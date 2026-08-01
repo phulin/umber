@@ -72,6 +72,18 @@ impl PageArtifact {
         true
     }
 
+    /// Retargets one exact ordered PDF image-reference occurrence.
+    pub fn retarget_pdf_image_at(&mut self, index: usize, failed: u32, replacement: u32) -> bool {
+        let Some(PageEffect::PdfRefXImage { object, .. }) = self.0.effects.get_mut(index) else {
+            return false;
+        };
+        if *object != failed {
+            return false;
+        }
+        *object = replacement;
+        true
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_mut(&mut self) -> &mut UnvalidatedPageArtifact {
         &mut self.0

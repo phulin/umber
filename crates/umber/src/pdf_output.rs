@@ -5851,11 +5851,64 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a test-only committed-artifact corruption hook; tracked by umber2-0wb7"]
     fn missing_delayed_image_record_is_exact_retry_stable_and_publishes_nothing() {
-        // Page artifacts and the image ledger are intentionally immutable at
-        // this boundary. Exercise this diagnostic once a bounded corruption
-        // constructor can create the otherwise-unrepresentable mismatch.
+        let png = test_png(0, &[0, 73]);
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 1,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Gray,
+                alpha: false,
+                png_color_type: Some(0),
+            }),
+            natural_width: Scaled::from_raw(65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let run = run_with_image(
+            &mut stores,
+            "\\pdfoutput=1\\pdfximage{delayed.png}\\shipout\\hbox{\\pdfrefximage1}\\end",
+            image,
+        );
+        let commits_before = stores.world().artifact_commits().to_vec();
+        let artifacts_before = stores.world().committed_artifacts().to_vec();
+        let mut artifacts = run.committed_artifacts.clone();
+        let mut page = tex_out::PageArtifact::from_bytes(artifacts[0].bytes())
+            .expect("committed image page parses");
+        let (effect_index, object) = page
+            .effects
+            .iter()
+            .enumerate()
+            .find_map(|(index, effect)| match effect {
+                tex_out::PageEffect::PdfRefXImage { object, .. } => Some((index, *object)),
+                _ => None,
+            })
+            .expect("page references delayed image");
+        let missing = i32::MAX as u32;
+        assert!(page.retarget_pdf_image_at(effect_index, object, missing));
+        artifacts[0] = artifacts[0].clone().with_testing_bytes_preserving_identity(
+            page.to_bytes().expect("corrupted page serializes"),
+        );
+
+        let first = pdf_from_committed_artifacts(&mut stores, &artifacts)
+            .expect_err("missing delayed image record is fatal");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &artifacts)
+            .expect_err("missing delayed image record remains fatal");
+        assert!(matches!(first, PdfBuildError::MissingRasterImage(value) if value == missing));
+        assert_eq!(
+            first.to_string(),
+            format!("PDF image object {missing} is missing")
+        );
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+        assert_eq!(stores.world().committed_artifacts(), artifacts_before);
     }
 
     #[test]

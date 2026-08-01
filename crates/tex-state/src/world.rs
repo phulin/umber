@@ -541,6 +541,16 @@ impl CommittedArtifact {
         self
     }
 
+    /// Replaces bytes without changing their asserted identity for corruption tests.
+    ///
+    /// This deliberately constructs an invalid committed-artifact boundary and
+    /// must only be used to exercise downstream rejection paths.
+    #[doc(hidden)]
+    pub fn with_testing_bytes_preserving_identity(mut self, bytes: Vec<u8>) -> Self {
+        self.bytes = bytes.into();
+        self
+    }
+
     /// Eager diagnostic origins aligned with artifact nodes in preorder.
     ///
     /// Replayed paragraphs retain stable recipes instead. Call
