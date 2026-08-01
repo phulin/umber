@@ -1634,10 +1634,20 @@ pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token
         },
         _ => return string_text(state, token),
     };
+    // TeX82 §§63/294: `show_token_list` renders control sequences through
+    // `print_cs`, and every escape prefix that `print_cs` emits comes from
+    // the live `\escapechar`. This matters for backed-up recovery tokens:
+    // §1064 inserts a closer ahead of the offending command, then §314
+    // pseudoprints that command while the current integer parameters remain
+    // in force.
     let mut text = if name.is_empty() {
-        "\\csname\\endcsname".to_owned()
+        format!(
+            "{}{}",
+            print_esc_text(state, "csname"),
+            print_esc_text(state, "endcsname")
+        )
     } else {
-        format!("\\{name}")
+        print_esc_text(state, name)
     };
     let mut chars = name.chars();
     let control_symbol = matches!((chars.next(), chars.next()), (Some(_), None));

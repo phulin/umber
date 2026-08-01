@@ -3896,6 +3896,34 @@ fn print_cmd_chr_relax_uses_live_escapechar() {
 }
 
 #[test]
+fn token_list_control_sequences_use_live_escapechar() {
+    // TeX82 §§63/294: `show_token_list` delegates control-sequence spelling
+    // to `print_cs`, including the live escape prefix.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let end = universe.intern("end").symbol();
+    universe.set_int_param(tex_state::env::banks::IntParam::ESCAPE_CHAR, 256);
+
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::Cs(end)),
+        "end "
+    );
+
+    universe.set_int_param(
+        tex_state::env::banks::IntParam::ESCAPE_CHAR,
+        i32::from(b'@'),
+    );
+    let null_cs = universe.intern("").symbol();
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::Cs(end)),
+        "@end "
+    );
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::Cs(null_cs)),
+        "@csname@endcsname "
+    );
+}
+
+#[test]
 fn meaning_renderer_covers_register_quantity_and_primitive_families() {
     use tex_state::env::banks::IntParam;
     use tex_state::meaning::{InternalInteger, UnexpandablePrimitive};

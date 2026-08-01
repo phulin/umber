@@ -102,6 +102,24 @@ fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
 }
 
 #[test]
+fn global_escapechar_survives_off_save_inserted_group_recovery() {
+    // TeX82 §§1064/1214: a globally assigned integer parameter remains live
+    // while `off_save` backs up the offending command and inserts the closer.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\scrollmode\\tracingonline=1\\hbox{\\escapechar=127\\global\\escapechar=256\\end}",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), 256);
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("! Missing } inserted."), "{terminal:?}");
+}
+
+#[test]
 fn tracingcommands_does_not_trace_prefix_or_reswitch_internal_fetches() {
     // TeX82 §§1030/1045/1211: neither a later prefix, a prefixed target, nor
     // the command fetched by `\ignorespaces` passes through `big_switch`'s
