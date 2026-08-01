@@ -8,6 +8,7 @@ pub(super) struct PageOverlay {
     pub(super) open_out_occurrences: Vec<(usize, tex_state::EffectPos)>,
     pub(super) math: Vec<MathSubstitution>,
     pub(super) directions: Vec<DirectionPermutation>,
+    pub(super) omitted_whatsits: Vec<(NodeListId, usize)>,
     pub(super) diagnostics: Vec<(PrintSink, String)>,
     color_target: tex_state::PdfColorStackTarget,
     running_thread_depth: Option<usize>,
@@ -81,6 +82,7 @@ pub(super) fn normalize_page(
         open_out_occurrences,
         math: Vec::new(),
         directions: Vec::new(),
+        omitted_whatsits: Vec::new(),
         diagnostics: Vec::new(),
         color_target,
         running_thread_depth: None,
@@ -287,14 +289,21 @@ fn normalize_index(
                 )?;
             }
         }
-        NormalizeNode::Whatsit(whatsit) => append_whatsit_effect(
-            stores,
-            expansion,
-            overlay,
-            whatsit,
-            suppress_deferred_streams,
-            location,
-        )?,
+        NormalizeNode::Whatsit(whatsit) => {
+            let destination = matches!(whatsit, Whatsit::PdfDestination(_));
+            let effect_count = overlay.effects.len();
+            append_whatsit_effect(
+                stores,
+                expansion,
+                overlay,
+                whatsit,
+                suppress_deferred_streams,
+                location,
+            )?;
+            if destination && !suppress_deferred_streams && overlay.effects.len() == effect_count {
+                overlay.omitted_whatsits.push((list, index));
+            }
+        }
         NormalizeNode::Math(math) => {
             let mut nodes = crate::math::finish_math_list_node(stores, math, false);
             let replacement = stores.freeze_node_list_owned(&mut nodes);
@@ -541,13 +550,14 @@ fn append_whatsit_effect(
             let definition = stores
                 .define_pdf_destination(identity.clone(), structure)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
-            if definition.duplicate
-                && stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0
-            {
-                diagnostics.push((
-                    PrintSink::TerminalAndLog,
-                    super::super::super::pdf_destination_duplicate_warning(&identity),
-                ));
+            if definition.duplicate {
+                if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0 {
+                    diagnostics.push((
+                        PrintSink::TerminalAndLog,
+                        super::super::super::pdf_destination_duplicate_warning(&identity),
+                    ));
+                }
+                return Ok(());
             }
             let identifier = match identity {
                 tex_state::PdfDestinationIdentity::Name(name) => {

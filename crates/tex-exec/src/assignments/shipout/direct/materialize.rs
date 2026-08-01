@@ -12,6 +12,9 @@ pub(super) fn emitted_list_is_empty(
     let len = order.map_or_else(|| stores.nodes(list).len(), <[usize]>::len);
     for position in 0..len {
         let index = order.map_or(position, |indices| indices[position]);
+        if omitted_whatsit(overlay, list, index) {
+            continue;
+        }
         if let Some(replacement) = math_substitution(overlay, list, index) {
             if !emitted_list_is_empty(
                 stores,
@@ -56,6 +59,9 @@ pub(super) fn materialize_node_list(
     let len = order.map_or_else(|| stores.nodes(list).len(), <[usize]>::len);
     for position in 0..len {
         let index = order.map_or(position, |indices| indices[position]);
+        if omitted_whatsit(overlay, list, index) {
+            continue;
+        }
         if let Some(replacement) = math_substitution(overlay, list, index) {
             nodes.extend(materialize_node_list(
                 stores,

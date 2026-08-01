@@ -916,9 +916,72 @@ mod tests {
                     .iter()
                     .filter(|effect| matches!(effect, tex_out::PageEffect::PdfDestination(_)))
                     .count(),
-                2
+                1
             );
         }
+    }
+
+    #[test]
+    fn pdf_destination_duplicates_keep_identity_order_grouping_and_output_routing() {
+        const NAME_WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (name{7}) has been already used, duplicate ignored\n";
+        const NUMBER_WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (num7) has been already used, duplicate ignored\n";
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            concat!(
+                "\\pdfoutput=1",
+                "\\shipout\\hbox{\\pdfdest name{7} fit\\pdfdest num 7 fit}",
+                "{\\pdfsuppresswarningdupdest=1",
+                "\\shipout\\hbox{\\pdfdest name{7} fit}}",
+                "\\shipout\\hbox{\\pdfdest num 7 fit}",
+                "\\shipout\\hbox{\\pdfdest name{7} fit}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("destination duplicates are recoverable");
+
+        let expected = format!("{NUMBER_WARNING}{NAME_WARNING}");
+        assert_eq!(
+            tex_state::print::without_line_breaks(&String::from_utf8_lossy(
+                stores.world().memory_terminal_output().unwrap_or_default(),
+            )),
+            expected
+        );
+        assert_eq!(
+            tex_state::print::without_line_breaks(&String::from_utf8_lossy(
+                stores.world().memory_log_output().unwrap_or_default(),
+            )),
+            expected
+        );
+
+        assert_eq!(stores.pdf_destinations(false).len(), 2);
+        assert!(
+            stores
+                .pdf_destinations(false)
+                .iter()
+                .all(|record| record.defined())
+        );
+        let destination_effects = stores
+            .world()
+            .artifact_commits()
+            .iter()
+            .map(|&hash| {
+                stores
+                    .world()
+                    .read_artifact(hash)
+                    .expect("artifact read")
+                    .expect("artifact exists")
+            })
+            .map(|bytes| tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses"))
+            .map(|artifact| {
+                artifact
+                    .effects
+                    .iter()
+                    .filter(|effect| matches!(effect, tex_out::PageEffect::PdfDestination(_)))
+                    .count()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(destination_effects, [2, 0, 0, 0]);
     }
 
     #[test]

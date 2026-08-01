@@ -648,6 +648,9 @@ fn emit_index(
     suppress_deferred_streams: bool,
     depth: usize,
 ) -> Result<(), ExecError> {
+    if omitted_whatsit(overlay, list, index) {
+        return Ok(());
+    }
     if let Some(replacement) = math_substitution(overlay, list, index) {
         return emit_node_list(
             stores,
@@ -1094,6 +1097,13 @@ fn math_substitution(overlay: &PageOverlay, list: NodeListId, index: usize) -> O
         .iter()
         .find(|entry| entry.list == list && entry.index == index)
         .map(|entry| entry.replacement)
+}
+
+fn omitted_whatsit(overlay: &PageOverlay, list: NodeListId, index: usize) -> bool {
+    overlay
+        .omitted_whatsits
+        .iter()
+        .any(|&(candidate, candidate_index)| candidate == list && candidate_index == index)
 }
 
 fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
