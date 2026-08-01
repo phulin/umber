@@ -35,6 +35,225 @@ fn hbox_with_one_point_kern(stores: &mut Universe) -> NodeListId {
 }
 
 #[test]
+fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
+    let mut stores = Universe::new();
+    let spec = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let empty = stores.freeze_node_list(&[]);
+    let leader = LeaderPayload::HList(zero_sized_hbox(empty));
+    let cases = [
+        (GlueKind::Normal, None, "\\glue 1.0\n"),
+        (GlueKind::TabSkip, None, "\\glue(\\tabskip) 1.0\n"),
+        (GlueKind::BaselineSkip, None, "\\glue(\\baselineskip) 1.0\n"),
+        (GlueKind::LineSkip, None, "\\glue(\\lineskip) 1.0\n"),
+        (GlueKind::TopSkip, None, "\\glue(\\topskip) 1.0\n"),
+        (GlueKind::SplitTopSkip, None, "\\glue(\\splittopskip) 1.0\n"),
+        (GlueKind::LeftSkip, None, "\\glue(\\leftskip) 1.0\n"),
+        (GlueKind::RightSkip, None, "\\glue(\\rightskip) 1.0\n"),
+        (GlueKind::ParFillSkip, None, "\\glue(\\parfillskip) 1.0\n"),
+        (
+            GlueKind::AboveDisplaySkip,
+            None,
+            "\\glue(\\abovedisplayskip) 1.0\n",
+        ),
+        (
+            GlueKind::BelowDisplaySkip,
+            None,
+            "\\glue(\\belowdisplayskip) 1.0\n",
+        ),
+        (
+            GlueKind::AboveDisplayShortSkip,
+            None,
+            "\\glue(\\abovedisplayshortskip) 1.0\n",
+        ),
+        (
+            GlueKind::BelowDisplayShortSkip,
+            None,
+            "\\glue(\\belowdisplayshortskip) 1.0\n",
+        ),
+        (
+            GlueKind::Leaders,
+            Some(leader),
+            "\\leaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
+        ),
+        (
+            GlueKind::Cleaders,
+            Some(leader),
+            "\\cleaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
+        ),
+        (
+            GlueKind::Xleaders,
+            Some(leader),
+            "\\xleaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
+        ),
+        (GlueKind::MuSkip, None, "\\glue(\\mskip) 1.0mu\n"),
+        (GlueKind::ThinMuSkip, None, "\\glue(\\thinmuskip) 1.0mu\n"),
+        (GlueKind::MedMuSkip, None, "\\glue(\\medmuskip) 1.0mu\n"),
+        (GlueKind::ThickMuSkip, None, "\\glue(\\thickmuskip) 1.0mu\n"),
+        (GlueKind::NonScript, None, "\\glue(\\nonscript) 1.0\n"),
+    ];
+
+    for (kind, payload, expected) in cases {
+        let node = Node::Glue {
+            spec,
+            kind,
+            leader: payload,
+        };
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &[node],
+                DumpConfig {
+                    breadth: 10,
+                    depth: 10
+                }
+            ),
+            expected,
+            "wrong dump for {kind:?}",
+        );
+        assert_eq!(stores.glue(spec).width, Scaled::from_raw(Scaled::UNITY));
+        assert!(stores.nodes(empty).is_empty());
+    }
+}
+
+#[test]
+fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
+    let mut stores = Universe::new();
+    let cases = [
+        (
+            Order::Normal,
+            Order::Filll,
+            "2.0 plus -3.0 minus 4.0filll",
+            "2.0mu plus -3.0mu minus 4.0filll",
+        ),
+        (
+            Order::Fil,
+            Order::Fill,
+            "2.0 plus -3.0fil minus 4.0fill",
+            "2.0mu plus -3.0fil minus 4.0fill",
+        ),
+        (
+            Order::Fill,
+            Order::Fil,
+            "2.0 plus -3.0fill minus 4.0fil",
+            "2.0mu plus -3.0fill minus 4.0fil",
+        ),
+        (
+            Order::Filll,
+            Order::Normal,
+            "2.0 plus -3.0filll minus 4.0",
+            "2.0mu plus -3.0filll minus 4.0mu",
+        ),
+    ];
+    for (stretch_order, shrink_order, ordinary, math) in cases {
+        let value = GlueSpec {
+            width: Scaled::from_raw(2 * Scaled::UNITY),
+            stretch: Scaled::from_raw(-3 * Scaled::UNITY),
+            stretch_order,
+            shrink: Scaled::from_raw(4 * Scaled::UNITY),
+            shrink_order,
+        };
+        let spec = stores.intern_glue(value);
+        for (kind, expected) in [(GlueKind::Normal, ordinary), (GlueKind::MuSkip, math)] {
+            let node = Node::Glue {
+                spec,
+                kind,
+                leader: None,
+            };
+            let prefix = if kind == GlueKind::MuSkip {
+                "\\glue(\\mskip) "
+            } else {
+                "\\glue "
+            };
+            assert_eq!(
+                dump_node_slice(
+                    &stores,
+                    &[node],
+                    DumpConfig {
+                        breadth: 10,
+                        depth: 10
+                    }
+                ),
+                format!("{prefix}{expected}\n"),
+            );
+            assert_eq!(stores.glue(spec), value, "dumping must not rewrite glue");
+        }
+    }
+
+    let signs = [
+        (
+            2,
+            3,
+            4,
+            "2.0 plus 3.0 minus 4.0",
+            "2.0mu plus 3.0mu minus 4.0mu",
+        ),
+        (
+            2,
+            3,
+            -4,
+            "2.0 plus 3.0 minus -4.0",
+            "2.0mu plus 3.0mu minus -4.0mu",
+        ),
+        (
+            2,
+            -3,
+            4,
+            "2.0 plus -3.0 minus 4.0",
+            "2.0mu plus -3.0mu minus 4.0mu",
+        ),
+        (
+            2,
+            -3,
+            -4,
+            "2.0 plus -3.0 minus -4.0",
+            "2.0mu plus -3.0mu minus -4.0mu",
+        ),
+        (
+            -2,
+            3,
+            4,
+            "-2.0 plus 3.0 minus 4.0",
+            "-2.0mu plus 3.0mu minus 4.0mu",
+        ),
+        (
+            -2,
+            3,
+            -4,
+            "-2.0 plus 3.0 minus -4.0",
+            "-2.0mu plus 3.0mu minus -4.0mu",
+        ),
+        (
+            -2,
+            -3,
+            4,
+            "-2.0 plus -3.0 minus 4.0",
+            "-2.0mu plus -3.0mu minus 4.0mu",
+        ),
+        (
+            -2,
+            -3,
+            -4,
+            "-2.0 plus -3.0 minus -4.0",
+            "-2.0mu plus -3.0mu minus -4.0mu",
+        ),
+    ];
+    for (width, stretch, shrink, ordinary, math) in signs {
+        let value = GlueSpec {
+            width: Scaled::from_raw(width * Scaled::UNITY),
+            stretch: Scaled::from_raw(stretch * Scaled::UNITY),
+            stretch_order: Order::Normal,
+            shrink: Scaled::from_raw(shrink * Scaled::UNITY),
+            shrink_order: Order::Normal,
+        };
+        assert_eq!(format_glue(value, ""), ordinary);
+        assert_eq!(format_glue(value, "mu"), math);
+    }
+}
+
+#[test]
 fn box_lr_has_exact_canonical_node_dump_evidence() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);

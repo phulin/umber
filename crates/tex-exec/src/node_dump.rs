@@ -157,7 +157,7 @@ fn dump_node(
                     out,
                     "{}{}",
                     kind.leader_dump_prefix(),
-                    format_glue(stores.glue(*spec))
+                    format_glue(stores.glue(*spec), kind.glue_unit())
                 );
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
@@ -165,7 +165,7 @@ fn dump_node(
                     out,
                     "{}{}",
                     kind.glue_dump_prefix(),
-                    format_glue(stores.glue(*spec))
+                    format_glue(stores.glue(*spec), kind.glue_unit())
                 );
             }
         }
@@ -257,7 +257,7 @@ fn dump_node(
                 out,
                 "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
                 format_scaled_without_unit(*size),
-                format_glue(stores.glue(*split_top_skip)),
+                format_glue(stores.glue(*split_top_skip), ""),
                 format_scaled_without_unit(*split_max_depth),
             );
             dump_list(stores, *content, config, depth + 1, ListContext::VList, out);
@@ -822,17 +822,18 @@ fn write_prefix(depth: i32, out: &mut String) {
     }
 }
 
-fn format_glue(spec: GlueSpec) -> String {
+fn format_glue(spec: GlueSpec, unit: &str) -> String {
     let mut text = format_scaled_without_unit(spec.width);
+    text.push_str(unit);
     if spec.stretch.raw() != 0 {
         text.push_str(" plus ");
         text.push_str(&format_scaled_without_unit(spec.stretch));
-        text.push_str(order_unit(spec.stretch_order));
+        text.push_str(&glue_component_unit(spec.stretch_order, unit));
     }
     if spec.shrink.raw() != 0 {
         text.push_str(" minus ");
         text.push_str(&format_scaled_without_unit(spec.shrink));
-        text.push_str(order_unit(spec.shrink_order));
+        text.push_str(&glue_component_unit(spec.shrink_order, unit));
     }
     text
 }
@@ -902,6 +903,7 @@ mod tests;
 trait GlueKindDump {
     fn glue_dump_prefix(self) -> &'static str;
     fn leader_dump_prefix(self) -> &'static str;
+    fn glue_unit(self) -> &'static str;
 }
 
 impl GlueKindDump for GlueKind {
@@ -923,7 +925,7 @@ impl GlueKindDump for GlueKind {
             Self::Leaders => "\\leaders \\glue ",
             Self::Cleaders => "\\cleaders \\glue ",
             Self::Xleaders => "\\xleaders \\glue ",
-            Self::MuSkip => "\\glue ",
+            Self::MuSkip => "\\glue(\\mskip) ",
             Self::ThinMuSkip => "\\glue(\\thinmuskip) ",
             Self::MedMuSkip => "\\glue(\\medmuskip) ",
             Self::ThickMuSkip => "\\glue(\\thickmuskip) ",
@@ -937,6 +939,13 @@ impl GlueKindDump for GlueKind {
             Self::Cleaders => "\\cleaders ",
             Self::Xleaders => "\\xleaders ",
             _ => self.glue_dump_prefix(),
+        }
+    }
+
+    fn glue_unit(self) -> &'static str {
+        match self {
+            Self::MuSkip | Self::ThinMuSkip | Self::MedMuSkip | Self::ThickMuSkip => "mu",
+            _ => "",
         }
     }
 }
