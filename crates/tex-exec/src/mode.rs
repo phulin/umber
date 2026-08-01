@@ -965,9 +965,11 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
             for direction in &interrupt.active_directions {
                 projection.u8(match direction {
                     tex_state::node::Direction::BeginL => 0,
-                    tex_state::node::Direction::BeginR => 1,
-                    tex_state::node::Direction::EndL => 2,
+                    tex_state::node::Direction::EndL => 1,
+                    tex_state::node::Direction::BeginR => 2,
                     tex_state::node::Direction::EndR => 3,
+                    tex_state::node::Direction::BeginM => 4,
+                    tex_state::node::Direction::EndM => 5,
                 });
             }
         }

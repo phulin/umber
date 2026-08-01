@@ -134,9 +134,10 @@ fn update_active_directions(nodes: &[Node], active: &mut Vec<Direction>) {
 
 const fn matching_end(direction: Direction) -> Direction {
     match direction {
+        Direction::BeginM => Direction::EndM,
         Direction::BeginL => Direction::EndL,
         Direction::BeginR => Direction::EndR,
-        Direction::EndL | Direction::EndR => direction,
+        Direction::EndM | Direction::EndL | Direction::EndR => direction,
     }
 }
 

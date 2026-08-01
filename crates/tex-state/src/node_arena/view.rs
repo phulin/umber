@@ -531,6 +531,8 @@ impl NodeStorage {
                 1 => Direction::EndL,
                 2 => Direction::BeginR,
                 3 => Direction::EndR,
+                4 => Direction::BeginM,
+                5 => Direction::EndM,
                 _ => unreachable!("stored direction code is valid"),
             }),
             7 => NodeRef::MathStyle(decode_style(payload as u8)),

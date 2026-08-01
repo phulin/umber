@@ -91,6 +91,31 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
 }
 
+#[test]
+fn etex_mlr_boundaries_dump_with_exact_identity() {
+    // Merged e-TeX WEB §12 keeps all six M/L/R math-node subtypes distinct.
+    let mut stores = Universe::new();
+    let list = stores.freeze_node_list(&[
+        Node::Direction(tex_state::node::Direction::BeginM),
+        Node::Direction(tex_state::node::Direction::EndM),
+        Node::Direction(tex_state::node::Direction::BeginL),
+        Node::Direction(tex_state::node::Direction::EndL),
+        Node::Direction(tex_state::node::Direction::BeginR),
+        Node::Direction(tex_state::node::Direction::EndR),
+    ]);
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 10,
+                depth: 10
+            }
+        ),
+        "\\beginM\n\\endM\n\\beginL\n\\endL\n\\beginR\n\\endR\n"
+    );
+}
+
 /// pdfTeX §§190/193 retain insertion and numbered-mark identity in list
 /// diagnostics, in node order, without consuming or rewriting either frozen
 /// source list. This is the exact body printed for the equivalent

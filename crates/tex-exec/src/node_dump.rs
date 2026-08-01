@@ -227,6 +227,8 @@ fn dump_node(
         }
         Node::Direction(direction) => {
             let name = match direction {
+                tex_state::node::Direction::BeginM => "beginM",
+                tex_state::node::Direction::EndM => "endM",
                 tex_state::node::Direction::BeginL => "beginL",
                 tex_state::node::Direction::EndL => "endL",
                 tex_state::node::Direction::BeginR => "beginR",

@@ -391,6 +391,32 @@ fn direction_predicate_scans_compact_tags_without_decoding_nodes() {
 }
 
 #[test]
+fn etex_math_boundaries_keep_six_distinct_compact_identities() {
+    // Merged e-TeX WEB §12 assigns distinct math-node subtypes to M/L/R
+    // begin/end boundaries. Compact storage must not collapse M into L/R.
+    let mut arena = NodeArena::new();
+    let boundaries = [
+        Direction::BeginM,
+        Direction::EndM,
+        Direction::BeginL,
+        Direction::EndL,
+        Direction::BeginR,
+        Direction::EndR,
+    ];
+    let list = arena.append(
+        &boundaries
+            .iter()
+            .copied()
+            .map(Node::Direction)
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        arena.get_epoch(list).to_vec(),
+        boundaries.map(Node::Direction)
+    );
+}
+
+#[test]
 fn shipout_normalization_predicate_rejects_inert_compact_tags() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);

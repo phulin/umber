@@ -521,13 +521,73 @@ pub enum DiscKind {
     AutomaticHyphen,
 }
 
-/// An e-TeX text-direction boundary (manual section 3.5, TeX--XeT).
+/// An e-TeX M/L/R math boundary (merged e-TeX WEB §12).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum Direction {
-    BeginL,
-    EndL,
-    BeginR,
-    EndR,
+#[repr(u8)]
+pub enum MathBoundary {
+    BeginM = 4,
+    EndM = 5,
+    BeginL = 0,
+    EndL = 1,
+    BeginR = 2,
+    EndR = 3,
+}
+
+/// Compatibility name for the L/R users of [`MathBoundary`].
+pub type Direction = MathBoundary;
+
+/// Merged e-TeX WEB §53a's split LR anomaly counter.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct LrAnomalies {
+    pub missing: u32,
+    pub extra: u32,
+}
+
+/// Canonical M/L/R nesting state used by list-boundary algorithms.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MathBoundaryStack {
+    open: Vec<MathBoundary>,
+    anomalies: LrAnomalies,
+}
+
+impl MathBoundaryStack {
+    pub fn observe(&mut self, boundary: MathBoundary) {
+        match boundary {
+            MathBoundary::BeginM | MathBoundary::BeginL | MathBoundary::BeginR => {
+                self.open.push(boundary)
+            }
+            MathBoundary::EndM | MathBoundary::EndL | MathBoundary::EndR => {
+                if self
+                    .open
+                    .last()
+                    .copied()
+                    .is_some_and(|open| open.matches(boundary))
+                {
+                    self.open.pop();
+                } else {
+                    self.anomalies.extra = self.anomalies.extra.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn finish(mut self) -> LrAnomalies {
+        self.anomalies.missing = self
+            .anomalies
+            .missing
+            .saturating_add(u32::try_from(self.open.len()).unwrap_or(u32::MAX));
+        self.anomalies
+    }
+}
+
+impl MathBoundary {
+    const fn matches(self, end: Self) -> bool {
+        matches!(
+            (self, end),
+            (Self::BeginM, Self::EndM) | (Self::BeginL, Self::EndL) | (Self::BeginR, Self::EndR)
+        )
+    }
 }
 
 /// The sign of box glue adjustment.
