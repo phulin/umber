@@ -197,8 +197,13 @@ fn dump_node(
         Node::Char { font, ch, .. } => {
             let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_char(*ch));
         }
-        Node::Lig { font, ch, .. } => {
-            let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_ligature(*ch));
+        Node::Lig { font, ch, orig, .. } => {
+            let _ = writeln!(
+                out,
+                "{} {}",
+                dump_font(stores, *font),
+                dump_ligature(*ch, orig)
+            );
         }
         Node::Disc {
             pre, post, replace, ..
@@ -673,15 +678,14 @@ fn dump_char(ch: char) -> String {
     }
 }
 
-fn dump_ligature(ch: char) -> String {
-    match ch as u32 {
-        11 => "^^K (ligature ff)".to_owned(),
-        12 => "^^L (ligature fi)".to_owned(),
-        13 => "^^M (ligature fl)".to_owned(),
-        14 => "^^N (ligature ffi)".to_owned(),
-        15 => "^^O (ligature ffl)".to_owned(),
-        _ => dump_char(ch),
+fn dump_ligature(ch: char, orig: &[char]) -> String {
+    let mut rendered = dump_char(ch);
+    rendered.push_str(" (ligature ");
+    for &original in orig {
+        rendered.push_str(&dump_char(original));
     }
+    rendered.push(')');
+    rendered
 }
 
 fn dump_box(

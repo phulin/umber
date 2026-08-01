@@ -10,6 +10,58 @@ use tex_state::node::{
     UnsetNode, UnsetNodeFields,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
+use tex_state::token::OriginId;
+
+#[test]
+fn ligature_dump_includes_original_character_list() {
+    let mut stores = Universe::new();
+    let identifier = stores.intern_relaxed_control_sequence("f");
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+    let ligature = Node::Lig {
+        font: tex_state::font::NULL_FONT,
+        ch: 'X',
+        orig: vec!['a', 'b'],
+        origins: vec![OriginId::UNKNOWN; 2],
+    };
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[ligature],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "\\f X (ligature ab)\n",
+    );
+}
+
+#[test]
+fn ligature_semantic_equality_ignores_original_character_provenance() {
+    let with_unknown_origins = Node::Lig {
+        font: tex_state::font::NULL_FONT,
+        ch: 'X',
+        orig: vec!['a', 'b'],
+        origins: vec![OriginId::UNKNOWN; 2],
+    };
+    let without_origins = Node::Lig {
+        font: tex_state::font::NULL_FONT,
+        ch: 'X',
+        orig: vec!['a', 'b'],
+        origins: Vec::new(),
+    };
+
+    assert_eq!(with_unknown_origins, without_origins);
+}
+
+#[test]
+#[ignore = "Node::Lig has no left/right boundary subtype representation (umber2-llks)"]
+fn ligature_dump_marks_left_and_right_boundaries() {
+    // Once Node::Lig retains TeX's left-hit/right-hit subtype bits, construct
+    // the corresponding node here and assert `\\f X (ligature |ab|)\n`.
+    panic!("blocked on boundary subtype representation");
+}
 
 /// Builds the `\hbox{\kern1pt}` box register from bd `umber2-alfh.6`'s
 /// reproduction (`tests/corpus/command-semantic/main-control/show-box/show-box.tex`):
