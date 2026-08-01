@@ -6432,6 +6432,73 @@ mod tests {
     }
 
     #[test]
+    fn pdf_decimal_conversion_rounds_signed_boundaries_half_away_from_zero() {
+        for (raw, digits, expected) in [
+            (32_890, 0, 0),
+            (32_891, 0, 1),
+            (-32_890, 0, 0),
+            (-32_891, 0, -1),
+            (3_289, 1, 0),
+            (3_290, 1, 1),
+            (-3_289, 1, 0),
+            (-3_290, 1, -1),
+            (65_536, 4, 9_963),
+        ] {
+            assert_eq!(
+                scaled_to_bp_coefficient(Scaled::from_raw(raw), digits),
+                expected,
+                "raw={raw}, digits={digits}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_source_fonts_at_distinct_sizes_share_one_stable_pdf_resource() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed TFM");
+        let run = run_in(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\font\\small=cmr10 at 10pt \\font\\large=cmr10 at 12pt ",
+                "\\pdfmapline{=cmr10 Helvetica}",
+                "\\shipout\\hbox{\\small A\\large B}\\end",
+            ),
+        );
+        let resources = stores.pdf_font_resources().collect::<Vec<_>>();
+        assert_eq!(resources.len(), 1, "source identity owns the PDF resource");
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("font-size PDF assembles");
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("font-size PDF replay assembles");
+        assert_eq!(first, second);
+
+        let parsed = probe(&first);
+        let page = &parsed.pages().expect("one output page")[0];
+        let font_dictionary = page_resources(page)
+            .get(b"Font")
+            .and_then(ProbeValue::as_dictionary)
+            .expect("typed page font dictionary");
+        assert_eq!(font_dictionary.entries.len(), 1);
+        assert!(font_dictionary.get(b"F1").is_some());
+        let content = &page.content.as_ref().expect("decoded page content").decoded;
+        assert!(content.windows(9).any(|window| window == b"/F1 9.963"));
+        assert!(content.windows(10).any(|window| window == b"/F1 11.955"));
+        assert_eq!(
+            shown_text_operands(&parsed, 1),
+            vec![b"A".to_vec(), b"B".to_vec()]
+        );
+    }
+
+    #[test]
     fn accessibility_whatsits_survive_shipout_and_artifact_round_trip() {
         let mut stores = pdftex_recovery_stores();
         prepare_pdftex_run_stores(&mut stores);

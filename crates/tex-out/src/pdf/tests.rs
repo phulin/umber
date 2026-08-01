@@ -86,6 +86,29 @@ fn direct_literal_preserves_text_state_but_page_literal_closes_it() {
 }
 
 #[test]
+fn text_strings_escape_every_byte_without_changing_the_decoded_payload() {
+    let payload = (u8::MIN..=u8::MAX).collect::<Vec<_>>();
+    let bytes = ordered_page_content(&[PdfContentOperation::Text(PdfContentTextRun {
+        x: 0.0,
+        baseline: 0.0,
+        font_name: b"F1".to_vec(),
+        font_size: 10.0,
+        bytes: payload.clone(),
+    })]);
+
+    let mut encoded = Vec::with_capacity(514);
+    encoded.push(b'<');
+    for byte in &payload {
+        encoded.extend_from_slice(format!("{byte:02X}").as_bytes());
+    }
+    encoded.extend_from_slice(b"> Tj");
+    assert!(
+        bytes.windows(encoded.len()).any(|window| window == encoded),
+        "all binary text bytes use one exact PDF hex string"
+    );
+}
+
+#[test]
 fn color_stack_bytes_use_the_writer_owned_path_and_literal_modes() {
     let bytes = ordered_page_content(&[
         PdfContentOperation::ColorStack {
