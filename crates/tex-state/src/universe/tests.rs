@@ -131,6 +131,75 @@ fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
 }
 
 #[test]
+fn initial_code_tables_survive_format_round_trip() {
+    let dumped_clock = JobClock {
+        time: 61,
+        second: 2,
+        day: 3,
+        month: 4,
+        year: 2005,
+    };
+    let loaded_clock = JobClock {
+        time: 126,
+        second: 7,
+        day: 8,
+        month: 9,
+        year: 2010,
+    };
+    let initial = Universe::with_world(World::memory_with_clock(dumped_clock));
+    let image = initial.dump_format().expect("INITEX format serializes");
+    let restored = Universe::from_format(World::memory_with_clock(loaded_clock), &image)
+        .expect("INITEX format restores");
+
+    // tex.web §§232 and 240 make the code tables portable format state.
+    for code in 0_u8..=u8::MAX {
+        let ch = char::from(code);
+        assert_eq!(restored.catcode(ch), initial.catcode(ch), "catcode {code}");
+        assert_eq!(
+            restored.mathcode(ch),
+            initial.mathcode(ch),
+            "mathcode {code}"
+        );
+        assert_eq!(restored.lccode(ch), initial.lccode(ch), "lccode {code}");
+        assert_eq!(restored.uccode(ch), initial.uccode(ch), "uccode {code}");
+        assert_eq!(restored.sfcode(ch), initial.sfcode(ch), "sfcode {code}");
+        assert_eq!(restored.delcode(ch), initial.delcode(ch), "delcode {code}");
+    }
+    for raw in 0..crate::env::banks::PARAMETER_COUNT as u16 {
+        let param = IntParam::new(raw);
+        if [
+            IntParam::TIME,
+            IntParam::DAY,
+            IntParam::MONTH,
+            IntParam::YEAR,
+        ]
+        .contains(&param)
+        {
+            continue;
+        }
+        assert_eq!(
+            restored.int_param(param),
+            initial.int_param(param),
+            "integer parameter {raw}"
+        );
+    }
+    for register in 0..=u8::MAX {
+        assert_eq!(
+            restored.count(register.into()),
+            initial.count(register.into()),
+            "count register {register}"
+        );
+    }
+
+    // tex.web's `fix_date_and_time` values are job inputs, so loading replaces
+    // them with the new World's clock rather than restoring them.
+    assert_eq!(restored.int_param(IntParam::TIME), loaded_clock.time);
+    assert_eq!(restored.int_param(IntParam::DAY), loaded_clock.day);
+    assert_eq!(restored.int_param(IntParam::MONTH), loaded_clock.month);
+    assert_eq!(restored.int_param(IntParam::YEAR), loaded_clock.year);
+}
+
+#[test]
 fn pdftex_utility_mutations_replay_with_identical_hashes() {
     let world = World::memory_with_pdftex_inputs(
         crate::JobClock::DEFAULT,

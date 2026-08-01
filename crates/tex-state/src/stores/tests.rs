@@ -1225,22 +1225,73 @@ fn rollback_restores_glue_store_as_part_of_snapshot_tuple() {
 }
 
 #[test]
-fn state_defaults_match_tex82_initex() {
+fn initial_tex82_code_tables_cover_all_ascii_exceptions_and_formulas() {
     let stores = Stores::new();
 
-    assert_eq!(stores.int_param(IntParam::PRETOLERANCE), 0);
-    assert_eq!(stores.int_param(IntParam::TOLERANCE), 10_000);
-    assert_eq!(stores.int_param(IntParam::MAG), 1000);
-    assert_eq!(stores.int_param(IntParam::MAX_DEAD_CYCLES), 25);
-    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
-    assert_eq!(stores.int_param(IntParam::ESCAPE_CHAR), b'\\' as i32);
-    assert_eq!(stores.int_param(IntParam::END_LINE_CHAR), 13);
-    assert_eq!(stores.int_param(IntParam::DEFAULT_HYPHEN_CHAR), 0);
-    assert_eq!(stores.int_param(IntParam::DEFAULT_SKEW_CHAR), 0);
-    assert_eq!(stores.int_param(IntParam::FAM), 0);
-    assert_eq!(stores.int_param(IntParam::UC_HYPH), 0);
-    assert_eq!(stores.int_param(IntParam::LEFT_HYPHEN_MIN), 0);
-    assert_eq!(stores.int_param(IntParam::RIGHT_HYPHEN_MIN), 0);
+    // tex.web §232 initializes the complete 8-bit code-table region.
+    for code in 0_u8..=u8::MAX {
+        let ch = char::from(code);
+        let expected_catcode = match code {
+            0 => Catcode::Ignored,
+            13 => Catcode::EndLine,
+            b' ' => Catcode::Space,
+            b'%' => Catcode::Comment,
+            b'\\' => Catcode::Escape,
+            127 => Catcode::Invalid,
+            b'A'..=b'Z' | b'a'..=b'z' => Catcode::Letter,
+            _ => Catcode::Other,
+        };
+        let expected_mathcode = match code {
+            b'0'..=b'9' => 0x7000 + u32::from(code),
+            b'A'..=b'Z' | b'a'..=b'z' => 0x7100 + u32::from(code),
+            _ => u32::from(code),
+        };
+        let (expected_lccode, expected_uccode) = match code {
+            b'A'..=b'Z' => (u32::from(code + (b'a' - b'A')), u32::from(code)),
+            b'a'..=b'z' => (u32::from(code), u32::from(code - (b'a' - b'A'))),
+            _ => (0, 0),
+        };
+
+        assert_eq!(stores.catcode(ch), expected_catcode, "catcode {code}");
+        assert_eq!(stores.mathcode(ch), expected_mathcode, "mathcode {code}");
+        assert_eq!(stores.lccode(ch), expected_lccode, "lccode {code}");
+        assert_eq!(stores.uccode(ch), expected_uccode, "uccode {code}");
+        assert_eq!(
+            stores.sfcode(ch),
+            if code.is_ascii_uppercase() { 999 } else { 1000 },
+            "sfcode {code}"
+        );
+        assert_eq!(
+            stores.delcode(ch),
+            if code == b'.' { 0 } else { -1 },
+            "delcode {code}"
+        );
+    }
+
+    // tex.web §240 zeroes the whole integer region, including count
+    // registers, then assigns exactly these six nonzero parameter defaults.
+    // The full slot range includes e-TeX/pdfTeX profile controls, which must
+    // remain disabled until their profile initialization runs.
+    for raw in 0..crate::env::banks::PARAMETER_COUNT as u16 {
+        let param = IntParam::new(raw);
+        let expected = match param {
+            IntParam::TOLERANCE => 10_000,
+            IntParam::MAG => 1000,
+            IntParam::HANG_AFTER => 1,
+            IntParam::MAX_DEAD_CYCLES => 25,
+            IntParam::ESCAPE_CHAR => i32::from(b'\\'),
+            IntParam::END_LINE_CHAR => 13,
+            _ => 0,
+        };
+        assert_eq!(stores.int_param(param), expected, "integer parameter {raw}");
+    }
+    for register in 0..=u8::MAX {
+        assert_eq!(
+            stores.count(register.into()),
+            0,
+            "count register {register}"
+        );
+    }
     assert_eq!(stores.dimen(0), scaled(0));
     assert_eq!(stores.dimen_param(DimenParam::OVERFULL_RULE), scaled(0));
     assert_eq!(stores.dimen_param(DimenParam::MAX_DEPTH), scaled(0));
