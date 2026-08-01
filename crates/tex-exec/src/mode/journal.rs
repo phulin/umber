@@ -24,6 +24,8 @@ struct ModeListScalars {
     space_factor: i32,
     no_boundary: bool,
     hyphen_language: u8,
+    left_hyphen_min: u8,
+    right_hyphen_min: u8,
 }
 
 impl ModeListScalars {
@@ -40,6 +42,8 @@ impl ModeListScalars {
             space_factor: list.space_factor,
             no_boundary: list.no_boundary,
             hyphen_language: list.hyphen_language,
+            left_hyphen_min: list.left_hyphen_min,
+            right_hyphen_min: list.right_hyphen_min,
         }
     }
 
@@ -55,6 +59,8 @@ impl ModeListScalars {
         list.space_factor = self.space_factor;
         list.no_boundary = self.no_boundary;
         list.hyphen_language = self.hyphen_language;
+        list.left_hyphen_min = self.left_hyphen_min;
+        list.right_hyphen_min = self.right_hyphen_min;
     }
 }
 

@@ -861,7 +861,8 @@ fn fix_hyphen_language_with_fuel(
             right_hyphen_min,
         },
     )?;
-    nest.current_list_mutation().set_hyphen_language(language);
+    nest.current_list_mutation()
+        .set_hyphen_context(language, left_hyphen_min, right_hyphen_min);
     Ok(())
 }
 

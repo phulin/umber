@@ -118,7 +118,7 @@ pub(crate) fn start_canonical_paragraph(
                 );
                 build_page_if_outer_vertical(nest, stores)?;
             }
-            nest.push(Mode::Horizontal)?;
+            nest.push_at_line(Mode::Horizontal, stores.current_input_line())?;
             // §1091's `mode_line:=line`, which §804 reports this paragraph's
             // over/underfull lines from.
             stores.push_paragraph_start_line(stores.current_input_line());
@@ -200,7 +200,7 @@ fn start_paragraph(
                 );
                 build_page_if_outer_vertical(nest, stores)?;
             }
-            nest.push(Mode::Horizontal)?;
+            nest.push_at_line(Mode::Horizontal, stores.current_input_line())?;
             // §1091's `mode_line:=line`.
             stores.push_paragraph_start_line(stores.current_input_line());
             if indent {

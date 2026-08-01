@@ -1211,6 +1211,20 @@ fn showlists_reports_unfinished_math_noad_fields() {
 }
 
 #[test]
+fn showlists_reports_incomplete_fraction_numerator() {
+    let stores = super::core::run_canonical_tex82(r"\nonstopmode$a\above1pt\showlists b$\end");
+    let log = terminal_effect_text(&stores);
+
+    let numerator = log
+        .find("this will begin denominator of:\n")
+        .expect("incomplete fraction diagnostic");
+    assert!(
+        log[numerator..].contains("this will begin denominator of:\n\\mathord"),
+        "{log}"
+    );
+}
+
+#[test]
 fn par_in_math_finishes_math_with_tex_error_text() {
     let (stores, executor) = run_math_source(r"$a\par");
     assert_eq!(executor.nest().current_mode(), Mode::Vertical);

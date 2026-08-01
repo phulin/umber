@@ -1525,7 +1525,13 @@ impl CanonicalMainControl {
         // this fallible operation must precede both halves of the live
         // discretionary lifecycle: no rejected opener may leave a disc_group
         // without its restricted-horizontal mode.
-        self.modes.push(Mode::RestrictedHorizontal)?;
+        self.modes.push_at_line(
+            Mode::RestrictedHorizontal,
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+        )?;
         stores.enter_group_with_kind_at_line(
             GroupKind::Disc,
             self.command.current_file_line_number(),
@@ -2075,7 +2081,10 @@ impl CanonicalMainControl {
                         GroupKind::Output,
                         self.command.current_file_line_number(),
                     );
-                    self.modes.push(Mode::InternalVertical)?;
+                    self.modes.push_at_line(
+                        Mode::InternalVertical,
+                        -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+                    )?;
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
                 }
@@ -2108,7 +2117,13 @@ impl CanonicalMainControl {
         // the body opens a `simple_group`.
         let enclosing_depth = stores.group_depth();
         stores.enter_group_with_kind_at_line(kind, self.command.current_file_line_number());
-        self.modes.push(Mode::Math)?;
+        self.modes.push_at_line(
+            Mode::Math,
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+        )?;
         self.main_loop_active = false;
         while stores.group_depth() > enclosing_depth {
             match self.nested_step_once(stores, None)? {
@@ -2414,7 +2429,13 @@ impl CanonicalMainControl {
                         self.command.current_file_line_number(),
                     );
                     stores.set_int_param(IntParam::FAM, -1);
-                    self.modes.push(Mode::Math)?;
+                    self.modes.push_at_line(
+                        Mode::Math,
+                        self.command
+                            .current_file_line_number()
+                            .try_into()
+                            .unwrap_or(i32::MAX),
+                    )?;
                     self.modes.current_list_mutation().set_display_eq_no(
                         crate::mode::DisplayEqNo {
                             side: match number.side {
@@ -2490,11 +2511,17 @@ impl CanonicalMainControl {
             self.command.current_file_line_number(),
         );
         stores.set_int_param(IntParam::FAM, -1);
-        self.modes.push(if display {
-            Mode::DisplayMath
-        } else {
-            Mode::Math
-        })?;
+        self.modes.push_at_line(
+            if display {
+                Mode::DisplayMath
+            } else {
+                Mode::Math
+            },
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+        )?;
         schedule_everymath(&mut self.command, stores, display);
         Ok(())
     }
@@ -2677,7 +2704,13 @@ impl CanonicalMainControl {
             .checked_add(3)
             .expect("display prev_graf overflow");
         self.modes.set_enclosing_vertical_prev_graf(prev);
-        self.modes.push(Mode::Horizontal)?;
+        self.modes.push_at_line(
+            Mode::Horizontal,
+            self.command
+                .current_file_line_number()
+                .try_into()
+                .unwrap_or(i32::MAX),
+        )?;
         // §1200's `push_nest` sets `mode_line:=line` like every other one, so
         // the paragraph fragment that follows a display reports its own
         // over/underfull lines as §663's "in paragraph at lines A--B" rather
@@ -2739,7 +2772,13 @@ impl CanonicalMainControl {
                     GroupKind::MathLeft,
                     self.command.current_file_line_number(),
                 );
-                self.modes.push(Mode::Math)?;
+                self.modes.push_at_line(
+                    Mode::Math,
+                    self.command
+                        .current_file_line_number()
+                        .try_into()
+                        .unwrap_or(i32::MAX),
+                )?;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -12209,7 +12248,11 @@ fn apply_scanned_step(
                     right_hyphen_min,
                 },
             )?;
-            modes.current_list_mutation().set_hyphen_language(clang);
+            modes.current_list_mutation().set_hyphen_context(
+                clang,
+                left_hyphen_min,
+                right_hyphen_min,
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalSetLanguage { token } => {
@@ -12739,11 +12782,14 @@ fn apply_scanned_step(
                 kind.group_kind()
             };
             enter_canonical_group(stores, command.state, group_kind);
-            modes.push(if kind.horizontal() {
-                Mode::RestrictedHorizontal
-            } else {
-                Mode::InternalVertical
-            })?;
+            modes.push_at_line(
+                if kind.horizontal() {
+                    Mode::RestrictedHorizontal
+                } else {
+                    Mode::InternalVertical
+                },
+                stores.current_input_line(),
+            )?;
             // TeX82 §§1051--1052 and §1167 run `normal_paragraph` after
             // opening every internal-vertical box body. In particular, a
             // `\vbox`/`\vtop` must not inherit the enclosing `\parshape`.
@@ -12786,7 +12832,7 @@ fn apply_scanned_step(
             }
             let class = class as u16;
             enter_canonical_group(stores, command.state, GroupKind::Insert);
-            modes.push(Mode::InternalVertical)?;
+            modes.push_at_line(Mode::InternalVertical, stores.current_input_line())?;
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
@@ -12896,11 +12942,14 @@ fn apply_scanned_step(
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
             enter_canonical_group(stores, command.state, kind.group_kind());
-            modes.push(if kind.horizontal() {
-                Mode::RestrictedHorizontal
-            } else {
-                Mode::InternalVertical
-            })?;
+            modes.push_at_line(
+                if kind.horizontal() {
+                    Mode::RestrictedHorizontal
+                } else {
+                    Mode::InternalVertical
+                },
+                stores.current_input_line(),
+            )?;
             if !kind.horizontal() {
                 crate::assignments::normal_paragraph(modes, stores);
             }
@@ -13353,11 +13402,14 @@ fn apply_scanned_step(
             } else {
                 modes.current_list().prev_depth()
             };
-            modes.push(replay_alignment_mode(if vertical {
-                AlignmentKind::VAlign
-            } else {
-                AlignmentKind::HAlign
-            }))?;
+            modes.push_at_line(
+                replay_alignment_mode(if vertical {
+                    AlignmentKind::VAlign
+                } else {
+                    AlignmentKind::HAlign
+                }),
+                stores.current_input_line(),
+            )?;
             if let Some(prev_depth) = enclosing_prev_depth {
                 modes.current_list_mutation().set_prev_depth(prev_depth);
             }
@@ -14217,11 +14269,14 @@ fn apply_box_shift(
                 kind.group_kind()
             };
             enter_canonical_group(stores, command, group_kind);
-            modes.push(if kind.horizontal() {
-                Mode::RestrictedHorizontal
-            } else {
-                Mode::InternalVertical
-            })?;
+            modes.push_at_line(
+                if kind.horizontal() {
+                    Mode::RestrictedHorizontal
+                } else {
+                    Mode::InternalVertical
+                },
+                stores.current_input_line(),
+            )?;
             if !kind.horizontal() {
                 crate::assignments::normal_paragraph(modes, stores);
             }

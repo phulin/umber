@@ -124,6 +124,8 @@ pub struct ModeList {
     space_factor: i32,
     no_boundary: bool,
     hyphen_language: u8,
+    left_hyphen_min: u8,
+    right_hyphen_min: u8,
 }
 
 impl ModeList {
@@ -245,6 +247,22 @@ impl ModeList {
 
     pub fn set_hyphen_language(&mut self, language: u8) {
         self.hyphen_language = language;
+    }
+
+    #[must_use]
+    pub const fn left_hyphen_min(&self) -> u8 {
+        self.left_hyphen_min
+    }
+
+    #[must_use]
+    pub const fn right_hyphen_min(&self) -> u8 {
+        self.right_hyphen_min
+    }
+
+    pub fn set_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
+        self.hyphen_language = language;
+        self.left_hyphen_min = left;
+        self.right_hyphen_min = right;
     }
 
     #[must_use]
@@ -501,6 +519,10 @@ impl ModeListMutation<'_> {
 
     pub(crate) fn set_hyphen_language(&mut self, language: u8) {
         self.list.set_hyphen_language(language);
+    }
+
+    pub(crate) fn set_hyphen_context(&mut self, language: u8, left: u8, right: u8) {
+        self.list.set_hyphen_context(language, left, right);
     }
 
     pub(crate) fn set_prev_depth(&mut self, depth: Scaled) {
@@ -840,6 +862,7 @@ pub enum EqNoSide {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModeLevelSummary {
     mode: Mode,
+    entry_line: i32,
     list: ModeList,
 }
 
@@ -848,8 +871,18 @@ impl ModeLevelSummary {
     pub fn new(mode: Mode) -> Self {
         Self {
             mode,
+            entry_line: 0,
             list: ModeList::default(),
         }
+    }
+
+    #[must_use]
+    pub const fn entry_line(&self) -> i32 {
+        self.entry_line
+    }
+
+    pub(crate) const fn set_entry_line(&mut self, line: i32) {
+        self.entry_line = line;
     }
 
     #[must_use]
@@ -898,6 +931,7 @@ impl ModeNestSummary {
             projection.usize(self.levels.len());
             for level in self.levels.iter() {
                 hash_mode(level.mode, projection);
+                projection.i32(level.entry_line);
                 hash_mode_list(&level.list, projection);
             }
         })
@@ -1030,6 +1064,8 @@ fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
     projection.i32(list.space_factor);
     projection.bool(list.no_boundary);
     projection.u8(list.hyphen_language);
+    projection.u8(list.left_hyphen_min);
+    projection.u8(list.right_hyphen_min);
 }
 
 fn hash_optional_usize(value: Option<usize>, projection: &mut EngineBoundaryHasher<'_>) {
@@ -1149,6 +1185,12 @@ impl ModeNest {
     /// semantic stack. Accordingly, a rejected push leaves every live level
     /// and the journal unchanged.
     pub fn push(&mut self, mode: Mode) -> Result<(), ExecError> {
+        self.push_at_line(mode, 0)
+    }
+
+    /// Enters a semantic level while retaining TeX's `mode_line` diagnostic
+    /// context. A negative line identifies the output-routine level.
+    pub(crate) fn push_at_line(&mut self, mode: Mode, entry_line: i32) -> Result<(), ExecError> {
         if self.levels.len() > Self::TEX82_NEST_SIZE {
             return Err(ExecError::Fatal(tex_command::FatalError::overflow(
                 "semantic nest size",
@@ -1156,6 +1198,7 @@ impl ModeNest {
             )));
         }
         let mut level = ModeLevelSummary::new(mode);
+        level.set_entry_line(entry_line);
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
             level.mutate_list(|list| list.set_space_factor(1000));
         }

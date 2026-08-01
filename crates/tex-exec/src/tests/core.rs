@@ -4276,6 +4276,45 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
 }
 
 #[test]
+fn showlists_reports_source_entry_line_and_hyphenation_context() {
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\language=7\\lefthyphenmin=2\\righthyphenmin=5\nX\\showlists\\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains("### horizontal mode entered at line 2 (language7:hyphenmin2,5)"),
+        "{log}"
+    );
+    assert!(
+        log.contains("spacefactor 1000, current language 7"),
+        "{log}"
+    );
+}
+
+#[test]
+fn showlists_marks_only_the_active_output_routine_context() {
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\output={\\showlists\\shipout\\box255}\n\\topskip=0pt\\vsize=1pt\\setbox0=\\hbox{}\\ht0=2pt\\copy0\\penalty-10000\n\\showlists\\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert_eq!(
+        log.matches("### internal vertical mode entered at line 2 (\\output routine)")
+            .count(),
+        1,
+        "{log}"
+    );
+    let active = log
+        .find("(\\output routine)")
+        .expect("active output-routine marker");
+    let later = log[active..]
+        .rfind("### vertical mode entered at line 0")
+        .expect("post-unwind outer vertical report");
+    assert!(later > 0, "{log}");
+}
+
+#[test]
 fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);

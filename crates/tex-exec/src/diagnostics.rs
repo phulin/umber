@@ -569,7 +569,20 @@ pub(crate) fn execute_showlists(
     for (index, level) in summary.levels().iter().enumerate().rev() {
         text.push_str("### ");
         text.push_str(mode_text(level.mode()));
-        text.push_str(" mode entered at line 0\n");
+        text.push_str(" mode entered at line ");
+        text.push_str(&level.entry_line().unsigned_abs().to_string());
+        if level.entry_line() < 0 {
+            text.push_str(" (\\output routine)");
+        } else if matches!(level.mode(), Mode::Horizontal | Mode::RestrictedHorizontal) {
+            text.push_str(" (language");
+            text.push_str(&level.list().hyphen_language().to_string());
+            text.push_str(":hyphenmin");
+            text.push_str(&level.list().left_hyphen_min().to_string());
+            text.push(',');
+            text.push_str(&level.list().right_hyphen_min().to_string());
+            text.push(')');
+        }
+        text.push('\n');
         if index == 0 && level.mode() == Mode::Vertical {
             if stores.current_page_len() != 0 {
                 let current_page = stores.current_page_nodes();
@@ -630,9 +643,22 @@ pub(crate) fn execute_showlists(
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 text.push_str("spacefactor ");
                 text.push_str(&level.list().raw_space_factor().to_string());
+                if level.mode() == Mode::Horizontal {
+                    text.push_str(", current language ");
+                    text.push_str(&level.list().hyphen_language().to_string());
+                }
                 text.push('\n');
             }
-            Mode::Math | Mode::DisplayMath => {}
+            Mode::Math | Mode::DisplayMath => {
+                if let Some(fraction) = level.list().incomplete_fraction() {
+                    text.push_str("this will begin denominator of:\n");
+                    text.push_str(&dump_node_list(
+                        stores,
+                        fraction.numerator,
+                        DumpConfig::read(stores),
+                    ));
+                }
+            }
         }
     }
     // §218's `show_activities` opens with `print_nl(""); print_ln`, not the
