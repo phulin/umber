@@ -35,6 +35,31 @@ fn missing_extension_fonts_are_distinguished_after_symbol_fonts_validate() {
     );
 }
 
+/// TeX82 §§1194-1195 delete the entire formula after the symbol-family check
+/// succeeds but any extension-family size lacks thirteen parameters.  The
+/// diagnostic is recoverable: following input still executes normally.
+#[test]
+fn display_exit_deletes_formula_when_extension_font_is_missing() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\sym=cmsy10 \relax
+          \textfont2=\sym \scriptfont2=\sym \scriptscriptfont2=\sym
+          \count0=0 $$x$$ \count0=73 \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("extension-font deletion recovers and continues");
+
+    let transcript = terminal_effect_text(&stores);
+    assert!(transcript.contains("Math formula deleted: Insufficient extension fonts"));
+    assert!(transcript.contains("Sorry, but I can't typeset math unless \\textfont 3"));
+    assert!(transcript.contains("and \\scriptfont 3 and \\scriptscriptfont 3 have all"));
+    assert!(transcript.contains("the \\fontdimen values needed in math extension fonts."));
+    assert_eq!(stores.count(0), 73, "following assignment must execute");
+}
+
 #[test]
 fn char_primitive_scans_as_a_direct_math_field() {
     let (stores, executor) = run_math_source(r"$\mathop\char66");

@@ -1426,7 +1426,7 @@
         },
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "tex82_math_field_and_atom_construction_matrix"
+          "test": "math_scalar_family_and_delimiter_field_matrix"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1657,7 +1657,7 @@
         },
         {
           "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "canonical_fraction_and_left_right_nesting_recovery_matrix"
+          "test": "math_recovery_diagnostics_are_exact_and_continue"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1727,7 +1727,7 @@
         },
         {
           "path": "crates/tex-exec/src/math/tests.rs",
-          "test": "canonical_math_exit_display_eqno_boundary_matrix"
+          "test": "finish_display_math_packages_width_equation_number_and_migration_matrix"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

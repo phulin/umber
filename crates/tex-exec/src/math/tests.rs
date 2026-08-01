@@ -394,7 +394,7 @@ fn tex82_math_entry_display_probe_and_eqno_mode_matrix() {
 }
 
 #[test]
-fn canonical_math_exit_display_eqno_boundary_matrix() {
+fn finish_display_math_packages_width_equation_number_and_migration_matrix() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut nest = horizontal_nest(Mode::Horizontal);
     let mut opening = InputStack::new(MemoryInput::new(""));

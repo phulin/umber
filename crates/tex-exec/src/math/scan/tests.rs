@@ -1,6 +1,7 @@
 use super::*;
 use crate::push_traced_tokens;
 use tex_lex::MemoryInput;
+use tex_state::env::banks::IntParam;
 use tex_state::provenance::SyntheticOriginKind;
 
 #[test]
@@ -79,7 +80,7 @@ fn owned_nodes(stores: &Universe, list: tex_state::ids::NodeListId) -> Vec<Node>
 }
 
 #[test]
-fn tex82_math_field_and_atom_construction_matrix() {
+fn math_scalar_family_and_delimiter_field_matrix() {
     let mut stores = math_stores();
     let mut nest = math_nest();
     let mut execution = crate::ExecutionContext::new("texput");
@@ -100,6 +101,33 @@ fn tex82_math_field_and_atom_construction_matrix() {
         panic!("an empty group remains a sub-mlist");
     };
     assert!(stores.nodes(empty).is_empty());
+
+    // TeX82 §§1151,1154-1155 retain a fixed mathcode family, but class 7
+    // substitutes the live \fam only when it is in the four-bit range.
+    stores.set_int_param(IntParam::FAM, 15);
+    let fixed = math_char_from_code(0x1234, &stores, OriginId::UNKNOWN)
+        .expect("fixed-family math character");
+    let variable = math_char_from_code(0x7234, &stores, OriginId::UNKNOWN)
+        .expect("variable-family math character");
+    assert_eq!((fixed.family, fixed.character), (2, '4'));
+    assert_eq!((variable.family, variable.character), (15, '4'));
+    stores.set_int_param(IntParam::FAM, 16);
+    let out_of_range = math_char_from_code(0x7234, &stores, OriginId::UNKNOWN)
+        .expect("out-of-range fam retains encoded family");
+    assert_eq!(out_of_range.family, 2);
+
+    // §§1159-1161 split a 27-bit delimiter into its small and large
+    // class/family/character fields without truncating the scanned value.
+    let mut delimiter_input = InputStack::new(MemoryInput::new(r#"\delimiter"7654321 "#));
+    assert_eq!(
+        scan_delimiter_token(
+            &mut delimiter_input,
+            &mut stores,
+            &mut crate::ExecutionContext::new("texput"),
+        )
+        .expect("full delimiter scans"),
+        0x0765_4321
+    );
 
     let mut compound = InputStack::new(MemoryInput::new("{ab}"));
     let MathField::SubMlist(compound) =
@@ -304,7 +332,7 @@ fn tex82_script_attachment_dummy_noad_and_duplicate_matrix() {
 }
 
 #[test]
-fn canonical_fraction_and_left_right_nesting_recovery_matrix() {
+fn math_recovery_diagnostics_are_exact_and_continue() {
     for (primitive, source, expected_thickness, expected_delimiters) in [
         (
             UnexpandablePrimitive::Over,
