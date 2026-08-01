@@ -147,13 +147,4 @@ impl CommandProcessor<'_> {
             )],
         }));
     }
-
-    /// Records an error diagnostic whose canonical text has no operand.
-    pub(crate) fn observe_error_diagnostic(&mut self, diagnostic: &'static str) {
-        self.observe(CommandObservation::Diagnostic(DiagnosticRecord {
-            severity: "error",
-            diagnostic,
-            arguments: Vec::new(),
-        }));
-    }
 }

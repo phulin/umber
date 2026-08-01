@@ -3,6 +3,8 @@ umber::register_format_worker_test_bootstrap!();
 
 #[path = "it/command_semantic.rs"]
 mod command_semantic;
+#[path = "it/event_stream_diff.rs"]
+mod event_stream_diff;
 #[path = "it/explicit_repository.rs"]
 mod explicit_repository;
 #[path = "it/repository_comparison.rs"]

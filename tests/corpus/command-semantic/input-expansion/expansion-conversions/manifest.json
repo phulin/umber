@@ -26,14 +26,21 @@
       "projection": {
         "kind": "observations",
         "kinds": [
-          "diagnostic"
+          "input"
         ]
       },
       "expected": [
-        "diagnostic:error:missing_font_identifier:"
+        "input:backup:backup",
+        "input:recovery:recovery",
+        "input:backup:backup",
+        "input:retire:backup",
+        "input:retire:recovery",
+        "input:retire:backup",
+        "input:retire:file",
+        "input:stop:terminal"
       ],
       "channels": {
-        "events": 38,
+        "events": 37,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -50,8 +50,10 @@ impl CommandProcessor<'_> {
             }
             _ => {
                 // §577 reports before §327's `back_error` backs up the
-                // rejected command. The fixed diagnostic has no operand.
-                self.observe_error_diagnostic("missing_font_identifier");
+                // rejected command. The pinned WEB observer does not assign
+                // this text-only error a semantic diagnostic event: only the
+                // report channel below carries it. Publishing an additional
+                // command event would shift every later canonical event.
                 let deferred = {
                     let mut report = self.state.print_err("Missing font identifier");
                     report.help(&[

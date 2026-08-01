@@ -4577,6 +4577,11 @@ fn fontname_invalid_character_and_control_recover_once_then_resume_expansion() {
         });
         assert_eq!(delivered, expected);
 
+        // TeX82 §577 still prints the missing-identifier error and performs
+        // §327's `back_error`, but the canonical WEB observer assigns that
+        // text-only report no semantic diagnostic event. This is especially
+        // important when §336's conditional-limit recovery supplied the
+        // rejected `\relax`: an invented event shifts the whole trace.
         let diagnostics = recorder
             .0
             .iter()
@@ -4589,7 +4594,6 @@ fn fontname_invalid_character_and_control_recover_once_then_resume_expansion() {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].arguments.is_empty());
+        assert!(diagnostics.is_empty());
     }
 }

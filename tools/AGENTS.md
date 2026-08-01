@@ -100,6 +100,13 @@ lower `tex-observe` crate, and reports a ranked worklist of up to
 replay failures alike). It never invokes a reference engine or joins the
 production engine dependency graph.
 
+`event-stream-diff EXPECTED.jsonl ACTUAL.jsonl` is the read-only exhaustive
+counterpart for already-captured canonical streams such as guarded TRIP
+artifacts. It applies the same keyed alignment and exact root-site grouping,
+with no divergence budget. It intentionally compares the portable events as
+captured; a format-loaded caller must still distinguish allocator-only macro
+operands using the phase projection recorded by the TRIP triage report.
+
 The tool's one Cargo integration binary is `tests/it.rs`; focused external-boundary suites are submodules under `tests/it/`. `tests/it/command_semantic.rs` owns the generic declarative semantic-minifixture runner. It discovers each fixture's singleton versioned `manifest.json` under `tests/corpus/command-semantic/<domain>/<fixture>/`; every fixture directory is a closed unit containing that manifest, its declared TeX source, and each applicable `expected.<channel>` file, with no domain manifest or shared expected-output tree. The runner validates catalogue ownership and exact provenance, drives tiny fixture bytes through instrumented `CanonicalMainControl`, and enforces short exact pass or strict-xfail projections without adding Rust case registries or integration binaries. Manifests may select filtered canonical observation families and supply bounded in-memory terminal lines or named inputs, so pausing, read, and input-open cases remain hermetic. They may also select committed command, mode, final-box, and prepared-page artifact boundaries for focused execution evidence.
 
 Comparison is a two-tier keyed sequence alignment, not an index-parallel
