@@ -4504,6 +4504,57 @@ fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
 }
 
 #[test]
+fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
+    // e-TeX 2.6 [19.277] returns from `eq_define` when both the command and
+    // token-list pointer are unchanged. This covers both dense `\toks`
+    // registers and token-list parameters; [49.1226]'s sparse `sa_def` path
+    // retains its independently observed assignment boundary.
+    let source = br"{\toks20={} \everypar={} \toks300={}
+                      \global\toks20={} \global\everypar={}}\end";
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(&mut control, source);
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record)
+                if record.target == "register" || record.target == "parameter" =>
+            {
+                Some((record.target, record.key.as_deref(), record.global))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mutations,
+        [
+            ("register", Some("toks:300"), false),
+            ("register", Some("toks:20"), true),
+            ("parameter", Some("token_parameter:1"), true),
+        ]
+    );
+
+    let mut tex82 = Universe::new_with_plain_catcodes();
+    let mut tex82_control = CanonicalMainControl::tex82_initex(&mut tex82);
+    register_source(&mut tex82_control, br"\toks20={} \everypar={} \end");
+    let mut tex82_observations = ObservationRecorder::default();
+    run_to_end_observed(&mut tex82_control, &mut tex82, &mut tex82_observations);
+    assert_eq!(
+        tex82_observations
+            .0
+            .iter()
+            .filter(|observation| matches!(observation, CommandObservation::Mutation(_)))
+            .count(),
+        2,
+        "TeX82 does not have e-TeX's identical-definition shortcut"
+    );
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical

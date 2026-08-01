@@ -11652,7 +11652,7 @@ fn apply_scanned_step(
             let new = tokens.token_list();
             if global {
                 stores.set_toks_global(index, new);
-            } else {
+            } else if !etex_redundant_local_word_assignment(stores, old, new) || index > 255 {
                 stores.set_toks(index, new);
             }
             crate::assignments::tracing::trace_toks_register(stores, index, global, old, new);
@@ -11706,7 +11706,7 @@ fn apply_scanned_step(
             let new = tokens.token_list();
             if global {
                 stores.set_tok_param_global(parameter, new);
-            } else {
+            } else if !etex_redundant_local_word_assignment(stores, old, new) {
                 stores.set_tok_param(parameter, new);
             }
             crate::assignments::tracing::trace_tok_param(stores, index, global, old, new);
@@ -14097,6 +14097,13 @@ fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep
         } if *index <= 255 => {
             etex_redundant_local_word_assignment(stores, stores.dimen(*index), *value)
         }
+        ScannedStep::Toks {
+            index,
+            tokens,
+            global: false,
+        } if *index <= 255 => {
+            etex_redundant_local_word_assignment(stores, stores.toks(*index), tokens.token_list())
+        }
         ScannedStep::IntParam {
             index,
             value,
@@ -14123,6 +14130,15 @@ fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep
             stores,
             stores.glue_param(GlueParam::new(*index)),
             value,
+        ),
+        ScannedStep::TokParam {
+            index,
+            tokens,
+            global: false,
+        } => etex_redundant_local_word_assignment(
+            stores,
+            stores.tok_param(TokParam::new(*index)),
+            tokens.token_list(),
         ),
         // e-TeX 2.6 [49.1221--1237] routes indices above 255 through
         // `sa_def`, not §§277-278's `eq_define`. An identical pointer avoids
