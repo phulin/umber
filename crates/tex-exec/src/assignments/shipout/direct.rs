@@ -226,6 +226,9 @@ pub(super) fn stage_shipout(
             tex_state::PdfColorStackTarget::Page,
         )
     })?;
+    if emit_dvi {
+        reject_pdf_nodes_in_dvi(&overlay.effects)?;
+    }
 
     // Phase B holds only an immutable state view. One compact-list walk feeds
     // the canonical writer and DVI state machine together.
@@ -316,6 +319,37 @@ pub(super) fn stage_shipout(
         effect_pos,
         retained_diagnostics,
     })
+}
+
+fn reject_pdf_nodes_in_dvi(effects: &[PageEffect]) -> Result<(), ExecError> {
+    let rejected = effects.iter().find_map(|effect| match effect {
+        PageEffect::OpenOut { .. }
+        | PageEffect::CloseOut { .. }
+        | PageEffect::Write { .. }
+        | PageEffect::Special { .. }
+        | PageEffect::PdfSavePosition => None,
+        PageEffect::PdfAccessibility(_) => Some("pdfextension"),
+        PageEffect::PdfAnnotation(_) => Some("pdfannot"),
+        PageEffect::PdfLiteral { .. } => Some("pdfliteral"),
+        PageEffect::PdfSetMatrix { .. } => Some("pdfsetmatrix"),
+        PageEffect::PdfSave => Some("pdfsave"),
+        PageEffect::PdfRestore => Some("pdfrestore"),
+        PageEffect::PdfColorStack { .. } => Some("pdfcolorstack"),
+        PageEffect::PdfSnapState { .. } => Some("pdfsnaprefpoint"),
+        PageEffect::PdfSnapRefPoint => Some("pdfsnaprefpoint"),
+        PageEffect::PdfSnapY { .. } => Some("pdfsnapy"),
+        PageEffect::PdfSnapYComp { .. } => Some("pdfsnapycomp"),
+        PageEffect::PdfRefXForm { .. } => Some("pdfrefxform"),
+        PageEffect::PdfRefXImage { .. } => Some("pdfrefximage"),
+        PageEffect::PdfDestination(_) => Some("pdfdest"),
+        PageEffect::PdfThread(_) => Some("pdfthread"),
+        PageEffect::PdfStartThread(_) => Some("pdfstartthread"),
+        PageEffect::PdfEndThread => Some("pdfendthread"),
+    });
+    match rejected {
+        Some(name) => Err(ExecError::PdfDeferredNodeInDviMode(name)),
+        None => Ok(()),
+    }
 }
 
 fn needs_positioned_shipout(effects: &[PageEffect]) -> bool {

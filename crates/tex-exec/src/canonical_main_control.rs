@@ -744,8 +744,19 @@ impl CanonicalMainControl {
     /// If the job shipped pages and `dvi` is `None`. §642 prints the DVI
     /// file's exact byte length, which no engine-level state holds, so the
     /// alternative to refusing here is printing a fabricated number.
-    pub fn finish_job(&mut self, stores: &mut Universe, dvi: Option<crate::DviJobOutput>) {
-        crate::job::finish_job(stores, self.capabilities.job_name(), dvi);
+    pub fn finish_job(
+        &mut self,
+        stores: &mut Universe,
+        dvi: Option<crate::DviJobOutput>,
+        pdf: Option<&mut crate::PdfJobFinalizationReport>,
+    ) {
+        crate::job::finish_job(
+            stores,
+            self.command_profile(),
+            self.capabilities.job_name(),
+            dvi,
+            pdf,
+        );
     }
 
     /// Renders whatever §537/§362 bracketing the command core queued but had

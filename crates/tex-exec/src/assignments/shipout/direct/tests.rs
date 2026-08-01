@@ -63,6 +63,32 @@ fn position_and_snap_effects_require_positioned_shipout() {
 }
 
 #[test]
+fn dvi_accepts_only_canonical_deferred_whatsit_exceptions() {
+    let effects = [
+        PageEffect::Write {
+            sink: EffectSink::Terminal,
+            text: "write".to_owned(),
+        },
+        PageEffect::Special {
+            class: "special".to_owned(),
+            payload: b"payload".to_vec(),
+        },
+        PageEffect::PdfSavePosition,
+    ];
+    assert!(reject_pdf_nodes_in_dvi(&effects).is_ok());
+
+    let rejected = reject_pdf_nodes_in_dvi(&[PageEffect::PdfLiteral {
+        mode: tex_out::PdfLiteralMode::Direct,
+        payload: b"q".to_vec(),
+    }])
+    .expect_err("a deferred PDF node must fail when DVI traversal reaches it");
+    assert_eq!(
+        rejected.to_string(),
+        "pdfTeX error (ext4): \\pdfliteral used while \\pdfoutput is not set."
+    );
+}
+
+#[test]
 fn openout_sidecars_share_the_filtered_page_effect_index_space() {
     let mut world = tex_state::World::memory();
     world.record_pdf_object_placeholder("before");

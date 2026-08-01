@@ -871,7 +871,7 @@ impl<'a> CanonicalEngineSession<'a> {
             })
         };
         if self.loaded_job_framing {
-            self.control.finish_job(self.stores, dvi_output);
+            self.control.finish_job(self.stores, dvi_output, None);
         }
         let commits = self.stores.world().artifact_commits();
         let artifacts = &commits[self.artifact_cursor..];

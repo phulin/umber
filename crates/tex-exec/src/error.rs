@@ -224,6 +224,7 @@ pub enum ExecError {
     PdfXFormVoidBox,
     PdfImmediateReservedObject,
     PdfExtensionInDviMode(&'static str),
+    PdfDeferredNodeInDviMode(&'static str),
     PdfDuplicateOpenAction,
     PdfImageOpen {
         name: String,
@@ -478,6 +479,10 @@ impl fmt::Display for ExecError {
                 f,
                 "pdfTeX error (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0)."
             ),
+            Self::PdfDeferredNodeInDviMode(name) => write!(
+                f,
+                "pdfTeX error (ext4): \\{name} used while \\pdfoutput is not set."
+            ),
             Self::PdfDuplicateOpenAction => {
                 f.write_str("pdfTeX error (ext1): duplicate of openaction")
             }
@@ -630,6 +635,7 @@ impl std::error::Error for ExecError {
             | Self::PdfXFormVoidBox
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
+            | Self::PdfDeferredNodeInDviMode(_)
             | Self::PdfDuplicateOpenAction
             | Self::PdfImageOpen { .. }
             | Self::PdfActionTypeMissing
@@ -735,6 +741,7 @@ impl ExecError {
             | Self::PdfXFormVoidBox
             | Self::PdfImmediateReservedObject
             | Self::PdfExtensionInDviMode(_)
+            | Self::PdfDeferredNodeInDviMode(_)
             | Self::PdfDuplicateOpenAction
             | Self::PdfImageOpen { .. }
             | Self::PdfActionTypeMissing

@@ -131,6 +131,42 @@ pub struct DviJobOutput {
     pub byte_len: u64,
 }
 
+/// Host-supplied facts printed by pdfTeX after its PDF writer is finalized.
+///
+/// The engine owns profile selection and rendering; the host owns these facts
+/// because only the final PDF serializer knows its object-stream and memory
+/// totals. The receipt is one-shot so retrying job finalization cannot append
+/// a second statistics block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdfJobFinalizationReport {
+    pub pdf_objects: u32,
+    pub compressed_objects: u32,
+    pub object_streams: u32,
+    pub named_destinations: u32,
+    pub extra_memory_words: u32,
+    reported: bool,
+}
+
+impl PdfJobFinalizationReport {
+    #[must_use]
+    pub const fn new(
+        pdf_objects: u32,
+        compressed_objects: u32,
+        object_streams: u32,
+        named_destinations: u32,
+        extra_memory_words: u32,
+    ) -> Self {
+        Self {
+            pdf_objects,
+            compressed_objects,
+            object_streams,
+            named_destinations,
+            extra_memory_words,
+            reported: false,
+        }
+    }
+}
+
 /// A job started from a dumped format: web2c's `dump_name` (the `-fmt=`
 /// argument) plus the `\year`/`\month`/`\day` that were current when
 /// tex.web §1328's `store_fmt_file` built the dumped `format_ident`.
@@ -564,11 +600,57 @@ fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, int
 /// [`crate::MainControlStep::End`]) can't reorder anything this function
 /// prints. What remains here is exactly §642's DVI report and the
 /// transcript-closing note.
-pub(crate) fn finish_job(stores: &mut Universe, job_name: &str, dvi: Option<DviJobOutput>) {
+pub(crate) fn finish_job(
+    stores: &mut Universe,
+    profile: CommandProfile,
+    job_name: &str,
+    dvi: Option<DviJobOutput>,
+    pdf: Option<&mut PdfJobFinalizationReport>,
+) {
     print_usage_statistics(stores);
     print_dvi_report(stores, dvi);
+    print_pdf_report(stores, profile, pdf);
     print_transcript_note(stores, job_name);
     stores.printer().print_ln();
+}
+
+fn print_pdf_report(
+    stores: &mut Universe,
+    profile: CommandProfile,
+    report: Option<&mut PdfJobFinalizationReport>,
+) {
+    if !profile.capabilities().supports_pdftex() {
+        return;
+    }
+    let Some(report) = report else { return };
+    if std::mem::replace(&mut report.reported, true) {
+        return;
+    }
+    let mut printer = stores.printer();
+    printer.print_nl("PDF statistics:").print_nl(" ");
+    print_u32(&mut printer, report.pdf_objects);
+    printer.print(" PDF objects out of 1000 (max. 8388607)");
+    if report.compressed_objects > 0 {
+        printer.print_nl(" ");
+        print_u32(&mut printer, report.compressed_objects);
+        printer.print(" compressed objects within ");
+        print_u32(&mut printer, report.object_streams);
+        printer.print(" object stream");
+        if report.object_streams != 1 {
+            printer.print_char('s');
+        }
+    }
+    printer.print_nl(" ");
+    print_u32(&mut printer, report.named_destinations);
+    printer
+        .print(" named destinations out of 1000 (max. 500000)")
+        .print_nl(" ");
+    print_u32(&mut printer, report.extra_memory_words);
+    printer.print(" words of extra memory for PDF output out of 10000 (max. 10000000)");
+}
+
+fn print_u32(printer: &mut Printer<'_>, value: u32) {
+    printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
 fn print_usage_statistics(stores: &mut Universe) {

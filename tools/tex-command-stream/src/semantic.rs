@@ -1259,7 +1259,7 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
                     file_name: format!("{job_name}.dvi"),
                     byte_len: dvi.len() as u64,
                 });
-                control.finish_job(&mut universe, dvi_output);
+                control.finish_job(&mut universe, dvi_output, None);
                 return Ok(SemanticRun {
                     observations: recorder.0,
                     counts,

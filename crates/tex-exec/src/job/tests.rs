@@ -268,7 +268,7 @@ fn history_note_is_silent_in_batch_mode_even_when_history_is_raised() {
 fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
     let mut stores = Universe::new();
 
-    finish_job(&mut stores, "show-box", None);
+    finish_job(&mut stores, CommandProfile::TEX82, "show-box", None, None);
 
     assert_eq!(
         terminal_text(&stores),
@@ -282,7 +282,7 @@ fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
 fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
     let mut stores = Universe::new();
     stores.set_int_param_global(IntParam::TRACING_STATS, 0);
-    finish_job(&mut stores, "stats", None);
+    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
     assert!(!terminal_text(&stores).contains("Here is how much"));
     assert!(!log_text(&stores).contains("Here is how much"));
 }
@@ -296,7 +296,7 @@ fn finish_job_prints_tex82_usage_report_before_dvi_tail_through_live_selector() 
         let mut stores = Universe::new();
         stores.set_interaction_mode(interaction);
         stores.set_int_param_global(IntParam::TRACING_STATS, 1);
-        finish_job(&mut stores, "stats", None);
+        finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
         let log = log_text(&stores);
         let report = "Here is how much of TeX's memory you used:\n";
         assert!(log.starts_with(report));
@@ -320,11 +320,13 @@ fn finish_job_reports_output_written_with_the_singular_page_form() {
 
     finish_job(
         &mut stores,
+        CommandProfile::TEX82,
         "doc",
         Some(DviJobOutput {
             file_name: "doc.dvi".into(),
             byte_len: 44,
         }),
+        None,
     );
 
     assert!(
@@ -341,11 +343,13 @@ fn finish_job_reports_output_written_with_the_plural_page_form() {
 
     finish_job(
         &mut stores,
+        CommandProfile::TEX82,
         "doc",
         Some(DviJobOutput {
             file_name: "doc.dvi".into(),
             byte_len: 88,
         }),
+        None,
     );
 
     assert!(
@@ -359,7 +363,7 @@ fn finish_job_reports_output_written_with_the_plural_page_form() {
 #[should_panic(expected = "no `DviJobOutput` was supplied")]
 fn finish_job_refuses_to_fabricate_a_byte_count_for_a_shipped_page() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
-    finish_job(&mut stores, "doc", None);
+    finish_job(&mut stores, CommandProfile::TEX82, "doc", None, None);
 }
 
 #[test]
@@ -367,10 +371,47 @@ fn finish_job_transcript_note_is_terminal_only_and_silent_in_batch_mode() {
     let mut stores = Universe::new();
     stores.set_interaction_mode(InteractionMode::Batch);
 
-    finish_job(&mut stores, "show-box", None);
+    finish_job(&mut stores, CommandProfile::TEX82, "show-box", None, None);
 
     assert!(!terminal_text(&stores).contains("Transcript written on"));
     assert!(!log_text(&stores).contains("Transcript written on"));
+}
+
+#[test]
+fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
+    let mut stores = Universe::new();
+    let mut report = PdfJobFinalizationReport::new(17, 6, 2, 3, 41);
+    finish_job(
+        &mut stores,
+        CommandProfile::PDFTEX14027,
+        "doc",
+        None,
+        Some(&mut report),
+    );
+    finish_job(
+        &mut stores,
+        CommandProfile::PDFTEX14027,
+        "doc",
+        None,
+        Some(&mut report),
+    );
+    let terminal = terminal_text(&stores);
+    let expected = "PDF statistics:\n 17 PDF objects out of 1000 (max. 8388607)\n 6 compressed objects within 2 object streams\n 3 named destinations out of 1000 (max. 500000)\n 41 words of extra memory for PDF output out of 10000 (max. 10000000)";
+    assert_eq!(terminal.matches("PDF statistics:").count(), 1);
+    assert!(
+        terminal.contains(expected),
+        "terminal text was: {terminal:?}"
+    );
+}
+
+#[test]
+fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
+    for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
+        let mut stores = Universe::new();
+        let mut report = PdfJobFinalizationReport::new(1, 0, 0, 0, 1);
+        finish_job(&mut stores, profile, "doc", None, Some(&mut report));
+        assert!(!terminal_text(&stores).contains("PDF statistics:"));
+    }
 }
 
 /// A loaded-format job prints the format's identity on both sinks, but not
