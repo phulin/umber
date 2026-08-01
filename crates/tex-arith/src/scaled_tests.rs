@@ -351,6 +351,28 @@ fn decimal_fraction_rounding_matches_tex_edges() {
 }
 
 #[test]
+fn decimal_rounding_ignores_digits_after_seventeenth() {
+    let prefix = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7];
+    let mut ending_in_zero = prefix.to_vec();
+    ending_in_zero.push(0);
+    let mut ending_in_nine = prefix.to_vec();
+    ending_in_nine.push(9);
+
+    assert_eq!(
+        round_decimal_fraction(&ending_in_zero),
+        round_decimal_fraction(&ending_in_nine),
+        "digits beyond TeX82's 17-digit precision cannot affect rounding"
+    );
+
+    let mut carrying_zero = vec![9; 17];
+    carrying_zero.push(0);
+    let mut carrying_nine = vec![9; 17];
+    carrying_nine.push(9);
+    assert_eq!(round_decimal_fraction(&carrying_zero), Scaled::UNITY);
+    assert_eq!(round_decimal_fraction(&carrying_nine), Scaled::UNITY);
+}
+
+#[test]
 fn physical_unit_table_matches_tex_web() {
     assert_eq!(PhysicalUnit::Sp.point_ratio(), (1, 65_536));
     assert_eq!(PhysicalUnit::Pt.point_ratio(), (1, 1));

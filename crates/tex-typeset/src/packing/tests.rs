@@ -20,6 +20,44 @@ fn badness_matches_tex_web_boundaries() {
     assert_eq!(badness(sp(7_230_585), sp(1_663_497)), 8189);
 }
 
+#[test]
+fn badness_is_bounded_and_monotonic() {
+    assert_eq!(badness(sp(0), sp(0)), 0);
+    assert_eq!(badness(sp(1), sp(0)), INF_BAD);
+    assert_eq!(badness(sp(1290), sp(297)), 8189);
+    assert_eq!(badness(sp(1291), sp(297)), INF_BAD);
+
+    let mut previous = badness(sp(0), sp(297));
+    for excess in 1..=5_000 {
+        let current = badness(sp(excess), sp(297));
+        assert!(
+            (0..=INF_BAD).contains(&current),
+            "badness({excess}, 297) was {current}"
+        );
+        assert!(
+            current >= previous,
+            "badness decreased from {previous} to {current} at excess {excess}"
+        );
+        previous = current;
+    }
+
+    for excess in [1, 1_291, 7_230_584, 7_230_585, i32::MAX] {
+        let mut previous = badness(sp(excess), sp(0));
+        for shrink in 1..=5_000 {
+            let current = badness(sp(excess), sp(shrink));
+            assert!(
+                (0..=INF_BAD).contains(&current),
+                "badness({excess}, {shrink}) was {current}"
+            );
+            assert!(
+                current <= previous,
+                "badness increased from {previous} to {current} at shrink {shrink} for excess {excess}"
+            );
+            previous = current;
+        }
+    }
+}
+
 fn width_font(name: &str, salt: u8) -> LoadedFont {
     let mut characters = vec![None; 256];
     for code in 0_u8..=u8::MAX {
