@@ -5565,6 +5565,33 @@ fn shipout_box_completion_precedes_its_terminator_backup_retirement() {
 }
 
 #[test]
+fn tracingoutput_breaks_before_the_root_box_on_terminal_and_log() {
+    // TeX82 §§58/174/198/638: `show_node_list` prints a newline before the
+    // root node. The break is independent of §58's `max_print_line` meter;
+    // with TRIP's width and count-register marker, wrapping alone would put
+    // it later inside the box's `glue set` text.
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_error_context_widths(
+        tex_state::print::ErrorContextWidths::new(64, 32)
+            .and_then(|widths| widths.with_max_print_line(72))
+            .expect("TRIP print widths are valid"),
+    );
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingoutput=1\count4=11\shipout\vbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let expected = "Completed box being shipped out [0.0.0.0.11]\n\\vbox(0.0+0.0)x0.0";
+    let terminal = terminal_only_text(&universe);
+    let transcript = transcript_text(&universe);
+    assert!(terminal.contains(expected), "{terminal:?}");
+    assert!(transcript.contains(expected), "{transcript:?}");
+}
+
+#[test]
 fn canonical_initex_replay_observes_committed_message_effects() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

@@ -10024,7 +10024,11 @@ fn print_ship_out_marker_open(
             crate::node_dump::DumpConfig::read(stores),
         );
         let mut diagnostic = stores.begin_diagnostic();
-        diagnostic.print_rendered(&text);
+        // TeX82 §§174/198: `show_box` enters `show_node_list`, whose loop
+        // executes `print_ln` before it renders the root node. This is an
+        // unconditional structural break, not a `max_print_line` wrap and
+        // not indentation carried by the detached node text.
+        diagnostic.print_ln().print_rendered(&text);
         diagnostic.end(true);
     }
 }
