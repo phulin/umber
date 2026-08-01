@@ -41,6 +41,13 @@ const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
 /// scanning a definition, use, preamble or text.
 const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 
+/// TeX82 §345's invalid source-character report.
+///
+/// The tokenizer has already consumed the character when this is recorded;
+/// raw delivery reports it with deletions disabled and then restarts at the
+/// following character instead of producing a token for it.
+const INVALID_SOURCE_CHARACTER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0345;
+
 use super::alignment::AlignmentDeliveryState;
 use super::alignment::CELL_ALIGN_STATE;
 
@@ -1380,7 +1387,25 @@ impl CommandProcessor<'_> {
                                 direct_source: true,
                             }));
                         }
-                        SourceTokenizationStep::InvalidCharacter(_) => continue,
+                        SourceTokenizationStep::InvalidCharacter(_) => {
+                            // TeX82 §345 temporarily sets
+                            // `deletions_allowed:=false`, calls `error`, restores
+                            // it, and goes to `restart`. Umber's error channel
+                            // deliberately has deletion disabled (tex-state's
+                            // print contract), so queuing this one report before
+                            // continuing has the same recovery boundary: the
+                            // offending character is consumed exactly once and
+                            // no later token is silently discarded.
+                            self.report_recoverable(
+                                INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
+                                "Text line contains an invalid character".into(),
+                                &[
+                                    "A funny symbol that I can't read has just been input.",
+                                    "Continue, and I'll forget that it ever happened.",
+                                ],
+                            );
+                            continue;
+                        }
                         SourceTokenizationStep::End => {
                             // e-TeX 2.6 etex.ch §24.362 inserts a non-null
                             // `\everyeof` above the still-live source. Its
@@ -2349,6 +2374,66 @@ mod tests {
                 tex_state::ids::TokenListId::EMPTY,
             ),
         }
+    }
+
+    #[test]
+    fn invalid_source_character_reports_and_restarts_at_following_token() {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(&b"\x7fA"[..]),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        universe.set_catcode('\x7f', tex_state::token::Catcode::Invalid);
+        let mut capabilities = CommandHostCapabilities::default();
+
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let following = processor
+            .get_next()
+            .expect("invalid-character recovery succeeds")
+            .expect("following token remains live");
+        assert!(matches!(
+            following.meaning(),
+            Meaning::CharToken {
+                ch: 'A',
+                cat: tex_state::token::Catcode::Letter,
+            }
+        ));
+
+        let diagnostics = processor.take_semantic_diagnostics();
+        let [
+            crate::CommandSemanticDiagnostic::Recoverable {
+                identity: INVALID_SOURCE_CHARACTER_DIAGNOSTIC,
+                message,
+                help,
+                context,
+            },
+        ] = diagnostics.as_slice()
+        else {
+            panic!("TeX82 §345 reports once before restart: {diagnostics:?}");
+        };
+        assert_eq!(message, "Text line contains an invalid character");
+        assert_eq!(
+            *help,
+            [
+                "A funny symbol that I can't read has just been input.",
+                "Continue, and I'll forget that it ever happened.",
+            ]
+        );
+        assert!(
+            context.contains("\x7f"),
+            "the report captures the consumed invalid character's source context: {context:?}"
+        );
+        assert!(
+            processor.take_semantic_diagnostics().is_empty(),
+            "the consumed invalid character is not diagnosed twice"
+        );
     }
 
     #[test]
