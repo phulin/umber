@@ -3554,6 +3554,48 @@ fn etex_glue_component_enquiries_cover_values_orders_and_zero_components() {
 }
 
 #[test]
+fn etex_glue_component_enquiries_observe_typed_internal_and_outer_boundaries() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    for (primitive, specific, outer) in [
+        (P::GlueStretch, "glue_stretch", "dimension"),
+        (P::GlueShrink, "glue_shrink", "dimension"),
+        (P::GlueStretchOrder, "glue_stretch_order", "integer"),
+        (P::GlueShrinkOrder, "glue_shrink_order", "integer"),
+    ] {
+        let mut universe = crate::test_harness::universe();
+        let enquiry = internal_primitive(&mut universe, "glue-enquiry", primitive);
+        let tokens = std::iter::once(enquiry)
+            .chain(scanner_tokens("1pt plus 2fil minus 3fill"))
+            .collect();
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        push(&mut command, tokens);
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        if outer == "integer" {
+            processor.scan_integer().expect("order enquiry scans");
+        } else {
+            processor.scan_dimension().expect("component enquiry scans");
+        }
+
+        let kinds = scanner_kinds(&recorder);
+        assert_eq!(
+            &kinds[kinds.len() - 3..],
+            [specific, "internal", outer],
+            "primitive: {primitive:?}"
+        );
+    }
+}
+
+#[test]
 fn etex_glue_component_enquiries_scan_registers_and_coerce_mu_glue() {
     use tex_state::glue::{GlueSpec, Order};
     use tex_state::meaning::UnexpandablePrimitive as P;

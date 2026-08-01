@@ -613,3 +613,39 @@ fn glue_scanners_and_mutations_keep_structured_orders() {
         })
     );
 }
+
+#[test]
+fn glue_component_enquiry_results_keep_their_typed_values() {
+    let root = LiveSource {
+        name: "root.tex".into(),
+        source: SourceId::new(7),
+        bytes: Arc::from(&b""[..]),
+    };
+    let mut translator = LiveSessionTranslator::for_root(SchemaVersion::V1, "terminal", root);
+    translator.translate_captured([
+        CommandObservation::Scanner(ScannerRecord {
+            kind: "glue_stretch_order",
+            value: "2".into(),
+            tokens: None,
+        }),
+        CommandObservation::Scanner(ScannerRecord {
+            kind: "glue_shrink",
+            value: "196608".into(),
+            tokens: None,
+        }),
+    ]);
+    assert_eq!(
+        translator.events[0].event,
+        Event::Scanner(ScannerEvent {
+            scanner: "glue_stretch_order".into(),
+            result: CanonicalValue::Integer(2),
+        })
+    );
+    assert_eq!(
+        translator.events[1].event,
+        Event::Scanner(ScannerEvent {
+            scanner: "glue_shrink".into(),
+            result: CanonicalValue::Scaled(196_608),
+        })
+    );
+}

@@ -2131,17 +2131,37 @@ impl CommandProcessor<'_> {
                 | UnexpandablePrimitive::GlueShrinkOrder),
             ) => {
                 let glue = self.scan_glue(false)?.value;
-                match primitive {
-                    UnexpandablePrimitive::GlueStretch => InternalValue::Dimension(glue.stretch),
-                    UnexpandablePrimitive::GlueShrink => InternalValue::Dimension(glue.shrink),
-                    UnexpandablePrimitive::GlueStretchOrder => {
-                        InternalValue::Integer(glue.stretch_order as i32)
+                let (kind, value) = match primitive {
+                    UnexpandablePrimitive::GlueStretch => {
+                        ("glue_stretch", InternalValue::Dimension(glue.stretch))
                     }
-                    UnexpandablePrimitive::GlueShrinkOrder => {
-                        InternalValue::Integer(glue.shrink_order as i32)
+                    UnexpandablePrimitive::GlueShrink => {
+                        ("glue_shrink", InternalValue::Dimension(glue.shrink))
                     }
+                    UnexpandablePrimitive::GlueStretchOrder => (
+                        "glue_stretch_order",
+                        InternalValue::Integer(glue.stretch_order as i32),
+                    ),
+                    UnexpandablePrimitive::GlueShrinkOrder => (
+                        "glue_shrink_order",
+                        InternalValue::Integer(glue.shrink_order as i32),
+                    ),
                     _ => unreachable!("outer match restricts primitive"),
-                }
+                };
+                // e-TeX 2.6 [53a.5362--5402] owns a typed enquiry result
+                // after extracting the component/order and before §413's
+                // common internal-value boundary.
+                let rendered = match value {
+                    InternalValue::Integer(value) => value.to_string(),
+                    InternalValue::Dimension(value) => value.raw().to_string(),
+                    _ => unreachable!("glue enquiries return only integer or dimension values"),
+                };
+                self.observe(CommandObservation::Scanner(ScannerRecord {
+                    kind,
+                    value: rendered,
+                    tokens: None,
+                }));
+                value
             }
             // e-TeX 2.6 etex.ch [53a.4945--5360]: all four expression
             // primitives are `last_item` internal quantities. `scan_expr`

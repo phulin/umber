@@ -109,12 +109,17 @@ pub(crate) fn translate_observation(
                     | "current_condition_level"
                     | "current_condition_type"
                     | "current_condition_branch"
+                    | "glue_stretch_order"
+                    | "glue_shrink_order"
             ) {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Integer,
                 )
-            } else if matches!(record.kind, "dimension" | "expression_dimension") {
+            } else if matches!(
+                record.kind,
+                "dimension" | "expression_dimension" | "glue_stretch" | "glue_shrink"
+            ) {
                 record.value.parse::<i64>().map_or_else(
                     |_| CanonicalValue::Name(record.value),
                     CanonicalValue::Scaled,
