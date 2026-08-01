@@ -1092,6 +1092,108 @@ fn input_uses_only_capability_registered_backing_and_returns_to_parent() {
     assert_eq!(chars(&mut processor), "ab z ");
 }
 
+#[test]
+fn recursive_input_during_filename_scan_inserts_frozen_relax_before_restored_input() {
+    // TeX82 §§378/527: a recursively expanded `\input` cannot start another
+    // filename scan. It is restored beneath inaccessible `frozen_relax`, so
+    // the active scan stops first and ordinary expansion rereads the original
+    // command only after the filename boundary has ended.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let input = install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    let mut tokens = vec![Token::Cs(input)];
+    tokens.extend(letters("inc"));
+    tokens.push(Token::Char {
+        ch: ' ',
+        cat: Catcode::Space,
+    });
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(
+            tokens.into_iter().map(traced).collect::<Vec<_>>(),
+        )),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    command
+        .begin_file_name()
+        .expect("outer filename scan begins");
+
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "inc.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"z".as_slice()),
+        ),
+    );
+    let mut recorder = Recorder::default();
+
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        let boundary = processor
+            .get_x_token()
+            .expect("recursive input recovery succeeds")
+            .expect("frozen relax terminates the filename scan");
+        assert_eq!(boundary.spelling().semantic_token(), Token::frozen_relax());
+        assert_eq!(boundary.meaning(), Meaning::Relax);
+    }
+    assert!(command.name_in_progress());
+    assert!(
+        !recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Effect(effect) if effect.kind == "input"
+        )),
+        "the child must not open before the frozen-relax boundary"
+    );
+
+    command.end_file_name();
+    let child_token = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        processor
+            .get_x_token()
+            .expect("restored input expands")
+            .expect("child source delivers its first token")
+    };
+    assert_eq!(
+        child_token.spelling().semantic_token(),
+        Token::Char {
+            ch: 'z',
+            cat: Catcode::Letter,
+        }
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Command(delivery)
+                    if delivery.boundary == CommandDeliveryBoundary::Raw
+                        && delivery.command == "input"
+            ))
+            .count(),
+        2,
+        "the original input is encountered once recursively and reread once"
+    );
+    assert_eq!(
+        recorder
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Effect(effect)
+                    if effect.kind == "input" && effect.detail == "inc.tex"
+            ))
+            .count(),
+        1,
+        "the restored input opens the child exactly once"
+    );
+}
+
 fn effect_text(universe: &Universe) -> String {
     universe
         .world()
