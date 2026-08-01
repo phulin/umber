@@ -1641,6 +1641,9 @@ fn outline_objects(
             stack.push((index, record.count().unsigned_abs() as usize));
         }
     }
+    while stack.last().is_some_and(|(_, remaining)| *remaining == 0) {
+        stack.pop();
+    }
     if let Some(&(parent, remaining)) = stack.last() {
         return Err(PdfBuildError::OutlineCountIncomplete {
             object: records[parent].item_object(),
@@ -8438,6 +8441,14 @@ mod tests {
             "\\shipout\\hbox{}\\end",
         ));
         assert_eq!(stores.pdf_outlines().len(), 4);
+        assert_eq!(
+            stores
+                .pdf_outlines()
+                .iter()
+                .map(|record| record.count())
+                .collect::<Vec<_>>(),
+            [2, -1, 0, 0]
+        );
         let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
             .expect("outline PDF assembles");
         let parsed = probe(&pdf);
@@ -8482,6 +8493,14 @@ mod tests {
             "}}",
             "\\end",
         ));
+        assert_eq!(
+            stores
+                .pdf_outlines()
+                .iter()
+                .map(|record| record.count())
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
 
         let commits_before = stores.world().artifact_commits().to_vec();
         let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
