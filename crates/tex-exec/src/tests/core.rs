@@ -1,6 +1,8 @@
 use super::support::*;
 use super::*;
-use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandProfile, RegisteredSourceKind, SourceRegistration, install_tex82_expandable_primitives,
+};
 use tex_lex::TokenListReplayKind;
 use tex_state::ids::ArenaRef;
 use tex_state::node::Node;
@@ -5356,10 +5358,23 @@ fn canonical_valign_noalign_preserves_the_alignment_mode() {
 }
 
 pub(super) fn run_canonical_etex(source: &str) -> Universe {
+    run_canonical_extended_profile(source, CommandProfile::ETEX26)
+}
+
+fn run_canonical_extended_profile(source: &str, profile: CommandProfile) -> Universe {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(profile);
+    install_tex82_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
+    match profile {
+        CommandProfile::ETEX26 => {}
+        CommandProfile::PDFTEX14027 => {
+            tex_expand::install_pdftex_expandable_primitives(&mut stores);
+        }
+        _ => panic!("extended-profile helper requires e-TeX or pdfTeX"),
+    }
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -5371,7 +5386,7 @@ pub(super) fn run_canonical_etex(source: &str) -> Universe {
             return stores;
         }
     }
-    panic!("canonical e-TeX source did not terminate");
+    panic!("canonical extended-profile source did not terminate");
 }
 
 #[test]
@@ -5439,14 +5454,68 @@ fn canonical_etex_text_directions_follow_texxet_state() {
             Node::Direction(tex_state::node::Direction::EndR),
         ]
     );
+}
 
-    let (disabled, nodes) = run_canonical_etex_current_list(r"\noindent\beginL\endL\beginR\endR");
-    assert!(nodes.is_empty());
-    let terminal = terminal_effect_text(&disabled);
-    for name in ["beginL", "endL", "beginR", "endR"] {
+#[test]
+fn disabled_text_directions_diagnose_exactly_without_consuming_or_mutating() {
+    // e-TeX 2.6 etex.ch [17.3822--3880]: every nonzero `valign` modifier
+    // passes through `eTeX_enabled`, whose false branch reports exactly one
+    // Improper diagnostic with help1 and appends no direction node.
+    const PRIMITIVES: [(&str, usize); 4] = [("beginL", 2), ("endL", 1), ("beginR", 1), ("endR", 1)];
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+        let stores = run_canonical_extended_profile(
+            r"\nonstopmode
+              \TeXXeTstate=0 \count0=0
+              \setbox0=\hbox{\beginL \global\advance\count0 by1
+                {\TeXXeTstate=-1 \endL \global\advance\count0 by2}
+                \beginR \global\advance\count0 by4
+                \endR \global\advance\count0 by8}
+              \setbox1=\vbox{\beginL \global\count2=1 \par}
+              \shipout\copy0
+              \global\count1=\TeXXeTstate
+              \end",
+            profile,
+        );
+
+        assert_eq!(stores.count(0), 15, "profile {profile:?}");
+        assert_eq!(stores.count(1), 0, "profile {profile:?}");
+        assert_eq!(stores.count(2), 1, "profile {profile:?}");
+        assert_eq!(
+            stores.int_param(IntParam::TEX_XET_STATE),
+            0,
+            "profile {profile:?}"
+        );
+        let box0 = stores.box_reg(0).expect("copy shipout must retain box 0");
         assert!(
-            terminal.contains(&format!("Improper \\{name}")),
-            "{terminal}"
+            stores
+                .nodes(box0)
+                .testing_decoded()
+                .iter()
+                .all(|node| !matches!(node, Node::Direction(_))),
+            "profile {profile:?} inserted a disabled direction node"
+        );
+
+        let log = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("completed job must publish its transcript"),
+        );
+        for (primitive, expected_count) in PRIMITIVES {
+            assert_eq!(
+                log.lines()
+                    .filter(|line| *line == format!("! Improper \\{primitive}."))
+                    .count(),
+                expected_count,
+                "profile {profile:?}, primitive \\{primitive}: {log:?}"
+            );
+        }
+        assert_eq!(
+            log.lines()
+                .filter(|line| *line == "Sorry, this optional e-TeX feature has been disabled.")
+                .count(),
+            PRIMITIVES.iter().map(|(_, count)| count).sum(),
+            "profile {profile:?}: {log:?}"
         );
     }
 }
