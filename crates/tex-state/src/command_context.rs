@@ -66,6 +66,19 @@ impl CommandContext<'_> {
         self.universe.begin_diagnostic()
     }
 
+    /// tex.web §75's ordinary print scope at the current interaction-implied
+    /// selector, through the live command aggregate borrow.
+    ///
+    /// e-TeX's `\tracingnesting` warnings (`group_warning`/`if_warning`/
+    /// `file_warning`) print directly at this ambient selector rather than
+    /// through §245's `begin_diagnostic` redirect: unlike
+    /// `\tracingassigns`/`\tracinggroups`/`\tracingifs`, they are not gated
+    /// on `\tracingonline` and must reach the terminal whenever the ambient
+    /// selector already does.
+    pub fn printer(&mut self) -> crate::print::Printer<'_> {
+        self.universe.printer()
+    }
+
     /// Opens tex.web §73's recoverable-error report through the live command
     /// aggregate borrow.
     ///
@@ -403,6 +416,34 @@ impl CommandContext<'_> {
                 .innermost_group_kind()
                 .map_or(0, crate::GroupKind::etex_code),
         )
+    }
+
+    /// Every open group at or above `min_depth` (1-based group level),
+    /// outermost first, as `(level, group_text, entered_line)`: e-TeX 2.6
+    /// [49.1293]'s `print_group` fields for `\tracingnesting`'s
+    /// `file_warning`, which needs the same per-group display `\showgroups`
+    /// does but is not itself gated behind `\showgroups`'s own diagnostic
+    /// channel.
+    #[must_use]
+    pub fn group_frames_from(&self, min_depth: usize) -> Vec<(usize, &'static str, u32)> {
+        self.universe
+            .group_frames()
+            .enumerate()
+            .skip(min_depth)
+            .map(|(index, frame)| (index + 1, frame.kind().group_text(), frame.entered_line()))
+            .collect()
+    }
+
+    /// tex.web §245's other half: `if history=spotless then
+    /// history:=warning_issued`, for a warning printed outside
+    /// `begin_diagnostic` (`\tracingnesting`'s `group_warning`/`if_warning`/
+    /// `file_warning`, which are not `stat`-gated and so do not open a
+    /// diagnostic scope at all).
+    pub fn record_warning_history(&mut self) {
+        self.universe
+            .world_mut()
+            .error_channel_mut()
+            .record_warning_history();
     }
 
     /// Classifies a box register without exposing node-store ownership.

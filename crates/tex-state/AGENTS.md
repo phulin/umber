@@ -18,7 +18,11 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
 - `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
 - `src/command_context.rs`: Interpretation-neutral aggregate access boundary
-  reserved for the canonical command processor.
+  reserved for the canonical command processor. Exposes `begin_diagnostic`
+  (e-TeX `\tracingifs`), `printer` (e-TeX `\tracingnesting`'s
+  not-`stat`-gated `file_warning`), and `group_frames_from` (the same
+  per-group display `\showgroups` uses) so `tex-command` can render those
+  without a queued cross-crate diagnostic.
 - `src/dependency.rs`: Region-scoped dependency keys, detached observations, changed-at validation, semantic backdating, and opaque cross-Universe memo validation stamps.
 - `src/dependency/tests.rs`: Dependency mutation matrix, deterministic nested propagation, and handle-independent observation tests.
 - `src/diagnostic.rs`: tex.web §245's shared `begin_diagnostic`/`end_diagnostic` print channel, which every `\tracing*` parameter's text is routed through.
