@@ -1348,6 +1348,52 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
     );
 }
 
+/// TeX82 §§722--724 and §755: `fetch` calls `char_warning` for a character
+/// absent from a defined math font, drops that character, and continues the
+/// surrounding formula. See umber2-e51h.63.7 for the missing conversion-event
+/// boundary needed to make the warning observable outside `tex-typeset`.
+#[test]
+#[ignore = "umber2-e51h.63.7: math conversion cannot yet emit char_warning"]
+fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
+    let (mut stores, executor) = run_math_source("$a\\mathchar\"007f b");
+    let list = unfinished_math_list(&mut stores, &executor);
+
+    let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
+
+    let characters: Vec<_> = nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(characters, ['a', 'b']);
+    assert!(
+        terminal_effect_text(&stores).contains("Missing character: There is no ^^? in font cmr10!")
+    );
+}
+
+/// TeX82 §§722--723 and §755: selecting nullfont through an undefined family
+/// reports the canonical error and deletes the formula instead of treating
+/// the requested glyph as an ordinary missing character.
+#[test]
+#[ignore = "umber2-e51h.63.7: undefined math families do not yet abort conversion"]
+fn undefined_math_family_reports_error_and_recovers() {
+    let (mut stores, executor) = run_math_source("$a\\mathchar\"0f61 b");
+    let list = unfinished_math_list(&mut stores, &executor);
+
+    let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
+
+    assert!(
+        nodes
+            .iter()
+            .all(|node| matches!(node, Node::MathOn(_) | Node::MathOff(_)))
+    );
+    assert!(
+        terminal_effect_text(&stores).contains("Math formula deleted: Insufficient symbol fonts")
+    );
+}
+
 #[test]
 fn inline_math_resets_space_factor_before_following_space() {
     let (_stores, executor) = run_math_source(r"\noindent\spacefactor=2000 $a$\message{done}");

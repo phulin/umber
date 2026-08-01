@@ -614,7 +614,7 @@
         },
         {
           "path": "crates/tex-typeset/src/math/convert/tests.rs",
-          "test": "tex82_first_pass_choice_bin_and_nonscript_matrix"
+          "test": "mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

@@ -16,8 +16,12 @@ fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Con
     }
 }
 
+/// TeX82 §§728--733 and §§761--767: both mlist passes must retain the full
+/// eight-style state, perform rules 5/6 bin reclassification, suppress the
+/// node following `\nonscript` only in script styles, and insert rule 21
+/// penalties only at eligible boundaries.
 #[test]
-fn tex82_first_pass_choice_bin_and_nonscript_matrix() {
+fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
     let mut stores = setup_universe();
     let arms = ['a', 'b', 'c', '+']
         .map(|ch| stores.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
@@ -30,9 +34,13 @@ fn tex82_first_pass_choice_bin_and_nonscript_matrix() {
     let params = MathParams::read(&stores);
     for (style, expected) in [
         (Style::DISPLAY, 'a'),
+        (Style::DISPLAY.cramped_style(), 'a'),
         (Style::TEXT, 'b'),
+        (Style::TEXT.cramped_style(), 'b'),
         (Style::SCRIPT, 'c'),
+        (Style::SCRIPT.cramped_style(), 'c'),
         (Style::SCRIPT_SCRIPT, '+'),
+        (Style::SCRIPT_SCRIPT.cramped_style(), '+'),
     ] {
         let layout = mlist_to_hlist(&stores, choice, style, false, &params);
         let selected = root_nodes(&layout).into_iter().find_map(|node| match node {
@@ -74,20 +82,28 @@ fn tex82_first_pass_choice_bin_and_nonscript_matrix() {
             kind: KernKind::Mu,
         },
     ]);
-    let text = mlist_to_hlist(&stores, nonscript, Style::TEXT, false, &params);
-    assert!(root_nodes(&text).iter().any(|node| matches!(
-        node,
-        MathNode::Kern {
-            kind: KernKind::Explicit,
-            ..
-        }
-    )));
-    let script = mlist_to_hlist(&stores, nonscript, Style::SCRIPT, false, &params);
-    assert!(
-        !root_nodes(&script)
-            .iter()
-            .any(|node| matches!(node, MathNode::Kern { .. }))
-    );
+    for style in [
+        Style::DISPLAY,
+        Style::DISPLAY.cramped_style(),
+        Style::TEXT,
+        Style::TEXT.cramped_style(),
+        Style::SCRIPT,
+        Style::SCRIPT.cramped_style(),
+        Style::SCRIPT_SCRIPT,
+        Style::SCRIPT_SCRIPT.cramped_style(),
+    ] {
+        let layout = mlist_to_hlist(&stores, nonscript, style, false, &params);
+        let has_kern = root_nodes(&layout).iter().any(|node| {
+            matches!(
+                node,
+                MathNode::Kern {
+                    kind: KernKind::Explicit,
+                    ..
+                }
+            )
+        });
+        assert_eq!(has_kern, !style.is_script_or_smaller(), "{style:?}");
+    }
 
     let missing = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -95,6 +111,23 @@ fn tex82_first_pass_choice_bin_and_nonscript_matrix() {
     ))]);
     let missing = mlist_to_hlist(&stores, missing, Style::TEXT, false, &params);
     assert!(missing.root().is_empty());
+
+    let penalized = stores.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'a')),
+        Node::MathNoad(noad(NoadClass::Bin, '+')),
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+        Node::MathNoad(noad(NoadClass::Rel, '=')),
+        Node::MathNoad(noad(NoadClass::Ord, 'c')),
+    ]);
+    let layout = mlist_to_hlist(&stores, penalized, Style::TEXT, true, &params);
+    let penalties: Vec<_> = root_nodes(&layout)
+        .iter()
+        .filter_map(|node| match node {
+            MathNode::Penalty(value) => Some(*value),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(penalties, [params.bin_op_penalty, params.rel_penalty]);
 }
 
 #[test]
