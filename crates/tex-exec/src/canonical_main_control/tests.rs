@@ -4566,6 +4566,46 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
 }
 
 #[test]
+fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
+    // TeX82 §§1077/1085 commits a constructed box only after its box group is
+    // unsaved. e-TeX 2.6 [47.1077] sends targets above 255 through [53a]'s
+    // `sa_def_box`, so those delayed writes (and immediate void operands) are
+    // sparse mutation boundaries; the dense `eq_define` target stays silent.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"{\setbox20=\hbox{} \setbox300=\hbox{}
+             \global\setbox301=\vbox{} \setbox302=\box0}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "register" => {
+                Some((record.key.as_deref(), record.value.as_str(), record.global))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mutations,
+        [
+            (Some("box:300"), "name:occupied", false),
+            (Some("box:301"), "name:occupied", true),
+            (Some("box:302"), "name:void", false),
+        ]
+    );
+    assert!(stores.box_reg(20).is_none());
+    assert!(stores.box_reg(300).is_none());
+    assert!(stores.box_reg(301).is_some());
+    assert!(stores.box_reg(302).is_none());
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical

@@ -562,7 +562,10 @@ pub(crate) fn translate_mutation(record: MutationRecord) -> Event {
         } else if let Some(value) = record.value.strip_prefix("glue:") {
             parse_glue_scanner_value(value)
         } else {
-            None
+            record
+                .value
+                .strip_prefix("name:")
+                .map(|value| CanonicalValue::Name(value.into()))
         };
         if let Some(value) = value {
             return Event::Mutation(MutationEvent {

@@ -2411,8 +2411,10 @@ impl CommandProcessor<'_> {
     /// TeX.web's `prefixed_command` dispatches `set_box` to §433's
     /// `scan_eight_bit_int` then `scan_optional_equals`, followed immediately
     /// by §1084's `scan_box`; none of that operand returns to main control.
+    /// e-TeX 2.6 [49.1241] widens only the target to `scan_register_num` while
+    /// retaining the same complete operand ownership and backup transitions.
     pub fn scan_setbox_assignment(&mut self) -> Result<ScannedSetBoxAssignment, CommandError> {
-        let index = self.scan_eight_bit_register_index()?;
+        let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
         let payload = self.scan_box_payload()?;
         Ok(ScannedSetBoxAssignment { index, payload })

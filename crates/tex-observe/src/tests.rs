@@ -529,6 +529,26 @@ fn token_register_mutations_keep_the_frozen_list() {
 }
 
 #[test]
+fn sparse_box_mutations_keep_the_named_state() {
+    let event = translate_mutation(MutationRecord {
+        target: "register",
+        value: "name:occupied".into(),
+        key: Some("box:300".into()),
+        tokens: None,
+        global: true,
+    });
+    assert_eq!(
+        event,
+        Event::Mutation(MutationEvent {
+            target: StateTarget::Register,
+            key: CanonicalValue::Name("box:300".into()),
+            value: CanonicalValue::Name("occupied".into()),
+            scope: "global".into(),
+        })
+    );
+}
+
+#[test]
 fn meaning_mutations_keep_the_assigned_control_sequence() {
     let event = translate_mutation(MutationRecord {
         target: "meaning",

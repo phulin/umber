@@ -13497,11 +13497,7 @@ fn apply_scanned_step(
                     push_prepared_dvi_page(prepared_dvi_pages, receipt);
                 }
             } else if let Some(target) = box_state.target {
-                if target.global {
-                    stores.set_box_reg_global(target.index, boxed);
-                } else {
-                    stores.set_box_reg(target.index, boxed);
-                }
+                commit_set_box_target(target, Some(boxed), stores, command);
             } else {
                 // TeX82 §1076's `box_end` branch for an ordinary
                 // (non-register, non-shipout, non-leader) box appends the
@@ -14666,18 +14662,8 @@ fn box_end(
         // §1077 defines the register unconditionally: a void `cur_box` makes
         // the destination void, it does not leave the old value in place.
         BoxContext::SetBox(target) => {
-            match node {
-                Some(node) => {
-                    let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
-                    if target.global {
-                        stores.set_box_reg_global(target.index, boxed);
-                    } else {
-                        stores.set_box_reg(target.index, boxed);
-                    }
-                }
-                None if target.global => stores.clear_box_reg_global(target.index),
-                None => stores.clear_box_reg(target.index),
-            }
+            let boxed = node.map(|node| stores.freeze_node_list(std::slice::from_ref(&node)));
+            commit_set_box_target(target, boxed, stores, command);
             Ok(())
         }
         // §1075 guards `ship_out` with `cur_box<>null`.
@@ -14689,6 +14675,45 @@ fn box_end(
             }
             Ok(())
         }
+    }
+}
+
+/// Commits TeX82 §1077/e-TeX 2.6 [47.1077]'s resolved `box_end` target.
+///
+/// Dense targets use `eq_define` and remain outside the oracle's named
+/// mutation regions. Extended targets use [53a]'s `sa_def`/`gsa_def`, whose
+/// committed sparse-register boundary is observed after §1085 has packaged
+/// and unsaved the box group. Keeping the observation beside the write also
+/// covers immediate `\box`, `\copy`, `\lastbox`, and `\vsplit` operands.
+fn commit_set_box_target(
+    target: SetBoxTarget,
+    boxed: Option<NodeListId>,
+    stores: &mut Universe,
+    command: &mut CommandMachine<'_>,
+) {
+    match (target.global, boxed) {
+        (false, Some(boxed)) => stores.set_box_reg(target.index, boxed),
+        (true, Some(boxed)) => stores.set_box_reg_global(target.index, boxed),
+        (false, None) => stores.clear_box_reg(target.index),
+        (true, None) => stores.clear_box_reg_global(target.index),
+    }
+    if target.index > 255
+        && let Some(observations) = command.observations.as_mut()
+    {
+        observations
+            .0
+            .push(CommandObservation::Mutation(MutationRecord {
+                target: "register",
+                value: if boxed.is_some() {
+                    "name:occupied"
+                } else {
+                    "name:void"
+                }
+                .into(),
+                key: Some(format!("box:{}", target.index)),
+                tokens: None,
+                global: target.global,
+            }));
     }
 }
 
