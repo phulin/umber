@@ -28,12 +28,10 @@ every issue a fresh branch at an explicit base commit.
 ## Dispatch A Wave
 
 1. Claim disjoint issues in Beads and pin one explicit `{BASE_REF}`.
-2. Check capacity with `scripts/build-cache-policy.py --jobs N`. If it refuses,
-   reduce the wave or reclaim an idle slot.
-3. Claim an idle slot by atomically creating
+2. Claim an idle slot by atomically creating
    `.worktrees/.locks/{SLOT_NAME}`. Treat an existing lock as live until Beads,
    active agents, Git worktrees, and Cargo processes prove it stale.
-4. Require a reused slot to be clean, detached, idle, and process-free. Create
+3. Require a reused slot to be clean, detached, idle, and process-free. Create
    a missing slot only once, then create the issue branch:
 
    ```bash
@@ -42,8 +40,8 @@ every issue a fresh branch at an explicit base commit.
    python3 {REPO_ROOT}/scripts/native-test-assets.py {SLOT_PATH}
    ```
 
-5. Record the slot, branch, and base on the Beads issue. If no slot is free,
-   wait or serialize instead of growing the pool without a capacity check.
+4. Record the slot, branch, and base on the Beads issue. If no slot is free,
+   wait or serialize instead of growing the pool implicitly.
 
 Append this to each dispatched agent's prompt:
 

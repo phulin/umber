@@ -132,15 +132,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   native correctness suite concurrently with the format and clippy gate.
   Clippy uses its own `target/clippy` directory so it does not lock the test
   build.
-- Cargo targets are checkout-local by default; linked worktrees do not share
-  compiled artifacts. Before dispatching parallel jobs, run
-  `scripts/build-cache-policy.py --jobs N`. It budgets 12 GiB per new worktree
-  plus a 4 GiB filesystem reserve, preserving ordinary incremental compilation
-  while refusing dispatch without enough capacity. Reclamation is never
-  automatic: `--reclaim` removes only the current checkout's
-  `target/debug/incremental` and `target/clippy`, and refuses while Cargo-family
-  processes are active there. See
-  [Build Cache Policy](docs/build_cache_policy.md).
+- Cargo targets are checkout-local by default; persistent linked worktrees keep
+  their own compiled artifacts between issues.
 - Use `cargo run-dev -p umber -- <args>` for local CLI runs that should share
   optimized artifacts with the test build.
 - Snapshot-sensitive corpus and format work must pass the explicit regenerated

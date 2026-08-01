@@ -26,12 +26,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   test asset allowlist from the primary checkout into a linked worktree.
 - `test-native-test-assets.py`: hermetic linked-worktree coverage for asset
   identity, isolation, idempotence, and unsafe-input rejection.
-- `build-cache-policy.py`: report-only parallel-build capacity preflight using
-  the measured per-worktree budget; its explicit `--reclaim` mode removes only
-  the current checkout's validated incremental and clippy cache paths and
-  refuses when Cargo-family processes are active there.
-- `test-build-cache-policy.py`: temporary-directory proof of exact-target
-  reclamation, report budgeting, process refusal, and symlink/traversal guards.
 - `test-fetch-conformance-inputs.sh`: hermetic ordered-locator, digest,
   manifest-safety, and offline-cache contract for TRIP/e-TRIP acquisition.
 - `check-lint-passes.py`: the clippy gate's declared lint passes; verifies each
