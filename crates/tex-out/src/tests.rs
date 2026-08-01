@@ -255,13 +255,13 @@ fn pdftex_kern_kinds_round_trip() {
         PageNode::MarginKern {
             amount: Scaled::from_raw(-123),
             side: MarginKernSide::Left,
-            font_id: 0,
+            font_id: 1,
             ch: b'A',
         },
         PageNode::MarginKern {
             amount: Scaled::from_raw(456),
             side: MarginKernSide::Right,
-            font_id: 0,
+            font_id: 1,
             ch: b'.',
         },
         PageNode::Kern {
