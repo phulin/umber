@@ -266,6 +266,23 @@ fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
 }
 
 #[test]
+fn tracingrestores_reports_restored_box_register_value() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\hbox{}{\\setbox7=\\vbox{}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\box7=\n\\hbox(0.0+0.0)x0.0}\n"
+    );
+}
+
+#[test]
 fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppression() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

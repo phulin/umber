@@ -41,6 +41,17 @@ impl RestoreRecord {
         }
     }
 
+    fn restoring_box(env: &Env, index: u16, old: crate::env::box_bank::BoxSlot) -> Self {
+        Self {
+            cell: CellId::new(BankTag::Box, u32::from(index)),
+            old: old.value(),
+            retaining: false,
+            tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
+            tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
+            escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+        }
+    }
+
     #[must_use]
     pub const fn cell(self) -> CellId {
         self.cell
@@ -557,12 +568,26 @@ impl Env {
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
                     self.boxes.restore(rec.index(), rec.old());
+                    restores.push(RestoreRecord::restoring_box(self, rec.index(), rec.old()));
                 }
             }
             self.journal.truncate_to(marker_pos);
             self.journal.truncate_box_undos(boundary.box_undo_len);
             meaning_changed
         };
+        let mut traced_boxes = SmallVec::<[u32; 8]>::new();
+        restores.retain(|record| {
+            if record.cell().bank() != BankTag::Box {
+                return true;
+            }
+            let index = record.cell().index();
+            if traced_boxes.contains(&index) {
+                false
+            } else {
+                traced_boxes.push(index);
+                true
+            }
+        });
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
         let payloads = self.aftergroup.drain(aftergroup_start..).collect();
@@ -636,6 +661,11 @@ impl Env {
                             .expect("box undo was indexed before group compaction");
                         if !state.has_later_global {
                             self.boxes.restore(rec.index(), rec.old());
+                            restores.push(RestoreRecord::restoring_box(
+                                self,
+                                rec.index(),
+                                rec.old(),
+                            ));
                         }
                     }
                 }
