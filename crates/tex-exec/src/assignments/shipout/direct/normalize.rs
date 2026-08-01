@@ -837,7 +837,7 @@ pub(super) fn direction_permutation_for_box(
 
 fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
     struct Segment {
-        right_to_left: bool,
+        begin: Direction,
         chunks: Vec<Vec<usize>>,
     }
     fn append(target: &mut Vec<usize>, stack: &mut [Segment], index: usize) {
@@ -851,7 +851,7 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
         let Some(mut segment) = stack.pop() else {
             return;
         };
-        if segment.right_to_left {
+        if segment.begin == Direction::BeginR {
             segment.chunks.reverse();
         }
         let nodes = segment.chunks.into_iter().flatten().collect::<Vec<_>>();
@@ -869,21 +869,30 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
     let mut stack = Vec::<Segment>::new();
     for (index, node) in nodes.into_iter().enumerate() {
         match node {
-            NodeRef::Direction(Direction::BeginL) => stack.push(Segment {
-                right_to_left: false,
-                chunks: Vec::new(),
-            }),
-            NodeRef::Direction(Direction::BeginR) => stack.push(Segment {
-                right_to_left: true,
+            NodeRef::Direction(
+                begin @ (Direction::BeginM | Direction::BeginL | Direction::BeginR),
+            ) => stack.push(Segment {
+                begin,
                 chunks: Vec::new(),
             }),
             NodeRef::Direction(Direction::EndL)
-                if stack.last().is_some_and(|segment| !segment.right_to_left) =>
+                if stack
+                    .last()
+                    .is_some_and(|segment| segment.begin == Direction::BeginL) =>
             {
                 finish(&mut reordered, &mut stack);
             }
             NodeRef::Direction(Direction::EndR)
-                if stack.last().is_some_and(|segment| segment.right_to_left) =>
+                if stack
+                    .last()
+                    .is_some_and(|segment| segment.begin == Direction::BeginR) =>
+            {
+                finish(&mut reordered, &mut stack);
+            }
+            NodeRef::Direction(Direction::EndM)
+                if stack
+                    .last()
+                    .is_some_and(|segment| segment.begin == Direction::BeginM) =>
             {
                 finish(&mut reordered, &mut stack);
             }
