@@ -12092,11 +12092,12 @@ fn canonical_box_request_lifecycle_mode_and_recovery_matrix() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.66.7: canonical leader recovery loses the enclosing setbox close"]
 fn canonical_leader_invalid_payload_replays_after_recovery() {
     // TeX82 §1084 requires `back_error`: the rejected command remains the
     // next main-control command and the enclosing box completes normally.
-    let mut recovery = Universe::new_with_plain_catcodes();
+    // Use the nonstop harness so §82 returns to main control after reporting
+    // the error instead of waiting for an error-stop terminal response.
+    let mut recovery = crate::test_harness::universe_with_plain_catcodes();
     let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovery);
     register_source(
         &mut recovery_control,
@@ -12118,10 +12119,10 @@ fn canonical_leader_invalid_payload_replays_after_recovery() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.66.7: canonical leader recovery loses the enclosing setbox close"]
 fn canonical_leader_invalid_glue_replays_after_recovery() {
     // TeX82 §1078 likewise backs up a non-glue command after a valid payload.
-    let mut recovery = Universe::new_with_plain_catcodes();
+    // The nonstop harness lets that canonical recovery continue after §82.
+    let mut recovery = crate::test_harness::universe_with_plain_catcodes();
     let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovery);
     register_source(
         &mut recovery_control,
