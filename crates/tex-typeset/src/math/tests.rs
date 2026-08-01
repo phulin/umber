@@ -76,6 +76,48 @@ fn classic_math_parameters_observe_live_fontdimen_assignments() {
 }
 
 #[test]
+fn undefined_family_discards_only_the_offending_math_character() {
+    // TeX82 §§722--723's `fetch` resets the undefined field to `empty` and
+    // continues converting the surrounding formula; it does not set §1194's
+    // whole-formula `danger` state, which is reserved for deficient families
+    // 2 and 3 symbol/extension fonts.
+    let mut universe = setup_universe();
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'a')),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(MathChar {
+                family: 13,
+                character: 'X',
+                origin: tex_state::token::OriginId::UNKNOWN,
+            }),
+        )),
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+    ]);
+    let params = MathParams::read(&universe);
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(!layout.recovered());
+    assert!(layout.conversion_events().iter().any(|event| matches!(
+        event,
+        MathConversionEvent::UndefinedFamily {
+            size: MathFontSize::Text,
+            family: 13,
+            character: 'X'
+        }
+    )));
+    let characters = layout
+        .logical_nodes(layout.root())
+        .into_iter()
+        .filter_map(|node| match node {
+            MathNode::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(characters, ['a', 'b']);
+}
+
+#[test]
 fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() {
     let woff2 = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
     let web = parse_stix_math(FontContainer::Woff2, woff2.to_vec());

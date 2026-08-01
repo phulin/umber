@@ -297,14 +297,29 @@ impl MathLayoutSink for LoweredMathSink<'_> {
                         diagnostic.end(false);
                     }
                 }
-                MathConversionEvent::UndefinedFamily { .. } => {
-                    let mut report = self
-                        .stores
-                        .print_err("Math formula deleted: Insufficient symbol fonts");
+                MathConversionEvent::UndefinedFamily {
+                    size,
+                    family,
+                    character,
+                } => {
+                    let size = match size {
+                        tex_state::math::MathFontSize::Text => "\\textfont",
+                        tex_state::math::MathFontSize::Script => "\\scriptfont",
+                        tex_state::math::MathFontSize::ScriptScript => "\\scriptscriptfont",
+                    };
+                    let mut report = self.stores.print_err("");
+                    report
+                        .print(size)
+                        .print_char(' ')
+                        .print_int(i32::from(family))
+                        .print(" is undefined (character ")
+                        .print_char(character)
+                        .print_char(')');
                     report.help(&[
                         "Somewhere in the math formula just ended, you used the",
                         "stated character from an undefined font family. For example,",
-                        "plain TeX doesn't allow \\it or \\sl in subscripts.",
+                        "plain TeX doesn't allow \\it or \\sl in subscripts. Proceed,",
+                        "and I'll try to forget that I needed that character.",
                     ]);
                     let _ = report.error();
                 }

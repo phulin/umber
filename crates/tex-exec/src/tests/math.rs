@@ -1521,24 +1521,24 @@ fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
     );
 }
 
-/// TeX82 §§722--723 and §755: selecting nullfont through an undefined family
-/// reports the canonical error and deletes the formula instead of treating
-/// the requested glyph as an ordinary missing character.
+/// TeX82 §§722--723: selecting nullfont through an undefined family resets
+/// only that math field to empty and continues converting its siblings.
 #[test]
-fn undefined_math_family_reports_error_and_recovers() {
+fn undefined_math_family_reports_error_and_omits_only_character() {
     let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"0f61 b");
     let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
 
-    assert!(
-        nodes
-            .iter()
-            .all(|node| matches!(node, Node::MathOn(_) | Node::MathOff(_)))
-    );
-    assert!(
-        terminal_effect_text(&stores).contains("Math formula deleted: Insufficient symbol fonts")
-    );
+    let characters = nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(characters, ['a', 'b']);
+    assert!(terminal_effect_text(&stores).contains("\\textfont 15 is undefined (character a)"));
 }
 
 #[test]

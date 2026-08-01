@@ -762,9 +762,6 @@ pub(crate) fn fetch(
     style: Style,
 ) -> Option<FetchedChar> {
     // AppG rule 17
-    if ctx.recovered.get() {
-        return None;
-    }
     let font = ctx.state.math_family_font(style.size(), ch.family);
     if font == NULL_FONT {
         ctx.conversion_events
@@ -772,8 +769,8 @@ pub(crate) fn fetch(
             .push(MathConversionEvent::UndefinedFamily {
                 size: style.size(),
                 family: ch.family,
+                character: ch.character,
             });
-        ctx.recovered.set(true);
         return None;
     }
     let fetched = match ctx.state.math_metrics_source(font) {

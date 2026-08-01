@@ -103,6 +103,7 @@ pub enum MathConversionEvent {
     UndefinedFamily {
         size: tex_state::math::MathFontSize,
         family: u8,
+        character: char,
     },
 }
 
