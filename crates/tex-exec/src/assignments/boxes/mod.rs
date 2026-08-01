@@ -832,10 +832,11 @@ fn append_unboxed(
         .filter(|node| {
             !matches!(
                 node,
-                Node::Kern {
-                    kind: KernKind::LeftMargin | KernKind::RightMargin,
-                    ..
-                }
+                Node::MarginKern { .. }
+                    | Node::Kern {
+                        kind: KernKind::LeftMargin | KernKind::RightMargin,
+                        ..
+                    }
             )
         })
         .collect::<Vec<_>>()

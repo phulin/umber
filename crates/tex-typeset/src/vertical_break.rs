@@ -61,7 +61,7 @@ pub fn vert_break(
                     update_spacing_node(state, node, &mut acc, index)?;
                 }
             }
-            Some(Node::Kern { .. }) => {
+            Some(Node::Kern { .. } | Node::MarginKern { .. }) => {
                 if matches!(nodes.get(index + 1), Some(Node::Glue { .. })) {
                     penalty = Some(0);
                     update_spacing = true;

@@ -1,7 +1,7 @@
 use crate::{
     ArtifactCodecLimits, ArtifactValidationError, ArtifactValidationLimits, BoxNode,
     CodecLimitKind, ContentHash, DiscKind, EffectSink, FontResource, GlueKind, GlueOrder,
-    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MathGlyph,
+    GlueSetRatio, GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MarginKernSide, MathGlyph,
     MathGlyphSelection, MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageArtifact,
     PageEffect, PageNode, PageToken, ParseError, PdfAccessibilityEffect, PdfDestinationEffect,
     PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode, SerializeError, TokenCatcode,
@@ -252,13 +252,17 @@ fn pdftex_kern_kinds_round_trip() {
         unreachable!("sample root is a vlist");
     };
     root.children = vec![
-        PageNode::Kern {
+        PageNode::MarginKern {
             amount: Scaled::from_raw(-123),
-            kind: KernKind::LeftMargin,
+            side: MarginKernSide::Left,
+            font_id: 0,
+            ch: b'A',
         },
-        PageNode::Kern {
+        PageNode::MarginKern {
             amount: Scaled::from_raw(456),
-            kind: KernKind::RightMargin,
+            side: MarginKernSide::Right,
+            font_id: 0,
+            ch: b'.',
         },
         PageNode::Kern {
             amount: Scaled::from_raw(789),

@@ -176,6 +176,9 @@ pub(super) fn add_node_width<S: TypesetState>(
                 add_font_kern_expansion(state, widths, nodes, index, *amount);
             }
         }
+        Node::MarginKern { amount, .. } => {
+            widths.natural = add_scaled(widths.natural, *amount);
+        }
         Node::MathOn(width) | Node::MathOff(width) => {
             widths.natural = add_scaled(widths.natural, *width)
         }

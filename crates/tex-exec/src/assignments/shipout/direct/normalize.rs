@@ -217,6 +217,7 @@ fn normalize_index(
             NodeRef::Char { .. }
             | NodeRef::Lig { .. }
             | NodeRef::Kern { .. }
+            | NodeRef::MarginKern { .. }
             | NodeRef::Glue { .. }
             | NodeRef::Penalty(_)
             | NodeRef::Rule { .. }

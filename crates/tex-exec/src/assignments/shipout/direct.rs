@@ -5,15 +5,17 @@ use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
     DiscKind as PageDiscKind, EffectSink, FontResource, FontResourceConstruction,
     GlueKind as PageGlueKind, GlueOrder as PageGlueOrder, GlueSign, GlueSpec as PageGlueSpec,
-    JobInfo, KernKind as PageKernKind, LeaderPayload as PageLeaderPayload, PageEffect, PageNode,
-    PageToken, TokenCatcode, V10ArtifactBuilder, V10NodeListWriter,
+    JobInfo, KernKind as PageKernKind, LeaderPayload as PageLeaderPayload,
+    MarginKernSide as PageMarginKernSide, PageEffect, PageNode, PageToken, TokenCatcode,
+    V10ArtifactBuilder, V10NodeListWriter,
 };
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
 use tex_state::node::{
     BoxNode as StateBoxNode, Direction, DiscKind as StateDiscKind, GlueKind as StateGlueKind,
-    KernKind as StateKernKind, LeaderPayload as StateLeaderPayload, Node, Sign, Whatsit,
+    KernKind as StateKernKind, LeaderPayload as StateLeaderPayload,
+    MarginKernSide as StateMarginKernSide, Node, Sign, Whatsit,
 };
 use tex_state::node_arena::{NodeList, NodeRef};
 use tex_state::token::{Catcode, OriginId, Token};
@@ -690,6 +692,20 @@ fn emit_index(
         NodeRef::Kern { amount, kind } => {
             emission.node([]);
             output.kern(amount, lower_kern_kind(kind))?;
+            if let Some(dvi) = dvi.as_deref_mut() {
+                dvi.kern(amount).map_err(invalid_artifact)?;
+            }
+        }
+        NodeRef::MarginKern {
+            amount,
+            side,
+            font,
+            ch,
+        } => {
+            let (code, width) = glyph(stores, font, char::from(ch))?;
+            let projection = glyph_projection(stores, font, code, width, emission)?;
+            emission.node([]);
+            output.margin_kern(amount, lower_margin_kern_side(side), projection.font_id, ch)?;
             if let Some(dvi) = dvi.as_deref_mut() {
                 dvi.kern(amount).map_err(invalid_artifact)?;
             }

@@ -471,7 +471,9 @@ impl<W: std::io::Write> DviWriter<W> {
                     base_line,
                 })?;
             }
-            PageNode::Kern { amount, .. } => self.cur_h = add_scaled(self.cur_h, *amount)?,
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                self.cur_h = add_scaled(self.cur_h, *amount)?;
+            }
             PageNode::MathOn(width) | PageNode::MathOff(width) => {
                 self.cur_h = add_scaled(self.cur_h, *width)?;
             }
@@ -533,7 +535,9 @@ impl<W: std::io::Write> DviWriter<W> {
                     top_edge,
                 })?;
             }
-            PageNode::Kern { amount, .. } => self.cur_v = add_scaled(self.cur_v, *amount)?,
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                self.cur_v = add_scaled(self.cur_v, *amount)?;
+            }
             PageNode::WhatsitAnchor { effect_index } => {
                 self.out_what(effects, *effect_index)?;
             }
@@ -630,7 +634,7 @@ impl<W: std::io::Write> DviWriter<W> {
                         base_line,
                     })?;
                 }
-                PageNode::Kern { amount, .. } => {
+                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
                     self.cur_h = add_scaled(self.cur_h, *amount)?;
                 }
                 PageNode::MathOn(width) | PageNode::MathOff(width) => {
@@ -716,7 +720,7 @@ impl<W: std::io::Write> DviWriter<W> {
                         top_edge,
                     })?;
                 }
-                PageNode::Kern { amount, .. } => {
+                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
                     self.cur_v = add_scaled(self.cur_v, *amount)?;
                 }
                 PageNode::WhatsitAnchor { effect_index } => {
@@ -1038,7 +1042,9 @@ fn predict_snap_correction(
                     )?,
                 )?;
             }
-            PageNode::Kern { amount, .. } => current = add_scaled(current, *amount)?,
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                current = add_scaled(current, *amount)?;
+            }
             PageNode::WhatsitAnchor { effect_index } => {
                 let effect =
                     effects

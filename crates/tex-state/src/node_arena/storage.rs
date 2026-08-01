@@ -4,7 +4,7 @@ use super::{checked_len, preflight_capacity};
 use crate::identity::IdentityMark;
 use crate::ids::{GlueId, NodeListId};
 use crate::math::MathStyle;
-use crate::node::{DiscKind, GlueKind, KernKind, Node};
+use crate::node::{DiscKind, GlueKind, KernKind, MarginKernSide, Node};
 use crate::scaled::Scaled;
 use crate::token::OriginId;
 
@@ -124,6 +124,7 @@ impl SidecarNeeds {
             Node::Adjust(_) => Some(&mut self.adjusts),
             Node::Char { .. }
             | Node::Kern { .. }
+            | Node::MarginKern { .. }
             | Node::Glue { leader: None, .. }
             | Node::Penalty(_)
             | Node::MathOn(_)
@@ -455,6 +456,12 @@ impl NodeStorage {
                 2,
                 amount.raw() as u32 as u64 | ((kern_code(*kind) as u64) << 32),
             ),
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => encode_margin_kern(*amount, *side, *font, *ch),
             Node::Glue {
                 spec,
                 kind,
@@ -542,6 +549,12 @@ impl NodeStorage {
                 2,
                 amount.raw() as u32 as u64 | ((kern_code(kind) as u64) << 32),
             ),
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => encode_margin_kern(amount, side, font, ch),
             Node::Glue {
                 spec,
                 kind,
@@ -663,6 +676,23 @@ fn push_sidecar<T>(tag: u8, table: &mut Vec<T>, value: T) -> NodeWord {
     let i = checked_len(table.len(), "node sidecar exceeds u32 entries");
     table.push(value);
     NodeWord::sidecar(tag, i)
+}
+
+fn encode_margin_kern(
+    amount: Scaled,
+    side: MarginKernSide,
+    font: crate::ids::FontId,
+    ch: u8,
+) -> NodeWord {
+    debug_assert!(font.raw() < (1 << 15), "font id exceeds TeX font domain");
+    let side = u64::from(matches!(side, MarginKernSide::Right));
+    NodeWord::new(
+        24,
+        amount.raw() as u32 as u64
+            | (side << 32)
+            | ((font.raw() as u64) << 33)
+            | ((ch as u64) << 48),
+    )
 }
 fn kern_code(v: KernKind) -> u8 {
     match v {

@@ -20,6 +20,35 @@ fn smoke() {
 }
 
 #[test]
+fn margin_kern_glyph_provenance_survives_snapshot_and_format_round_trips() {
+    use crate::font::NULL_FONT;
+    use crate::node::{MarginKernSide, Node};
+
+    let expected = Node::MarginKern {
+        amount: Scaled::from_raw(-12_345),
+        side: MarginKernSide::Right,
+        font: NULL_FONT,
+        ch: b'.',
+    };
+    let mut universe = Universe::new();
+    let list = universe.freeze_node_list(std::slice::from_ref(&expected));
+    universe.set_box_reg_global(17, list);
+    let snapshot = universe.snapshot();
+    assert_eq!(
+        universe.nodes(universe.box_reg(17).expect("box survives snapshot")),
+        std::slice::from_ref(&expected)
+    );
+    universe.rollback(&snapshot);
+
+    let bytes = universe.dump_format().expect("margin-kern format dumps");
+    let loaded = Universe::from_format(World::default(), &bytes).expect("margin-kern format loads");
+    assert_eq!(
+        loaded.nodes(loaded.box_reg(17).expect("box survives format")),
+        std::slice::from_ref(&expected)
+    );
+}
+
+#[test]
 fn format_roundtrip_counts_structural_end_match_in_macro_observation_width() {
     // TeX82 §§289/294/341/473 place `end_match` between a definition's
     // parameter and replacement text. The format loader compacts away an

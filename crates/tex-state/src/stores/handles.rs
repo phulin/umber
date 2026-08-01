@@ -328,7 +328,9 @@ impl Stores {
                     self.assert_live_handles_in_leader_payload(leader);
                 }
             }
-            Node::Char { font, .. } | Node::Lig { font, .. } => self.assert_live_font(*font),
+            Node::Char { font, .. } | Node::Lig { font, .. } | Node::MarginKern { font, .. } => {
+                self.assert_live_font(*font)
+            }
             Node::HList(box_node) | Node::VList(box_node) => {
                 self.assert_live_child_node_list(box_node.children);
             }

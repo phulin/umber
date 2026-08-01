@@ -6,8 +6,8 @@ use crate::math::{
     NoadKind,
 };
 use crate::node::{
-    BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, Node, PdfAccessibilityControl,
-    PdfLiteralMode, Sign, UnsetKind, UnsetNode, Whatsit,
+    BoxNode, DiscKind, GlueKind, KernKind, LeaderPayload, MarginKernSide, Node,
+    PdfAccessibilityControl, PdfLiteralMode, Sign, UnsetKind, UnsetNode, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -84,6 +84,12 @@ pub(super) enum FormatNode {
     Adjust {
         content: FormatListKey,
         pre: bool,
+    },
+    MarginKern {
+        amount: Scaled,
+        side: MarginKernSide,
+        font: u32,
+        ch: u8,
     },
 }
 
@@ -308,6 +314,7 @@ impl FormatNode {
             Self::Char { .. }
             | Self::Lig { .. }
             | Self::Kern { .. }
+            | Self::MarginKern { .. }
             | Self::Glue { leader: None, .. }
             | Self::Penalty(_)
             | Self::Rule { .. }
@@ -350,6 +357,17 @@ impl FormatNode {
                 orig,
             },
             Node::Kern { amount, kind } => Self::Kern { amount, kind },
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Self::MarginKern {
+                amount,
+                side,
+                font: font.raw(),
+                ch,
+            },
             Node::Glue { spec, kind, leader } => Self::Glue {
                 spec: spec.raw(),
                 kind,
@@ -453,6 +471,17 @@ impl FormatNode {
                 }
             }
             Self::Kern { amount, kind } => Node::Kern { amount, kind },
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Node::MarginKern {
+                amount,
+                side,
+                font: font_id(content_ids, font)?,
+                ch,
+            },
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: glue_id(content_ids, spec)?,
                 kind,

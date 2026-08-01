@@ -96,6 +96,21 @@ pub(super) fn materialize_node_list(
                 amount,
                 kind: lower_kern_kind(kind),
             }),
+            NodeRef::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => {
+                let (code, width) = glyph(stores, font, char::from(ch))?;
+                let projection = glyph_projection(stores, font, code, width, emission)?;
+                Some(PageNode::MarginKern {
+                    amount,
+                    side: lower_margin_kern_side(side),
+                    font_id: projection.font_id,
+                    ch,
+                })
+            }
             NodeRef::Glue { spec, kind, leader } => Some(PageNode::Glue {
                 spec: lower_glue(stores.glue(spec)),
                 kind: lower_glue_kind(kind),

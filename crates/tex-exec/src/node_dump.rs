@@ -140,6 +140,17 @@ fn dump_node(
                 );
             }
         },
+        Node::MarginKern { amount, side, .. } => {
+            let side = match side {
+                tex_state::node::MarginKernSide::Left => "left",
+                tex_state::node::MarginKernSide::Right => "right",
+            };
+            let _ = writeln!(
+                out,
+                "\\kern{} ({side} margin)",
+                format_scaled_without_unit(*amount)
+            );
+        }
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
                 let _ = writeln!(

@@ -47,10 +47,10 @@ pub use binary::{
 pub use model::{
     ArtifactValidationError, ArtifactValidationLimits, BoxNode, DEFAULT_BANNER, DiscKind,
     EffectSink, FontResource, FontResourceConstruction, GlueKind, GlueOrder, GlueSetRatio,
-    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MathGlyph, MathGlyphSelection,
-    MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageArtifact, PageArtifactBuilder,
-    PageEffect, PageNode, PageToken, PdfAccessibilityEffect, PdfAnnotationEffect,
-    PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind, PdfLiteralMode,
-    PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
+    GlueSign, GlueSpec, JobInfo, KernKind, LeaderPayload, MarginKernSide, MathGlyph,
+    MathGlyphSelection, MathOutputEvent, MathRule, MathStart, OpenTypeFontResource, PageArtifact,
+    PageArtifactBuilder, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
+    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
+    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 pub use tex_content::{ContentDomain, ContentHash, ContentIdentity};

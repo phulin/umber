@@ -11,7 +11,7 @@ use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
-use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, Node, Sign};
+use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, MarginKernSide, Node, Sign};
 use tex_state::page::PageMark;
 use tex_state::provenance::{
     InsertedOrigin, InsertedOriginKind, MacroInvocationOrigin, OriginRecord, SynthesizedOrigin,
@@ -5568,13 +5568,17 @@ fn margin_kern_enquiries_find_named_kerns_inside_skip_glue() {
             kind: GlueKind::LeftSkip,
             leader: None,
         },
-        Node::Kern {
+        Node::MarginKern {
             amount: Scaled::from_raw(-5 * 65_536),
-            kind: KernKind::LeftMargin,
+            side: MarginKernSide::Left,
+            font: tex_state::font::NULL_FONT,
+            ch: b'A',
         },
-        Node::Kern {
+        Node::MarginKern {
             amount: Scaled::from_raw(-7 * 65_536),
-            kind: KernKind::RightMargin,
+            side: MarginKernSide::Right,
+            font: tex_state::font::NULL_FONT,
+            ch: b'.',
         },
         Node::Glue {
             spec: zero,

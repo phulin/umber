@@ -100,6 +100,7 @@ impl<W: std::io::Write> DviWriter<W> {
             PageNode::Char { .. }
             | PageNode::Lig { .. }
             | PageNode::Kern { .. }
+            | PageNode::MarginKern { .. }
             | PageNode::Glue { .. }
             | PageNode::Penalty(_)
             | PageNode::Rule { .. }

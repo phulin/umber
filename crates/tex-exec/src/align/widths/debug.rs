@@ -52,6 +52,7 @@ fn debug_assert_no_unset_node(node: &Node, stack: &mut Vec<NodeListId>) {
         Node::Char { .. }
         | Node::Lig { .. }
         | Node::Kern { .. }
+        | Node::MarginKern { .. }
         | Node::Glue { .. }
         | Node::Penalty(_)
         | Node::Rule { .. }

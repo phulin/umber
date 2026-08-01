@@ -1307,9 +1307,9 @@ fn margin_kern_enquiry(
     };
     let children = stores.nodes(box_node.children);
     let expected = if left {
-        tex_state::node::KernKind::LeftMargin
+        tex_state::node::MarginKernSide::Left
     } else {
-        tex_state::node::KernKind::RightMargin
+        tex_state::node::MarginKernSide::Right
     };
     let found = if left {
         children
@@ -1322,7 +1322,11 @@ fn margin_kern_enquiry(
             .find(|node| !margin_kern_enquiry_skip(node, false))
     };
     Ok(match found {
-        Some(tex_state::node_arena::NodeRef::Kern { amount, kind }) if kind == expected => amount,
+        Some(tex_state::node_arena::NodeRef::MarginKern { amount, side, .. })
+            if side == expected =>
+        {
+            amount
+        }
         _ => tex_state::scaled::Scaled::from_raw(0),
     })
 }

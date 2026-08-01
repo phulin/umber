@@ -394,7 +394,9 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                     meas.depth = meas.depth.max(metrics.depth);
                 }
             }
-            NodeRef::Kern { amount, .. } => meas.width = add(meas.width, amount),
+            NodeRef::Kern { amount, .. } | NodeRef::MarginKern { amount, .. } => {
+                meas.width = add(meas.width, amount);
+            }
             NodeRef::Glue { spec, leader, .. } => {
                 add_glue(&mut meas, state.glue(spec), Axis::Horizontal);
                 if let Some(leader) = leader {
@@ -483,7 +485,9 @@ fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement
                     meas.depth = meas.depth.max(metrics.depth);
                 }
             }
-            Node::Kern { amount, .. } => meas.width = add(meas.width, *amount),
+            Node::Kern { amount, .. } | Node::MarginKern { amount, .. } => {
+                meas.width = add(meas.width, *amount);
+            }
             Node::Glue { spec, leader, .. } => {
                 add_glue(&mut meas, state.glue(*spec), Axis::Horizontal);
                 if let Some(leader) = leader {
@@ -588,7 +592,9 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                     meas.width = meas.width.max(width);
                 }
             }
-            NodeRef::Kern { amount, .. } => add_vertical_spacing(&mut meas, amount),
+            NodeRef::Kern { amount, .. } | NodeRef::MarginKern { amount, .. } => {
+                add_vertical_spacing(&mut meas, amount);
+            }
             NodeRef::Glue { spec, leader, .. } => {
                 add_glue(&mut meas, state.glue(spec), Axis::Vertical);
                 if let Some(leader) = leader {

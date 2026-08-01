@@ -3,16 +3,21 @@ use super::*;
 #[test]
 fn unboxing_removes_margin_kerns_without_mutating_source_or_reordering_material() {
     let mut stores = Universe::new_with_plain_catcodes();
+    let font = tex_state::font::NULL_FONT;
     let source_nodes = [
         Node::Penalty(1),
-        Node::Kern {
+        Node::MarginKern {
             amount: Scaled::from_raw(-Scaled::UNITY),
-            kind: KernKind::LeftMargin,
+            side: tex_state::node::MarginKernSide::Left,
+            font,
+            ch: b'A',
         },
         Node::Penalty(2),
-        Node::Kern {
+        Node::MarginKern {
             amount: Scaled::from_raw(-2 * Scaled::UNITY),
-            kind: KernKind::RightMargin,
+            side: tex_state::node::MarginKernSide::Right,
+            font,
+            ch: b'.',
         },
         Node::Penalty(3),
     ];

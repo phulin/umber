@@ -2,7 +2,8 @@ use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_sty
 use crate::ids::{ArenaRef, GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
-    BoxNode, Direction, DiscKind, GlueKind, KernKind, Node, UnsetNode, UnsetNodeFields,
+    BoxNode, Direction, DiscKind, GlueKind, KernKind, MarginKernSide, Node, UnsetNode,
+    UnsetNodeFields,
 };
 use crate::scaled::Scaled;
 use crate::token::OriginId;
@@ -33,6 +34,12 @@ pub enum NodeRef<'a> {
     Kern {
         amount: Scaled,
         kind: KernKind,
+    },
+    MarginKern {
+        amount: Scaled,
+        side: MarginKernSide,
+        font: crate::ids::FontId,
+        ch: u8,
     },
     Glue {
         spec: GlueId,
@@ -137,6 +144,17 @@ impl NodeRef<'_> {
             Self::Kern { amount, kind } => Node::Kern {
                 amount: *amount,
                 kind: *kind,
+            },
+            Self::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Node::MarginKern {
+                amount: *amount,
+                side: *side,
+                font: *font,
+                ch: *ch,
             },
             Self::Glue { spec, kind, leader } => Node::Glue {
                 spec: *spec,
@@ -489,6 +507,16 @@ impl NodeStorage {
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),
                 kind: decode_kern(((payload >> 32) & 7) as u8),
+            },
+            24 => NodeRef::MarginKern {
+                amount: Scaled::from_raw(payload as u32 as i32),
+                side: if ((payload >> 32) & 1) == 0 {
+                    MarginKernSide::Left
+                } else {
+                    MarginKernSide::Right
+                },
+                font: crate::ids::FontId::new(((payload >> 33) & 0x7fff) as u32),
+                ch: (payload >> 48) as u8,
             },
             3 => NodeRef::Glue {
                 spec: GlueId::new(payload as u32),

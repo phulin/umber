@@ -33,6 +33,7 @@ pub(super) fn page_extent(node: &PageNode) -> PageExtent {
         PageNode::Char { .. }
         | PageNode::Lig { .. }
         | PageNode::Kern { .. }
+        | PageNode::MarginKern { .. }
         | PageNode::Glue { .. }
         | PageNode::Penalty(_)
         | PageNode::Disc { .. }

@@ -1458,6 +1458,7 @@ pub fn node_name(node: &Node) -> String {
         Node::Char { .. } => "char",
         Node::Lig { .. } => "ligature",
         Node::Kern { .. } => "kern",
+        Node::MarginKern { .. } => "margin-kern",
         Node::Glue { .. } => "glue",
         Node::Penalty(_) => "penalty",
         Node::Rule { .. } => "rule",

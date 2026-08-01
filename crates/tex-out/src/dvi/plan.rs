@@ -101,7 +101,9 @@ impl DviPagePlanBuilder {
             | PageNode::Lig {
                 font_id, ch, width, ..
             } => self.char(*font_id, *ch, *width),
-            PageNode::Kern { amount, .. } => self.kern(*amount),
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                self.kern(*amount)
+            }
             PageNode::Glue {
                 spec, leader: None, ..
             } => self.glue(*spec),

@@ -3,6 +3,7 @@ use tex_fonts::metrics::CharTag;
 use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
+use tex_state::node::KernKind;
 use tex_state::token::OriginId;
 
 fn sp(raw: i32) -> Scaled {
@@ -86,17 +87,21 @@ fn materializes_margin_kerns_inside_paragraph_skip_glue() {
 
     assert!(matches!(
         nodes[1],
-        Node::Kern {
+        Node::MarginKern {
             amount,
-            kind: KernKind::LeftMargin
-        } if amount == sp(-5 * 65_536)
+            side: MarginKernSide::Left,
+            font: source_font,
+            ch: b'A',
+        } if amount == sp(-5 * 65_536) && source_font == font
     ));
     assert!(matches!(
         nodes[4],
-        Node::Kern {
+        Node::MarginKern {
             amount,
-            kind: KernKind::RightMargin
-        } if amount == sp(-7 * 65_536)
+            side: MarginKernSide::Right,
+            font: source_font,
+            ch: b'.',
+        } if amount == sp(-7 * 65_536) && source_font == font
     ));
     assert!(matches!(
         nodes[5],

@@ -29,6 +29,13 @@ pub enum Node {
         amount: Scaled,
         kind: KernKind,
     },
+    /// pdfTeX character protrusion retaining the exact contributing glyph.
+    MarginKern {
+        amount: Scaled,
+        side: MarginKernSide,
+        font: FontId,
+        ch: u8,
+    },
     Glue {
         spec: GlueId,
         kind: GlueKind,
@@ -113,6 +120,25 @@ impl PartialEq for Node {
                     kind: right_kind,
                 },
             ) => left_amount == right_amount && left_kind == right_kind,
+            (
+                Self::MarginKern {
+                    amount: left_amount,
+                    side: left_side,
+                    font: left_font,
+                    ch: left_ch,
+                },
+                Self::MarginKern {
+                    amount: right_amount,
+                    side: right_side,
+                    font: right_font,
+                    ch: right_ch,
+                },
+            ) => {
+                left_amount == right_amount
+                    && left_side == right_side
+                    && left_font == right_font
+                    && left_ch == right_ch
+            }
             (
                 Self::Glue {
                     spec: left_spec,
@@ -454,6 +480,13 @@ pub enum KernKind {
     RightMargin,
 }
 
+/// The edge at which pdfTeX materialized a character-protrusion kern.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum MarginKernSide {
+    Left,
+    Right,
+}
+
 /// The source of a glue node.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum GlueKind {
@@ -646,7 +679,7 @@ impl Node {
             Self::Whatsit(_) => 9,
             Self::MathOn(_) | Self::MathOff(_) | Self::Direction(_) => 10,
             Self::Glue { .. } | Self::Nonscript => 11,
-            Self::Kern { .. } => 12,
+            Self::Kern { .. } | Self::MarginKern { .. } => 12,
             Self::Penalty(_) => 13,
             Self::Unset(_) => 14,
             Self::MathNoad(_)
@@ -693,6 +726,7 @@ impl Node {
             Self::Char { .. }
             | Self::Lig { .. }
             | Self::Kern { .. }
+            | Self::MarginKern { .. }
             | Self::Glue { .. }
             | Self::Penalty(_)
             | Self::Rule { .. }

@@ -287,13 +287,17 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
 fn pdftex_kern_kinds_round_trip_in_compact_nodes() {
     let mut arena = NodeArena::new();
     let nodes = [
-        Node::Kern {
+        Node::MarginKern {
             amount: scaled(-123),
-            kind: KernKind::LeftMargin,
+            side: crate::node::MarginKernSide::Left,
+            font: crate::font::NULL_FONT,
+            ch: b'A',
         },
-        Node::Kern {
+        Node::MarginKern {
             amount: scaled(456),
-            kind: KernKind::RightMargin,
+            side: crate::node::MarginKernSide::Right,
+            font: crate::font::NULL_FONT,
+            ch: b'.',
         },
         Node::Kern {
             amount: scaled(789),
@@ -304,7 +308,7 @@ fn pdftex_kern_kinds_round_trip_in_compact_nodes() {
 
     assert_eq!(arena.get_epoch(list), &nodes);
     assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
-    assert_eq!(arena.storage.testing_tags(), vec![2, 2, 2]);
+    assert_eq!(arena.storage.testing_tags(), vec![24, 24, 2]);
 }
 
 #[test]

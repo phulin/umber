@@ -1,9 +1,9 @@
 use crate::{
     BoxNode, ContentHash, DiscKind, EffectSink, FontResource, FontResourceConstruction, GlueKind,
-    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, MathGlyphSelection,
-    MathOutputEvent, PageArtifact, PageEffect, PageNode, PageToken, PdfAccessibilityEffect,
-    PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier, PdfDestinationKind,
-    PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
+    GlueOrder, GlueSetRatio, GlueSign, GlueSpec, KernKind, LeaderPayload, MarginKernSide,
+    MathGlyphSelection, MathOutputEvent, PageArtifact, PageEffect, PageNode, PageToken,
+    PdfAccessibilityEffect, PdfAnnotationEffect, PdfDestinationEffect, PdfDestinationIdentifier,
+    PdfDestinationKind, PdfLiteralMode, PdfThreadEffect, TokenCatcode, UnvalidatedPageArtifact,
 };
 use std::fmt;
 use tex_arith::Scaled;
@@ -41,6 +41,7 @@ mod wire {
         pub const MARK: u8 = 13;
         pub const INSERT: u8 = 14;
         pub const ADJUST: u8 = 15;
+        pub const MARGIN_KERN: u8 = 16;
     }
 
     pub mod leader {
@@ -640,6 +641,23 @@ impl<'a> V10NodeListWriter<'a> {
         Ok(())
     }
 
+    pub fn margin_kern(
+        &mut self,
+        amount: Scaled,
+        side: MarginKernSide,
+        font_id: u32,
+        ch: u8,
+    ) -> Result<(), SerializeError> {
+        self.begin_node()?;
+        self.writer.u8(wire::node::MARGIN_KERN);
+        self.writer.scaled(amount);
+        self.writer
+            .u8(u8::from(matches!(side, MarginKernSide::Right)));
+        self.writer.u32(font_id);
+        self.writer.u8(ch);
+        Ok(())
+    }
+
     pub fn penalty(&mut self, value: i32) -> Result<(), SerializeError> {
         self.begin_node()?;
         self.writer.tagged_i32(wire::node::PENALTY, value);
@@ -1157,6 +1175,13 @@ impl<'r, 'a> V10NodeListReader<'r, 'a> {
             wire::node::KERN => {
                 let amount = self.reader.scaled()?;
                 parse_kern_kind(self.reader.u8()?)?;
+                V10StreamNode::Kern(amount)
+            }
+            wire::node::MARGIN_KERN => {
+                let amount = self.reader.scaled()?;
+                let _side = self.reader.u8()?;
+                let _font_id = self.reader.u32()?;
+                let _ch = self.reader.u8()?;
                 V10StreamNode::Kern(amount)
             }
             wire::node::GLUE => {
@@ -1930,6 +1955,18 @@ impl Writer {
                 bytes[1..5].copy_from_slice(&amount.raw().to_le_bytes());
                 bytes[5] = kern_kind_tag(*kind);
                 self.raw(&bytes);
+            }
+            PageNode::MarginKern {
+                amount,
+                side,
+                font_id,
+                ch,
+            } => {
+                self.u8(wire::node::MARGIN_KERN);
+                self.scaled(*amount);
+                self.u8(u8::from(matches!(side, MarginKernSide::Right)));
+                self.u32(*font_id);
+                self.u8(*ch);
             }
             PageNode::Glue { spec, kind, leader } => {
                 self.u8(wire::node::GLUE);
@@ -3164,6 +3201,21 @@ impl Reader<'_> {
             wire::node::KERN => Ok(ParsedNode::Complete(PageNode::Kern {
                 amount: self.scaled()?,
                 kind: parse_kern_kind(self.u8()?)?,
+            })),
+            wire::node::MARGIN_KERN => Ok(ParsedNode::Complete(PageNode::MarginKern {
+                amount: self.scaled()?,
+                side: match self.u8()? {
+                    0 => MarginKernSide::Left,
+                    1 => MarginKernSide::Right,
+                    value => {
+                        return Err(ParseError::InvalidTag {
+                            kind: "margin kern side",
+                            tag: value,
+                        });
+                    }
+                },
+                font_id: self.u32()?,
+                ch: self.u8()?,
             })),
             wire::node::GLUE => {
                 let spec = self.glue_spec()?;

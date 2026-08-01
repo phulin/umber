@@ -2201,7 +2201,8 @@ impl Stores {
         for node in self.nodes(id) {
             match node {
                 crate::node_arena::NodeRef::Char { font, .. }
-                | crate::node_arena::NodeRef::Lig { font, .. } => {
+                | crate::node_arena::NodeRef::Lig { font, .. }
+                | crate::node_arena::NodeRef::MarginKern { font, .. } => {
                     if !fonts.contains(&font) {
                         fonts.push(font);
                     }
@@ -2971,6 +2972,17 @@ impl Stores {
             Node::Kern { amount, kind } => {
                 amount.raw().hash(hasher);
                 kind.hash(hasher);
+            }
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => {
+                amount.raw().hash(hasher);
+                side.hash(hasher);
+                font.raw().hash(hasher);
+                ch.hash(hasher);
             }
             Node::Glue { spec, kind, leader } => {
                 self.glue(*spec).hash(hasher);

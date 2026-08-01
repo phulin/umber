@@ -891,6 +891,18 @@ impl Stores {
                 hasher.i32(amount.raw());
                 hash_kern_kind(kind, hasher);
             }
+            NodeRef::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => {
+                hasher.tag(22);
+                hasher.i32(amount.raw());
+                hasher.u8(side as u8);
+                self.hash_font(font, hasher);
+                hasher.u8(ch);
+            }
             NodeRef::Glue { spec, kind, leader } => {
                 hasher.tag(3);
                 self.hash_glue(spec, hasher);
@@ -1045,6 +1057,18 @@ impl Stores {
                 hasher.tag(2);
                 hasher.i32(amount.raw());
                 hash_kern_kind(kind, hasher);
+            }
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => {
+                hasher.tag(22);
+                hasher.i32(amount.raw());
+                hasher.u8(side as u8);
+                self.hash_font(font, hasher);
+                hasher.u8(ch);
             }
             Node::Glue { spec, kind, leader } => {
                 hasher.tag(3);

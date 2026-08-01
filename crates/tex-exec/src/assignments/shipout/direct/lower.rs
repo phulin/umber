@@ -123,6 +123,13 @@ pub(super) fn lower_kern_kind(kind: StateKernKind) -> PageKernKind {
     }
 }
 
+pub(super) fn lower_margin_kern_side(side: StateMarginKernSide) -> PageMarginKernSide {
+    match side {
+        StateMarginKernSide::Left => PageMarginKernSide::Left,
+        StateMarginKernSide::Right => PageMarginKernSide::Right,
+    }
+}
+
 pub(super) fn lower_disc_kind(kind: StateDiscKind) -> PageDiscKind {
     match kind {
         StateDiscKind::Discretionary => PageDiscKind::Discretionary,

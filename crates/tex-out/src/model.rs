@@ -339,6 +339,13 @@ pub enum PageNode {
         amount: Scaled,
         kind: KernKind,
     },
+    /// pdfTeX character protrusion with detached contributing-glyph identity.
+    MarginKern {
+        amount: Scaled,
+        side: MarginKernSide,
+        font_id: u32,
+        ch: u8,
+    },
     Glue {
         spec: GlueSpec,
         kind: GlueKind,
@@ -433,6 +440,12 @@ pub enum KernKind {
     Accent,
     LeftMargin,
     RightMargin,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum MarginKernSide {
+    Left,
+    Right,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -806,6 +819,9 @@ fn validate_artifact(
                     let allows_unicode = font_ids.get(font_id).copied().unwrap_or(false);
                     validate_character(*source, allows_unicode)?;
                 }
+            }
+            PageNode::MarginKern { font_id, ch, .. } => {
+                validate_font_and_char(&font_ids, *font_id, u32::from(*ch))?;
             }
             PageNode::HList(box_node) | PageNode::VList(box_node) => {
                 push_nodes(&mut stack, &box_node.children, depth + 1);

@@ -210,6 +210,10 @@ impl Lowerer<'_> {
                     }
                     self.cur_h = add(self.cur_h, *amount)?;
                 }
+                PageNode::MarginKern { amount, .. } => {
+                    run.flush(self)?;
+                    self.cur_h = add(self.cur_h, *amount)?;
+                }
                 PageNode::Glue { spec, kind, leader } => {
                     let width = glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?;
                     if leader.is_none()
@@ -294,7 +298,9 @@ impl Lowerer<'_> {
                     let height = glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?;
                     self.vleaders(this_box, *kind, leader, height, left_edge, top_edge, depth)?;
                 }
-                PageNode::Kern { amount, .. } => self.cur_v = add(self.cur_v, *amount)?,
+                PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                    self.cur_v = add(self.cur_v, *amount)?;
+                }
                 PageNode::WhatsitAnchor { effect_index } => self.special_v(
                     *effect_index,
                     &this_box.children[index + 1..],
@@ -908,7 +914,9 @@ fn predict_snap_correction(
                     glue_width(this_box, *spec, &mut cur_glue, &mut cur_g)?,
                 )?;
             }
-            PageNode::Kern { amount, .. } => current = add(current, *amount)?,
+            PageNode::Kern { amount, .. } | PageNode::MarginKern { amount, .. } => {
+                current = add(current, *amount)?;
+            }
             PageNode::WhatsitAnchor { effect_index } => {
                 let effect =
                     effects

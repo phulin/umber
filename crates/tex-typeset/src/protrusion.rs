@@ -1,7 +1,7 @@
 //! Pure pdfTeX character-protrusion edge discovery and line materialization.
 
 use tex_state::font::PdfFontCode;
-use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::node::{GlueKind, MarginKernSide, Node};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -42,31 +42,36 @@ pub fn line_protrusion(state: &impl TypesetState, nodes: &[Node]) -> LineProtrus
 /// already present. Margin kerns sit inside those skips, exactly as in
 /// pdfTeX's `post_line_break`.
 pub fn insert_margin_kerns(state: &impl TypesetState, nodes: &mut Vec<Node>) {
-    let protrusion = line_protrusion(state, nodes);
-    if protrusion.right.raw() != 0 {
+    let right = edge_glyph(state, nodes, Edge::Right);
+    if let Some(glyph) = right.filter(|glyph| glyph_width(state, *glyph, Edge::Right).raw() != 0) {
+        let amount = glyph_width(state, glyph, Edge::Right);
         let at = right_margin_position(nodes);
         nodes.insert(
             at,
-            Node::Kern {
-                amount: protrusion
-                    .right
+            Node::MarginKern {
+                amount: amount
                     .checked_neg()
                     .expect("a legal protrusion can be negated"),
-                kind: KernKind::RightMargin,
+                side: MarginKernSide::Right,
+                font: glyph.font,
+                ch: glyph.code,
             },
         );
     }
-    if protrusion.left.raw() != 0 {
+    let left = edge_glyph(state, nodes, Edge::Left);
+    if let Some(glyph) = left.filter(|glyph| glyph_width(state, *glyph, Edge::Left).raw() != 0) {
+        let amount = glyph_width(state, glyph, Edge::Left);
         let at =
             edge_position(state, nodes, Edge::Left).unwrap_or_else(|| leading_left_skip_end(nodes));
         nodes.insert(
             at,
-            Node::Kern {
-                amount: protrusion
-                    .left
+            Node::MarginKern {
+                amount: amount
                     .checked_neg()
                     .expect("a legal protrusion can be negated"),
-                kind: KernKind::LeftMargin,
+                side: MarginKernSide::Left,
+                font: glyph.font,
+                ch: glyph.code,
             },
         );
     }
@@ -218,6 +223,7 @@ fn search_node(state: &impl TypesetState, node: &Node, edge: Edge) -> Search {
         }
         Node::Glue { spec, .. } if state.glue(*spec).width.raw() == 0 => Search::Skip,
         Node::Penalty(_)
+        | Node::MarginKern { .. }
         | Node::Mark { .. }
         | Node::Ins { .. }
         | Node::Whatsit(_)
