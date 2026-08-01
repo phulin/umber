@@ -1,8 +1,12 @@
 use crate::FontContainer;
 use std::path::Path;
 use tex_incr::RevisionId;
+use tex_state::env::banks::{DimenParam, IntParam};
+use tex_state::hyphenation::{ExceptionSpec, PatternSpec};
+use tex_state::ids::TokenListId;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
-use tex_state::{Universe, World};
+use tex_state::scaled::Scaled;
+use tex_state::{FormatError, Universe, World};
 
 use super::*;
 
@@ -27,6 +31,171 @@ fn session(main: &str) -> VirtualCompileSession {
         .add_user_file("main.tex", main.as_bytes().to_vec())
         .expect("main file");
     session
+}
+
+fn load_profile_format(mode: EngineMode, bytes: &[u8]) -> Universe {
+    let mut stores = Universe::from_format(World::memory(), bytes).expect("profile format loads");
+    mode.install_after_format(&mut stores);
+    stores
+}
+
+fn assert_profile_surface(mode: EngineMode, stores: &mut Universe) {
+    for (name, available) in [
+        ("count", true),
+        ("numexpr", mode != EngineMode::Tex82),
+        ("pdfoutput", mode == EngineMode::PdfTex),
+        ("pdfprimitive", mode == EngineMode::PdfTex),
+    ] {
+        let symbol = stores.intern(name);
+        assert_eq!(
+            stores.meaning(symbol) != Meaning::Undefined,
+            available,
+            "{name} availability in {mode:?}",
+        );
+        assert_eq!(
+            stores.primitive_meaning(name).is_some(),
+            available,
+            "{name} primitive identity in {mode:?}",
+        );
+    }
+}
+
+#[test]
+fn tex_etex_pdftex_fresh_and_twice_loaded_format_matrix() {
+    let mut profile_hashes = Vec::new();
+
+    for mode in [EngineMode::Tex82, EngineMode::ETex, EngineMode::PdfTex] {
+        let mut fresh = Universe::default();
+        mode.prepare_fresh(&mut fresh);
+        assert_profile_surface(mode, &mut fresh);
+
+        fresh.set_count(37, 1_403);
+        fresh.set_int_param(IntParam::SAVING_V_DISCARDS, 2);
+        fresh.set_int_param(IntParam::TEX_XET_STATE, 1);
+        fresh.add_hyphenation_exception(ExceptionSpec {
+            word: "deterministic".to_owned(),
+            positions: vec![2, 5],
+        });
+        fresh.add_hyphenation_pattern(PatternSpec {
+            letters: "matrix".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0, 0],
+        });
+        let font_symbol = fresh.intern("matrixfont");
+        let font = fresh.intern_font_with_identifier(
+            tex_fonts::LoadedFont::new(
+                "matrix-font",
+                "matrix-font.tfm",
+                [0x5a; 32],
+                0,
+                Scaled::from_raw(10 * Scaled::UNITY),
+                Scaled::from_raw(10 * Scaled::UNITY),
+                vec![Scaled::from_raw(0); 7],
+                tex_fonts::FontMetrics::default(),
+            ),
+            font_symbol,
+        );
+        fresh.set_meaning(font_symbol, Meaning::Font(font));
+        if mode == EngineMode::PdfTex {
+            fresh.set_int_param(IntParam::PDF_COMPRESS_LEVEL, 6);
+            fresh.set_dimen_param(DimenParam::PDF_PAGE_WIDTH, Scaled::from_raw(12_345));
+        }
+
+        let fresh_hash = fresh.testing_state_hash();
+        profile_hashes.push((mode, fresh_hash));
+        let first_bytes = fresh.dump_format().expect("fresh profile dumps");
+        let mut once = load_profile_format(mode, &first_bytes);
+        assert_profile_surface(mode, &mut once);
+        assert_eq!(once.count(37), 1_403, "ordinary state in {mode:?}");
+        assert_eq!(
+            once.int_param(IntParam::SAVING_V_DISCARDS),
+            2,
+            "ordinary e-TeX state in {mode:?}",
+        );
+        assert_eq!(
+            once.int_param(IntParam::TEX_XET_STATE),
+            0,
+            "optional e-TeX state resets in {mode:?}",
+        );
+        assert_eq!(
+            once.hyphenation_exception("deterministic"),
+            Some([2, 5].as_slice()),
+            "hyphenation exception in {mode:?}",
+        );
+        assert!(!once.hyphenation_patterns_open(), "loaded trie in {mode:?}");
+        let Meaning::Font(once_font) = once.meaning(once.symbol("matrixfont").expect("font name"))
+        else {
+            panic!("loaded font meaning in {mode:?}");
+        };
+        assert_eq!(
+            once.font(once_font).name(),
+            "matrix-font",
+            "loaded font in {mode:?}"
+        );
+        if mode == EngineMode::PdfTex {
+            assert_eq!(once.int_param(IntParam::PDF_COMPRESS_LEVEL), 6);
+            assert_eq!(once.dimen_param(DimenParam::PDF_PAGE_WIDTH).raw(), 12_345);
+        }
+
+        let second_bytes = once.dump_format().expect("first load redumps");
+        assert_eq!(
+            second_bytes, first_bytes,
+            "first deterministic redump in {mode:?}"
+        );
+        let mut twice = load_profile_format(mode, &second_bytes);
+        assert_profile_surface(mode, &mut twice);
+        let Meaning::Font(twice_font) =
+            twice.meaning(twice.symbol("matrixfont").expect("font name"))
+        else {
+            panic!("twice-loaded font meaning in {mode:?}");
+        };
+        assert_eq!(
+            twice.font(twice_font).name(),
+            "matrix-font",
+            "twice-loaded font in {mode:?}"
+        );
+        assert_eq!(
+            twice.dump_format().expect("second load redumps"),
+            first_bytes,
+            "second deterministic redump in {mode:?}",
+        );
+    }
+
+    assert_ne!(profile_hashes[0].1, profile_hashes[1].1);
+    assert_ne!(profile_hashes[1].1, profile_hashes[2].1);
+    assert_ne!(profile_hashes[0].1, profile_hashes[2].1);
+}
+
+#[test]
+fn profile_format_dump_and_malformed_load_fail_exactly() {
+    let mut stores = Universe::default();
+    EngineMode::PdfTex.prepare_fresh(&mut stores);
+    stores
+        .append_pdf_document_fragment(tex_state::PdfDocumentFragmentKind::Info, TokenListId::EMPTY);
+    assert_eq!(stores.dump_format(), Err(FormatError::NonEmptyPdfDocument));
+
+    let mut valid = Universe::default();
+    EngineMode::PdfTex.prepare_fresh(&mut valid);
+    let bytes = valid.dump_format().expect("valid pdfTeX format");
+    for (label, malformed, expected) in [
+        (
+            "truncated",
+            bytes[..bytes.len() - 1].to_vec(),
+            "truncated Umber format file",
+        ),
+        (
+            "bad magic",
+            {
+                let mut malformed = bytes.clone();
+                malformed[0] ^= 0xff;
+                malformed
+            },
+            "not an Umber format file",
+        ),
+    ] {
+        let error = Universe::from_format(World::memory(), &malformed)
+            .expect_err("malformed format must fail closed");
+        assert_eq!(error.to_string(), expected, "{label}");
+    }
 }
 
 fn compile_diagnostic(session: &mut VirtualCompileSession) -> CompileDiagnostic {
