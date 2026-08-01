@@ -273,6 +273,28 @@ fn new_current_page_resets_nodes_totals_depth_and_last_item_state() {
 }
 
 #[test]
+fn output_page_reset_retains_totals_until_the_next_page_starts() {
+    let mut stores = Universe::new();
+    params(&mut stores, 1_000, 9, 0);
+    stores.freeze_page_specs(PageContents::BoxThere);
+    stores.push_current_page_node(Node::Penalty(41));
+    stores.set_page_dimension(PageDimension::Total, s(52));
+    stores.set_page_dimension(PageDimension::Shrink, s(51));
+    stores.set_output_routine_active(true);
+
+    stores.start_page_after_output();
+
+    assert_eq!(stores.page_contents(), PageContents::Empty);
+    assert_eq!(stores.current_page_len(), 0);
+    assert_eq!(stores.page_dimension(PageDimension::Total), s(52));
+    assert_eq!(stores.page_dimension(PageDimension::Shrink), s(51));
+
+    stores.freeze_page_specs(PageContents::BoxThere);
+    assert_eq!(stores.page_dimension(PageDimension::Total), s(0));
+    assert_eq!(stores.page_dimension(PageDimension::Shrink), s(0));
+}
+
+#[test]
 fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
     let mut stores = crate::test_harness::universe();
     assert_eq!(

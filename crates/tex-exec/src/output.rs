@@ -179,7 +179,7 @@ fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), Exec
     );
     let box255 = stores.freeze_node_list(&[Node::VList(packed.node)]);
     stores.set_box_reg_global(255, box255);
-    stores.start_new_page();
+    stores.start_page_after_output();
     for node in distributed.heldover {
         stores.push_current_page_node(node);
     }
@@ -442,7 +442,7 @@ fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
 fn prepend_output_heldover(stores: &mut Universe, output_nodes: Vec<Node>) {
     let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
     heldover.extend(output_nodes);
-    stores.start_new_page();
+    stores.start_page_after_output();
     stores.set_page_integer(PageInteger::InsertPenalties, 0);
     stores.prepend_page_contributions(heldover);
 }

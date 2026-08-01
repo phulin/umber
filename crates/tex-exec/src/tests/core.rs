@@ -4461,6 +4461,16 @@ fn showlists_marks_a_page_held_during_an_output_routine() {
 }
 
 #[test]
+fn output_routine_observes_completed_page_shrink() {
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\output={\\showthe\\pageshrink\\shipout\\box255}\\topskip=0pt\\vsize=1pt\\hrule height0pt\\vskip0pt minus51pt\\hrule height2pt\\penalty-10000\\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(log.contains("\n> 51.0pt.\n<output>"), "{log}");
+}
+
+#[test]
 fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);

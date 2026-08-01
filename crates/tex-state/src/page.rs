@@ -746,7 +746,7 @@ impl PageBuilderState {
     }
 
     pub(crate) fn start_new_page(&mut self) {
-        self.current_page.clear();
+        self.start_page_after_output();
         self.page_goal = Scaled::from_raw(0);
         self.page_total = Scaled::from_raw(0);
         self.page_stretch = Scaled::from_raw(0);
@@ -754,6 +754,13 @@ impl PageBuilderState {
         self.page_fill_stretch = Scaled::from_raw(0);
         self.page_filll_stretch = Scaled::from_raw(0);
         self.page_shrink = Scaled::from_raw(0);
+    }
+
+    /// TeX82 §1012's reset after `fire_up`: the page list and builder
+    /// controls are empty, while `page_so_far` remains observable until §991
+    /// freezes the next page's specifications.
+    pub(crate) fn start_page_after_output(&mut self) {
+        self.current_page.clear();
         self.contents = PageContents::Empty;
         self.last_glue = None;
         self.last_penalty = 0;

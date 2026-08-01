@@ -6026,6 +6026,14 @@ impl Universe {
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
+    /// Applies TeX82 §1012's post-`fire_up` structural page reset while
+    /// retaining `page_so_far` until the next §991 specification freeze.
+    pub fn start_page_after_output(&mut self) {
+        self.page.start_page_after_output();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
+    }
+
     #[must_use]
     pub fn page_discards(&self) -> &[Node] {
         self.page.page_discards()
