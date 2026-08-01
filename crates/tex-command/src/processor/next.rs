@@ -1482,11 +1482,21 @@ impl CommandProcessor<'_> {
         &mut self,
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
+        let open_depths = self.command.source_open_depths(identity);
         let retirement = self
             .command
             .retire_exhausted_input(identity)
             .map_err(|_| CommandError::input_invariant())?;
         let action = retirement.action;
+        // e-TeX 2.6 [23.328]'s `file_warning`: `end_file_reading` retiring a
+        // real source level (never a `\read` pseudo-file's `EndReadLine`, and
+        // never a token-list level) is the one point this level's recorded
+        // group/conditional open depth can be compared against the live one.
+        if matches!(action, InputRetirementAction::SourcePopped)
+            && let Some(open_depths) = open_depths
+        {
+            self.warn_file_boundary_incomplete(open_depths);
+        }
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
             let reason = if self.take_immediate_write_retirement(identity) {
                 InputReason::Write

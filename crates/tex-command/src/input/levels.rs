@@ -41,6 +41,20 @@ pub(crate) struct SourceLevel {
     /// e-TeX §24.362's once-only token list, pushed above this source when
     /// natural EOF is first observed and before `end_file_reading`.
     pub(crate) every_eof: Option<tex_state::TracedTokenList>,
+    /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]`/`if_stack[in_open]`: the
+    /// live group and conditional depth recorded when this level's
+    /// `begin_file_reading` ran, compared against the current depth at
+    /// `end_file_reading` to drive `\tracingnesting`'s `file_warning`.
+    /// `None` until the opener records it (this crate has no `Universe`
+    /// access at construction time; see `CommandState::record_source_open_depths`).
+    pub(crate) open_depths: Option<SourceOpenDepths>,
+}
+
+/// e-TeX 2.6's `grp_stack`/`if_stack` entry for one open source level.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct SourceOpenDepths {
+    pub(crate) group_depth: u32,
+    pub(crate) conditional_depth: u32,
 }
 
 /// What exhausting a source level does, per tex.web §360.

@@ -971,6 +971,119 @@ fn input_uses_only_capability_registered_backing_and_returns_to_parent() {
     assert_eq!(chars(&mut processor), "ab z ");
 }
 
+fn effect_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tracingnesting_warns_when_a_file_ends_with_an_open_group() {
+    // e-TeX 2.6 [23.328]'s `file_warning`: a group opened while reading
+    // "inc.tex" and never closed before that file's natural EOF.
+    let mut command = CommandState::default();
+    let parent = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\input{inc}z".as_slice()),
+        ))
+        .expect("parent registers");
+    command
+        .open_registered_source(parent)
+        .expect("parent opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 1);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "inc.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"a".as_slice()),
+        ),
+    );
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        // Drains through `\input`'s expansion into "inc.tex"'s one character,
+        // leaving the child source the live level.
+        let delivered = processor
+            .get_x_token()
+            .expect("input expands")
+            .expect("a token is delivered");
+        assert_eq!(
+            delivered.spelling().semantic_token(),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+    // Simulate a `{` read from "inc.tex" that is never matched by a `}`
+    // before the file's natural EOF. `enter_group_with_kind` (not
+    // `..._at_line`) matches this raw-processor test's own tokens, which
+    // carry no source line either.
+    universe.enter_group_with_kind(tex_state::GroupKind::Simple);
+    let text = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        chars(&mut processor)
+    };
+    assert_eq!(
+        text.trim_start(),
+        "z ",
+        "the parent still resumes normally after the child ends"
+    );
+    let reported = effect_text(&universe);
+    assert!(
+        reported.contains("Warning: end of file when simple group (level 1) is incomplete\n"),
+        "{reported:?}"
+    );
+}
+
+#[test]
+fn disabled_tracingnesting_emits_no_file_boundary_warning() {
+    let mut command = CommandState::default();
+    let parent = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\input{inc}z".as_slice()),
+        ))
+        .expect("parent registers");
+    command
+        .open_registered_source(parent)
+        .expect("parent opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "inc.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"a".as_slice()),
+        ),
+    );
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("input expands")
+            .expect("a token is delivered");
+    }
+    universe.enter_group_with_kind(tex_state::GroupKind::Simple);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        chars(&mut processor);
+    }
+    assert!(!effect_text(&universe).contains("Warning"));
+}
+
 #[test]
 fn endinput_keeps_its_line_but_retires_nested_source_before_the_next_line() {
     let mut command = CommandState::default();

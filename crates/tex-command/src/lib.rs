@@ -53,6 +53,7 @@ mod scan_toks;
 mod scanners;
 mod snapshot;
 mod state;
+mod tracing_nesting;
 
 #[cfg(test)]
 mod fixture_replay;

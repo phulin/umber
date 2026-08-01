@@ -3480,6 +3480,18 @@ impl CommandProcessor<'_> {
             self.command
                 .open_registered_source(source)
                 .map_err(|_| CommandError::input_invariant())?;
+            // e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
+            // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
+            // `file_warning` at this level's eventual `end_file_reading`.
+            if let Some(level) = self.command.top_input_level_identity() {
+                let (group_depth, _) = self.state.current_group_values();
+                let conditional_depth = self.command.conditions.frames.len();
+                self.command.record_source_open_depths(
+                    level,
+                    group_depth.max(0) as u32,
+                    u32::try_from(conditional_depth).unwrap_or(u32::MAX),
+                );
+            }
             let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
             self.command
                 .prepare_started_input(endlinechar)

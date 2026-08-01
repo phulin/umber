@@ -13,8 +13,8 @@ mod tests;
 
 pub(crate) use levels::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, ReplayTrace, RetirementBehavior,
-    SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceRetirement, StoredReplayReason,
-    TokenBehavior, TokenCursor, TokenPayload,
+    SharedBackedUpBuffer, SharedTokenBuffer, SourceLevel, SourceOpenDepths, SourceRetirement,
+    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 pub(crate) use source::{LineBackingRegistry, RegisteredSource, SourceCursor};
 #[allow(unused_imports)] // consumed by the ordered raw-delivery implementation issues

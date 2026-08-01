@@ -1125,8 +1125,45 @@ impl CommandState {
             name_class,
             retirement,
             every_eof,
+            open_depths: None,
         }));
         identity
+    }
+
+    /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
+    /// if_stack[in_open]:=cond_ptr`, recorded by the opener because
+    /// `push_source_level` has no `Universe` access to read the live group
+    /// depth itself. A no-op if `level` is not a live source level (for
+    /// example, it has already been retired).
+    pub(crate) fn record_source_open_depths(
+        &mut self,
+        level: InputLevelId,
+        group_depth: u32,
+        conditional_depth: u32,
+    ) {
+        for entry in &mut self.input.levels {
+            if let InputLevel::Source(source) = entry
+                && source.identity == level
+            {
+                source.open_depths = Some(crate::input::SourceOpenDepths {
+                    group_depth,
+                    conditional_depth,
+                });
+                return;
+            }
+        }
+    }
+
+    /// The `\tracingnesting` open-depth record [`Self::record_source_open_depths`]
+    /// attached to a still-live source level, read before retirement removes it.
+    pub(crate) fn source_open_depths(
+        &self,
+        level: InputLevelId,
+    ) -> Option<crate::input::SourceOpenDepths> {
+        self.input.levels.iter().find_map(|entry| match entry {
+            InputLevel::Source(source) if source.identity == level => source.open_depths,
+            _ => None,
+        })
     }
 
     /// Applies TeX's `\endinput` retirement request to the active physical

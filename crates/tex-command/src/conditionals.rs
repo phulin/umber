@@ -1173,7 +1173,7 @@ impl CommandProcessor<'_> {
     }
 
     /// e-TeX's `\unless`-prefixed `print_cmd_chr(if_test,cur_if)` spelling.
-    fn conditional_kind_text(&self, frame: &ConditionFrame) -> String {
+    pub(crate) fn conditional_kind_text(&self, frame: &ConditionFrame) -> String {
         let name =
             crate::processor::expand::print_esc_text(&self.state, frame.kind.canonical_name());
         if frame.inverted {

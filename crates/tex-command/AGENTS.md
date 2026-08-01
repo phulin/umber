@@ -37,6 +37,9 @@ print channel of its own outside the borrowed
   immutable engine/character profiles, capabilities, stable fingerprints, and
   focused value/identity tests.
 - `src/state.rs`: persistent command state and discardable runtime ownership.
+  Also owns `\tracingnesting`'s `record_source_open_depths`/
+  `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
+  [23.328] compares at a source level's `end_file_reading`.
 - `src/command.rs`: public opaque, ephemeral current-command representation.
 - `src/error.rs`: private command error and resource-need representation.
 - `src/fuel.rs`: checked finite command-work limits, the constructor-free
@@ -79,7 +82,9 @@ print channel of its own outside the borrowed
   and focused conformance tests.
 - `src/input/levels.rs`, `src/input/levels/tests.rs`: dense source/token-list
   levels, stored/transient/argument payload ownership, orthogonal delivery and
-  retirement behavior, replay explanations, and focused ownership tests.
+  retirement behavior, replay explanations, and focused ownership tests. A
+  source level's `open_depths` field is `\tracingnesting`'s own record; see
+  `src/tracing_nesting.rs`.
 - `src/input/stack.rs`, `src/input/stack/tests.rs`: exact input retirement,
   retained v-template lifecycle, macro-activation cleanup, `param_start`
   parameter replay ownership, and trace-independence tests.
@@ -150,6 +155,19 @@ print channel of its own outside the borrowed
   through `tex_state::CommandContext::begin_diagnostic` because tex.web's
   `show_cur_cmd_chr` fires from inside `conditional`/`pass_text` itself
   rather than through the executor.
+- `src/tracing_nesting.rs`: renders e-TeX 2.6's `\tracingnesting`
+  `file_warning` -- "Warning: end of file when ... is incomplete" for every
+  group and conditional still open at a source level's natural EOF, compared
+  against the depth `state.rs`'s `record_source_open_depths` recorded when
+  that level opened. Called from `processor/next.rs`'s `retire_and_restart`,
+  the one choke point every input-level retirement passes through. Prints
+  through the ambient selector (`CommandContext::printer`), not
+  `begin_diagnostic`'s `\tracingonline` redirect: unlike
+  `\tracingassigns`/`\tracinggroups`/`\tracingifs`, `file_warning` is not
+  `stat`-gated in `etex.ch`. `group_warning`/`if_warning` (a group or
+  conditional closing inside a different file than it opened in, reported at
+  that close rather than at file end) are not implemented; see
+  `umber2-aqx9`.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. It also owns TeX82 §482's `read_toks`, which is deliberately
