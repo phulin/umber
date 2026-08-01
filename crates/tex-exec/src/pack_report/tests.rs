@@ -2,8 +2,8 @@
 
 use super::*;
 use tex_state::EffectRecord;
-use tex_state::glue::Order;
-use tex_state::node::{BoxNode, BoxNodeFields, Sign};
+use tex_state::glue::{GlueSpec, Order};
+use tex_state::node::{AdjustNode, BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 fn empty_hbox(stores: &mut Universe) -> Node {
@@ -44,6 +44,91 @@ fn sink_text(stores: &Universe, terminal: bool) -> String {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn short_display_does_not_skip_following_nodes_for_side_stored_replacement() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let replacement = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let nodes = [
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+        },
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+    ];
+
+    assert_eq!(short_display_nodes(&stores, &nodes), "|");
+}
+
+#[test]
+fn short_display_maps_all_node_classes() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let zero_glue = stores.intern_glue(GlueSpec::ZERO);
+    let nonzero_glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let mark_tokens = stores.intern_token_list(&[]);
+    let pre = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let post = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(2 * Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let nodes = [
+        empty_hbox(&mut stores),
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+        Node::Glue {
+            spec: zero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Glue {
+            spec: nonzero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::MathOn(Scaled::from_raw(0)),
+        Node::Mark {
+            class: 0,
+            tokens: mark_tokens,
+        },
+        Node::Adjust(AdjustNode {
+            content: empty,
+            pre: false,
+        }),
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre,
+            post,
+            replace: empty,
+        },
+        Node::Penalty(100),
+        Node::Kern {
+            amount: Scaled::from_raw(3 * Scaled::UNITY),
+            kind: KernKind::Explicit,
+        },
+    ];
+
+    assert_eq!(short_display_nodes(&stores, &nodes), "[]| $[][]");
 }
 
 #[test]

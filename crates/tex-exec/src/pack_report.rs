@@ -206,9 +206,8 @@ fn append_short_display_nodes(
     font_in_short_display: &mut Option<tex_state::ids::FontId>,
     out: &mut String,
 ) {
-    let mut index = 0;
-    while index < nodes.len() {
-        match &nodes[index] {
+    for node in nodes {
+        match node {
             Node::Char { font, ch, .. } => {
                 append_short_char(stores, *font, *ch, font_in_short_display, out);
             }
@@ -233,20 +232,17 @@ fn append_short_display_nodes(
                 }
             }
             Node::MathOn(_) | Node::MathOff(_) => out.push('$'),
-            Node::Disc {
-                pre, post, replace, ..
-            } => {
+            Node::Disc { pre, post, .. } => {
                 append_short_display(stores, *pre, font_in_short_display, out);
                 append_short_display(stores, *post, font_in_short_display, out);
-                // §175 then steps past `replace_count` following nodes, which
-                // the break has already accounted for.
-                index += stores.nodes(*replace).len();
+                // TeX82 steps past replacement nodes linked after a disc.
+                // Umber stores them in the disc's side list, so iteration over
+                // the containing list must not advance for their count.
             }
             // §175's `othercases do_nothing`: kerns, penalties, and the math
             // list nodes that never reach a packed horizontal list.
             _ => {}
         }
-        index += 1;
     }
 }
 
