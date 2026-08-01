@@ -386,6 +386,63 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
     );
 }
 
+/// TeX82 §193's insertion-node arm prints every symbolic field before
+/// recursively displaying the insertion list. Formatting is observational:
+/// neither the insertion payload nor its child order may be consumed or
+/// rewritten while `show_node_list` walks the frozen lists.
+#[test]
+fn insertion_node_dump_prints_all_web_fields() {
+    let mut stores = Universe::new();
+    let split_top_skip = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
+    let children = [
+        Node::Rule {
+            width: Some(Scaled::from_raw(0)),
+            height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
+            depth: Some(Scaled::from_raw(0)),
+        },
+        Node::Penalty(23),
+    ];
+    let content = stores.freeze_node_list(&children);
+    let insertion = Node::Ins {
+        class: 7,
+        size: Scaled::from_raw(5 * Scaled::UNITY),
+        split_top_skip,
+        split_max_depth: Scaled::from_raw(4 * Scaled::UNITY),
+        floating_penalty: 100,
+        content,
+    };
+    let source = stores.freeze_node_list(std::slice::from_ref(&insertion));
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            source,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        concat!(
+            "\\insert7, natural size 5.0; split(0.0,4.0); float cost 100\n",
+            ".\\rule(5.0+0.0)x0.0\n",
+            ".\\penalty 23\n",
+        ),
+    );
+    assert_eq!(stores.nodes(source), std::slice::from_ref(&insertion));
+    assert_eq!(stores.nodes(content), children.as_slice());
+    let source_after = stores.nodes(source).to_vec();
+    let [
+        Node::Ins {
+            content: attached_content,
+            ..
+        },
+    ] = source_after.as_slice()
+    else {
+        panic!("insertion payload was detached");
+    };
+    assert_eq!(*attached_content, content);
+}
+
 /// e-TeX `etex.web` change blocks 21 and 49 extend TeX82's mark node with a
 /// class, while merged block 77 prints class zero in the legacy `\mark` form
 /// and every sparse class as `\marks<n>`. The 255/256 boundary must therefore
