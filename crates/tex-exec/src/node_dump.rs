@@ -756,8 +756,10 @@ fn dump_unset(
         format_scaled_without_unit(unset.depth),
         format_scaled_without_unit(unset.width)
     );
-    if unset.span_count > 1 {
-        let _ = write!(out, ", spans {}", unset.span_count);
+    // TeX82 §186 stores one less than the number of columns in the
+    // quarterword field and omits the annotation only for a single column.
+    if unset.span_count != 0 {
+        let _ = write!(out, " ({} columns)", u32::from(unset.span_count) + 1);
     }
     if unset.stretch.raw() != 0 {
         let _ = write!(

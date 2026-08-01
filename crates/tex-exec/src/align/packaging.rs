@@ -23,8 +23,8 @@ pub(crate) enum UnsetPackContext {
 
 /// TeX82 §796's `type(u):=unset_node; span_count(u):=n`.
 ///
-/// `span_count` is Umber's 1-based column count, so it is one more than
-/// §796's `n`, which starts at `min_quarterword` because "this represents a
+/// The argument is Umber's 1-based column count. The stored field is §796's
+/// encoded `n`, which starts at `min_quarterword` because "this represents a
 /// span count of 1" and is then incremented once per column step by §798's
 /// `repeat incr(n); q:=link(link(q)); until q=cur_align`.
 ///
@@ -69,7 +69,7 @@ pub(crate) fn make_unset_node(
         width: packed.node.width,
         height: packed.node.height,
         depth: packed.node.depth,
-        span_count,
+        span_count: span_count.saturating_sub(1),
         stretch: metrics.stretch,
         stretch_order: metrics.stretch_order,
         shrink: metrics.shrink,

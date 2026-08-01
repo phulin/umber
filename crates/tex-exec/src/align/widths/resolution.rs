@@ -62,7 +62,7 @@ fn collect_width_requirements(
             let tex_state::node_arena::NodeRef::Unset(cell) = child else {
                 continue;
             };
-            let span = usize::from(cell.span_count.max(1));
+            let span = usize::from(cell.span_count) + 1;
             requirements.push(AlignmentWidthRequirement {
                 first_column: column,
                 span,

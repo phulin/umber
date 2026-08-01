@@ -55,7 +55,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
         };
 
         assert_eq!(cell.kind, cell_unset_kind(alignment));
-        assert_eq!(cell.span_count, 3);
+        assert_eq!(cell.span_count, 2);
         assert_eq!(cell.width, expected.width);
         assert_eq!(cell.height, expected.height);
         assert_eq!(cell.depth, expected.depth);
@@ -72,7 +72,7 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
 
 #[test]
 fn span_record_256_limit_and_merge_fields() {
-    // TeX82 §§797--798 store the one-based span count in a quarterword. The
+    // TeX82 §§797--798 store the zero-based span count in a quarterword. The
     // largest legal cell therefore spans 256 columns; one more succumbs with
     // the canonical confusion, without losing the packed metric fields.
     let mut stores = Universe::new_with_plain_catcodes();
@@ -91,7 +91,7 @@ fn span_record_256_limit_and_merge_fields() {
     .expect("§798 permits max_quarterword span steps") else {
         panic!("legal span must remain unset");
     };
-    assert_eq!(limit.span_count, 256);
+    assert_eq!(limit.span_count, 255);
     assert_eq!(
         (limit.width, limit.height, limit.depth),
         (sp(9), sp(2), sp(1))

@@ -432,6 +432,7 @@ pub struct UnsetNode {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
+    /// TeX82 §796's zero-based quarterword encoding (columns minus one).
     pub span_count: u16,
     pub stretch: Scaled,
     pub stretch_order: Order,
@@ -466,6 +467,7 @@ pub struct UnsetNodeFields {
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
+    /// TeX82 §796's zero-based quarterword encoding (columns minus one).
     pub span_count: u16,
     pub stretch: Scaled,
     pub stretch_order: Order,

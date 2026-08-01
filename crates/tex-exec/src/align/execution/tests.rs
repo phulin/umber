@@ -248,10 +248,10 @@ fn execute_test_row(
 #[test]
 fn fin_col_delimiter_matrix_and_periodic_extension() {
     for (source, columns, loop_start, expected_spans) in [
-        ("&\\cr", 2, None, vec![1, 1]),
-        ("\\span\\cr", 2, None, vec![2]),
-        ("\\crcr", 1, None, vec![1]),
-        ("&&\\cr", 2, Some(1), vec![1, 1, 1]),
+        ("&\\cr", 2, None, vec![0, 0]),
+        ("\\span\\cr", 2, None, vec![1]),
+        ("\\crcr", 1, None, vec![0]),
+        ("&&\\cr", 2, Some(1), vec![0, 0, 0]),
     ] {
         let (_stores, nest, _, extra) =
             execute_test_row(AlignmentKind::HAlign, columns, loop_start, source, false);

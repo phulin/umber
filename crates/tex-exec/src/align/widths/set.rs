@@ -150,7 +150,7 @@ fn set_row_children(
     for child in stores.nodes(row.children) {
         match child {
             tex_state::node_arena::NodeRef::Unset(cell) => {
-                let span = usize::from(cell.span_count.max(1));
+                let span = usize::from(cell.span_count) + 1;
                 out.push(set_cell(config, row, &cell, column, span, stores)?);
                 for offset in 1..span {
                     let spanned_column = column + offset;

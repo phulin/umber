@@ -6,7 +6,8 @@ use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
 use tex_state::math::{LimitType, MathChar, MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{
-    AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign,
+    AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
+    UnsetNode, UnsetNodeFields,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -118,6 +119,72 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     };
     let text = dump_node_list(&stores, list, config);
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
+}
+
+/// TeX82 §186 (`tex.web:3740-3752`) decodes an unset node's quarterword
+/// span count as one less than its displayed column count. A zero field has no
+/// suffix; nonzero fields use the exact ` (N columns)` spelling before the
+/// independently ordered stretch and shrink components.
+#[test]
+fn unset_box_prints_encoded_column_count_and_glue_fields() {
+    let mut stores = Universe::new();
+    let children = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let unset = |span_count| {
+        Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::HBox,
+            width: Scaled::from_raw(4 * Scaled::UNITY),
+            height: Scaled::from_raw(5 * Scaled::UNITY),
+            depth: Scaled::from_raw(6 * Scaled::UNITY),
+            span_count,
+            stretch: Scaled::from_raw(2 * Scaled::UNITY),
+            stretch_order: Order::Fil,
+            shrink: Scaled::from_raw(3 * Scaled::UNITY),
+            shrink_order: Order::Normal,
+            children,
+        }))
+    };
+    let source = [unset(0), unset(1), unset(2)];
+    let list = stores.freeze_node_list(&source);
+    let before_source = stores.nodes(list).to_vec();
+    let before_children = stores.nodes(children).to_vec();
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        concat!(
+            "\\unsetbox(5.0+6.0)x4.0, stretch 2.0fil, shrink 3.0\n",
+            ".\\kern 1.0\n",
+            "\\unsetbox(5.0+6.0)x4.0 (2 columns), stretch 2.0fil, shrink 3.0\n",
+            ".\\kern 1.0\n",
+            "\\unsetbox(5.0+6.0)x4.0 (3 columns), stretch 2.0fil, shrink 3.0\n",
+            ".\\kern 1.0\n",
+        ),
+    );
+    assert_eq!(stores.nodes(list), before_source);
+    assert_eq!(stores.nodes(children), before_children);
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &source[1..2],
+            DumpConfig {
+                breadth: 100,
+                depth: 0,
+            },
+        ),
+        "\\unsetbox(5.0+6.0)x4.0 (2 columns), stretch 2.0fil, shrink 3.0 []\n",
+    );
+    assert_eq!(stores.nodes(list), before_source);
+    assert_eq!(stores.nodes(children), before_children);
 }
 
 fn zero_sized_hbox(children: NodeListId) -> BoxNode {
