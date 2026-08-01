@@ -947,4 +947,116 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn terminal_prompt_and_input_echo_are_channel_specific() {
+        // tex.web §71: the terminal has already displayed the user's
+        // keystrokes, so `term_input` writes only the prompt there. The
+        // transcript receives the prompt followed by the accepted line and
+        // its newline. Neither deferred channel is visible before commit.
+        for mode in [
+            InteractionMode::Scroll,
+            InteractionMode::ErrorStop,
+            InteractionMode::Nonstop,
+            InteractionMode::Batch,
+        ] {
+            let mut universe = Universe::new();
+            universe.set_interaction_mode(mode);
+            universe
+                .world_mut()
+                .push_memory_terminal_line("typed")
+                .expect("memory world accepts terminal input");
+
+            let line = if universe
+                .command_context()
+                .interaction_permits_terminal_input()
+            {
+                universe
+                    .command_context()
+                    .input_ln(CommandLineSource::Terminal { prompt: "? " })
+            } else {
+                Some("noninteractive".to_owned())
+            };
+
+            let interactive = matches!(mode, InteractionMode::Scroll | InteractionMode::ErrorStop);
+            assert_eq!(
+                line.as_deref(),
+                Some(if interactive {
+                    "typed"
+                } else {
+                    "noninteractive"
+                }),
+                "{mode:?}"
+            );
+            assert_eq!(universe.world().memory_terminal_output(), Some(&b""[..]));
+            assert_eq!(universe.world().memory_log_output(), Some(&b""[..]));
+
+            let effects = universe.world().effect_pos();
+            universe
+                .commit_effects(effects)
+                .expect("commit terminal acquisition effects");
+            assert_eq!(
+                universe.world().memory_terminal_output(),
+                Some(if interactive { &b"? "[..] } else { &b""[..] }),
+                "{mode:?}"
+            );
+            assert_eq!(
+                universe.world().memory_log_output(),
+                Some(if interactive {
+                    &b"? typed\n"[..]
+                } else {
+                    &b""[..]
+                }),
+                "{mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_input_echo_wraps_the_transcript_without_wrapping_the_terminal() {
+        let mut universe = Universe::new();
+        universe
+            .world_mut()
+            .push_memory_terminal_line("typed")
+            .expect("memory world accepts terminal input");
+        universe
+            .world_mut()
+            .write_text(crate::world::PrintSink::Log, &"l".repeat(78));
+
+        assert_eq!(
+            universe
+                .command_context()
+                .input_ln(CommandLineSource::Terminal { prompt: "? " }),
+            Some("typed".to_owned())
+        );
+        let effects = universe.world().effect_pos();
+        universe
+            .commit_effects(effects)
+            .expect("commit independently wrapped acquisition effects");
+
+        assert_eq!(universe.world().memory_terminal_output(), Some(&b"? "[..]));
+        assert_eq!(
+            universe.world().memory_log_output(),
+            Some(format!("{}?\n typed\n", "l".repeat(78)).as_bytes())
+        );
+    }
+
+    #[test]
+    fn exhausted_terminal_does_not_fabricate_an_echoed_line() {
+        let mut universe = Universe::new();
+
+        assert_eq!(
+            universe
+                .command_context()
+                .input_ln(CommandLineSource::Terminal { prompt: "? " }),
+            None
+        );
+        let effects = universe.world().effect_pos();
+        universe
+            .commit_effects(effects)
+            .expect("commit terminal EOF prompt");
+
+        assert_eq!(universe.world().memory_terminal_output(), Some(&b"? "[..]));
+        assert_eq!(universe.world().memory_log_output(), Some(&b"? "[..]));
+    }
 }
