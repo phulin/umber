@@ -2754,6 +2754,56 @@ fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
 }
 
 #[test]
+fn malformed_pdf_navigation_keeps_the_nonoperand_token() {
+    // pdftex.web §§1561, 1562, 1565, and 1566 diagnose a missing action or
+    // identifier after keyword probes. `scan_keyword` must leave the first
+    // nonoperand token available to the surrounding recovery path.
+    for (primitive, expected) in [
+        (
+            UnexpandablePrimitive::PdfStartLink,
+            "pdfTeX error (ext1): action type missing",
+        ),
+        (
+            UnexpandablePrimitive::PdfOutline,
+            "pdfTeX error (ext1): action type missing",
+        ),
+        (
+            UnexpandablePrimitive::PdfDest,
+            "pdfTeX error (ext1): identifier type missing",
+        ),
+        (
+            UnexpandablePrimitive::PdfThread,
+            "pdfTeX error (ext1): identifier type missing",
+        ),
+        (
+            UnexpandablePrimitive::PdfStartThread,
+            "pdfTeX error (ext1): identifier type missing",
+        ),
+    ] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        push(&mut command, text_tokens("Z"));
+        let (error, following) = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let error = processor
+                .scan_pdf_navigation_request(primitive)
+                .expect_err("malformed request is rejected");
+            let following = processor
+                .get_x_token()
+                .expect("following token delivery succeeds")
+                .expect("keyword mismatch preserves its token")
+                .meaning();
+            (error, following)
+        };
+        assert_eq!(error, CommandError::PdfNavigation(expected));
+        assert!(matches!(following, Meaning::CharToken { ch: 'Z', .. }));
+    }
+}
+
+#[test]
 fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
     let mut command = CommandState::default();
     let source = command

@@ -505,7 +505,10 @@ impl fmt::Display for ExecError {
                 f.write_str("pdfTeX error (ext1): \u{005c}pdfendlink without \u{005c}pdfstartlink")
             }
             Self::PdfLinkInVerticalMode(name) => {
-                write!(f, "You can't use `\\{name}' in vertical mode.")
+                write!(
+                    f,
+                    "pdfTeX error (ext1): \\{name} cannot be used in vertical mode"
+                )
             }
             Self::PdfDestinationIdentifierMissing => {
                 f.write_str("pdfTeX error (ext4): destination identifier type missing")

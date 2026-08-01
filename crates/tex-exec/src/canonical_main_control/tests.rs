@@ -2903,6 +2903,49 @@ fn pdf_annotation_family_rejects_dvi_before_allocation_or_operand_scan() {
 }
 
 #[test]
+fn pdf_link_vertical_mode_rejects_before_operand_scan_without_mutation() {
+    // pdftex.web §1561 checks vertical mode before `new_annot_whatsit` and
+    // therefore before the rule, attributes, and action.  The deliberately
+    // malformed action must not mask the mode diagnostic, consume its
+    // following token, allocate a link, or append a node.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_annotation_control(&mut stores);
+    register_source(
+        &mut control,
+        br"\pdfstartlink width 5pt definitely-not-an-action\relax",
+    );
+    let state_before = stores.testing_state_hash();
+
+    let error = control
+        .step(&mut stores)
+        .expect_err("vertical link start is rejected before its operands");
+    assert!(matches!(
+        error,
+        ExecError::PdfLinkInVerticalMode("pdfstartlink")
+    ));
+    assert_eq!(
+        error.to_string(),
+        "pdfTeX error (ext1): \\pdfstartlink cannot be used in vertical mode"
+    );
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(control.modes.current_list().nodes().is_empty());
+
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
+    assert!(matches!(
+        control.step(&mut stores),
+        Err(ExecError::PdfNavigation(
+            "pdfTeX error (ext1): action type missing"
+        ))
+    ));
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert!(control.modes.current_list().nodes().is_empty());
+}
+
+#[test]
 fn pdf_end_link_dvi_retry_preserves_the_open_link_and_command() {
     // pdftex.web §1561 rejects DVI mode before appending the end whatsit. The
     // open-link stack and the unconsumed command both survive for retry.

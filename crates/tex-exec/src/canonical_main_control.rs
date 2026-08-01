@@ -6545,6 +6545,22 @@ fn scan_command(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
+            // pdftex.web §1561 rejects both link boundary commands in
+            // vertical mode immediately after `check_pdfoutput`, before
+            // `\pdfstartlink` scans its rule, attributes, or action.  Keep
+            // this restriction on the scanning side of the typed-request
+            // boundary so malformed operands cannot mask the mode error.
+            if matches!(
+                primitive,
+                UnexpandablePrimitive::PdfStartLink | UnexpandablePrimitive::PdfEndLink
+            ) && matches!(mode, Mode::Vertical | Mode::InternalVertical)
+            {
+                return Err(ExecError::PdfLinkInVerticalMode(match primitive {
+                    UnexpandablePrimitive::PdfStartLink => "pdfstartlink",
+                    UnexpandablePrimitive::PdfEndLink => "pdfendlink",
+                    _ => unreachable!(),
+                }));
+            }
             Ok(ScannedStep::PdfNavigation(
                 processor
                     .scan_pdf_navigation_request(primitive)
