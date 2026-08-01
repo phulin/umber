@@ -1423,11 +1423,11 @@ fn token_parameter_presence_is_grouped_checkpointed_and_format_stable() {
 }
 
 #[test]
-fn checkpoint_hash_schema_receipts_token_parameter_presence_vocabulary() {
+fn checkpoint_hash_schema_receipts_token_presence_and_box_lr_vocabularies() {
     assert_eq!(
         crate::CHECKPOINT_STATE_HASH_SCHEMA_VERSION,
-        26,
-        "changing token-cell presence framing requires a checkpoint hash schema bump"
+        27,
+        "v26 receipts token-cell presence; v27 receipts canonical box_lr identity"
     );
 }
 
