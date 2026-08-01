@@ -1541,8 +1541,8 @@ pub fn command_token_text(state: &mut tex_state::CommandContext<'_>, token: Toke
         Token::Cs(symbol) => {
             let meaning = state.meaning(symbol);
             state.primitive_name(meaning).map_or_else(
-                || format!("\\{}", state.resolve(symbol)),
-                |name| format!("\\{name}"),
+                || print_esc_text(state, state.resolve(symbol)),
+                |name| print_esc_text(state, name),
             )
         }
     }

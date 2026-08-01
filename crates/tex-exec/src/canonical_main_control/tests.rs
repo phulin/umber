@@ -4748,6 +4748,28 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
 }
 
 #[test]
+fn illegal_case_command_spelling_uses_live_escapechar() {
+    // TeX82 §§63, 298, and 1049: `you_cant` renders the rejected command
+    // through `print_cmd_chr`; its primitive cases use `print_esc`, whose
+    // escape prefix is omitted when `\escapechar` is outside 0..255.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .modes
+        .push(Mode::InternalVertical)
+        .expect("test mode push");
+    register_source(&mut control, br"\escapechar=256\end");
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("You can't use `end' in internal vertical mode"),
+        "{terminal:?}"
+    );
+    assert!(!terminal.contains("You can't use `\\end'"), "{terminal:?}");
+}
+
+#[test]
 fn openin_closein_replace_stream_state_and_apply_filename_rules() {
     // TeX82 §§1272--1275 close an existing stream before replacement, retain
     // an explicit extension, supply `.tex` only when the extension is empty,
