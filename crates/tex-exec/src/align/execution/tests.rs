@@ -114,6 +114,10 @@ fn align_peek_selects_noalign_finish_crcr_or_row() {
         }
     );
     assert!(
+        input.alignment_state_is(1_000_000),
+        "TeX82 §785 resets align_state before expandable lookahead"
+    );
+    assert!(
         nest.list(align_level)
             .expect("alignment test precondition")
             .nodes()
@@ -149,6 +153,10 @@ fn align_peek_selects_noalign_finish_crcr_or_row() {
         )
         .expect("alignment test precondition")
         .is_none()
+    );
+    assert!(
+        closing_input.alignment_state_is(999_999),
+        "the delivered closing brace remains accounted when fin_align is selected"
     );
 }
 

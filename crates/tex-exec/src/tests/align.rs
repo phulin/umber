@@ -1983,8 +1983,12 @@ fn display_halign_closes_semisimple_group_and_discards_prior_formula() {
 
     assert_eq!(stores.count(0), 1);
     let output = support::terminal_effect_text(&stores);
-    assert!(output.contains("Missing \\endgroup inserted"));
-    assert!(output.contains("Improper \\halign inside $$'s"));
+    assert!(output.contains("! Missing \\endgroup inserted."));
+    assert!(output.contains("! Improper \\halign inside $$'s."));
+    assert!(
+        output.contains("Displays can use special alignments (like \\eqalignno)"),
+        "TeX82 §774's display-material rejection keeps its canonical help text"
+    );
 }
 
 #[test]

@@ -174,5 +174,28 @@ fn scan_u_v_templates_empty_nested_and_malformed() {
         ],
         "a second parameter token is diagnosed and ignored"
     );
-    assert!(terminal_text(&stores).contains("Only one # is allowed per tab"));
+    let output = terminal_text(&stores);
+    assert!(output.contains("! Only one # is allowed per tab."));
+    assert!(output.contains("more than one, so I'm ignoring all but the first."));
+
+    // TeX82 §783 uses `back_error` when the top-level delimiter arrives
+    // before `#`: the delimiter must remain current for §784's v-template
+    // scan, rather than being discarded with the synthetic parameter marker.
+    let (missing_stores, missing) = scan(UnexpandablePrimitive::HAlign, "{abc\\cr}");
+    assert_eq!(
+        missing_stores.tokens(missing.columns()[0].u_template),
+        &[
+            character('a', Catcode::Letter),
+            character('b', Catcode::Letter),
+            character('c', Catcode::Letter),
+        ]
+    );
+    assert_eq!(
+        missing_stores.tokens(missing.columns()[0].v_template),
+        &[missing_stores.frozen_end_template_token()],
+        "the backed-up \\cr is re-read as the v-template terminator"
+    );
+    let output = terminal_text(&missing_stores);
+    assert!(output.contains("! Missing # inserted in alignment preamble."));
+    assert!(output.contains("none, so I've put one in; maybe that will work."));
 }
