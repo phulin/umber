@@ -13,22 +13,31 @@ pub struct RestoreRecord {
     cell: CellId,
     old: u64,
     retaining: bool,
+    tracing_restores: i32,
+    tracing_online: i32,
+    escape_char: i32,
 }
 
 impl RestoreRecord {
-    const fn restoring(cell: CellId, old: u64) -> Self {
+    fn restoring(env: &Env, cell: CellId, old: u64) -> Self {
         Self {
             cell,
             old,
             retaining: false,
+            tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
+            tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
+            escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
         }
     }
 
-    const fn retaining(cell: CellId, old: u64) -> Self {
+    fn retaining(env: &Env, cell: CellId) -> Self {
         Self {
             cell,
-            old,
+            old: env.semantic_word(cell),
             retaining: true,
+            tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
+            tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
+            escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
         }
     }
 
@@ -45,6 +54,18 @@ impl RestoreRecord {
     #[must_use]
     pub const fn is_retaining(self) -> bool {
         self.retaining
+    }
+
+    pub const fn tracing_restores(self) -> i32 {
+        self.tracing_restores
+    }
+
+    pub const fn tracing_online(self) -> i32 {
+        self.tracing_online
+    }
+
+    pub const fn escape_char(self) -> i32 {
+        self.escape_char
     }
 }
 
@@ -530,9 +551,9 @@ impl Env {
             let mut meaning_changed = false;
             for index in (marker_index + 1..group_end).rev() {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
-                    restores.push(RestoreRecord::restoring(rec.cell(), rec.old()));
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
+                    restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
                     self.boxes.restore(rec.index(), rec.old());
@@ -594,11 +615,11 @@ impl Env {
                         .get(&cell_key(rec.cell()))
                         .expect("journal cell was indexed before group compaction");
                     if !state.has_later_global {
-                        restores.push(RestoreRecord::restoring(rec.cell(), rec.old()));
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
+                        restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
                     } else {
-                        restores.push(RestoreRecord::retaining(rec.cell(), rec.old()));
+                        restores.push(RestoreRecord::retaining(self, rec.cell()));
                     }
                 }
                 Entry::BoxUndo(id) => {

@@ -5626,16 +5626,22 @@ impl Universe {
         use crate::cell::BankTag;
         use crate::env::banks::IntParam;
 
-        if self.int_param(IntParam::TRACING_RESTORES) <= 0 {
-            return;
-        }
         for &record in records {
+            if record.tracing_restores() <= 0 {
+                continue;
+            }
             let cell = record.cell();
             let (name, value) = match cell.bank() {
                 BankTag::Count => (
-                    format!("\\count{}", cell.index()),
+                    format!("count{}", cell.index()),
                     (record.old() as u32 as i32).to_string(),
                 ),
+                BankTag::IntParam if cell.index() < 128 => {
+                    let Some(name) = IntParam::new(cell.index() as u16).tex82_name() else {
+                        continue;
+                    };
+                    (name.to_owned(), (record.old() as u32 as i32).to_string())
+                }
                 _ => continue,
             };
             let label = if record.is_retaining() {
@@ -5643,11 +5649,15 @@ impl Universe {
             } else {
                 "restoring"
             };
-            let mut diagnostic = self.begin_diagnostic();
+            let mut diagnostic = crate::diagnostic::Diagnostic::begin_with_tracing_online(
+                self,
+                record.tracing_online(),
+            );
+            diagnostic.print_char('{').print(label).print_char(' ');
+            if let Ok(byte) = u8::try_from(record.escape_char()) {
+                diagnostic.print_ascii(char::from(byte));
+            }
             diagnostic
-                .print_char('{')
-                .print(label)
-                .print_char(' ')
                 .print(&name)
                 .print_char('=')
                 .print(&value)

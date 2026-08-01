@@ -60,6 +60,78 @@ param_index!(GlueParam);
 param_index!(TokParam);
 
 impl IntParam {
+    /// TeX82's §236 parameter spelling used by §283's `show_eqtb`-based
+    /// restoration trace.
+    #[must_use]
+    pub fn tex82_name(self) -> Option<&'static str> {
+        const NAMES: [&str; 60] = [
+            "pretolerance",
+            "tolerance",
+            "linepenalty",
+            "hyphenpenalty",
+            "exhyphenpenalty",
+            "clubpenalty",
+            "widowpenalty",
+            "displaywidowpenalty",
+            "brokenpenalty",
+            "binoppenalty",
+            "relpenalty",
+            "predisplaypenalty",
+            "postdisplaypenalty",
+            "interlinepenalty",
+            "doublehyphendemerits",
+            "finalhyphendemerits",
+            "adjdemerits",
+            "mag",
+            "delimiterfactor",
+            "looseness",
+            "time",
+            "day",
+            "month",
+            "year",
+            "showboxbreadth",
+            "showboxdepth",
+            "hbadness",
+            "vbadness",
+            "pausing",
+            "tracingonline",
+            "tracingmacros",
+            "tracingstats",
+            "globaldefs",
+            "tracingparagraphs",
+            "tracingpages",
+            "tracingoutput",
+            "tracinglostchars",
+            "tracingcommands",
+            "tracingrestores",
+            "uchyph",
+            "escapechar",
+            "defaulthyphenchar",
+            "defaultskewchar",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "endlinechar",
+            "newlinechar",
+            "language",
+            "lefthyphenmin",
+            "righthyphenmin",
+            "holdinginserts",
+            "errorcontextlines",
+            "outputpenalty",
+            "maxdeadcycles",
+            "hangafter",
+            "floatingpenalty",
+            "fam",
+        ];
+        match NAMES.get(self.0 as usize) {
+            Some(&"") | None => None,
+            Some(&name) => Some(name),
+        }
+    }
+
     /// TeX's first-pass paragraph badness cutoff.
     pub const PRETOLERANCE: Self = Self::new(0);
 

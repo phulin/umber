@@ -240,7 +240,26 @@ fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppressi
     );
     assert_eq!(
         pending_sink_text(&stores, false),
-        "{retaining \\count1=0}\n{restoring \\count2=0}\n"
+        "{retaining \\count1=10}\n{restoring \\count2=0}\n"
+    );
+}
+
+#[test]
+fn tracingrestores_reports_retained_integer_parameter_with_live_escapechar() {
+    // TeX82 §283 calls `restore_trace` for both retained and restored eqtb
+    // words; §252's `show_eqtb` names integer parameters through `print_esc`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\escapechar=127\\global\\escapechar=256}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{retaining escapechar=256}\n"
     );
 }
 

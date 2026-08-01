@@ -34,10 +34,18 @@ pub struct Diagnostic<'a> {
 
 impl<'a> Diagnostic<'a> {
     fn begin(universe: &'a mut Universe) -> Self {
+        let tracing_online = universe.int_param(IntParam::TRACING_ONLINE);
+        Self::begin_with_tracing_online(universe, tracing_online)
+    }
+
+    pub(crate) fn begin_with_tracing_online(
+        universe: &'a mut Universe,
+        tracing_online: i32,
+    ) -> Self {
         // tex.web §245: `if (tracing_online<=0)and(selector=term_and_log) then
         // decr(selector)`, moving `term_and_log` to `log_only`.
         let mut selector = Selector::for_interaction(universe.interaction_mode());
-        if universe.int_param(IntParam::TRACING_ONLINE) <= 0 && selector == Selector::TermAndLog {
+        if tracing_online <= 0 && selector == Selector::TermAndLog {
             selector = selector.decr();
             // §245's other half: `if history=spotless then
             // history:=warning_issued`. The trace is about to become
