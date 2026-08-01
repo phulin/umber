@@ -66,6 +66,7 @@ pub enum MacroCallError {
     EndOfInput {
         macro_name: String,
         context: TracedTokenWord,
+        partial: Vec<Token>,
     },
     DoesNotMatchDefinition {
         macro_name: String,
@@ -74,10 +75,12 @@ pub enum MacroCallError {
     ParagraphEndedBeforeComplete {
         macro_name: String,
         context: TracedTokenWord,
+        partial: Vec<Token>,
     },
     ForbiddenOuterToken {
         macro_name: String,
         context: TracedTokenWord,
+        partial: Vec<Token>,
     },
 }
 
@@ -129,6 +132,26 @@ impl MacroCallError {
             | Self::ParagraphEndedBeforeComplete { context, .. }
             | Self::ForbiddenOuterToken { context, .. } => Some(context.origin()),
         }
+    }
+
+    fn with_partial(mut self, words: impl IntoIterator<Item = TracedTokenWord>) -> Self {
+        let partial = words
+            .into_iter()
+            .map(traced_semantic_token)
+            .collect::<Vec<_>>();
+        match &mut self {
+            Self::EndOfInput {
+                partial: retained, ..
+            }
+            | Self::ParagraphEndedBeforeComplete {
+                partial: retained, ..
+            }
+            | Self::ForbiddenOuterToken {
+                partial: retained, ..
+            } => *retained = partial,
+            Self::Lex(_) | Self::DoesNotMatchDefinition { .. } => {}
+        }
+        self
     }
 }
 
@@ -299,13 +322,22 @@ fn scan_delimited_argument(
     let mut level = 0_u32;
 
     loop {
-        let scanned = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
+        let scanned = next_or_pending_token(input, stores, expansion, context, &mut pending)
+            .map_err(|error| error.with_partial(argument[start..].iter().copied()))?;
         let token = traced_semantic_token(scanned.token);
         if level == 0 && token == delimiter.tokens[0] {
             let mut candidate = vec![scanned];
             let mut matched = true;
             for &expected in &delimiter.tokens[1..] {
-                let next = next_or_pending_token(input, stores, expansion, context, &mut pending)?;
+                let next = next_or_pending_token(input, stores, expansion, context, &mut pending)
+                    .map_err(|error| {
+                    error.with_partial(
+                        argument[start..]
+                            .iter()
+                            .copied()
+                            .chain(candidate.iter().map(|token| token.token)),
+                    )
+                })?;
                 candidate.push(next);
                 if traced_semantic_token(next.token) != expected {
                     matched = false;
@@ -345,7 +377,8 @@ fn scan_delimited_argument(
             continue;
         }
 
-        check_argument_par(stores, context, scanned)?;
+        check_argument_par(stores, context, scanned)
+            .map_err(|error| error.with_partial(argument[start..].iter().copied()))?;
         push_argument_token(argument, &mut level, scanned.token);
     }
 }
@@ -379,6 +412,7 @@ fn check_argument_par(
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: context.macro_name(stores),
             context: scanned.token,
+            partial: Vec::new(),
         });
     }
     Ok(())
@@ -398,6 +432,7 @@ fn next_checked_token(
         return Err(MacroCallError::ParagraphEndedBeforeComplete {
             macro_name: context.macro_name(stores),
             context: token,
+            partial: Vec::new(),
         });
     }
 
@@ -429,6 +464,7 @@ fn next_token_without_par_check(
             return Err(MacroCallError::EndOfInput {
                 macro_name: context.macro_name(stores),
                 context: recovery,
+                partial: Vec::new(),
             });
         }
     };
@@ -442,6 +478,7 @@ fn next_token_without_par_check(
             return Err(MacroCallError::ForbiddenOuterToken {
                 macro_name: context.macro_name(stores),
                 context: token,
+                partial: Vec::new(),
             });
         }
     }

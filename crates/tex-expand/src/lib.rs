@@ -406,6 +406,7 @@ pub enum RecoverableExpansionDiagnostic {
     FileEndedWhileScanningMacro {
         macro_name: String,
         context: TracedTokenWord,
+        partial: Vec<Token>,
     },
     InvalidTheTarget {
         context: TracedTokenWord,
@@ -1481,11 +1482,13 @@ impl<'a> ExpansionContext<'a> {
             ExpandError::MacroCall(args::MacroCallError::EndOfInput {
                 macro_name,
                 context,
+                partial,
             }) => {
                 self.recoverable_diagnostics.push(
                     RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
                         macro_name,
                         context,
+                        partial,
                     },
                 );
                 Ok(())

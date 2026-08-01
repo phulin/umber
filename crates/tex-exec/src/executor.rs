@@ -46,12 +46,13 @@ fn report_recoverable_expansion_diagnostics(
             }
             tex_expand::RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
                 macro_name,
+                partial,
                 ..
             } => {
                 // §338's `Tell the user what has run away`: `runaway` first,
                 // then the report. The `\par` that §338 inserts to unwind the
                 // call has already been pushed by the argument scanner.
-                report_runaway(stores, "argument", &[]);
+                report_runaway(stores, "argument", &partial);
                 report_input_error(
                     input,
                     stores,
@@ -140,8 +141,9 @@ fn report_paragraph_ended_before_complete(
     stores: &mut Universe,
     macro_name: &str,
     terminator: TracedTokenWord,
+    partial: &[tex_state::token::Token],
 ) -> Result<(), ExecError> {
-    report_runaway(stores, "argument", &[]);
+    report_runaway(stores, "argument", partial);
     back_error(
         input,
         stores,
@@ -168,8 +170,9 @@ fn report_forbidden_outer_token(
     stores: &mut Universe,
     macro_name: &str,
     outer: TracedTokenWord,
+    partial: &[tex_state::token::Token],
 ) -> Result<(), ExecError> {
-    report_runaway(stores, "argument", &[]);
+    report_runaway(stores, "argument", partial);
     back_error(
         input,
         stores,
@@ -190,10 +193,10 @@ fn report_forbidden_outer_token(
 /// §396), so the partial text sits above the message rather than inside it,
 /// and the message itself only has to name the macro.
 ///
-/// `partial` is that absorbed list. Umber's argument scanner discards the
-/// tokens it had matched when it raises the error, so the argument callers
-/// pass an empty list and print the header alone; a scanner that still holds
-/// its list should pass it.
+/// `partial` is that absorbed list. The argument scanner freezes its live
+/// delimited-argument buffer into the typed recovery value before recycling
+/// the transient allocation, so reporting never needs to reconstruct it from
+/// input context.
 fn report_runaway(stores: &mut Universe, kind: &str, partial: &[tex_state::token::Token]) {
     // §11's `error_line`, mirrored by `show_context`'s copy of the same
     // compile-time WEB constant.
@@ -2298,6 +2301,7 @@ where
                         tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
                             macro_name,
                             context,
+                            partial,
                         },
                     ) => {
                         report_paragraph_ended_before_complete(
@@ -2305,6 +2309,7 @@ where
                             stores,
                             &macro_name,
                             context,
+                            &partial,
                         )?;
                         continue;
                     }
@@ -2312,9 +2317,16 @@ where
                         tex_expand::args::MacroCallError::ForbiddenOuterToken {
                             macro_name,
                             context,
+                            partial,
                         },
                     ) => {
-                        report_forbidden_outer_token(input, stores, &macro_name, context)?;
+                        report_forbidden_outer_token(
+                            input,
+                            stores,
+                            &macro_name,
+                            context,
+                            &partial,
+                        )?;
                         continue;
                     }
                     tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
@@ -2371,18 +2383,26 @@ where
                     tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
                         macro_name,
                         context,
+                        partial,
                     },
                 )) => {
-                    report_paragraph_ended_before_complete(input, stores, &macro_name, context)?;
+                    report_paragraph_ended_before_complete(
+                        input,
+                        stores,
+                        &macro_name,
+                        context,
+                        &partial,
+                    )?;
                     continue;
                 }
                 Err(tex_expand::ExpandError::MacroCall(
                     tex_expand::args::MacroCallError::ForbiddenOuterToken {
                         macro_name,
                         context,
+                        partial,
                     },
                 )) => {
-                    report_forbidden_outer_token(input, stores, &macro_name, context)?;
+                    report_forbidden_outer_token(input, stores, &macro_name, context, &partial)?;
                     continue;
                 }
                 Err(err) => {

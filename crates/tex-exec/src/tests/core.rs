@@ -1240,7 +1240,6 @@ fn dump_marks_format_stop_and_stops_before_following_input() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.123: canonical matcher does not retain the partial argument at EOF"]
 fn incomplete_delimited_macro_at_root_eof_recovers_once_with_par() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
@@ -1263,6 +1262,40 @@ fn incomplete_delimited_macro_at_root_eof_recovers_once_with_par() {
         "{transcript}"
     );
     assert!(stores.input_summary().is_empty());
+}
+
+#[test]
+fn incomplete_delimited_macro_at_outer_token_recovers_once_with_par() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\outer\def\forbidden{}\def\runaway#1\stop{}\runaway missing\forbidden\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("TeX inserts par and aborts a macro call at a forbidden outer token");
+
+    let transcript = terminal_effect_text(&stores);
+    let heading = transcript.find("Runaway argument?").expect(&transcript);
+    let partial = transcript[heading..].find("missing").expect(&transcript) + heading;
+    let report = transcript
+        .find("Forbidden control sequence found while scanning use of \\runaway")
+        .expect(&transcript);
+    assert!(heading < partial && partial < report, "{transcript}");
+    assert_eq!(
+        transcript.matches("Runaway argument?").count(),
+        1,
+        "{transcript}"
+    );
+    assert_eq!(
+        transcript
+            .matches("Forbidden control sequence found while scanning use of \\runaway")
+            .count(),
+        1,
+        "{transcript}"
+    );
 }
 
 #[test]
