@@ -3920,6 +3920,10 @@ enum ScannedStep {
     MisplacedAlignmentDelimiter {
         token: Token,
     },
+    /// TeX82 §1129's command-specific misplaced-alignment report.
+    MisplacedAlignmentCommand {
+        omit: bool,
+    },
     /// TeX82 §342 has just run §789's
     /// ``@<Insert the ⟨v_j⟩ template and |goto restart|@>``.
     ///
@@ -7715,10 +7719,11 @@ fn scan_unclassified_primitive(
         P::Cr | P::CrCr | P::Span => scan_align_error(processor, command),
         // TeX82 §1126's `any_mode(no_align): no_align_error` and
         // `any_mode(omit): omit_error` (§1129). Both routines are a
-        // `print_err`/`help2`/`error` triple and nothing else, so ignoring the
-        // primitive is §1129's complete action; only the diagnostic is missing
-        // (umber2-johp.110).
-        P::NoAlign | P::Omit => Ok(ScannedStep::Continue),
+        // `print_err`/`help2`/`error` triple and nothing else: report the
+        // command-specific legal position, then discard the primitive.
+        P::NoAlign | P::Omit => Ok(ScannedStep::MisplacedAlignmentCommand {
+            omit: primitive == P::Omit,
+        }),
         // e-TeX 2.6 `etex.ch` [17.3822--3880] adds four nonzero modifiers to
         // TeX82's `valign` command code. In horizontal mode `eTeX_enabled`
         // first checks `TeXXeT_state>0`; only the enabled branch appends the
@@ -9328,6 +9333,7 @@ fn applied_mutation_observation(
         | ScannedStep::AlignmentPreambleOpening { .. }
         | ScannedStep::AlignmentPreambleStart { .. }
         | ScannedStep::MisplacedAlignmentDelimiter { .. }
+        | ScannedStep::MisplacedAlignmentCommand { .. }
         | ScannedStep::AlignmentCellOpening { .. }
         | ScannedStep::AlignmentCellFinish { .. }
         | ScannedStep::AlignmentFinish { .. }
@@ -12529,6 +12535,33 @@ fn apply_scanned_step(
         ScannedStep::MisplacedAlignmentDelimiter { token } => {
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context))?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MisplacedAlignmentCommand { omit } => {
+            let context = command.state.output_open_context(&stores.command_context());
+            let (name, help) = if omit {
+                (
+                    "omit",
+                    [
+                        "I expect to see \\omit only after tab marks or the \\cr of",
+                        "an alignment. Proceed, and I'll ignore this case.",
+                    ],
+                )
+            } else {
+                (
+                    "noalign",
+                    [
+                        "I expect to see \\noalign only after the \\cr of",
+                        "an alignment. Proceed, and I'll ignore this case.",
+                    ],
+                )
+            };
+            crate::diagnostics::report_misplaced_alignment_command(
+                stores,
+                name,
+                &help,
+                Some(context),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Mark { class, tokens } => {

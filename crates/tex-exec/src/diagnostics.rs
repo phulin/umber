@@ -180,6 +180,22 @@ pub(crate) fn report_misplaced_alignment_delimiter(
     Ok(())
 }
 
+/// TeX82 §1129's misplaced `\noalign` and `\omit` diagnostics.
+pub(crate) fn report_misplaced_alignment_command(
+    stores: &mut Universe,
+    name: &str,
+    help: &[&str],
+    context: Option<String>,
+) -> Result<(), ExecError> {
+    let mut report = stores.print_err("Misplaced ");
+    report.print_esc(name).help(help);
+    if let Some(context) = context {
+        report.context(context);
+    }
+    report.error().jump_out()?;
+    Ok(())
+}
+
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
     let token = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;

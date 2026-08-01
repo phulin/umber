@@ -2192,7 +2192,7 @@ fn showlists_inside_cell_reports_alignment_submode_nest() {
 
 #[test]
 fn right_brace_before_cr_uses_missing_cr_recovery() {
-    let stores = run_boxed_alignment_source("\\halign{#\\cr x}");
+    let stores = run_boxed_alignment_source("\\halign{#\\cr x}\\global\\count0=17");
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
     let cells = row_cells(&stores, rows[0]);
@@ -2200,7 +2200,17 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
     assert_eq!(rows.len(), 1);
     assert_eq!(cells.len(), 1);
     assert_eq!(cell_text(&stores, cells[0]), "x");
-    assert!(support::terminal_effect_text(&stores).contains("Missing \\cr inserted"));
+    assert_eq!(
+        stores.count(0),
+        17,
+        "brace replay must resume following input"
+    );
+    let output = support::terminal_effect_text(&stores);
+    assert_eq!(
+        output.matches("Missing \\cr inserted").count(),
+        1,
+        "the backed-up right brace must insert exactly one frozen \\cr: {output}"
+    );
 }
 
 #[test]

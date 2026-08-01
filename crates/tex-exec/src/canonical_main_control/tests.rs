@@ -1171,6 +1171,104 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
+#[test]
+fn misplaced_alignment_commands_route_exact_help_and_continue() {
+    let cases: &[(&[u8], &str, &[&str])] = &[
+        (
+            b"&",
+            "Misplaced alignment tab character &.",
+            &[
+                "I can't figure out why you would want to use a tab mark",
+                "here. If you just want an ampersand, the remedy is",
+                "simple: Just type `I\\&' now. But if some right brace",
+                "up above has ended a previous alignment prematurely,",
+                "you're probably due for more error messages, and you",
+                "might try typing `S' now just to see what is salvageable.",
+            ],
+        ),
+        (
+            br"\cr",
+            "Misplaced \\cr.",
+            &[
+                "I can't figure out why you would want to use a tab mark",
+                "or \\cr or \\span just now. If something like a right brace",
+                "up above has ended a previous alignment prematurely,",
+                "you're probably due for more error messages, and you",
+                "might try typing `S' now just to see what is salvageable.",
+            ],
+        ),
+        (br"\crcr", "Misplaced \\crcr.", &[]),
+        (br"\span", "Misplaced \\span.", &[]),
+        (
+            br"\noalign",
+            "Misplaced \\noalign.",
+            &[
+                "I expect to see \\noalign only after the \\cr of",
+                "an alignment. Proceed, and I'll ignore this case.",
+            ],
+        ),
+        (
+            br"\omit",
+            "Misplaced \\omit.",
+            &[
+                "I expect to see \\omit only after tab marks or the \\cr of",
+                "an alignment. Proceed, and I'll ignore this case.",
+            ],
+        ),
+    ];
+    let delimiter_help = cases[1].2;
+
+    for &(command, primary, help) in cases {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores
+            .world_mut()
+            .push_memory_terminal_line("h")
+            .expect("memory terminal accepts the help request");
+        stores
+            .world_mut()
+            .push_memory_terminal_line("s")
+            .expect("memory terminal accepts the continuation request");
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut source = command.to_vec();
+        source.extend_from_slice(br"\count0=17\end");
+        register_source(&mut control, &source);
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(
+            stores.count(0),
+            17,
+            "recovery did not continue for {primary}"
+        );
+        let output = terminal_text(&stores);
+        assert!(output.contains(&format!("! {primary}")), "{output}");
+        let expected_help = if help.is_empty() {
+            delimiter_help
+        } else {
+            help
+        };
+        let exact_help = expected_help.join("\n");
+        assert!(
+            output.contains(&exact_help),
+            "missing exact help for {primary}: {output}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "category-5 character delivery is not implemented: the lexer still consumes every end-line-category character as a physical line ending"]
+fn misplaced_category_five_character_routes_car_ret_help() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\catcode90=5 Z\n\\global\\count0=17\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 17);
+    assert!(terminal_text(&stores).contains("! Misplaced end of line character Z."));
+}
+
 fn pending_sink_text(stores: &Universe, terminal: bool) -> String {
     stores
         .world()
