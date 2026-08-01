@@ -1924,6 +1924,10 @@ mod tests {
             concat!(
                 "\\pdfsetrandomseed 999999999999 ",
                 "\\message{seed=\\the\\pdfrandomseed}",
+                "\\pdfsetrandomseed 1 ",
+                "\\message{positive=\\pdfuniformdeviate999999999999}",
+                "\\pdfsetrandomseed 1 ",
+                "\\message{negative=\\pdfuniformdeviate-999999999999}",
                 "\\message{missing=\\pdfuniformdeviate\\relax}\\end",
             ),
             &mut stores,
@@ -1931,8 +1935,42 @@ mod tests {
         .expect("recover random scanner diagnostics");
         assert!(output.contains("Number too big"), "{output}");
         assert!(output.contains("seed=2147483647"), "{output}");
+        assert!(output.contains("positive=1516446631"), "{output}");
+        assert!(output.contains("negative=-1516446631"), "{output}");
         assert!(output.contains("Missing number"), "{output}");
         assert!(output.contains("missing=0"), "{output}");
+    }
+
+    #[test]
+    fn pdftex_random_primitives_are_available_only_in_the_pdftex_profile() {
+        for prepare in [
+            prepare_run_stores as fn(&mut Universe),
+            prepare_etex_run_stores as fn(&mut Universe),
+        ] {
+            let mut stores = Universe::default();
+            prepare(&mut stores);
+            for name in [
+                "pdfrandomseed",
+                "pdfsetrandomseed",
+                "pdfuniformdeviate",
+                "pdfnormaldeviate",
+            ] {
+                let symbol = stores.intern(name);
+                assert_eq!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+            }
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        for name in [
+            "pdfrandomseed",
+            "pdfsetrandomseed",
+            "pdfuniformdeviate",
+            "pdfnormaldeviate",
+        ] {
+            let symbol = stores.intern(name);
+            assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
+        }
     }
 
     fn seed_pdftex_file_facts(stores: &mut Universe) {

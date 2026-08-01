@@ -619,6 +619,57 @@ fn pdftex_random_stream_matches_seeded_reference_sequence() {
 }
 
 #[test]
+fn pdftex_uniform_deviate_matches_oracle_at_extreme_bounds() {
+    // pdftex.web lines 2514-2873 and §1587 in the pinned 1.40.27 oracle.
+    let mut world = World::memory();
+    for (bound, expected) in [
+        (0, 0),
+        (1, 0),
+        (i32::MAX, 1_516_446_631),
+        (-i32::MAX, -1_516_446_631),
+    ] {
+        world.set_pdf_random_seed(1);
+        assert_eq!(world.pdf_uniform_deviate(bound), expected, "bound {bound}");
+    }
+}
+
+#[test]
+fn pdftex_uniform_deviate_matches_oracle_across_repeated_refills() {
+    // Exact pinned-pdfTeX checkpoints straddle the generator's first two
+    // 55-value refresh boundaries. Index zero is the first value consumed.
+    const ORACLE_CHECKPOINTS: &[(usize, i32)] = &[
+        (0, 1_516_446_631),
+        (1, 206_616_856),
+        (52, 1_882_092_151),
+        (53, 314_976_584),
+        (54, 585_288_992),
+        (55, 2_081_720_319),
+        (56, 932_870_584),
+        (107, 624_910_504),
+        (108, 1_263_438_591),
+        (109, 149_803_704),
+        (110, 2_035_657_095),
+        (111, 2_068_020_719),
+    ];
+
+    let sequence = |world: &mut World| {
+        world.set_pdf_random_seed(1);
+        (0..112)
+            .map(|_| world.pdf_uniform_deviate(i32::MAX))
+            .collect::<Vec<_>>()
+    };
+    let mut first_world = World::memory();
+    let mut second_world = World::memory();
+    let first = sequence(&mut first_world);
+    let second = sequence(&mut second_world);
+
+    assert_eq!(first, second, "equal seeds must reproduce every refill");
+    for &(index, expected) in ORACLE_CHECKPOINTS {
+        assert_eq!(first[index], expected, "oracle value at index {index}");
+    }
+}
+
+#[test]
 fn pdftex_utility_state_rolls_back_with_world_snapshot() {
     let mut world = World::memory();
     world.set_pdf_random_seed(1);
