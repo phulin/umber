@@ -28,7 +28,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// Members deliberately absent from `default-members`, each naming the tier
+/// Members deliberately absent from `default-members`, each naming the check
 /// that does run it. This is not permission to leave a crate untested.
 const OMITTED: &[(&str, &str)] = &[(
     "umber-wasm",
@@ -121,7 +121,7 @@ fn default_members_cover_every_host_testable_crate() {
         "these workspace members are not selected by `cargo test --tests`, and \
          no omission declares where they do run:\n{}\n\nAdd each to \
          `default-members` in Cargo.toml, or to OMITTED in this file with the \
-         tier that runs it. A member reachable by neither is one the routine \
+         check that runs it. A member reachable by neither is one the routine \
          gate silently skips.",
         unreached.join("\n")
     );
@@ -151,10 +151,10 @@ fn default_members_cover_every_host_testable_crate() {
 
 /// `[workspace] exclude` directories are not members at all, so the test above
 /// cannot see them: `cargo metadata` never reports them. Pushing a crate out
-/// of the workspace must not quietly take its tests out of every gate on the
-/// way, so each excluded directory names the tier that runs it.
+/// of the workspace must not quietly take its tests out of every check on the
+/// way, so each excluded directory names the check that runs it.
 #[test]
-fn every_excluded_workspace_directory_names_its_tier() {
+fn every_excluded_workspace_directory_names_its_check() {
     const EXCLUDED: &[(&str, &str)] = &[
         ("tools/corpus-sync", "check-tools.sh"),
         ("tools/fixturegen", "check-tools.sh"),
@@ -178,7 +178,7 @@ fn every_excluded_workspace_directory_names_its_tier() {
         "the root manifest's `[workspace] exclude` list and this test's \
          declaration disagree. Every excluded directory is its own workspace \
          with its own lockfile, unreachable from `--workspace`, so each must \
-         name the tier that runs it."
+         name the check that runs it."
     );
     for (path, _) in EXCLUDED {
         assert!(

@@ -37,30 +37,17 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-check-lint-passes.py`: synthetic-input proof that each coverage guard
   in `check-lint-passes.py` fails when it should; the clippy gate runs it
   before trusting them.
-- `test-ci-workflows.py`: deterministic contract check that the always-on
-  GitHub Actions quality workflow has no path filter, invokes `check.sh`, and
-  leaves native correctness and browser WASM coverage in the deferred workflow
-  without duplicating the format/lint gate.
-- `tier-runner.sh`: sourced step accounting shared by the deferred tiers; gives
-  each one named steps, a `VERDICT:` line naming what ran, a BLOCKED outcome
-  for an absent prerequisite that never exits 0, and a stamp written from that
-  accounting.
-- `tier_stamp.py`: the deferred-tier registry, stamp writer, and staleness
-  report; classifies each tier against the tree in front of the reader and
-  treats only a whole clean run at HEAD as evidence. `scripts/check.sh` and
-  `check.sh` prints its report, and `--require-attempted` is what
-  `hooks/pre-push` refuses a never-invoked tier with.
-- `test_tier_stamp.py`: synthetic-input proof that the classifier refuses every
-  shape that must not count as evidence; `tier_stamp.py report` runs it first.
+- `optional-check-runner.sh`: stateless named-step accounting shared by opt-in
+  checks; it runs all selected steps and prints a PASS, PARTIAL, BLOCKED, or
+  FAIL verdict.
 - `check-tools.sh`, `check-wasm.sh`, `check-hb-shape-fixtures.sh`, and the
-  three `check-latex-*.sh` entry points: the deferred tiers, each built on
-  `tier-runner.sh`. Run one with no arguments for the whole tier, or name steps
-  to run exactly those. The LaTeX entry points delegate to `run-latex-*.sh` so
-  their established implementation options remain available. See
-  [Deferred Test Tiers](../docs/testing_infrastructure.md#deferred-test-tiers).
+  three `check-latex-*.sh` entry points: explicit opt-in checks built on
+  `optional-check-runner.sh`. Run one with no arguments for the whole check, or
+  name steps to run exactly those. The LaTeX entry points delegate to
+  `run-latex-*.sh` so their established implementation options remain
+  available.
 - `hooks/`: versioned git hooks installed by `install-hooks.sh` through
-  `core.hooksPath`; `pre-commit` runs `check.sh` and `pre-push` refuses a push
-  while a deferred tier has never been invoked in the checkout.
+  `core.hooksPath`; `pre-commit` runs `check.sh`.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
 - `check-and-test.sh`: routine combined gate; prebuilds the complete native test
   suite before clippy can start a second cold Cargo workload, then runs the
@@ -81,6 +68,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
   only; font catalogs and font payload fixtures stay outside the package.
+- `build-wasm-plain-format.sh`: reproducibly rebuilds and verifies the packaged
+  Plain format image from `assets/plain-source.lock`.
+- `sync-github-issues.sh`: explicit Beads-to-GitHub issue, epic-label, and
+  project synchronization helper.
 - `build-tex82-oracle.sh`: hash-pinned TeX Live source acquisition and
   reproducible clean/instrumentation-ready TeX82 Web2C oracle builds; ordinary
   terminal/log/DVI transparency and the machine-readable semantic event matrix

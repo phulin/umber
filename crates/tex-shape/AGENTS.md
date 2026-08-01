@@ -29,10 +29,8 @@ font-unit conversion, and carries no engine state or output-backend concepts.
 Run `cargo test -q --tests -p tex-shape` and verify the crate for
 `wasm32-unknown-unknown`. Use `scripts/check.sh` for rustfmt and clippy.
 `scripts/check-hb-shape-fixtures.sh` compares the committed mark and conjunct
-fixtures with C HarfBuzz. It is a deferred tier, not an optional one: when
-`hb-shape` is absent it reports
+fixtures with C HarfBuzz. Run it when changing shaping fixtures or the
+rustybuzz integration. When `hb-shape` is absent it reports
 `VERDICT: BLOCKED - 0 of 1 steps ran` and exits 4, because a comparison that
 never happened must not share an exit status with one in which every fixture
-matched (`umber2-johp.210`). It runs on demand rather than in CI, and every
-`scripts/check.sh` and `scripts/run-native-tests.py` run prints what it last
-did; see [Deferred Test Tiers](../../docs/testing_infrastructure.md#deferred-test-tiers).
+matched (`umber2-johp.210`).

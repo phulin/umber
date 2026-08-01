@@ -11,13 +11,12 @@ cd "$repo_root"
 # a run in which the comparison never happened was byte-identical to the status
 # of a run in which every fixture matched (umber2-johp.210). That is the defect
 # this repository keeps finding: a check believed to be running that is not. A
-# missing `hb-shape` is now BLOCKED, which is never 0, and the run is stamped
-# where `scripts/check.sh` prints it.
+# missing `hb-shape` is now BLOCKED, which is never 0.
 
-# shellcheck source=scripts/tier-runner.sh
-source "$repo_root/scripts/tier-runner.sh"
+# shellcheck source=scripts/optional-check-runner.sh
+source "$repo_root/scripts/optional-check-runner.sh"
 
-TIER_ARGS="$*" tier_begin check-hb-shape-fixtures.sh hb-shape-comparison
+OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-hb-shape-fixtures.sh hb-shape-comparison
 
 fixtures="$repo_root/crates/tex-shape/tests/fixtures"
 
@@ -46,6 +45,6 @@ compare_fixtures() {
   return "$status"
 }
 
-tier_step_requiring "hb-shape mktemp diff" hb-shape-comparison compare_fixtures
+optional_check_step_requiring "hb-shape mktemp diff" hb-shape-comparison compare_fixtures
 
-tier_finish
+optional_check_finish

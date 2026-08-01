@@ -28,9 +28,8 @@ scripts/check-and-test.sh
 These commands run every workspace member whose tests can execute on the host;
 see [What The Native Test Gate Covers](#what-the-native-test-gate-covers) for
 how that set is established. What they do _not_ run -- the browser adapter, the
-opt-in host tools, and the C HarfBuzz cross-check -- is covered by three named
-tiers described in [Deferred Test Tiers](#deferred-test-tiers), and both
-commands print what each of those tiers last did.
+opt-in host tools, and the C HarfBuzz cross-check -- remains available through
+the explicit commands described in [Optional Checks](#optional-checks).
 Generated-input stabilization uses two closed source-only cases under
 `tests/corpus/stabilization`: native unit tests consume them directly, while
 the wasm-bindgen browser suite runs the same bytes and compares binary output,
@@ -124,10 +123,10 @@ member, and by making that correctness a test rather than a wrapper script.
 
 - `default_members_cover_every_host_testable_crate` reads `cargo metadata` and
   fails if any member is absent from `default-members` without an `OMITTED`
-  entry naming the tier that runs it. A stale entry -- one naming a package the
+  entry naming the check that runs it. A stale entry -- one naming a package the
   workspace no longer has, or one contradicted by `default-members` selecting
   it anyway -- fails too, so an excuse cannot outlive the thing it excused;
-- `every_excluded_workspace_directory_names_its_tier` does the same for
+- `every_excluded_workspace_directory_names_its_check` does the same for
   `[workspace] exclude` directories, which `--workspace` cannot reach at all
   because each is its own workspace with its own lockfile. Pushing a crate out
   of the workspace cannot quietly take its tests out of every gate on the way.
@@ -146,27 +145,19 @@ tree. `scripts/check-wasm.sh` runs those tests for real with
 `wasm-pack test --headless --firefox crates/umber-wasm`.
 
 The three `[workspace] exclude` directories -- `tools/corpus-sync`,
-`tools/fixturegen`, `tools/texlive-wasm-publish` -- hold 23 tests between them
-that likewise ran nowhere. They are separate workspaces with separate lockfiles
-and target directories, so they belong in the explicit tool tier rather than in
-the routine one: `scripts/check-tools.sh` runs each by manifest path, and
-`every_excluded_workspace_directory_names_its_tier` fails if a fourth appears
-without naming its gate.
+`tools/fixturegen`, `tools/texlive-wasm-publish` -- hold 23 tests between them.
+They are separate workspaces with separate lockfiles and target directories,
+so `scripts/check-tools.sh` runs each by manifest path, and
+`every_excluded_workspace_directory_names_its_check` fails if a fourth appears
+without naming its check.
 
-Each exclusion names a tier rather than a free-text command, and the tier must
-be one `scripts/tier_stamp.py` registers. That is what makes the deferral
-checkable: a registered tier stamps its runs and appears in the report below,
-so deferring to an unregistered name -- or to a typo -- fails with `COVERAGE`
-instead of reading as coverage.
+### Optional Checks
 
-### Deferred Test Tiers
+Six checks stay outside the routine gate because they require wasm-pack, a
+headless browser, ripgrep, HarfBuzz, pinned distributions, or dependency trees
+the workspace lockfile does not cover:
 
-Six tiers are deliberately outside the routine gate, because running them
-there would make the fast path depend on wasm-pack, a headless browser,
-ripgrep, HarfBuzz, and three dependency trees the workspace lockfile does not
-cover:
-
-| Tier                                 | Covers                                                                                                                            |
+| Check                                | Covers                                                                                                                            |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts/check-tools.sh`             | the three `[workspace] exclude` directories, `parity-harness` in its `reference-tools` resolution, and the opt-in clippy features |
 | `scripts/check-wasm.sh`              | `umber-wasm`'s `#[wasm_bindgen_test]` suite and the authored browser package                                                      |
@@ -175,14 +166,8 @@ cover:
 | `scripts/check-latex-wasm.sh`        | the pinned LaTeX native/WASM article parity build                                                                                 |
 | `scripts/check-latex-parity.sh`      | the pinned upstream LaTeX2e DVI parity cohort                                                                                     |
 
-Being separate was never the defect. The defect (`umber2-johp.213`) was that
-the routine gates asserted these tiers cover what they exclude while nothing
-invoked any of them and nothing recorded whether any had ever run: a green
-routine run read as a coverage statement it had no evidence for. Three things
-now hold instead.
-
-**Each tier reports what it ran.** They share `scripts/tier-runner.sh`, which
-gives every tier named steps and ends the run in a verdict line:
+They share `scripts/optional-check-runner.sh`, which gives each check named
+steps and ends the run in a verdict line:
 
 ```text
 check-tools.sh: VERDICT: PASS - 12 of 12 steps ran
@@ -191,56 +176,13 @@ check-tools.sh: VERDICT: FAIL - 12 of 12 steps ran, 1 failed: oracle-regeneratio
 check-tools.sh: VERDICT: PARTIAL - 2 of 12 steps ran; 10 not selected
 ```
 
-Every step runs even after one fails, as in `scripts/check.sh`. A step whose
-tool is absent is `BLOCKED`, never skipped, and `BLOCKED` exits 4: the exit
-contract is `0` PASS or PARTIAL, `1` FAIL, `2` a step name the tier does not
-have, `4` BLOCKED. Naming steps on the command line runs exactly those, with
-byte-identical commands, and is recorded as the partial run it is.
+Every selected step runs even after one fails, as in `scripts/check.sh`. A step
+whose tool is absent is `BLOCKED`, never skipped, and `BLOCKED` exits 4. Naming
+steps on the command line runs exactly those commands and reports a PARTIAL
+verdict. The checks are invoked explicitly when their subsystem is in scope;
+the routine gate keeps no local history of them.
 
-**Each run is recorded where the routine gates read it.** `tier_finish` writes
-a stamp under `.tier-stamps/` (gitignored) holding the commit, whether the tree
-was dirty, and the step census. `scripts/tier_stamp.py report` classifies each
-tier against the tree in front of you as `PASSED`, `PARTIAL`, `STALE`,
-`BLOCKED`, `FAILED`, or `NEVER-RUN`, and only a whole clean run at HEAD counts
-as evidence. `scripts/check.sh` prints that report -- reading a file, running
-no tier -- so a green suite can no longer be mistaken for a statement about the
-deferred tiers:
-
-```text
-TIER SUMMARY: 0 of 6 deferred tiers have passed on this tree (6 never-run)
-```
-
-`scripts/test_tier_stamp.py` drives the classifier with every shape that must
-_not_ count as evidence -- a stale commit, a dirty tree, a named-step subset, a
-blocked run -- and `tier_stamp.py report` runs it before printing anything, for
-the same reason the clippy gate self-tests `check-lint-passes.py`.
-`scripts/test-deferred-tier-entrypoints.py`, which the native gate runs before
-its own verdict, verifies that the stamped LaTeX entries are registered,
-discoverable, and report a missing prerequisite as BLOCKED.
-
-**Something invokes them.** `.github/workflows/deferred-tiers.yml` runs
-`check-wasm.sh`, `check-tools.sh`, and `check-hb-shape-fixtures.sh` on every
-pull request, on pushes to `main`, and weekly; the HarfBuzz job installs the
-`hb-shape` provider explicitly. The LaTeX tiers remain manual because they
-need the pinned live distribution and reference inputs, but their entry points
-write the same stamps and are therefore visible in ordinary verdicts. Locally,
-`scripts/hooks/pre-push` refuses to push a branch while any tier
-has never been invoked in that checkout. It refuses only `NEVER-RUN`: a tier
-that answered `BLOCKED` because a tool is absent has told you something, while
-refusing `BLOCKED` and `FAILED` too would make recording a bad outcome worse
-for the author than never running the tier at all. Install the hooks with
-`scripts/install-hooks.sh`, which prints what it installed.
-
-The repository format and lint contract is independent of those expensive
-tiers. `.github/workflows/quality.yml` runs `scripts/check.sh` without a path
-filter on every pull request and every push to `main`, so documentation, root
-Markdown, fixtures, scripts, tools, and every workspace crate reach the same
-gate. The deferred WASM job runs native correctness through
-`cargo test --tests` but does not repeat formatting or linting.
-`scripts/test-ci-workflows.py` binds those workflow responsibilities so a
-future edit cannot silently put the path-filter hole back.
-
-A tier can be BLOCKED on a normal development machine, and that is the point:
+An optional check can be BLOCKED on a normal development machine:
 on a host without ripgrep, `check-tools.sh` reports
 `VERDICT: BLOCKED - 11 of 12 steps ran, 1 could not run` and exits 4 rather
 than reporting a pass for a comparison that never happened.
@@ -570,10 +512,8 @@ rather than merely compiled. Adding a feature, or changing which member enables
 one, fails the gate until someone decides how it is covered. The features
 listed as out of scope today are the opt-in profiling, `shadow`, `dvi-tools`,
 and `reference-tools` configurations, several of which
-`scripts/check-tools.sh` lints through `umber`. That hand-off is a deferral,
-not an absence: `check.sh` ends by printing what `check-tools.sh` last did,
-so "linted by `scripts/check-tools.sh`" is a claim a reader can check against
-[Deferred Test Tiers](#deferred-test-tiers) rather than take on faith.
+`scripts/check-tools.sh` lints through `umber`. Run that explicit check when
+changing those opt-in configurations.
 
 Denial happens in the script rather than through `-D warnings`: any diagnostic
 from a workspace crate fails a pass, including one from a crate in dependency

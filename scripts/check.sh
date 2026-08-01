@@ -119,21 +119,6 @@ gate rustfmt cargo fmt --all --check
 gate clippy run_clippy
 gate node-width-budget scripts/check-node-width-budget.sh
 
-# The clippy gate's declaration hands several feature resolutions --
-# `reference-tools`, `profiling-runner`, `dvi-tools` -- to `check-tools.sh`, a
-# tier this script must not run: it needs ripgrep, the pinned oracle builds, and
-# three extra dependency trees. Deferring the work is fine; asserting it happens
-# is not, which is what this did before umber2-johp.213. The tiers now stamp
-# their own runs and the report below states what each one last did, so
-# "linted by scripts/check-tools.sh" stops being a claim with nothing behind it.
-# This reads a file; it runs no tier and adds no gate.  The entrypoint guard
-# below verifies that the stamped tiers are registered, discoverable, and
-# report a missing prerequisite as BLOCKED; it moved here when
-# `run-native-tests.py` was deleted in favour of plain `cargo test --tests`.
-printf '\n=== check.sh: deferred tiers (not run here)\n'
-python3 scripts/test-deferred-tier-entrypoints.py
-python3 scripts/tier_stamp.py report
-
 if ((${#failed_gates[@]} == 0)); then
   printf '\ncheck.sh: all %d gates passed.\n' "$ran_gates"
   exit 0

@@ -1,6 +1,6 @@
 # Docs Guidance
 
-Read the repository-level `AGENTS.md` before editing here. Documentation should describe the current fixture workflow: `cargo test --tests` exercises every host-testable workspace member against committed fixtures, its coverage bound by `crates/test-support/tests/workspace_selection.rs`, `scripts/check-tools.sh` gates opt-in host tools as one of the three deferred tiers whose runs are stamped and reported by every routine gate, and `scripts/regen-fixtures.sh` is the only supported live-reference regeneration entry point.
+Read the repository-level `AGENTS.md` before editing here. Documentation should describe the current fixture workflow: `cargo test --tests` exercises every host-testable workspace member against committed fixtures, its coverage is bound by `crates/test-support/tests/workspace_selection.rs`, expensive environment-specific checks remain explicit opt-in commands, and `scripts/regen-fixtures.sh` is the only supported live-reference regeneration entry point.
 
 When documenting tests or parity workflow, point fixture changes to `scripts/regen-fixtures.sh` modes rather than cargo-test environment variables or retired scripts.
 
@@ -9,10 +9,6 @@ than only its layout. Follow the "Writing Markdown" rules in the repository-leve
 `AGENTS.md` before adding a code span, a fenced block, or a wrapped link.
 
 `snapshot_performance.md` defines the focused snapshot latency and retained-allocation gate, including its asymptotic budgets and measurement semantics.
-
-`build_cache_policy.md` records the measured checkout-local Cargo target costs,
-parallel-dispatch capacity floor, decision to preserve incremental compilation,
-and guarded opt-in reclamation contract.
 
 `profiling.md` documents the persistent in-process Gentle profiler, its
 Samply wrapper, prerequisites, counters, measurement controls, and capture

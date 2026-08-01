@@ -63,7 +63,7 @@ command at all (`umber2-johp.211`).
 
 The fix is a test rather than a wrapper. `default_members_cover_every_host_testable_crate`
 in `test-support` reads `cargo metadata` and fails if any member is absent from
-`default-members` without a declared reason naming the tier that runs it, and
+`default-members` without a declared reason naming the check that runs it, and
 a companion test does the same for every `[workspace] exclude` directory, which
 `--workspace` cannot reach at all. The coverage invariant is therefore enforced
 inside the suite, under the command everyone already runs -- strictly better
@@ -80,21 +80,10 @@ regeneration, profiling, and triage entry points run through
 `scripts/check-tools.sh`, which also covers `parity-harness` in its
 `reference-tools` resolution.
 
-Both of those sentences were, until `umber2-johp.213`, claims nothing checked.
-Neither script was invoked by any hook or gate, `check-wasm.sh` ran in CI only
-behind a path filter, and `check-tools.sh` ran nowhere at all, so a green
-correctness tier read as a statement about coverage no run had produced. The
-tiers stay separate -- the routine tier must not acquire a dependency on
-wasm-pack, a browser, ripgrep, or three extra dependency trees -- but the claim
-is now checkable rather than asserted. See
-[Deferred Test Tiers](testing_infrastructure.md#deferred-test-tiers) for the
-mechanism, which is a rule about all three of them:
-
-**A deferred tier must end in a verdict line naming the steps that ran, must
-record that verdict where the routine gates read it, and must never report
-success for work it did not do.** A tier whose prerequisite is absent reports
-`BLOCKED`, which is not zero. `skipping, exit 0` is the defect this repository
-has now spent eleven issues on, not a way around it (`umber2-johp.210`).
+These checks stay outside the routine tier so it does not depend on wasm-pack,
+a browser, ripgrep, HarfBuzz, pinned distributions, or additional dependency
+trees. Run them explicitly when working in the subsystem they cover. Their
+shared runner reports missing prerequisites as `BLOCKED`, not success.
 
 Regenerate committed fixtures only through `scripts/regen-fixtures.sh`, the
 blessed live-reference rewrite path.
