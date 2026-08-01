@@ -264,6 +264,8 @@ pub(crate) fn test_rebox(
         layout: super::MathLayoutBuilder::new(),
         converted: Default::default(),
         source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
     };
     let list = if empty {
         ctx.layout.empty()

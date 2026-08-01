@@ -442,6 +442,10 @@ Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
 math conversion builds one span-backed `MathLayout`; `FrozenHList` values are
 handles into that arena, not recursive owned vectors. Execution lowers the
 completed layout through `MathLayoutSink` into state-owned node lists.
+The layout also carries typed `MathConversionEvent` values for missing glyphs
+and undefined selected families. Execution renders those detached events as
+TeX diagnostics; an undefined-family event marks formula recovery, so the sink
+deletes the whole converted formula instead of lowering its arena.
 
 Source boxes crossing into Appendix G retain their authoritative box geometry.
 TeX.web's `clean_box` reuses a sole unshifted hlist or vlist node, and

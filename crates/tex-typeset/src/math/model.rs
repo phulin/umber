@@ -15,6 +15,8 @@ pub struct MathLayout {
     nodes: Vec<MathNode>,
     root: FrozenHList,
     source_box_packs: Vec<MathPackObservation>,
+    conversion_events: Vec<MathConversionEvent>,
+    recovered: bool,
 }
 
 impl MathLayout {
@@ -29,6 +31,17 @@ impl MathLayout {
         let end = start + list.len as usize;
         assert!(end <= self.nodes.len(), "math layout span is not live");
         &self.nodes[start..end]
+    }
+
+    #[must_use]
+    pub fn conversion_events(&self) -> &[MathConversionEvent] {
+        &self.conversion_events
+    }
+
+    /// Whether Appendix G requested deletion of the whole formula.
+    #[must_use]
+    pub const fn recovered(&self) -> bool {
+        self.recovered
     }
 
     #[cfg(test)]
@@ -58,6 +71,8 @@ impl MathLayout {
 pub trait MathLayoutReader {
     fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
     fn source_box_pack_observations(&self) -> &[MathPackObservation];
+    fn conversion_events(&self) -> &[MathConversionEvent];
+    fn recovered(&self) -> bool;
 }
 
 impl MathLayoutReader for MathLayout {
@@ -68,6 +83,27 @@ impl MathLayoutReader for MathLayout {
     fn source_box_pack_observations(&self) -> &[MathPackObservation] {
         &self.source_box_packs
     }
+
+    fn conversion_events(&self) -> &[MathConversionEvent] {
+        &self.conversion_events
+    }
+
+    fn recovered(&self) -> bool {
+        self.recovered
+    }
+}
+
+/// Execution-visible evidence produced by pure Appendix G character fetching.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MathConversionEvent {
+    MissingCharacter {
+        font: FontId,
+        character: char,
+    },
+    UndefinedFamily {
+        size: tex_state::math::MathFontSize,
+        family: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,7 +237,17 @@ impl MathLayoutBuilder {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn finish(self, root: FrozenHList) -> MathLayout {
+        self.finish_with_conversion(root, Vec::new(), false)
+    }
+
+    pub(crate) fn finish_with_conversion(
+        self,
+        root: FrozenHList,
+        conversion_events: Vec<MathConversionEvent>,
+        recovered: bool,
+    ) -> MathLayout {
         debug_assert!(
             root.end() <= self.nodes.len(),
             "math layout root must belong to this arena"
@@ -210,6 +256,8 @@ impl MathLayoutBuilder {
             nodes: self.nodes,
             root,
             source_box_packs: self.source_box_packs,
+            conversion_events,
+            recovered,
         }
     }
 

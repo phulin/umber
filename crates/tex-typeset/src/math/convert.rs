@@ -1,15 +1,18 @@
 use ahash::{AHashMap, AHashSet};
+use std::cell::{Cell, RefCell};
 use tex_arith::x_over_n;
 use tex_fonts::CharMetrics;
+use tex_state::font::NULL_FONT;
 use tex_state::ids::{FontId, NodeListId};
 use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::{
-    BoxAxis, FrozenHList, MathBox, MathGlueKind, MathLayout, MathLayoutBuilder, MathLayoutSink,
-    MathNode, MathParams, MathTypesetState, SpacingKind, Style, StyleFamily, add, boxed_node,
-    delimiters, fractions, left_right_delimiter_target, operators, radicals, scripts, spacing,
+    BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout,
+    MathLayoutBuilder, MathLayoutSink, MathNode, MathParams, MathTypesetState, SpacingKind, Style,
+    StyleFamily, add, boxed_node, delimiters, fractions, left_right_delimiter_target, operators,
+    radicals, scripts, spacing,
 };
 
 #[cfg(test)]
@@ -71,10 +74,15 @@ fn build_math_layout(
         layout: MathLayoutBuilder::new(),
         converted: AHashMap::new(),
         source_lists: AHashMap::new(),
+        conversion_events: RefCell::new(Vec::new()),
+        recovered: Cell::new(false),
     };
     prepare_nested_mlists(&mut ctx, input, style);
     let root = convert_mlist_uncached(&mut ctx, input, style, penalties);
-    ctx.layout.finish(root)
+    let recovered = ctx.recovered.get();
+    let root = if recovered { ctx.layout.empty() } else { root };
+    ctx.layout
+        .finish_with_conversion(root, ctx.conversion_events.into_inner(), recovered)
 }
 
 pub(super) fn convert_mlist<S: MathTypesetState>(
@@ -661,7 +669,7 @@ pub(crate) fn clean_box(
     match field {
         MathField::Empty => ctx.layout.hpack(ctx.layout.empty()),
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
-            if let Some(fetched) = fetch(ctx.state, *ch, style) {
+            if let Some(fetched) = fetch(ctx, *ch, style) {
                 char_box(ctx, fetched, ch.origin)
             } else {
                 ctx.layout.hpack(ctx.layout.empty())
@@ -695,7 +703,7 @@ pub(crate) fn make_character_nucleus<S: MathTypesetState>(
     delta: &mut Scaled,
 ) -> FrozenHList {
     // AppG rule 17
-    let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
+    let Some(fetched) = fetch(ctx, ch, ctx.style) else {
         return ctx.layout.empty();
     };
     *delta = fetched.metrics.italic_correction;
@@ -749,34 +757,58 @@ pub(crate) fn char_box(
 }
 
 pub(crate) fn fetch(
-    state: &impl MathTypesetState,
+    ctx: &Context<'_, impl MathTypesetState>,
     ch: MathChar,
     style: Style,
 ) -> Option<FetchedChar> {
     // AppG rule 17
-    let font = state.math_family_font(style.size(), ch.family);
-    match state.math_metrics_source(font) {
-        tex_fonts::MathMetricsSource::OpenType(math) => {
-            let glyph = math.glyph(ch.character, style.script_level())?;
-            Some(FetchedChar {
+    if ctx.recovered.get() {
+        return None;
+    }
+    let font = ctx.state.math_family_font(style.size(), ch.family);
+    if font == NULL_FONT {
+        ctx.conversion_events
+            .borrow_mut()
+            .push(MathConversionEvent::UndefinedFamily {
+                size: style.size(),
+                family: ch.family,
+            });
+        ctx.recovered.set(true);
+        return None;
+    }
+    let fetched = match ctx.state.math_metrics_source(font) {
+        tex_fonts::MathMetricsSource::OpenType(math) => math
+            .glyph(ch.character, style.script_level())
+            .map(|glyph| FetchedChar {
                 font,
                 ch: ch.character,
                 metrics: glyph.metrics,
                 glyph_id: Some(glyph.glyph_id),
                 top_accent_attachment: glyph.top_accent_attachment,
-            })
-        }
+            }),
         tex_fonts::MathMetricsSource::ClassicTfmExact => {
-            let code = u8::try_from(u32::from(ch.character)).ok()?;
-            Some(FetchedChar {
-                font,
-                ch: ch.character,
-                metrics: state.classic_math_char_metrics(font, code)?,
-                glyph_id: None,
-                top_accent_attachment: None,
+            u8::try_from(u32::from(ch.character)).ok().and_then(|code| {
+                ctx.state
+                    .classic_math_char_metrics(font, code)
+                    .map(|metrics| FetchedChar {
+                        font,
+                        ch: ch.character,
+                        metrics,
+                        glyph_id: None,
+                        top_accent_attachment: None,
+                    })
             })
         }
+    };
+    if fetched.is_none() {
+        ctx.conversion_events
+            .borrow_mut()
+            .push(MathConversionEvent::MissingCharacter {
+                font,
+                character: ch.character,
+            });
     }
+    fetched
 }
 
 pub(crate) fn source_list(
@@ -961,6 +993,8 @@ pub(crate) struct Context<'a, S> {
     pub(crate) layout: MathLayoutBuilder,
     pub(crate) converted: AHashMap<(NodeListId, Style), FrozenHList>,
     pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
+    pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,
+    pub(crate) recovered: Cell<bool>,
 }
 
 impl<S> Context<'_, S> {

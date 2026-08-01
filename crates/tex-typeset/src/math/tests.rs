@@ -1655,6 +1655,8 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         layout: MathLayoutBuilder::new(),
         converted: Default::default(),
         source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
     };
 
     let empty = clean_box(&mut ctx, &MathField::Empty, Style::TEXT);
@@ -1685,6 +1687,8 @@ fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
         layout: MathLayoutBuilder::new(),
         converted: Default::default(),
         source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
     };
     let clean = clean_box(&mut ctx, &MathField::SubBox(boxed), Style::TEXT);
     assert_eq!(

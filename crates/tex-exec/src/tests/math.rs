@@ -1353,9 +1353,8 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
 /// surrounding formula. See umber2-e51h.63.7 for the missing conversion-event
 /// boundary needed to make the warning observable outside `tex-typeset`.
 #[test]
-#[ignore = "umber2-e51h.63.7: math conversion cannot yet emit char_warning"]
 fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
-    let (mut stores, executor) = run_math_source("$a\\mathchar\"007f b");
+    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"007f b");
     let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
@@ -1368,8 +1367,10 @@ fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
         })
         .collect();
     assert_eq!(characters, ['a', 'b']);
+    let terminal = terminal_effect_text(&stores);
     assert!(
-        terminal_effect_text(&stores).contains("Missing character: There is no ^^? in font cmr10!")
+        terminal.contains("Missing character: There is no ^^? in font cmr10!"),
+        "terminal output was {terminal:?}"
     );
 }
 
@@ -1377,9 +1378,8 @@ fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
 /// reports the canonical error and deletes the formula instead of treating
 /// the requested glyph as an ordinary missing character.
 #[test]
-#[ignore = "umber2-e51h.63.7: undefined math families do not yet abort conversion"]
 fn undefined_math_family_reports_error_and_recovers() {
-    let (mut stores, executor) = run_math_source("$a\\mathchar\"0f61 b");
+    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"0f61 b");
     let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
@@ -1609,6 +1609,38 @@ fn run_math_source(source: &str) -> (Universe, Executor) {
     stores.set_int_param(IntParam::SHOW_BOX_BREADTH, 100);
     stores.set_int_param(IntParam::SHOW_BOX_DEPTH, 100);
     let mut input = InputStack::new(MemoryInput::new(source));
+    let mut executor = Executor::new();
+    executor
+        .run(&mut input, &mut stores)
+        .expect("math source executes");
+    (stores, executor)
+}
+
+fn run_math_source_with_text_math_fonts(source: &str) -> (Universe, Executor) {
+    let mut stores = stores_with_fonts();
+    let metrics = stores
+        .world_mut()
+        .read_file("cmr10.tfm")
+        .expect("seeded math font is readable");
+    // Make slot 127 absent while retaining the canonical font name used by
+    // the warning contract; the committed cmr10 fixture defines that slot.
+    let mut sparse_metrics = metrics.bytes().to_vec();
+    let header_words = usize::from(u16::from_be_bytes([sparse_metrics[2], sparse_metrics[3]]));
+    let first_character = usize::from(u16::from_be_bytes([sparse_metrics[4], sparse_metrics[5]]));
+    let char_info = 24 + header_words * 4 + (0x7f - first_character) * 4;
+    sparse_metrics[char_info] = 0;
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", sparse_metrics)
+        .expect("install sparse metrics under the asserted diagnostic name");
+    tex_expand::install_expandable_primitives(&mut stores);
+    let source = format!(
+        r"\font\rm=cmr10
+          \tracinglostchars=1
+          \textfont0=\rm \scriptfont0=\rm \scriptscriptfont0=\rm
+          \textfont1=\rm \scriptfont1=\rm \scriptscriptfont1=\rm {source}"
+    );
+    let mut input = InputStack::new(MemoryInput::new(&source));
     let mut executor = Executor::new();
     executor
         .run(&mut input, &mut stores)

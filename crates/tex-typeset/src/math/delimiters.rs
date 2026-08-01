@@ -191,6 +191,8 @@ pub(crate) fn test_var_delimiter(
         layout: super::MathLayoutBuilder::new(),
         converted: Default::default(),
         source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
     };
     let boxed = var_delimiter(&mut ctx, delimiter, size, target);
     let layout = ctx.layout.finish(boxed.list);

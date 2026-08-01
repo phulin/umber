@@ -149,7 +149,7 @@ pub(super) fn make_math_accent(
     accent: MathChar,
 ) -> AccentResult {
     // AppG rule 12
-    let Some(fetched) = fetch(ctx.state, accent, ctx.style) else {
+    let Some(fetched) = fetch(ctx, accent, ctx.style) else {
         return AccentResult {
             hlist: ctx.layout.empty(),
             scripts_handled: false,
@@ -163,7 +163,7 @@ pub(super) fn make_math_accent(
     let skew = accent_skew(ctx, &noad.nucleus);
     let base_attachment = match &noad.nucleus {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
-            fetch(ctx.state, *ch, ctx.style).and_then(|glyph| glyph.top_accent_attachment)
+            fetch(ctx, *ch, ctx.style).and_then(|glyph| glyph.top_accent_attachment)
         }
         _ => None,
     };
@@ -299,7 +299,7 @@ fn accent_skew(ctx: &Context<'_, impl MathTypesetState>, nucleus: &MathField) ->
     let MathField::MathChar(ch) = nucleus else {
         return Scaled::from_raw(0);
     };
-    let Some(fetched) = fetch(ctx.state, *ch, ctx.style) else {
+    let Some(fetched) = fetch(ctx, *ch, ctx.style) else {
         return Scaled::from_raw(0);
     };
     let Ok(left) = u8::try_from(u32::from(fetched.ch)) else {

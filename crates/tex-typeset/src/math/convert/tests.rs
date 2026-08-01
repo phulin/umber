@@ -13,6 +13,8 @@ fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Con
         layout: MathLayoutBuilder::new(),
         converted: Default::default(),
         source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
     }
 }
 

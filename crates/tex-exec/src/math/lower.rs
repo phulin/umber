@@ -11,8 +11,8 @@ use tex_state::{GeometryObservation, Universe};
 use tex_typeset::TypesetState;
 use tex_typeset::math::MathLayoutReader;
 use tex_typeset::math::{
-    FrozenHList, MathBox, MathGlueKind, MathLayoutSink, MathNode, MathParamState, MathParams,
-    MathTypesetState, Style, mlist_to_hlist_with_sink,
+    FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayoutSink, MathNode,
+    MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist_with_sink,
 };
 
 pub(crate) fn finish_math_list_node(
@@ -282,6 +282,38 @@ impl MathParamState for LoweredMathSink<'_> {
 
 impl MathLayoutSink for LoweredMathSink<'_> {
     fn finish_math_hlist(&mut self, list: FrozenHList, layout: &dyn MathLayoutReader) {
+        for event in layout.conversion_events() {
+            match *event {
+                MathConversionEvent::MissingCharacter { font, character } => {
+                    if self.stores.int_param(IntParam::TRACING_LOST_CHARS) > 0 {
+                        let font_name = self.stores.font_name(font).to_owned();
+                        let mut diagnostic = self.stores.begin_diagnostic();
+                        diagnostic
+                            .print_nl("Missing character: There is no ")
+                            .print(&character.to_string())
+                            .print(" in font ")
+                            .print(&font_name)
+                            .print_char('!');
+                        diagnostic.end(false);
+                    }
+                }
+                MathConversionEvent::UndefinedFamily { .. } => {
+                    let mut report = self
+                        .stores
+                        .print_err("Math formula deleted: Insufficient symbol fonts");
+                    report.help(&[
+                        "Somewhere in the math formula just ended, you used the",
+                        "stated character from an undefined font family. For example,",
+                        "plain TeX doesn't allow \\it or \\sl in subscripts.",
+                    ]);
+                    let _ = report.error();
+                }
+            }
+        }
+        if layout.recovered() {
+            self.root_nodes.clear();
+            return;
+        }
         for packed in layout.source_box_pack_observations() {
             self.stores
                 .record_geometry_observation(GeometryObservation::Hpack {

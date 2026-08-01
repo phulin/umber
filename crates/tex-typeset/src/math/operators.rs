@@ -68,7 +68,7 @@ pub(super) fn make_ord(
             Err(_) => return,
         };
         set_current_nucleus(nodes, index, MathField::MathTextChar(current));
-        let Some(fetched) = fetch(ctx.state, current, ctx.style) else {
+        let Some(fetched) = fetch(ctx, current, ctx.style) else {
             return;
         };
         let Some(command) = ctx.state.lig_kern_command(
@@ -112,7 +112,7 @@ fn operator_nucleus(
     let mut field = noad.nucleus.clone();
     if let MathField::MathChar(mut ch) = field
         && ctx.style.is_display()
-        && let Some(fetched) = fetch(ctx.state, ch, ctx.style)
+        && let Some(fetched) = fetch(ctx, ch, ctx.style)
         && let Ok(code) = u8::try_from(u32::from(fetched.ch))
         && let Some(next) = ctx.state.font_next_larger(fetched.font, code)
         && ctx
@@ -126,7 +126,7 @@ fn operator_nucleus(
 
     match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
-            let Some(fetched) = fetch(ctx.state, ch, ctx.style) else {
+            let Some(fetched) = fetch(ctx, ch, ctx.style) else {
                 return ctx.layout.hpack(ctx.layout.empty());
             };
             let (mut boxed, selected_delta) = if ctx.style.is_display()

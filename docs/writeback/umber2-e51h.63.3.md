@@ -10,12 +10,11 @@ transitions, script-style `\nonscript` suppression, and rule 21's bin/rel
 penalties. The existing exhaustive inter-noad spacing table remains covered by
 `tex82_second_pass_spacing_delimiter_penalty_matrix`.
 
-TeX82 §§722--724 and §755 require two execution-visible outcomes that the
-current pure `tex-typeset` conversion boundary cannot report: canonical
+TeX82 §§722--724 and §755 require two execution-visible outcomes: canonical
 `char_warning` while omitting only a missing character, and an error that
-deletes a formula when its selected math family is undefined. The exact tests
+deletes a formula when its selected math family is undefined. Issue
+`umber2-e51h.63.7` added typed conversion events and a formula-recovery marker
+to the pure `MathLayout` boundary. `MathLayoutSink` consumers render those
+events without coupling the kernel to the execution printer. The tests
 `missing_math_character_reports_canonical_warning_and_omits_only_character`
-and `undefined_math_family_reports_error_and_recovers` are retained as ignored
-specifications. Issue `umber2-e51h.63.7` tracks a typed conversion-event and
-recovery boundary that can enable them without coupling the pure kernel to the
-execution printer.
+and `undefined_math_family_reports_error_and_recovers` now run normally.
