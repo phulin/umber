@@ -31,7 +31,6 @@
         "scanner-status:normal>defining",
         "input:push:terminal",
         "input:retire:terminal",
-        "input:stop:terminal",
         "scanner-status:defining>normal",
         "input:push:macro",
         "macro:activate:readvalue:0:",
@@ -42,7 +41,7 @@
         "input:stop:terminal"
       ],
       "channels": {
-        "events": 45,
+        "events": 44,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -1568,25 +1568,6 @@ impl CommandProcessor<'_> {
                 level: identity.0,
                 position: 0,
             }));
-            // TeX82 §360 returns a distinct raw zero command after §483's
-            // `end_file_reading` has retired a `\read` pseudo-file.  Preserve
-            // both transitions: the retirement describes the stack mutation,
-            // while this stop describes the caller-visible end of that one
-            // acquired line.  In particular, it is not the bottom-level
-            // terminal stop that ends a session.
-            if matches!(action, InputRetirementAction::ReadLineEnded) {
-                self.observe(CommandObservation::Input(InputRecord {
-                    transition: InputTransition::Stop,
-                    reason: InputReason::Source,
-                    // The pseudo-file has already crossed §483's
-                    // `end_file_reading`, so §360's returned zero command is
-                    // observed at TeX's restored terminal input boundary,
-                    // independent of which stream supplied the retired line.
-                    source_name: Some(SourceNameClass::Terminal),
-                    level: identity.0,
-                    position: 0,
-                }));
-            }
         }
         // The pinned observer names a retiring alignment template from the
         // token list the level holds, exactly as tex.web's `end_token_list`

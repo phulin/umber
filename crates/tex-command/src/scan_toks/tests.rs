@@ -2689,11 +2689,8 @@ fn read_and_readline_retire_with_the_open_stream_name() {
         .collect::<Vec<_>>();
     assert_eq!(
         stops,
-        [
-            crate::SourceNameClass::Terminal,
-            crate::SourceNameClass::Terminal,
-        ],
-        "§360's raw zero commands follow §483 retirement at the restored terminal boundary"
+        [],
+        "§360's zero command is not a terminal input-stack stop"
     );
     assert!(fuel.burned() <= 64);
     assert!(!universe.command_context().read_stream_at_eof(slot));
@@ -2767,19 +2764,15 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
                 )
             })
             .expect("§483 ends the terminal source level");
-        let stop = recorder
-            .0
-            .iter()
-            .rposition(|event| {
-                matches!(
-                    event,
-                    CommandObservation::Input(record)
-                        if record.transition == InputTransition::Stop
-                            && record.reason == crate::InputReason::Source
-                            && record.source_name == Some(crate::SourceNameClass::Terminal)
-                )
-            })
-            .expect("§360 returns a raw zero command after the terminal read line");
+        assert!(
+            !recorder.0.iter().any(|event| matches!(
+                event,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Stop
+                        && record.reason == crate::InputReason::Source
+            )),
+            "§360's zero command is a delivery result, not an input-stack stop"
+        );
         let normal = recorder
             .0
             .iter()
@@ -2792,8 +2785,8 @@ fn read_toks_reads_the_terminal_for_a_closed_or_out_of_range_stream() {
             })
             .expect("§482 restores normal status");
         assert!(
-            defining < push && push < retire && retire < stop && stop < normal,
-            "§§482-484 retire and stop the terminal level inside defining status"
+            defining < push && push < retire && retire < normal,
+            "§§482-484 retire the read pseudo-file before restoring scanner status"
         );
     }
 }

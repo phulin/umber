@@ -29,7 +29,7 @@
         "mutation:meaning:relax:macro definition:global"
       ],
       "channels": {
-        "events": 42,
+        "events": 41,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

@@ -29,7 +29,7 @@
         "mutation:register:-:count:0=1:local"
       ],
       "channels": {
-        "events": 53,
+        "events": 52,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },
