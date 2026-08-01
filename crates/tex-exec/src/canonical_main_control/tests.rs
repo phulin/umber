@@ -2062,7 +2062,6 @@ fn pdfsavepos_remains_available_in_dvi_mode() {
 }
 
 #[test]
-#[ignore = "umber2-ly87: canonical recovery does not yet append the stack-zero fallback action"]
 fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
     // pdftex.web §1563: invalid stack numbers fall back to stack zero, a
     // missing action is ignored after the four-action help, and subsequent
@@ -2080,6 +2079,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
         ),
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         let mut control = pdftex_graphics_control(&mut stores);
         register_source(&mut control, source);
@@ -2095,12 +2095,17 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
     }
 
     let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Scroll);
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let mut control = pdftex_graphics_control(&mut stores);
     register_source(&mut control, br"\pdfcolorstack0\pdfsave");
     let _ = control
         .step(&mut stores)
         .expect("missing action is recoverable");
+    assert!(control.modes.current_list().nodes().is_empty());
+    let _ = control
+        .step(&mut stores)
+        .expect("following command remains available");
     assert!(matches!(
         control.modes.current_list().nodes(),
         [Node::Whatsit(Whatsit::PdfSave)]
@@ -2109,6 +2114,7 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
     assert!(terminal.contains("Color stack action is missing"));
     assert!(terminal.contains("set, push, pop, current"));
     assert!(terminal.contains("I'll ignore the color stack command."));
+    assert!(terminal.contains("Proceed, with fingers crossed."));
 }
 
 fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {

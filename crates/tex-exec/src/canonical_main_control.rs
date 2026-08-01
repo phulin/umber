@@ -8672,6 +8672,7 @@ fn apply_pdf_graphics_request(
                         "The expected actions for \\pdfcolorstack:",
                         "    set, push, pop, current",
                         "I'll ignore the color stack command.",
+                        "Proceed, with fingers crossed.",
                     ],
                     context,
                 )?;

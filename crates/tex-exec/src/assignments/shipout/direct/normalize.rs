@@ -419,17 +419,14 @@ fn append_whatsit_effect(
                     page_start: false,
                 }),
                 Err(tex_state::PdfColorStackApplyError::Underflow) => {
+                    let target = match color_target {
+                        tex_state::PdfColorStackTarget::Page => "page",
+                        tex_state::PdfColorStackTarget::Form => "form",
+                    };
                     stores.world_mut().write_text(
                         tex_state::PrintSink::TerminalAndLog,
-                        &format!("pop empty color page stack {id}\n"),
+                        &format!("pop empty color {target} stack {id}\n"),
                     );
-                    // Preserve the artifact anchor correspondence without writing
-                    // any content-stream bytes for the failed pop.
-                    effects.push(PageEffect::PdfColorStack {
-                        mode: tex_out::PdfLiteralMode::Direct,
-                        payload: Vec::new(),
-                        page_start: false,
-                    });
                 }
                 Err(tex_state::PdfColorStackApplyError::Unknown) => {
                     unreachable!("validated color stack id")
