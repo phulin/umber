@@ -113,8 +113,7 @@ pub(super) fn execute_setbox(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<u16, ExecError> {
-    let index = scan_register_index(input, stores, execution, context)?;
-    skip_optional_equals_x(input, stores, execution)?;
+    let index = scan_setbox_target(input, stores, execution, context)?;
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let (nest, stores) = transaction.parts();
     let mut construction = stores.begin_box_build();
@@ -132,6 +131,19 @@ pub(super) fn execute_setbox(
     };
     construction.finish(index, value, global);
     transaction.commit();
+    Ok(index)
+}
+
+/// Scans the portion of TeX82 §1241's `\setbox` assignment that is owned
+/// even when box construction is forbidden: the register and optional equals.
+pub(crate) fn scan_setbox_target(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+    context: TracedTokenWord,
+) -> Result<u16, ExecError> {
+    let index = scan_register_index(input, stores, execution, context)?;
+    skip_optional_equals_x(input, stores, execution)?;
     Ok(index)
 }
 

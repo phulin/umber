@@ -162,6 +162,30 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
     );
 }
 
+#[test]
+fn forbidden_setbox_scans_target_but_leaves_box_command_and_body_owned_by_input() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\setbox17 = \\hbox{owned}"));
+    let mut execution = crate::ExecutionContext::new("texput");
+
+    finish_display_alignment_assignments(&mut input, &mut stores, &mut execution)
+        .expect("forbidden setbox rejection is recoverable");
+
+    assert!(terminal_text(&stores).contains("Improper \\setbox"));
+    let next = input
+        .next_traced_token(&mut stores)
+        .expect("remaining input reads")
+        .expect("box command remains input");
+    assert_eq!(
+        stores.meaning(match tex_expand::semantic_token(next) {
+            Token::Cs(symbol) => symbol,
+            token => panic!("expected box command, got {token:?}"),
+        }),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox)
+    );
+}
+
 fn horizontal_nest(mode: Mode) -> ModeNest {
     let mut nest = ModeNest::new();
     nest.push(mode).expect("test mode push");

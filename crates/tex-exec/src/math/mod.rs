@@ -1105,6 +1105,10 @@ fn finish_display_alignment_assignments(
             meaning,
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox)
         ) {
+            // §1241 scans the register and optional equals before consulting
+            // `set_box_allowed`; only the box command and its body remain input.
+            let context = *command.last().expect("setbox command token");
+            let _ = assignments::scan_setbox_target(input, stores, execution, context)?;
             // §1241's `set_box` guard on `set_box_allowed`.
             crate::error_report::report_input_error(
                 input,
@@ -1115,19 +1119,6 @@ fn finish_display_alignment_assignments(
                     "or between \\accent and an accented character.",
                 ],
             )?;
-            if let Some(next) = get_x_token_with_context(
-                input,
-                &mut tex_state::ExpansionContext::new(stores),
-                execution,
-            )? && !matches!(
-                tex_expand::semantic_token(next),
-                Token::Char {
-                    ch: '=',
-                    cat: Catcode::Other,
-                }
-            ) {
-                push_traced_tokens(input, stores, [next]);
-            }
             return Ok(());
         }
 

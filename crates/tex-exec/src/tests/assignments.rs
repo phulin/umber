@@ -665,6 +665,39 @@ fn arithmetic_overflow_reports_tex_error_text() {
 }
 
 #[test]
+fn arithmetic_failures_preserve_every_target_after_consuming_the_operand() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\count0=1073741824 \\multiply\\count0 by 2 ",
+        "\\dimen0=16383pt \\multiply\\dimen0 by 2 ",
+        "\\skip0=1pt plus 2fil minus 3pt \\divide\\skip0 by 0 ",
+        "\\count1=41 \\divide\\count1 by 0 ",
+        "\\count2=9",
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("arithmetic failures are recoverable");
+
+    assert_eq!(stores.count(0), 1_073_741_824);
+    assert_eq!(stores.dimen(0).raw(), 16_383 * Scaled::UNITY);
+    let skip = stores.glue(stores.skip(0));
+    assert_eq!(skip.width.raw(), Scaled::UNITY);
+    assert_eq!(skip.stretch.raw(), 2 * Scaled::UNITY);
+    assert_eq!(skip.stretch_order, tex_state::glue::Order::Fil);
+    assert_eq!(skip.shrink.raw(), 3 * Scaled::UNITY);
+    assert_eq!(stores.count(1), 41);
+    assert_eq!(stores.count(2), 9, "all failed operands must be consumed");
+    assert_eq!(
+        terminal_effect_text(&stores)
+            .matches("Arithmetic overflow")
+            .count(),
+        4
+    );
+}
+
+#[test]
 fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
     let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
