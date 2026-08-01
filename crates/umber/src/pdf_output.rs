@@ -31,6 +31,23 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{Read, Write};
 
 pub(crate) const DEFAULT_PDF_PK_RESOLUTION: i32 = 600;
+const PDF_FORM_MAX_DEPTH: usize = 256;
+const PDF_FORM_MAX_WORK: usize = 1_000_000;
+
+#[derive(Clone, Copy)]
+struct PdfFormTraversalLimits {
+    max_depth: usize,
+    max_work: usize,
+}
+
+impl Default for PdfFormTraversalLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: PDF_FORM_MAX_DEPTH,
+            max_work: PDF_FORM_MAX_WORK,
+        }
+    }
+}
 
 pub(crate) fn is_pdf_sfnt_program(name: &[u8]) -> bool {
     name.rsplit(|byte| *byte == b'.')
@@ -182,6 +199,12 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         .into_iter()
         .zip(positioned_forms)
         .collect::<BTreeMap<_, _>>();
+    validate_form_graph(
+        stores,
+        &positioned_pages,
+        &positioned_forms,
+        PdfFormTraversalLimits::default(),
+    )?;
     let font_usage_started = std::time::Instant::now();
     let font_usage = collect_font_usage(
         stores,
@@ -1310,6 +1333,91 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
         );
     }
     Ok(bytes)
+}
+
+fn validate_form_graph(
+    stores: &Universe,
+    pages: &[PositionedPage],
+    forms: &BTreeMap<u32, PositionedPage>,
+    limits: PdfFormTraversalLimits,
+) -> Result<(), PdfBuildError> {
+    fn references(page: &PositionedPage) -> impl Iterator<Item = u32> + '_ {
+        page.events.iter().filter_map(|event| match event {
+            PositionedEvent::PdfGraphics(graphics) => match graphics.effect {
+                tex_out::PageEffect::PdfRefXForm { object, .. } => Some(object),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    struct Traversal<'a> {
+        stores: &'a Universe,
+        forms: &'a BTreeMap<u32, PositionedPage>,
+        limits: PdfFormTraversalLimits,
+        work: usize,
+        active: BTreeSet<u32>,
+        complete: BTreeSet<u32>,
+    }
+
+    impl Traversal<'_> {
+        fn visit(&mut self, object: u32, depth: usize) -> Result<(), PdfBuildError> {
+            self.work =
+                self.work
+                    .checked_add(1)
+                    .ok_or(PdfBuildError::FormTraversalWorkExceeded(
+                        self.limits.max_work,
+                    ))?;
+            if self.work > self.limits.max_work {
+                return Err(PdfBuildError::FormTraversalWorkExceeded(
+                    self.limits.max_work,
+                ));
+            }
+            if depth > self.limits.max_depth {
+                return Err(PdfBuildError::FormTraversalDepthExceeded(
+                    self.limits.max_depth,
+                ));
+            }
+            if self.active.contains(&object) {
+                return Err(PdfBuildError::FormCycle(object));
+            }
+            if self.complete.contains(&object) {
+                return Ok(());
+            }
+            self.stores
+                .pdf_form(object)
+                .ok_or(PdfBuildError::ReferencedFormNotFound(object))?;
+            let page = self
+                .forms
+                .get(&object)
+                .ok_or(PdfBuildError::MissingFormArtifact(object))?;
+            let nested = references(page).collect::<Vec<_>>();
+            self.active.insert(object);
+            for nested in nested {
+                if nested == object {
+                    return Err(PdfBuildError::RecursiveForm(object));
+                }
+                self.visit(nested, depth + 1)?;
+            }
+            self.active.remove(&object);
+            self.complete.insert(object);
+            Ok(())
+        }
+    }
+
+    let roots = pages.iter().flat_map(references).collect::<BTreeSet<_>>();
+    let mut traversal = Traversal {
+        stores,
+        forms,
+        limits,
+        work: 0,
+        active: BTreeSet::new(),
+        complete: BTreeSet::new(),
+    };
+    for object in roots {
+        traversal.visit(object, 1)?;
+    }
+    Ok(())
 }
 
 fn collect_font_usage(
@@ -4331,6 +4439,9 @@ pub enum PdfBuildError {
     ReferencedFormNotFound(u32),
     MissingFormArtifact(u32),
     RecursiveForm(u32),
+    FormCycle(u32),
+    FormTraversalDepthExceeded(usize),
+    FormTraversalWorkExceeded(usize),
     InvalidRawObjectFileName(u32),
     TextRequiresFontResources,
     MissingPositionedFont(u32),
@@ -4461,6 +4572,13 @@ impl std::fmt::Display for PdfBuildError {
                 write!(f, "PDF form {id} was referenced before traversal")
             }
             Self::RecursiveForm(id) => write!(f, "PDF form {id} recursively references itself"),
+            Self::FormCycle(id) => write!(f, "PDF form cycle detected at object {id}"),
+            Self::FormTraversalDepthExceeded(limit) => {
+                write!(f, "PDF form traversal exceeds depth {limit}")
+            }
+            Self::FormTraversalWorkExceeded(limit) => {
+                write!(f, "PDF form traversal exceeds {limit} references")
+            }
             Self::InvalidRawObjectFileName(id) => {
                 write!(f, "PDF stream object {id} has a non-UTF-8 file name")
             }
@@ -7631,6 +7749,138 @@ mod tests {
                 .windows(2)
                 .any(|window| window == b"re")
         );
+    }
+
+    fn retarget_form_reference(stores: &mut Universe, form: u32, target: u32) {
+        let artifact = stores
+            .pdf_form_artifact(form)
+            .expect("form artifact exists");
+        let page = tex_out::PageArtifact::from_bytes(artifact.bytes()).expect("form parses");
+        let effects = page
+            .effects
+            .iter()
+            .cloned()
+            .map(|effect| match effect {
+                tex_out::PageEffect::PdfRefXForm {
+                    width,
+                    height,
+                    depth,
+                    ..
+                } => tex_out::PageEffect::PdfRefXForm {
+                    object: target,
+                    width,
+                    height,
+                    depth,
+                },
+                effect => effect,
+            })
+            .collect();
+        let replacement = tex_out::PageArtifactBuilder::new(tex_out::UnvalidatedPageArtifact {
+            job: page.job.clone(),
+            fonts: page.fonts.clone(),
+            counts: page.counts,
+            root: page.root.clone(),
+            effects,
+            math_events: page.math_events.clone(),
+        })
+        .build()
+        .expect("retargeted form remains structurally valid")
+        .to_bytes()
+        .expect("retargeted form serializes");
+        stores.set_pdf_form_artifact(
+            form,
+            tex_state::PdfFormArtifact::new(
+                replacement,
+                artifact.last_position(),
+                artifact.snap_reference(),
+            ),
+        );
+    }
+
+    #[test]
+    fn indirect_form_cycle_is_exact_retry_stable_and_does_not_replace_artifacts() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0",
+            "\\setbox0=\\hbox{\\vrule width1pt height1pt}\\pdfxform0",
+            "\\setbox0=\\hbox{\\pdfrefxform1}\\pdfxform0",
+            "\\setbox0=\\hbox{\\pdfrefxform3}\\pdfxform0",
+            "\\shipout\\hbox{\\pdfrefxform5}\\end",
+        ));
+        retarget_form_reference(&mut stores, 3, 5);
+        let commits_before = stores.world().artifact_commits().to_vec();
+        let page_before = run.committed_artifacts[0].bytes().to_vec();
+        let next_before = stores.pdf_next_object_id();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("5 -> 3 -> 5 must be rejected");
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("retry must reject at the same graph identity");
+
+        assert!(matches!(first, PdfBuildError::FormCycle(5)));
+        assert_eq!(first.to_string(), "PDF form cycle detected at object 5");
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(stores.pdf_next_object_id(), next_before);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+        assert_eq!(run.committed_artifacts[0].bytes(), page_before);
+    }
+
+    #[test]
+    fn form_graph_limits_reject_first_excess_and_accept_bounded_chain() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1",
+            "\\setbox0=\\hbox{\\vrule width1pt height1pt}\\pdfxform0",
+            "\\setbox0=\\hbox{\\pdfrefxform1}\\pdfxform0",
+            "\\setbox0=\\hbox{\\pdfrefxform3}\\pdfxform0",
+            "\\shipout\\hbox{\\pdfrefxform5}\\end",
+        ));
+        let pages = positioned_pages(&stores, &run.committed_artifacts, stores.pdf_pages())
+            .expect("position page");
+        let forms = positioned_forms(&stores)
+            .expect("position forms")
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        validate_form_graph(
+            &stores,
+            &pages,
+            &forms,
+            PdfFormTraversalLimits {
+                max_depth: 3,
+                max_work: 3,
+            },
+        )
+        .expect("three-form acyclic chain is within both bounds");
+
+        let depth = validate_form_graph(
+            &stores,
+            &pages,
+            &forms,
+            PdfFormTraversalLimits {
+                max_depth: 2,
+                max_work: 3,
+            },
+        )
+        .expect_err("the first over-depth form is rejected");
+        assert!(matches!(
+            depth,
+            PdfBuildError::FormTraversalDepthExceeded(2)
+        ));
+        assert_eq!(depth.to_string(), "PDF form traversal exceeds depth 2");
+
+        let work = validate_form_graph(
+            &stores,
+            &pages,
+            &forms,
+            PdfFormTraversalLimits {
+                max_depth: 3,
+                max_work: 2,
+            },
+        )
+        .expect_err("the first over-work reference is rejected");
+        assert!(matches!(work, PdfBuildError::FormTraversalWorkExceeded(2)));
+        assert_eq!(work.to_string(), "PDF form traversal exceeds 2 references");
+
+        pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("bounded acyclic chain serializes");
     }
 
     #[test]
