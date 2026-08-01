@@ -264,13 +264,10 @@ pub(crate) fn end_paragraph_with_fuel(
         build_page_if_outer_vertical(nest, stores)?;
         return Ok(());
     }
-    let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
-    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
     let _ = break_current_paragraph(
         nest,
         stores,
-        final_widow_penalty,
-        final_widow_penalties,
+        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         None,
         fuel,
@@ -312,8 +309,7 @@ fn end_paragraph_with_memo(
     let result = break_current_paragraph(
         nest,
         stores,
-        stores.int_param(IntParam::WIDOW_PENALTY),
-        stores.penalty_array(PenaltyArrayKind::Widow),
+        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         None,
         execution.command_fuel(),
@@ -351,13 +347,10 @@ pub(crate) fn end_paragraph_with_consumer_and_fuel(
         memo.abandon();
         return end_paragraph_with_fuel(nest, stores, fuel);
     }
-    let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
-    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
     let _ = break_current_paragraph(
         nest,
         stores,
-        final_widow_penalty,
-        final_widow_penalties,
+        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         Some(memo),
         fuel,
@@ -390,13 +383,10 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
     let _ = nest.current_list_mutation().take_nodes();
     nest.current_list_mutation().append(nodes);
     let Some((finished, line_count, last_badness)) = finished else {
-        let final_widow_penalty = stores.int_param(IntParam::WIDOW_PENALTY);
-        let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::Widow);
         let result = break_current_paragraph(
             nest,
             stores,
-            final_widow_penalty,
-            final_widow_penalties,
+            tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
             true,
             None,
             execution.command_fuel(),
@@ -462,13 +452,10 @@ pub(crate) fn interrupt_paragraph_for_display(
             line_count: 0,
         });
     }
-    let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
-    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
     let result = break_current_paragraph(
         nest,
         stores,
-        final_widow_penalty,
-        final_widow_penalties,
+        tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
         false,
         None,
         execution.command_fuel(),
@@ -501,14 +488,11 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
             line_count: 0,
         });
     }
-    let final_widow_penalty = stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY);
-    let final_widow_penalties = stores.penalty_array(PenaltyArrayKind::DisplayWidow);
     let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
     break_current_paragraph(
         nest,
         stores,
-        final_widow_penalty,
-        final_widow_penalties,
+        tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
         false,
         Some(&mut memo),
         fuel,
@@ -539,6 +523,7 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
         interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
         club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
         widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
+        display_widow_penalty: stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY),
         broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
         interline_penalties: stores.penalty_array(PenaltyArrayKind::InterLine),
         club_penalties: stores.penalty_array(PenaltyArrayKind::Club),
@@ -551,8 +536,7 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
 fn break_current_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
-    final_widow_penalty: i32,
-    final_widow_penalties: Vec<i32>,
+    widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
     mut memo: Option<&mut dyn crate::paragraph_memo::ParagraphMemoConsumer>,
     fuel: &mut tex_command::CommandFuel,
@@ -603,12 +587,7 @@ fn break_current_paragraph(
         }
     }
     let empty_list = stores.freeze_node_list(&[]);
-    let post_params = post_line_break_params(
-        &params,
-        final_widow_penalty,
-        final_widow_penalties,
-        empty_list,
-    );
+    let post_params = post_line_break_params(&params, widow_penalty_selector, empty_list);
     let mut line_count = 0i32;
     let mut last_line = None;
     let total_lines = decisions.breaks.len();
@@ -1240,6 +1219,7 @@ fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphPar
         interline_penalty: stores.int_param(IntParam::INTERLINE_PENALTY),
         club_penalty: stores.int_param(IntParam::CLUB_PENALTY),
         widow_penalty: stores.int_param(IntParam::WIDOW_PENALTY),
+        display_widow_penalty: stores.int_param(IntParam::DISPLAY_WIDOW_PENALTY),
         broken_penalty: stores.int_param(IntParam::BROKEN_PENALTY),
         interline_penalties: stores.penalty_array(PenaltyArrayKind::InterLine),
         club_penalties: stores.penalty_array(PenaltyArrayKind::Club),
@@ -1273,8 +1253,7 @@ fn line_break_params(stores: &Universe, params: &ParagraphParams) -> LineBreakPa
 
 fn post_line_break_params(
     params: &ParagraphParams,
-    final_widow_penalty: i32,
-    final_widow_penalties: Vec<i32>,
+    widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     empty_list: tex_state::ids::NodeListId,
 ) -> PostLineBreakParams {
     PostLineBreakParams {
@@ -1283,12 +1262,21 @@ fn post_line_break_params(
         right_skip: params.right_skip,
         interline_penalty: params.interline_penalty,
         club_penalty: params.club_penalty,
-        widow_penalty: final_widow_penalty,
+        widow_penalties: tex_typeset::linebreak::WidowPenalties {
+            selector: widow_penalty_selector,
+            ordinary: tex_typeset::linebreak::PenaltySequence {
+                fallback: params.widow_penalty,
+                values: params.widow_penalties.clone(),
+            },
+            display: tex_typeset::linebreak::PenaltySequence {
+                fallback: params.display_widow_penalty,
+                values: params.display_widow_penalties.clone(),
+            },
+        },
         broken_penalty: params.broken_penalty,
         prev_graf: params.prev_graf,
         interline_penalties: params.interline_penalties.clone(),
         club_penalties: params.club_penalties.clone(),
-        widow_penalties: final_widow_penalties,
         shape: line_shape(params),
     }
 }

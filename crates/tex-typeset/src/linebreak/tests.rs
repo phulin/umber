@@ -13,6 +13,17 @@ fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
 }
 
+fn ordinary_widow_penalties(fallback: i32, values: Vec<i32>) -> WidowPenalties {
+    WidowPenalties {
+        selector: WidowPenaltySelector::Ordinary,
+        ordinary: PenaltySequence { fallback, values },
+        display: PenaltySequence {
+            fallback: 0,
+            values: Vec::new(),
+        },
+    }
+}
+
 fn params(width: i32) -> LineBreakParams {
     LineBreakParams {
         pretolerance: 100,
@@ -184,12 +195,11 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
         right_skip: tex_state::ids::GlueId::ZERO,
         interline_penalty: 99,
         club_penalty: 999,
-        widow_penalty: 9999,
+        widow_penalties: ordinary_widow_penalties(9999, vec![2000, 1000]),
         broken_penalty: 0,
         prev_graf: 2,
         interline_penalties: vec![8, 7, 6],
         club_penalties: vec![200, 100],
-        widow_penalties: vec![2000, 1000],
         shape: LineShape::natural(sp(100)),
     };
 
@@ -207,6 +217,77 @@ fn etex_penalty_arrays_repeat_and_use_forward_and_reverse_indexes() {
         post::line_penalty_after(2, &breaks, false, &post),
         Some(2106)
     );
+}
+
+/// e-TeX 2.6 change [49.889] selects the display-widow family only for the
+/// partial paragraph immediately before display math. Array indexes count
+/// backward from that partial paragraph's end and repeat their final value.
+#[test]
+fn etex_display_widow_selector_survives_to_post_line_break() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let breaks = (1..=4)
+        .map(|position| BreakDecision {
+            position,
+            penalty: if position == 4 { EJECT_PENALTY } else { 0 },
+            hyphenated: false,
+        })
+        .collect::<Vec<_>>();
+    let mut params = PostLineBreakParams {
+        empty_list: empty,
+        left_skip: tex_state::ids::GlueId::ZERO,
+        right_skip: tex_state::ids::GlueId::ZERO,
+        interline_penalty: 7,
+        club_penalty: 0,
+        widow_penalties: WidowPenalties {
+            selector: WidowPenaltySelector::Ordinary,
+            ordinary: PenaltySequence {
+                fallback: 300,
+                values: vec![2_000, 1_000],
+            },
+            display: PenaltySequence {
+                fallback: 310,
+                values: vec![2_200, 1_100, 0],
+            },
+        },
+        broken_penalty: 0,
+        prev_graf: 0,
+        interline_penalties: Vec::new(),
+        club_penalties: Vec::new(),
+        shape: LineShape::natural(sp(100)),
+    };
+    let nodes = vec![rule(1), rule(2), rule(3), rule(4)];
+
+    let penalties = |params: &PostLineBreakParams| {
+        post_line_break(&universe, &nodes, &breaks, params.clone())
+            .into_iter()
+            .map(|line| line.penalty_after)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        penalties(&params),
+        vec![Some(1_007), Some(1_007), Some(2_007), None]
+    );
+
+    params.widow_penalties.selector = WidowPenaltySelector::DisplayInterrupted;
+    assert_eq!(
+        penalties(&params),
+        vec![Some(7), Some(1_107), Some(2_207), None]
+    );
+
+    params.widow_penalties.ordinary.values.clear();
+    params.widow_penalties.display.values.clear();
+    params.widow_penalties.selector = WidowPenaltySelector::Ordinary;
+    assert_eq!(penalties(&params), vec![Some(7), Some(7), Some(307), None]);
+    params.widow_penalties.selector = WidowPenaltySelector::DisplayInterrupted;
+    assert_eq!(penalties(&params), vec![Some(7), Some(7), Some(317), None]);
+
+    let one_line = [BreakDecision {
+        position: 1,
+        penalty: EJECT_PENALTY,
+        hyphenated: false,
+    }];
+    assert_eq!(post::line_penalty_after(0, &one_line, false, &params), None);
 }
 
 fn kern(width: i32) -> Node {
@@ -674,12 +755,11 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1206,12 +1286,11 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(15)),
         },
     );
@@ -1551,12 +1630,11 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
             right_skip: empty_glue,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1618,12 +1696,11 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1705,12 +1782,11 @@ fn next_line_discards_all_discardables_but_retains_font_kern() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1750,12 +1826,11 @@ fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
         right_skip: tex_state::ids::GlueId::ZERO,
         interline_penalty: 11,
         club_penalty: 101,
-        widow_penalty: 1_001,
+        widow_penalties: ordinary_widow_penalties(1_001, Vec::new()),
         broken_penalty: 10_001,
         prev_graf: 0,
         interline_penalties: Vec::new(),
         club_penalties: Vec::new(),
-        widow_penalties: Vec::new(),
         shape: LineShape::natural(sp(100)),
     };
 
@@ -1803,12 +1878,11 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1858,12 +1932,11 @@ fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1907,12 +1980,11 @@ fn line_materializer_reuses_the_returned_line_buffer() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1964,12 +2036,11 @@ fn post_line_break_omits_only_zero_leftskip() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );
@@ -1997,12 +2068,11 @@ fn post_line_break_omits_only_zero_leftskip() {
             right_skip: zero,
             interline_penalty: 0,
             club_penalty: 0,
-            widow_penalty: 0,
+            widow_penalties: ordinary_widow_penalties(0, Vec::new()),
             broken_penalty: 0,
             prev_graf: 0,
             interline_penalties: Vec::new(),
             club_penalties: Vec::new(),
-            widow_penalties: Vec::new(),
             shape: LineShape::natural(sp(100)),
         },
     );

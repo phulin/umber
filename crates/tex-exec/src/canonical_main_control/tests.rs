@@ -4542,7 +4542,8 @@ fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
         &mut control,
         br"\clubpenalties=2 200 100
            {\clubpenalties=1 7}
-           {\global\widowpenalties=2 300 400}
+           \widowpenalties=2 300 400
+           {\widowpenalties=1 7}
            {\globaldefs=1 \displaywidowpenalties=1 500}
            \interlinepenalties=2 9 8
            {\globaldefs=-1 \global\interlinepenalties=-4}

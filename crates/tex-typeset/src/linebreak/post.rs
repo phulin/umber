@@ -232,11 +232,15 @@ pub(super) fn line_penalty_after(
             )
             .expect("interline and club penalties fit TeX integer range");
     let lines_from_end = breaks.len() - line_no - 1;
+    let widow_penalties = match params.widow_penalties.selector {
+        super::WidowPenaltySelector::Ordinary => &params.widow_penalties.ordinary,
+        super::WidowPenaltySelector::DisplayInterrupted => &params.widow_penalties.display,
+    };
     penalty = penalty
         .checked_add(
-            penalty_array_value(&params.widow_penalties, lines_from_end).unwrap_or(
+            penalty_array_value(&widow_penalties.values, lines_from_end).unwrap_or(
                 if line_no + 2 == breaks.len() {
-                    params.widow_penalty
+                    widow_penalties.fallback
                 } else {
                     0
                 },

@@ -55,13 +55,33 @@ pub struct PostLineBreakParams {
     pub right_skip: GlueId,
     pub interline_penalty: i32,
     pub club_penalty: i32,
-    pub widow_penalty: i32,
+    pub widow_penalties: WidowPenalties,
     pub broken_penalty: i32,
     pub prev_graf: i32,
     pub interline_penalties: Vec<i32>,
     pub club_penalties: Vec<i32>,
-    pub widow_penalties: Vec<i32>,
     pub shape: LineShape,
+}
+
+/// e-TeX's paragraph-ending context retained until `post_line_break` chooses
+/// the widow-penalty family.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WidowPenalties {
+    pub selector: WidowPenaltySelector,
+    pub ordinary: PenaltySequence,
+    pub display: PenaltySequence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WidowPenaltySelector {
+    Ordinary,
+    DisplayInterrupted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PenaltySequence {
+    pub fallback: i32,
+    pub values: Vec<i32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

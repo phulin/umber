@@ -56,6 +56,7 @@ pub struct ParagraphParams {
     pub interline_penalty: i32,
     pub club_penalty: i32,
     pub widow_penalty: i32,
+    pub display_widow_penalty: i32,
     pub broken_penalty: i32,
     pub interline_penalties: Vec<i32>,
     pub club_penalties: Vec<i32>,
