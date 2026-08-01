@@ -1242,7 +1242,6 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
 }
 
 #[test]
-#[ignore = "category-5 character delivery is not implemented: the lexer still consumes every end-line-category character as a physical line ending"]
 fn misplaced_category_five_character_routes_car_ret_help() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
@@ -1252,7 +1251,11 @@ fn misplaced_category_five_character_routes_car_ret_help() {
     run_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.count(0), 17);
-    assert!(terminal_text(&stores).contains("! Misplaced end of line character Z."));
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! Misplaced end of line character Z."),
+        "{output}"
+    );
 }
 
 fn pending_sink_text(stores: &Universe, terminal: bool) -> String {

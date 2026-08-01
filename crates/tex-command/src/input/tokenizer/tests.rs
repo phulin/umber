@@ -225,11 +225,11 @@ fn blank_line_par_is_anchored_at_the_normalized_line_end() {
     );
 }
 
-/// tex.web §348 and §351 both finish a `car_ret` with `loc:=limit+1`, so an
-/// explicit catcode-5 character abandons the rest of its line and the token it
-/// produces is located at `buffer[limit]`, not at that character.
+/// TeX82 §1126 receives an arbitrary category-5 source character as a raw
+/// `car_ret`; it is not the synthetic character that terminates a physical
+/// input line.
 #[test]
-fn explicit_car_ret_character_finishes_its_line() {
+fn explicit_car_ret_character_is_delivered_without_finishing_its_line() {
     let catcode = |code: CharacterCode| match code.to_byte().expect("exact byte") {
         b'X' => Catcode::EndLine,
         other => classic_catcode(CharacterCode::from_byte(other)),
@@ -242,11 +242,27 @@ fn explicit_car_ret_character_finishes_its_line() {
     );
     assert_eq!(
         character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
+        (b'X', Catcode::EndLine, 1, 2)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
+        (b'b', Catcode::Letter, 2, 3)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
         (b' ', Catcode::Space, 3, 3)
     );
     assert_eq!(
-        control(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
-        (b"par".to_vec(), SourceControlSequenceKind::Paragraph, 6, 6)
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
+        (b'X', Catcode::EndLine, 4, 5)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
+        (b'b', Catcode::Letter, 5, 6)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
+        (b' ', Catcode::Space, 6, 6)
     );
     assert_eq!(
         character(state.next_exact_source_step(13, &mut CatcodeQueries(catcode))),
@@ -262,11 +278,11 @@ fn explicit_car_ret_character_finishes_its_line() {
     );
 }
 
-/// With `\endlinechar` inactive tex.web §362 decrements `limit`, so the line's
-/// last retained character occupies `buffer[limit]` and anchors the space
-/// §348 emits for an explicit catcode-5 character.
+/// With `\endlinechar` inactive, a category-5 source character remains an
+/// ordinary source-backed `car_ret` token rather than acquiring a synthetic
+/// line-end anchor.
 #[test]
-fn inactive_endlinechar_anchors_car_ret_at_the_last_retained_character() {
+fn inactive_endlinechar_does_not_change_explicit_car_ret_origin() {
     let catcode = |code: CharacterCode| match code.to_byte().expect("exact byte") {
         b'X' => Catcode::EndLine,
         other => classic_catcode(CharacterCode::from_byte(other)),
@@ -279,7 +295,11 @@ fn inactive_endlinechar_anchors_car_ret_at_the_last_retained_character() {
     );
     assert_eq!(
         character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
-        (b' ', Catcode::Space, 2, 3)
+        (b'X', Catcode::EndLine, 1, 2)
+    );
+    assert_eq!(
+        character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),
+        (b'b', Catcode::Letter, 2, 3)
     );
     assert_eq!(
         character(state.next_exact_source_step(-1, &mut CatcodeQueries(catcode))),

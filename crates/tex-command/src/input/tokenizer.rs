@@ -295,12 +295,23 @@ impl SourceCursor {
                     LexerState::SkipBlanks | LexerState::NewLine => continue,
                 },
                 Catcode::EndLine => {
-                    // tex.web §348, §350, and §351 each finish the line with
-                    // `loc:=limit+1`, whatever character carried catcode 5:
-                    // the rest of the line is skipped, and the emitted token
-                    // is located at `buffer[limit]`, not at the trigger. An
-                    // explicit `^^M` mid-line therefore ends the line exactly
-                    // like the synthetic `\endlinechar` does.
+                    // The synthetic character appended while §362 normalizes
+                    // a physical line drives §348/§350/§351's line-ending
+                    // state machine. A source character that merely has
+                    // category 5 is instead a raw `car_ret` command: §1126
+                    // must be allowed to route it through `align_error`.
+                    // Keeping those cases separate prevents a current
+                    // catcode assignment from turning an ordinary buffered
+                    // character into a physical line boundary.
+                    if !character.is_synthetic() {
+                        self.lexer_state = LexerState::MidLine;
+                        return SourceTokenizationStep::Token(SourceToken::Character {
+                            code: character.code(),
+                            catcode: Catcode::EndLine,
+                            range: character.range(),
+                            scalar_range,
+                        });
+                    }
                     let range = self.line_end_anchor();
                     let state = self.lexer_state;
                     self.skip_rest_of_line();

@@ -145,7 +145,16 @@ pub(crate) fn report_misplaced_alignment_delimiter(
     token: Token,
     context: Option<String>,
 ) -> Result<(), ExecError> {
-    let delimiter = tex_command::command_token_text(&mut stores.command_context(), token);
+    let delimiter = match token {
+        // A category-5 character reaches §1128 as the character command
+        // delivered by §1126, not as either control-sequence spelling that
+        // shares `car_ret`'s command code.
+        Token::Char {
+            ch,
+            cat: Catcode::EndLine,
+        } => format!("end of line character {ch}"),
+        _ => tex_command::command_token_text(&mut stores.command_context(), token),
+    };
     let tab_mark = matches!(
         token,
         Token::Char {
