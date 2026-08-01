@@ -1112,7 +1112,7 @@
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",
-          "test": "paragraph_is_rejected_only_for_non_long_macros"
+          "test": "macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports"
         },
         {
           "path": "crates/tex-command/src/macro_call/tests.rs",

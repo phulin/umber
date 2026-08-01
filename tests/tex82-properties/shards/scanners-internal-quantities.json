@@ -410,7 +410,7 @@
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
-          "test": "prev_depth_outside_vertical_mode_reads_zero"
+          "test": "auxiliary_internal_values_report_wrong_mode_and_preserve_write_zero"
         },
         {
           "path": "crates/tex-command/src/scanners/scalar/tests.rs",
