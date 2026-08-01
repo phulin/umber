@@ -451,6 +451,72 @@ fn stream_partial_lines_snapshot_and_restore() {
     assert_eq!(world.effect_records().len(), 3);
 }
 
+/// tex.web §58 increments `term_offset` and `file_offset` separately and
+/// calls the corresponding newline primitive at exactly `max_print_line`.
+#[test]
+fn write_text_wraps_terminal_and_log_at_exact_limit() {
+    let mut world = World::memory();
+
+    world.write_text(PrintSink::TerminalAndLog, &"a".repeat(79));
+    world.write_text(PrintSink::TerminalAndLog, "b");
+    world.write_text(PrintSink::Terminal, &"t".repeat(78));
+    world.write_text(PrintSink::Log, &"l".repeat(77));
+    world.write_text(PrintSink::TerminalAndLog, "xy");
+    world.write_text(PrintSink::TerminalAndLog, "\nnext");
+    let end = world.effect_pos();
+    world.commit_effects(end).expect("commit wrapped writes");
+
+    assert_eq!(
+        world.memory_terminal_output(),
+        Some(format!("{}\nb{}\nxy\nnext", "a".repeat(79), "t".repeat(78)).as_bytes())
+    );
+    assert_eq!(
+        world.memory_log_output(),
+        Some(format!("{}\nb{}x\ny\nnext", "a".repeat(79), "l".repeat(77)).as_bytes())
+    );
+    assert_eq!(world.stream_bufs().terminal_partial_line(), "next");
+    assert_eq!(world.stream_bufs().log_partial_line(), "next");
+}
+
+/// The TeX82 profile crosses the output boundary as raw bytes, but §58's
+/// line meters still count each byte as one character and wrap each selected
+/// sink from its own current offset.
+#[test]
+fn encoded_bytes_wrap_independent_print_sinks_without_utf8_projection() {
+    let mut world = World::memory();
+    world.write_encoded_bytes(PrintSink::Terminal, &[0xff; 78]);
+    world.write_encoded_bytes(PrintSink::Log, &[0x80; 77]);
+    world.write_encoded_bytes(PrintSink::TerminalAndLog, &[0x00, 0x81]);
+    world.write_encoded_bytes(PrintSink::TerminalAndLog, &[b'\n', 0xfe]);
+    let end = world.effect_pos();
+    world.commit_effects(end).expect("commit exact-byte writes");
+
+    assert_eq!(
+        world.memory_terminal_output(),
+        Some(
+            [&[0xff; 78][..], &[0x00, b'\n', 0x81, b'\n', 0xfe]]
+                .concat()
+                .as_slice()
+        )
+    );
+    assert_eq!(
+        world.memory_log_output(),
+        Some(
+            [&[0x80; 77][..], &[0x00, 0x81, b'\n', b'\n', 0xfe]]
+                .concat()
+                .as_slice()
+        )
+    );
+    assert_eq!(
+        world.stream_bufs().terminal_partial_line().as_bytes(),
+        [0xc3, 0xbe]
+    );
+    assert_eq!(
+        world.stream_bufs().log_partial_line().as_bytes(),
+        [0xc3, 0xbe]
+    );
+}
+
 #[test]
 fn input_stream_reads_are_pinned_and_snapshot_cursor_restores() {
     let mut world = World::memory();

@@ -2865,28 +2865,46 @@ impl World {
     /// It is the final output seam for TeX82 byte-domain characters and is
     /// also suitable for any future profile with an explicit external
     /// encoding. Encoding policy belongs to the caller; `World` retains and
-    /// commits the resulting bytes exactly.
+    /// commits the resulting bytes exactly. Printable sinks still pass
+    /// through §58's independent terminal and transcript line meters; a
+    /// numbered `\write` stream remains unmetered.
     pub fn write_encoded_bytes(&mut self, sink: PrintSink, bytes: &[u8]) {
-        self.append_effect(EffectRecord::StreamWriteBytes {
-            sink,
-            bytes: bytes.to_vec(),
-        });
-        let projection = bytes
-            .iter()
-            .map(|&byte| char::from(byte))
-            .collect::<String>();
-        let bufs = self.stream_bufs_mut();
+        let (terminal_offset, log_offset) = {
+            let bufs = self.stream_bufs();
+            (
+                bufs.terminal_partial_line.chars().count(),
+                bufs.log_partial_line.chars().count(),
+            )
+        };
         match sink {
             PrintSink::Terminal => {
-                append_partial_line(&mut bufs.terminal_partial_line, &projection)
+                let wrapped = wrap_print_bytes(bytes, terminal_offset);
+                self.record_printable_bytes(PrintSink::Terminal, wrapped);
             }
-            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &projection),
+            PrintSink::Log => {
+                let wrapped = wrap_print_bytes(bytes, log_offset);
+                self.record_printable_bytes(PrintSink::Log, wrapped);
+            }
             PrintSink::TerminalAndLog => {
-                append_partial_line(&mut bufs.terminal_partial_line, &projection);
-                append_partial_line(&mut bufs.log_partial_line, &projection);
+                let terminal = wrap_print_bytes(bytes, terminal_offset);
+                let log = wrap_print_bytes(bytes, log_offset);
+                if terminal == log {
+                    self.record_printable_bytes(PrintSink::TerminalAndLog, terminal);
+                } else {
+                    self.record_printable_bytes(PrintSink::Terminal, terminal);
+                    self.record_printable_bytes(PrintSink::Log, log);
+                }
             }
             PrintSink::Stream(slot) => {
-                append_partial_line(&mut bufs.partial_lines[slot.index()], &projection);
+                self.append_effect(EffectRecord::StreamWriteBytes {
+                    sink,
+                    bytes: bytes.to_vec(),
+                });
+                let projection = bytes_to_partial_line_projection(bytes);
+                append_partial_line(
+                    &mut self.stream_bufs_mut().partial_lines[slot.index()],
+                    &projection,
+                );
             }
         }
     }
@@ -2943,6 +2961,26 @@ impl World {
             PrintSink::TerminalAndLog => {
                 append_partial_line(&mut bufs.terminal_partial_line, &text);
                 append_partial_line(&mut bufs.log_partial_line, &text);
+            }
+            PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
+        }
+    }
+
+    fn record_printable_bytes(&mut self, sink: PrintSink, bytes: Vec<u8>) {
+        self.append_effect(EffectRecord::StreamWriteBytes {
+            sink,
+            bytes: bytes.clone(),
+        });
+        let projection = bytes_to_partial_line_projection(&bytes);
+        let bufs = self.stream_bufs_mut();
+        match sink {
+            PrintSink::Terminal => {
+                append_partial_line(&mut bufs.terminal_partial_line, &projection)
+            }
+            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &projection),
+            PrintSink::TerminalAndLog => {
+                append_partial_line(&mut bufs.terminal_partial_line, &projection);
+                append_partial_line(&mut bufs.log_partial_line, &projection);
             }
             PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
@@ -3938,6 +3976,35 @@ fn wrap_print_lines(text: &str, offset: usize) -> String {
         }
     }
     wrapped
+}
+
+/// The byte-domain counterpart of [`wrap_print_lines`]. Every TeX82 output
+/// byte is one printed character, including bytes outside UTF-8.
+fn wrap_print_bytes(bytes: &[u8], offset: usize) -> Vec<u8> {
+    let limit = crate::print::MAX_PRINT_LINE;
+    if offset + bytes.len() < limit && !bytes.contains(&b'\n') {
+        return bytes.to_vec();
+    }
+    let mut wrapped = Vec::with_capacity(bytes.len() + bytes.len() / limit + 1);
+    let mut column = offset;
+    for &byte in bytes {
+        if byte == b'\n' {
+            wrapped.push(byte);
+            column = 0;
+            continue;
+        }
+        wrapped.push(byte);
+        column += 1;
+        if column == limit {
+            wrapped.push(b'\n');
+            column = 0;
+        }
+    }
+    wrapped
+}
+
+fn bytes_to_partial_line_projection(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
 }
 
 fn append_partial_line(buffer: &mut String, text: &str) {
