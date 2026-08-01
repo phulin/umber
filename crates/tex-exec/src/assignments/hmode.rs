@@ -1631,7 +1631,19 @@ fn nonzero_glue_param_or_font_space(
 ) -> GlueSpec {
     let override_spec = stores.glue(stores.glue_param(override_param));
     if override_spec != GlueSpec::ZERO {
-        return override_spec;
+        // TeX82 §1042 uses a nonzero `\xspaceskip` verbatim, but a
+        // nonzero `\spaceskip` still passes through `app_space`'s
+        // space-factor scaling below. Only font glue receives the sentence
+        // extra-space component.
+        if override_param == GlueParam::XSPACE_SKIP {
+            return override_spec;
+        }
+        let mut spec = override_spec;
+        if space_factor != 1000 {
+            spec.stretch = scale_by_factor(spec.stretch, space_factor, 1000);
+            spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
+        }
+        return spec;
     }
     let font = stores.current_font();
     let mut spec = GlueSpec {

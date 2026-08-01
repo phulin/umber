@@ -11948,6 +11948,49 @@ fn canonical_text_material_space_factor_and_ligature_matrix() {
 }
 
 #[test]
+fn canonical_ordinary_space_selection_scaling_and_font_invalidation_matrix() {
+    // TeX82 §§1041--1042: font glue is live after a fontdimen write;
+    // spaceskip is scaled for an ordinary non-1000 space factor; sentence
+    // font glue adds fontdimen7 before scaling; and a nonzero xspaceskip is
+    // selected verbatim at factors of at least 2000.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10
+           \fontdimen2\f=10pt \fontdimen3\f=4pt
+           \fontdimen4\f=2pt \fontdimen7\f=3pt
+           \sfcode65=1000 \sfcode66=1500 \sfcode67=2000
+           \setbox0=\hbox{\f A X}
+           \fontdimen2\f=11pt
+           \setbox1=\hbox{\f A X}
+           \spaceskip=20pt plus4pt minus3pt
+           \setbox2=\hbox{\f B X}
+           \spaceskip=0pt
+           \setbox3=\hbox{\f C X}
+           \xspaceskip=30pt plus7pt minus5pt
+           \setbox4=\hbox{\f C X}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let components = |register| {
+        let nodes = box_children(&universe, register);
+        let [_, Node::Glue { spec, .. }, _] = nodes.as_slice() else {
+            panic!("box {register} must contain character, glue, character: {nodes:?}");
+        };
+        let spec = universe.glue(*spec);
+        (spec.width.raw(), spec.stretch.raw(), spec.shrink.raw())
+    };
+    let pt = Scaled::UNITY;
+    assert_eq!(components(0), (10 * pt, 4 * pt, 2 * pt));
+    assert_eq!(components(1), (11 * pt, 4 * pt, 2 * pt));
+    assert_eq!(components(2), (20 * pt, 6 * pt, 2 * pt));
+    assert_eq!(components(3), (14 * pt, 8 * pt, pt));
+    assert_eq!(components(4), (30 * pt, 7 * pt, 5 * pt));
+}
+
+#[test]
 fn canonical_vrule_resets_space_factor_before_zero_sfcode_closer() {
     // TeX82 §1056 sets `space_factor:=1000` after `\vrule` in hmode. The
     // closing parenthesis has sfcode zero, so it preserves that reset. The
@@ -11991,6 +12034,88 @@ fn canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix() {
         nodes.as_slice(),
         [Node::Kern { .. }, Node::Glue { .. }, Node::Rule { .. }]
     ));
+}
+
+#[test]
+fn canonical_direct_material_glue_order_kern_and_mu_subtype_matrix() {
+    // TeX82 §§1057--1061: every fixed infinite-glue command retains its
+    // order and sign, explicit kerns remain distinct from mu kerns, and the
+    // directly appended mu glue and mu kern retain their distinct subtypes.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\hfil\hfill\hss\hfilneg\kern2pt}
+           \setbox1=\vbox{\vfil\vfill\vss\vfilneg\kern3pt}
+           \end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let assert_glue_matrix = |register, kern_amount| {
+        let nodes = box_children(&universe, register);
+        let [
+            Node::Glue { spec: fil, .. },
+            Node::Glue { spec: fill, .. },
+            Node::Glue { spec: ss, .. },
+            Node::Glue { spec: filneg, .. },
+            Node::Kern {
+                amount,
+                kind: KernKind::Explicit,
+            },
+        ] = nodes.as_slice()
+        else {
+            panic!("box {register} direct-material matrix: {nodes:?}");
+        };
+        let fil = universe.glue(*fil);
+        let fill = universe.glue(*fill);
+        let ss = universe.glue(*ss);
+        let filneg = universe.glue(*filneg);
+        assert_eq!(
+            (fil.stretch_order, fil.stretch.raw()),
+            (Order::Fil, Scaled::UNITY)
+        );
+        assert_eq!(
+            (fill.stretch_order, fill.stretch.raw()),
+            (Order::Fill, Scaled::UNITY)
+        );
+        assert_eq!(
+            (ss.stretch_order, ss.stretch.raw()),
+            (Order::Fil, Scaled::UNITY)
+        );
+        assert_eq!(
+            (ss.shrink_order, ss.shrink.raw()),
+            (Order::Fil, Scaled::UNITY)
+        );
+        assert_eq!(
+            (filneg.stretch_order, filneg.stretch.raw()),
+            (Order::Fil, -Scaled::UNITY)
+        );
+        assert_eq!(*amount, Scaled::from_raw(kern_amount * Scaled::UNITY));
+    };
+    assert_glue_matrix(0, 2);
+    assert_glue_matrix(1, 3);
+
+    let mut math_universe = Universe::new_with_plain_catcodes();
+    let mut math_control = CanonicalMainControl::tex82_initex(&mut math_universe);
+    register_source(&mut math_control, br"$\mskip4mu\mkern5mu");
+    run_to_end(&mut math_control, &mut math_universe);
+    let math = math_control.modes.current_list().nodes();
+    assert!(
+        matches!(
+            math,
+            [
+                Node::Glue {
+                    kind: GlueKind::MuSkip,
+                    ..
+                },
+                Node::Kern {
+                    kind: KernKind::Mu,
+                    ..
+                },
+            ]
+        ),
+        "math direct-material subtype matrix: {math:?}"
+    );
 }
 
 #[test]
