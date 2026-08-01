@@ -1301,7 +1301,7 @@
       "claim": "Closein closes an open read stream; openin first closes the prior stream, scans a filename with default .tex extension, and records closed or just-open state from the open result.",
       "preconditions": ["A four-bit stream selector and host-neutral input capability are available."],
       "stimulus": [
-        "Phase 2 white-box unit `openin_closein_replace_stream_state_and_apply_default_extension` covers open, replacement, failed open, and close."
+        "Phase 2 white-box unit `openin_closein_replace_stream_state_and_apply_filename_rules` covers open, replacement, explicit and default extensions, and close."
       ],
       "expected_observations": [
         "The selected stream alone transitions to closed or just-open with the scanned canonical filename."
@@ -1317,7 +1317,7 @@
       "planned_coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
-          "test": "openin_closein_replace_stream_state_and_apply_default_extension"
+          "test": "openin_closein_replace_stream_state_and_apply_filename_rules"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1406,7 +1406,7 @@
       "claim": "Uppercase/lowercase scan an unexpanded token list, substitute nonzero code-table values in character and active-character tokens without changing command kind, then replay the list.",
       "preconditions": ["Case-code tables and a balanced token-list argument exist."],
       "stimulus": [
-        "Phase 2 white-box unit `case_shift_substitutes_character_codes_preserves_commands_and_replays` covers letters, other/active tokens, control sequences, and zero mappings."
+        "Phase 2 white-box unit `case_shift_preserves_raw_token_structure_at_code_table_boundaries` covers letters, other/active tokens, control sequences, and zero mappings."
       ],
       "expected_observations": [
         "Only eligible character codes with nonzero mappings change and replay order is preserved."
@@ -1421,7 +1421,7 @@
       "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
-          "test": "case_shift_substitutes_character_codes_preserves_commands_and_replays"
+          "test": "case_shift_preserves_raw_token_structure_at_code_table_boundaries"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

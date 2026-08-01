@@ -1553,6 +1553,58 @@ fn accent_base_lookahead_hands_a_prefixed_command_back_unreplayed() {
     );
 }
 
+#[test]
+fn assignment_loop_skips_relaxations_and_stops_before_following_token() {
+    // TeX82 §§1270--1271's `do_assignments` repeatedly uses the same
+    // non-blank, non-relax, non-call fetch. It stops with the first command
+    // above `max_non_prefixed_command` still delivered for
+    // `prefixed_command`; after that assignment, the following token is the
+    // next base lookup rather than part of the assignment.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let assignment = universe.intern("advance").symbol();
+    universe.set_meaning(
+        assignment,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Advance),
+    );
+    let relaxation = universe.intern("relax").symbol();
+    universe.set_meaning(relaxation, Meaning::Relax);
+    push(
+        &mut command,
+        [
+            Token::Char {
+                ch: ' ',
+                cat: Catcode::Space,
+            },
+            Token::Cs(relaxation),
+            Token::Cs(assignment),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let first = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_accent_base()
+        .expect("assignment-loop command scans");
+    assert!(matches!(first, ScannedAccentBase::Assignment(command)
+        if command.meaning() == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Advance)));
+
+    let second = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_accent_base()
+        .expect("following token remains available");
+    assert!(matches!(
+        second,
+        ScannedAccentBase::Character {
+            character: b'x',
+            ..
+        }
+    ));
+}
+
 /// The other half of §1124: a command that is neither a base character nor a
 /// prefixed command takes tex.web's `else back_input`, and that replay stays
 /// inside the delivery episode that fetched it.

@@ -4216,11 +4216,14 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
 }
 
 #[test]
-fn openin_closein_replace_stream_state_and_apply_default_extension() {
+fn openin_closein_replace_stream_state_and_apply_filename_rules() {
+    // TeX82 §§1272--1275 close an existing stream before replacement, retain
+    // an explicit extension, supply `.tex` only when the extension is empty,
+    // and make `\closein` restore the stream's closed/EOF state.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    for (name, bytes) in [("first.tex", &b"one"[..]), ("second.tex", &b"two"[..])] {
+    for (name, bytes) in [("first.tex", &b"one"[..]), ("second.dat", &b"two"[..])] {
         control.capabilities_mut().register_input(
             name,
             SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(bytes)),
@@ -4228,7 +4231,7 @@ fn openin_closein_replace_stream_state_and_apply_default_extension() {
     }
     register_source(
         &mut control,
-        br"\openin3=first.tex \read3 to \first \openin3=second.tex \read3 to \second \closein3\end",
+        br"\openin3=first \read3 to \first \openin3=second.dat \read3 to \second \closein3\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(
@@ -4527,7 +4530,10 @@ fn errmessage_selects_user_or_once_only_builtin_help_and_clears_flag() {
 }
 
 #[test]
-fn case_shift_substitutes_character_codes_preserves_commands_and_replays() {
+fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
+    // TeX82 §§1285--1289 scan unexpanded general text. §1288 substitutes
+    // only character-token codes, preserving their command/category; zero
+    // table entries and control-sequence tokens remain byte-for-byte tokens.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
