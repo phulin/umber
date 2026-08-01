@@ -448,6 +448,118 @@ fn punctuation_and_whatsits_preserve_the_next_hyphenation_candidate() {
 }
 
 #[test]
+fn paragraph_candidates_keep_patterns_and_exceptions_language_qualified() {
+    // pdfTeX §§26030--27481 retain TeX82 §896's candidate language:
+    // `\language<0` and `\language>255` select language zero, while 255 is a
+    // distinct pattern/exception namespace. This intentionally uses live
+    // `\lccode` fallback; saved-code switching belongs to umber2-e51h.83.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\language=-1 \hyphenation{de-fault}
+          \language=255 \patterns{b1ound} \hyphenation{ex-ception}
+          \language=256 \patterns{a1fter}
+          \lefthyphenmin=1 \righthyphenmin=1 \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("language-qualified hyphenation setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let chars = |word: &str| {
+        word.chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect::<Vec<_>>()
+    };
+    let language = |language| {
+        Node::Whatsit(tex_state::node::Whatsit::Language {
+            language,
+            left_hyphen_min: 1,
+            right_hyphen_min: 1,
+        })
+    };
+    let breaks = |stores: &mut Universe, nodes: Vec<Node>| {
+        crate::assignments::test_hyphenated_hlist(stores, &nodes)
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count()
+    };
+
+    assert_eq!(breaks(&mut stores, chars("default")), 1);
+    assert_eq!(breaks(&mut stores, chars("after")), 1);
+
+    let mut language_255_exception = vec![language(255)];
+    language_255_exception.extend(chars("exception"));
+    assert_eq!(breaks(&mut stores, language_255_exception), 1);
+    let mut language_255_pattern = vec![language(255)];
+    language_255_pattern.extend(chars("bound"));
+    assert_eq!(breaks(&mut stores, language_255_pattern), 1);
+
+    let mut wrong_language = vec![language(255)];
+    wrong_language.extend(chars("default"));
+    assert_eq!(breaks(&mut stores, wrong_language), 0);
+}
+
+#[test]
+fn language_whatsit_after_candidate_start_does_not_requalify_that_word() {
+    // TeX82 §896 updates `cur_lang` while seeking a candidate, then §897
+    // holds that language fixed while collecting the word. A language whatsit
+    // that terminates the candidate affects the next post-glue search only.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\language=0 \hyphenation{be-fore}
+          \language=255 \hyphenation{af-ter}
+          \lefthyphenmin=1 \righthyphenmin=1 \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("candidate-boundary setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let chars = |word: &str| {
+        word.chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect::<Vec<_>>()
+    };
+    let language_255 = Node::Whatsit(tex_state::node::Whatsit::Language {
+        language: 255,
+        left_hyphen_min: 1,
+        right_hyphen_min: 1,
+    });
+    let glue = Node::Glue {
+        spec: stores.glue_param(GlueParam::PAR_SKIP),
+        kind: GlueKind::Normal,
+        leader: None,
+    };
+    let mut paragraph = vec![glue.clone()];
+    paragraph.extend(chars("before"));
+    paragraph.push(language_255);
+    paragraph.push(glue);
+    paragraph.extend(chars("after"));
+
+    let hyphenated = crate::assignments::test_hyphenated_hlist_owned(&mut stores, paragraph);
+    assert_eq!(
+        hyphenated
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count(),
+        2,
+        "the in-progress word uses language zero; the post-glue word uses 255"
+    );
+}
+
+#[test]
 fn automatic_discretionary_rejects_replacement_counts_above_127() {
     // TeX82 §918 discards the discretionary when r_count exceeds 127.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();

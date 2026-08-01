@@ -5055,16 +5055,18 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     // TeX82 §1377 normalizes `cur_val` in both out-of-range directions to
     // language zero, and §1091's `norm_min` clamps each hyphen minimum into
-    // `1..=63`. The repeated `7` proves §1377 appends unconditionally: only
-    // §1376's `fix_language` is guarded by `l<>clang`.
+    // `1..=63`. The exact 255/256 boundary proves that 255 is retained while
+    // the first value above it joins negative values at language zero. The
+    // repeated `7` proves §1377 appends unconditionally: only §1376's
+    // `fix_language` is guarded by `l<>clang`.
     register_source(
         &mut control,
-        br"\lefthyphenmin=2 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7\setlanguage7\setlanguage300\setlanguage-1}\end",
+        br"\lefthyphenmin=2 \righthyphenmin=99 \setbox0=\hbox{\setlanguage7\setlanguage7\setlanguage255\setlanguage256\setlanguage-1}\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(
         language_whatsits(&stores),
-        vec![(7, 2, 63), (7, 2, 63), (0, 2, 63), (0, 2, 63)]
+        vec![(7, 2, 63), (7, 2, 63), (255, 2, 63), (0, 2, 63), (0, 2, 63)]
     );
 }
 
