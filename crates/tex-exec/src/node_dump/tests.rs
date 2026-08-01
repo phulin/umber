@@ -35,6 +35,97 @@ fn hbox_with_one_point_kern(stores: &mut Universe) -> NodeListId {
 }
 
 #[test]
+fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
+    let mut stores = Universe::new();
+    let leader_glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let empty = stores.freeze_node_list(&[]);
+    let leader = LeaderPayload::HList(zero_sized_hbox(empty));
+    let adjustment = stores.freeze_node_list(&[
+        Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Explicit,
+        },
+        Node::Penalty(10000),
+    ]);
+    let nodes = [
+        Node::Glue {
+            spec: leader_glue,
+            kind: GlueKind::Cleaders,
+            leader: Some(leader),
+        },
+        Node::Glue {
+            spec: leader_glue,
+            kind: GlueKind::Xleaders,
+            leader: Some(leader),
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(2 * Scaled::UNITY),
+            kind: KernKind::Font,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(3 * Scaled::UNITY),
+            kind: KernKind::Mu,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(4 * Scaled::UNITY),
+            kind: KernKind::Accent,
+        },
+        Node::MathOn(Scaled::from_raw(0)),
+        Node::MathOff(Scaled::from_raw(0)),
+        Node::MathOn(Scaled::from_raw(3 * Scaled::UNITY)),
+        Node::MathOff(Scaled::from_raw(-3 * Scaled::UNITY)),
+        Node::Penalty(-10000),
+        Node::Adjust(AdjustNode::ordinary(adjustment)),
+    ];
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &nodes,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        concat!(
+            "\\cleaders 2.0\n",
+            ".\\hbox(0.0+0.0)x0.0\n",
+            "\\xleaders 2.0\n",
+            ".\\hbox(0.0+0.0)x0.0\n",
+            "\\kern 1.0\n",
+            "\\kern2.0\n",
+            "\\mkern3.0mu\n",
+            "\\kern 4.0 (for accent)\n",
+            "\\mathon\n",
+            "\\mathoff\n",
+            "\\mathon, surrounded 3.0\n",
+            "\\mathoff, surrounded -3.0\n",
+            "\\penalty -10000\n",
+            "\\vadjust\n",
+            ".\\kern 1.0\n",
+            ".\\penalty 10000\n",
+        ),
+    );
+
+    assert_eq!(
+        stores.glue(leader_glue).width,
+        Scaled::from_raw(2 * Scaled::UNITY)
+    );
+    assert!(stores.nodes(empty).is_empty());
+    assert!(matches!(
+        stores.nodes(adjustment).to_vec().as_slice(),
+        [Node::Kern { .. }, Node::Penalty(10000)]
+    ));
+}
+
+#[test]
 fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
     let mut stores = Universe::new();
     let spec = stores.intern_glue(GlueSpec {
