@@ -1107,6 +1107,50 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn unavailable_delayed_pdf_image_does_not_replace_the_requested_output() {
+    let temp_dir = tempfile::tempdir().expect("create missing-image output temp dir");
+    let source = temp_dir.path().join("missing-image.tex");
+    let pdf = temp_dir.path().join("missing-image.pdf");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\pdfximage{missing.png}\\shipout\\hbox{\\pdfrefximage1}\\end\n",
+    )
+    .expect("write missing-image fixture");
+    fs::write(&pdf, b"existing output\n").expect("seed existing PDF path");
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .arg("run")
+            .arg("--pdftex")
+            .arg("--pdf")
+            .arg(&pdf)
+            .arg(&source)
+            .output()
+            .expect("run missing-image fixture")
+    };
+    let first = run();
+    let second = run();
+
+    assert!(!first.status.success());
+    assert!(!second.status.success());
+    assert_eq!(first.stderr, second.stderr, "fatal diagnostics are stable");
+    assert_eq!(
+        String::from_utf8(first.stderr).expect("stderr is utf-8"),
+        concat!(
+            "umber: incremental execution failed: pdfTeX error (ext5): ",
+            "cannot read image file missing.png: image is unavailable\n",
+        )
+    );
+    assert_eq!(
+        fs::read(&pdf).expect("read preserved output"),
+        b"existing output\n",
+        "failed delayed acquisition must publish no replacement artifact"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn fatal_annotation_action_finalization_does_not_replace_the_requested_output() {
     let temp_dir = tempfile::tempdir().expect("create annotation-finalization output temp dir");
     let source = temp_dir.path().join("annotation-finalization.tex");

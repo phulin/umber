@@ -5779,6 +5779,125 @@ mod tests {
     }
 
     #[test]
+    fn delayed_image_finalization_is_retry_stable_and_owns_one_xobject() {
+        let png = test_png(0, &[0, 73]);
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&png),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 1,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Gray,
+                alpha: false,
+                png_color_type: Some(0),
+            }),
+            natural_width: Scaled::from_raw(65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: png.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let run = run_with_image(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=1\\pdfcompresslevel=0",
+                "\\pdfximage{delayed.png}",
+                "\\shipout\\hbox{\\pdfrefximage\\pdflastximage}\\end",
+            ),
+            image,
+        );
+        let commits_before = stores.world().artifact_commits().to_vec();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("delayed image resource closes");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("delayed image resource closes again");
+        assert_eq!(second, first);
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+
+        let parsed = probe(&first);
+        let pages = parsed.pages().expect("one image page");
+        let xobjects = pages[0]
+            .resources
+            .categories
+            .get(b"XObject".as_slice())
+            .and_then(|layers| layers.last())
+            .expect("normalized XObject resources");
+        assert_eq!(xobjects.entries.len(), 1);
+        let image_id = xobjects
+            .entries
+            .values()
+            .next()
+            .and_then(ProbeValue::referenced_id)
+            .expect("indirect image resource");
+        assert_eq!(image_id, ProbeObjectId::new(1, 0));
+        let image_object = parsed.object(image_id).expect("owned image object");
+        let image = stream(&image_object);
+        assert_eq!(image.decoded, vec![73]);
+        assert!(
+            first
+                .windows(b"/Subtype/Image".len())
+                .any(|w| w == b"/Subtype/Image")
+        );
+        assert!(first.windows(b"stream\n".len()).any(|w| w == b"stream\n"));
+        assert!(
+            first
+                .windows(b"\nendstream".len())
+                .any(|w| w == b"\nendstream")
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a test-only committed-artifact corruption hook; tracked by umber2-0wb7"]
+    fn missing_delayed_image_record_is_exact_retry_stable_and_publishes_nothing() {
+        // Page artifacts and the image ledger are intentionally immutable at
+        // this boundary. Exercise this diagnostic once a bounded corruption
+        // constructor can create the otherwise-unrepresentable mismatch.
+    }
+
+    #[test]
+    fn invalid_delayed_image_payload_is_exact_retry_stable_and_publishes_nothing() {
+        let bytes = b"not a PNG".to_vec();
+        let image = tex_state::PdfExternalImageSource {
+            identity: ContentHash::from_bytes(&bytes),
+            metadata: PdfExternalImageMetadata::Raster(tex_state::PdfRasterImageMetadata {
+                format: PdfRasterFormat::Png,
+                width: 1,
+                height: 1,
+                bits_per_component: 8,
+                color_space: PdfRasterColorSpace::Gray,
+                alpha: false,
+                png_color_type: Some(0),
+            }),
+            natural_width: Scaled::from_raw(65_536),
+            natural_height: Scaled::from_raw(65_536),
+            bytes: bytes.into(),
+        };
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let run = run_with_image(
+            &mut stores,
+            "\\pdfoutput=1\\pdfximage{broken.png}\\shipout\\hbox{\\pdfrefximage1}\\end",
+            image,
+        );
+        let commits_before = stores.world().artifact_commits().to_vec();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("invalid delayed payload is fatal");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("invalid delayed payload remains fatal");
+        assert!(matches!(first, PdfBuildError::InvalidPng));
+        assert_eq!(first.to_string(), "registered PNG image data is invalid");
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+    }
+
+    #[test]
     fn streamed_rgba_split_rejects_short_and_overlong_scanlines() {
         let metadata = tex_state::PdfRasterImageMetadata {
             format: PdfRasterFormat::Png,
