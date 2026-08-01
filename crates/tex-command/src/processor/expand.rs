@@ -510,11 +510,16 @@ impl CommandProcessor<'_> {
                 command,
             );
         let spelling = self.observed_command_spelling(command);
+        let semantic_operand = crate::observation::canonical_sparse_register_operand(
+            self.command.profile(),
+            command.meaning(),
+        );
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Expanded,
             spelling,
             command: command_name,
             command_operand,
+            semantic_operand,
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),

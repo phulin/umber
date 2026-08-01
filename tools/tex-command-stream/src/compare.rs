@@ -375,8 +375,50 @@ pub fn find_divergences(
 pub(crate) fn events_match(expected: Option<&Event>, actual: Option<&Event>) -> bool {
     match (expected, actual) {
         (Some(expected), Some(actual)) if macro_call_operand_is_reference(expected, actual) => true,
+        (Some(expected), Some(actual))
+            if sparse_register_operand_is_reference(expected, actual) =>
+        {
+            true
+        }
         _ => expected == actual,
     }
+}
+
+fn sparse_register_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    // e-TeX 2.6 [49.1221--1224] exposes the allocator-owned sparse-array node
+    // address as `cur_chr`. Umber instead retains [49.5508--5523]'s portable
+    // type plus `print_sa_num` index. Project only the oracle address: an
+    // absent or integer Umber operand must still diverge.
+    let (
+        Event::Command(CommandEvent {
+            delivery: expected_delivery,
+            command:
+                CanonicalCommand {
+                    command: expected_command,
+                    operand: tex_oracle::CanonicalValue::Integer(_),
+                    control_sequence: expected_control_sequence,
+                    location: expected_location,
+                },
+        }),
+        Event::Command(CommandEvent {
+            delivery: actual_delivery,
+            command:
+                CanonicalCommand {
+                    command: actual_command,
+                    operand: tex_oracle::CanonicalValue::Name(_),
+                    control_sequence: actual_control_sequence,
+                    location: actual_location,
+                },
+        }),
+    ) = (expected, actual)
+    else {
+        return false;
+    };
+    matches!(expected_command.as_str(), "register" | "toks_register")
+        && expected_delivery == actual_delivery
+        && expected_command == actual_command
+        && expected_control_sequence == actual_control_sequence
+        && expected_location == actual_location
 }
 
 fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {

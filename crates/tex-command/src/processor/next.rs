@@ -2251,11 +2251,16 @@ impl CommandProcessor<'_> {
                 command,
             );
         let spelling = self.observed_command_spelling(command);
+        let semantic_operand = crate::observation::canonical_sparse_register_operand(
+            self.command.profile(),
+            command.meaning(),
+        );
         self.observe(CommandObservation::Command(CommandDeliveryRecord {
             boundary: CommandDeliveryBoundary::Raw,
             spelling,
             command: command_name,
             command_operand,
+            semantic_operand,
             provenance: CommandProvenance::from_stamp(
                 command.delivery_stamp(),
                 command.origin(),
@@ -3288,6 +3293,54 @@ mod tests {
                     && raw.command_operand == Some(4)
                     && expanded.command == raw.command
                     && expanded.command_operand == raw.command_operand
+        ));
+    }
+
+    #[test]
+    fn observer_preserves_sparse_register_type_and_index_at_both_boundaries() {
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(br"\alias".as_slice()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let alias = universe.intern("alias").symbol();
+        universe.set_meaning(alias, Meaning::SkipRegister(32_767));
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            processor
+                .get_x_token()
+                .expect("sparse shorthand delivers")
+                .expect("input remains live");
+        }
+
+        let deliveries = recorder
+            .0
+            .iter()
+            .filter_map(|record| match record {
+                CommandObservation::Command(command) => Some(command),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            deliveries.as_slice(),
+            [raw, expanded]
+                if raw.boundary == CommandDeliveryBoundary::Raw
+                    && expanded.boundary == CommandDeliveryBoundary::Expanded
+                    && raw.command == "register"
+                    && raw.command_operand.is_none()
+                    && raw.semantic_operand.as_deref() == Some("skip:32767")
+                    && expanded.semantic_operand == raw.semantic_operand
         ));
     }
 

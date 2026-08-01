@@ -56,6 +56,7 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
             boundary: CommandDeliveryBoundary::Raw,
             command: "letter".into(),
             command_operand: None,
+            semantic_operand: None,
             spelling: ObservedToken::Character {
                 character: 'G',
                 catcode: tex_state::token::Catcode::Letter,
@@ -247,6 +248,7 @@ fn command_source_location_and_provenance_are_retained() {
         },
         command: "letter".into(),
         command_operand: None,
+        semantic_operand: None,
         provenance: CommandProvenance {
             input_level: 1,
             position: 0,
@@ -309,6 +311,7 @@ fn input_effect_source_identity_resolves_after_unobserved_source_allocations() {
             spelling: ObservedToken::ControlSequence("endgroup".into()),
             command: "end_group".into(),
             command_operand: Some(0),
+            semantic_operand: None,
             provenance: CommandProvenance {
                 input_level: 9,
                 position: 0,
@@ -355,6 +358,7 @@ fn repeated_packed_name_uses_each_opened_source_snapshot_until_its_retirement() 
             },
             command: "letter".into(),
             command_operand: Some(i64::from(u32::from(character))),
+            semantic_operand: None,
             provenance: CommandProvenance {
                 input_level: 1,
                 position: byte,
@@ -454,6 +458,7 @@ fn live_macro_command_retains_reference_operand() {
         spelling: ObservedToken::ControlSequence("par".into()),
         command: "outer_call".into(),
         command_operand: Some(249_982),
+        semantic_operand: None,
         provenance: CommandProvenance {
             input_level: 1,
             position: 0,

@@ -20,7 +20,9 @@ pub(crate) fn translate_observation(
                 provenance.has_origin
             );
             let (mut operand, control_sequence) = command_token(&record.spelling);
-            if let Some(command_operand) = record.command_operand
+            if let Some(semantic_operand) = &record.semantic_operand {
+                operand = CanonicalValue::Name(semantic_operand.clone());
+            } else if let Some(command_operand) = record.command_operand
                 && (preserve_macro_reference_operands
                     || !matches!(
                         record.command.as_str(),

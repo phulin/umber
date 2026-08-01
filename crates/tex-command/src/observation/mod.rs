@@ -122,6 +122,9 @@ pub struct CommandDeliveryRecord {
     /// This is an identity from the installed primitive registry, never a
     /// fixture-derived value. Character spellings retain their own operand.
     pub command_operand: Option<i64>,
+    /// Portable semantic operand for commands whose WEB operand is an
+    /// allocator address rather than a stable selector.
+    pub semantic_operand: Option<String>,
     pub provenance: CommandProvenance,
 }
 
@@ -332,6 +335,19 @@ pub(crate) fn canonical_command_identity_for_profile(
         // must look like one.
         Meaning::Unknown(_) => ("undecodable_meaning".into(), None),
     }
+}
+
+/// e-TeX 2.6 [49.1221--1224] stores a sparse register shorthand's array-node
+/// pointer in `cur_chr`. Sections [49.5508--5523] define the portable identity
+/// encoded by that node as its register type and `print_sa_num` index.
+pub(crate) fn canonical_sparse_register_operand(
+    profile: CommandProfile,
+    meaning: Meaning,
+) -> Option<String> {
+    if !profile.capabilities().supports_etex() {
+        return None;
+    }
+    canonical_names::sparse_register_operand_name(meaning)
 }
 
 /// Canonical TeX82 observer identity for one delivered current command.
@@ -1157,7 +1173,8 @@ mod tests {
     fn etex_sparse_shorthands_use_sparse_array_commands() {
         // e-TeX 2.6 change [49.1224] defines register shorthands above 255
         // with `register`/`toks_register`; their `cur_chr` is the
-        // allocator-owned sparse-array node and has no portable value.
+        // allocator-owned sparse-array node, while [49.5508--5523] gives the
+        // node the portable type/index identity retained separately below.
         for meaning in [
             Meaning::CountRegister(2_000),
             Meaning::DimenRegister(2_001),
@@ -1183,6 +1200,18 @@ mod tests {
             ),
             ("register".into(), None)
         );
+        for (meaning, expected) in [
+            (Meaning::CountRegister(2_000), "count:2000"),
+            (Meaning::DimenRegister(2_001), "dimen:2001"),
+            (Meaning::SkipRegister(32_767), "skip:32767"),
+            (Meaning::MuskipRegister(32_766), "muskip:32766"),
+            (Meaning::ToksRegister(2_002), "toks:2002"),
+        ] {
+            assert_eq!(
+                canonical_sparse_register_operand(CommandProfile::ETEX26, meaning).as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

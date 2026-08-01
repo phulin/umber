@@ -1210,6 +1210,41 @@ mod tests {
     }
 
     #[test]
+    fn sparse_register_comparison_projects_only_the_oracle_node_address() {
+        let command = |operand| {
+            Event::Command(CommandEvent {
+                delivery: CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: "register".into(),
+                    operand,
+                    control_sequence: Some("alias".into()),
+                    location: None,
+                },
+            })
+        };
+        let expected = vec![NormalizedEvent {
+            sequence: 0,
+            semantic: command(CanonicalValue::Integer(1_926)),
+        }];
+        let semantic = vec![ObservedEvent::new(
+            command(CanonicalValue::Name("skip:32767".into())),
+            String::new(),
+        )];
+        assert_eq!(compare_streams("etex/sparse", &expected, &semantic), Ok(()));
+
+        let absent = vec![ObservedEvent::new(
+            command(CanonicalValue::None),
+            String::new(),
+        )];
+        assert!(compare_streams("etex/sparse", &expected, &absent).is_err());
+        let opaque = vec![ObservedEvent::new(
+            command(CanonicalValue::Integer(17)),
+            String::new(),
+        )];
+        assert!(compare_streams("etex/sparse", &expected, &opaque).is_err());
+    }
+
+    #[test]
     fn canonical_startup_matches_the_terminal_scan_before_root_delivery() {
         let fixture = committed_fixture();
         let repository = test_support::repository_root();

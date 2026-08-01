@@ -29,9 +29,26 @@
 //! - §305 fixes the six `scanner_status` values.
 
 use tex_state::glue::Order;
+use tex_state::meaning::Meaning;
 use tex_state::token::Catcode;
 
 use super::ObservedToken;
+
+/// Portable e-TeX sparse-array element identity from [49.5508--5523].
+///
+/// The WEB command operand is an allocator-owned node address; the node's
+/// semantic identity is its type and `print_sa_num` register index.
+#[must_use]
+pub(crate) fn sparse_register_operand_name(meaning: Meaning) -> Option<String> {
+    match meaning {
+        Meaning::CountRegister(index) if index > 255 => Some(format!("count:{index}")),
+        Meaning::DimenRegister(index) if index > 255 => Some(format!("dimen:{index}")),
+        Meaning::SkipRegister(index) if index > 255 => Some(format!("skip:{index}")),
+        Meaning::MuskipRegister(index) if index > 255 => Some(format!("muskip:{index}")),
+        Meaning::ToksRegister(index) if index > 255 => Some(format!("toks:{index}")),
+        _ => None,
+    }
+}
 
 /// tex.web §207's category-code name for one stored catcode.
 ///
