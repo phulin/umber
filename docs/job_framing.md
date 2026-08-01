@@ -30,6 +30,13 @@ and no normalization makes one the evidence for the other, which is why
 `umber2-alfh.1` -- validating every committed minifixture channel against the
 pinned oracle -- was blocked behind this document's subject.
 
+The retained public driver exposes startup acquisition through
+`CanonicalStartupInput` and `CanonicalEngineSession::acquire_startup_root`.
+The adapter supplies the initial `**` line and any §530 replacement lines;
+the existing `CanonicalResourceHost` still selects immutable bytes or reports
+absence. This keeps terminal interaction out of engine crates and gives native,
+browser, and test drivers the same bounded protocol.
+
 ## What a job prints, and when
 
 | tex.web               | Text                                                   | Sink                     |

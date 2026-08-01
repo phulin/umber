@@ -106,3 +106,10 @@ pub fn print_startup_file_open(universe: &mut Universe, name: &str) {
         .print(name);
     universe.world_mut().file_framing_mut().incr();
 }
+
+/// §537's startup opening after §536 has opened the transcript.
+pub fn print_startup_file_open_after_log(universe: &mut Universe, name: &str) {
+    let selector = Selector::for_interaction(universe.interaction_mode());
+    Printer::new(universe, selector).print_char('(').print(name);
+    universe.world_mut().file_framing_mut().incr();
+}

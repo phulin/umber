@@ -26,6 +26,16 @@ use crate::RunResult;
 /// Default bound for a host that repeatedly declines the same typed need.
 pub const DEFAULT_CANONICAL_NO_PROGRESS_LIMIT: u8 = 8;
 
+/// Explicit driver adapter for TeX82's startup `**` line and any §530
+/// replacement filename lines.
+///
+/// Engine crates never read ambient stdin. Native, WebAssembly, and test
+/// drivers provide the bounded line source appropriate to their host.
+pub trait CanonicalStartupInput {
+    /// Returns the next line after presenting `prompt`, or `None` at EOF.
+    fn read_line(&mut self, prompt: &str) -> Option<String>;
+}
+
 /// An immutable answer to exactly one canonical resource suspension.
 #[derive(Clone, Debug)]
 pub enum CanonicalResourceFulfillment {
@@ -131,6 +141,10 @@ pub enum CanonicalSessionState {
 pub enum CanonicalSessionError {
     RootAlreadyRegistered,
     RootNotRegistered,
+    StartupInputExhausted,
+    StartupFileUnavailable {
+        name: String,
+    },
     UnexpectedFulfillment {
         need: CanonicalResourceNeed,
         fulfillment: Box<CanonicalResourceFulfillment>,
@@ -153,6 +167,12 @@ impl fmt::Display for CanonicalSessionError {
             }
             Self::RootNotRegistered => {
                 formatter.write_str("canonical root has not been registered")
+            }
+            Self::StartupInputExhausted => {
+                formatter.write_str("startup terminal input was exhausted")
+            }
+            Self::StartupFileUnavailable { name } => {
+                write!(formatter, "startup input file is unavailable: {name}")
             }
             Self::UnexpectedFulfillment { need, fulfillment } => write!(
                 formatter,
@@ -207,6 +227,7 @@ pub struct CanonicalEngineSession<'a> {
     root_framing_is_command_owned: bool,
     startup_input_name: Option<String>,
     started: bool,
+    headline_printed: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
     terminated: bool,
     artifact_cursor: usize,
@@ -229,6 +250,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
+            headline_printed: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -253,6 +275,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
+            headline_printed: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -274,6 +297,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_framing_is_command_owned: false,
             startup_input_name: None,
             started: false,
+            headline_printed: false,
             terminated: false,
             no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
@@ -382,6 +406,81 @@ impl<'a> CanonicalEngineSession<'a> {
         )
     }
 
+    /// Acquires TeX's startup filename and immutable root through explicit
+    /// driver adapters, including §530's interactive replacement loop.
+    ///
+    /// The resource host remains the sole owner of lookup policy. A missing
+    /// name is retried only in scroll/error-stop modes; batch/nonstop return
+    /// the canonical fatal file outcome without consulting another line.
+    pub fn acquire_startup_root(
+        &mut self,
+        input: &mut dyn CanonicalStartupInput,
+        host: &mut dyn CanonicalResourceHost,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        if self.root_registered {
+            return Err(CanonicalSessionError::RootAlreadyRegistered);
+        }
+        self.print_startup_headline();
+        let mut prompt = "**";
+        loop {
+            let line = input
+                .read_line(prompt)
+                .ok_or(CanonicalSessionError::StartupInputExhausted)?;
+            let name = startup_file_name(&line);
+            let need = CanonicalResourceNeed::Input { name: name.clone() };
+            let outcome = {
+                let mut world = CanonicalResourceWorld::new(self.stores);
+                host.fulfill(&mut world, &need)
+            };
+            if let CanonicalResourceOutcome::Fulfilled(fulfillment) = outcome {
+                let CanonicalResourceFulfillment::Input {
+                    name: fulfilled_name,
+                    source,
+                } = fulfillment
+                else {
+                    return Err(CanonicalSessionError::UnexpectedFulfillment {
+                        need,
+                        fulfillment: Box::new(fulfillment),
+                    });
+                };
+                if fulfilled_name != name {
+                    return Err(CanonicalSessionError::UnexpectedFulfillment {
+                        need,
+                        fulfillment: Box::new(CanonicalResourceFulfillment::Input {
+                            name: fulfilled_name,
+                            source,
+                        }),
+                    });
+                }
+                self.control
+                    .begin_job_after_terminal_headline(self.stores, &name);
+                self.control.capabilities_mut().set_startup_job_name(&name);
+                let id = self
+                    .control
+                    .register_startup_root_source(self.stores, source, &name)?;
+                self.root_registered = true;
+                self.root_framing_is_command_owned = true;
+                self.startup_input_name = Some(name);
+                return Ok(id);
+            }
+            if !self
+                .stores
+                .command_context()
+                .interaction_permits_terminal_input()
+            {
+                let mut report = self.stores.print_err("Emergency stop");
+                report.help(&["*** (job aborted, file error in nonstop mode)"]);
+                report.succumb();
+                return Err(CanonicalSessionError::StartupFileUnavailable { name });
+            }
+            Printer::new(self.stores, Selector::TermOnly)
+                .print_nl(&format!("! I can't find file `{name}'."))
+                .print_ln()
+                .print("Please type another input file name: ");
+            prompt = "";
+        }
+    }
+
     /// Drives committed aggregate operations until completion or a typed
     /// suspension. Checkpoints are published solely from committed receipts.
     pub fn advance_until_waiting(
@@ -433,7 +532,7 @@ impl<'a> CanonicalEngineSession<'a> {
     /// this boundary; §534 later catches it up with a dated banner after the
     /// startup input has established the job name.
     fn print_startup_headline(&mut self) {
-        if !self.initex {
+        if !self.initex || std::mem::replace(&mut self.headline_printed, true) {
             return;
         }
         let banner = match self.command_profile().dialect() {
@@ -826,8 +925,23 @@ fn canonical_font_path(name: &str) -> PathBuf {
     }
 }
 
+fn startup_file_name(line: &str) -> String {
+    let supplied = line.trim().split_ascii_whitespace().next().unwrap_or("");
+    if supplied
+        .rsplit(['/', '\\'])
+        .next()
+        .is_some_and(|leaf| leaf.contains('.'))
+    {
+        supplied.to_owned()
+    } else {
+        format!("{supplied}.tex")
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use super::*;
     use tex_command::{CommandObservation, CommandObserver};
     use tex_exec::EngineBoundary;
@@ -836,6 +950,27 @@ mod tests {
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     struct WorldHost;
+
+    struct StartupLines {
+        lines: VecDeque<String>,
+        prompts: Vec<String>,
+    }
+
+    impl StartupLines {
+        fn new(lines: &[&str]) -> Self {
+            Self {
+                lines: lines.iter().map(|line| (*line).to_owned()).collect(),
+                prompts: Vec::new(),
+            }
+        }
+    }
+
+    impl CanonicalStartupInput for StartupLines {
+        fn read_line(&mut self, prompt: &str) -> Option<String> {
+            self.prompts.push(prompt.to_owned());
+            self.lines.pop_front()
+        }
+    }
 
     #[derive(Default)]
     struct ObservationRecorder(Vec<CommandObservation>);
@@ -899,6 +1034,101 @@ mod tests {
                         )
                     }),
             }
+        }
+    }
+
+    fn startup_session(interaction: tex_state::InteractionMode) -> Universe {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(interaction);
+        stores
+            .world_mut()
+            .set_memory_file("paper.tex", b"\\end".to_vec())
+            .expect("startup fixture registers");
+        stores
+    }
+
+    #[test]
+    fn startup_acquisition_orders_banner_log_echo_and_root_open() {
+        let mut stores = startup_session(tex_state::InteractionMode::ErrorStop);
+        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut lines = StartupLines::new(&["paper.tex"]);
+        session
+            .acquire_startup_root(&mut lines, &mut WorldHost)
+            .expect("startup root opens");
+        session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("startup job completes");
+
+        assert_eq!(lines.prompts, ["**"]);
+        assert_eq!(session.control.capabilities_mut().job_name(), "paper");
+        let (terminal, log) = transcript_channels(session.stores());
+        assert!(terminal.starts_with("This is TeX"));
+        assert!(
+            terminal.contains("(paper.tex"),
+            "terminal={terminal:?} log={log:?}"
+        );
+        assert!(
+            log.find("This is TeX").expect("log banner")
+                < log.find("**paper.tex").expect("startup echo")
+        );
+        let echo = log.find("**paper.tex");
+        let opening = log.find("(paper.tex");
+        assert!(
+            echo.zip(opening)
+                .is_some_and(|(echo, opening)| echo < opening),
+            "terminal={terminal:?} log={log:?}"
+        );
+    }
+
+    #[test]
+    fn startup_acquisition_retries_once_and_applies_default_tex_extension() {
+        let mut stores = startup_session(tex_state::InteractionMode::Scroll);
+        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut lines = StartupLines::new(&["missing", "paper"]);
+        session
+            .acquire_startup_root(&mut lines, &mut WorldHost)
+            .expect("replacement root opens");
+
+        assert_eq!(lines.prompts, ["**", ""]);
+        assert_eq!(session.control.capabilities_mut().job_name(), "paper");
+        let (terminal, log) = transcript_channels(session.stores());
+        assert_eq!(
+            terminal.matches("I can't find file `missing.tex'").count(),
+            1
+        );
+        assert_eq!(
+            terminal
+                .matches("Please type another input file name")
+                .count(),
+            1
+        );
+        assert!(log.contains("**paper.tex"));
+        assert!(!log.contains("missing"));
+    }
+
+    #[test]
+    fn startup_acquisition_aborts_without_replacement_in_noninteractive_modes() {
+        for interaction in [
+            tex_state::InteractionMode::Nonstop,
+            tex_state::InteractionMode::Batch,
+        ] {
+            let mut stores = startup_session(interaction);
+            let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+            let mut lines = StartupLines::new(&["missing", "paper"]);
+            let error = session
+                .acquire_startup_root(&mut lines, &mut WorldHost)
+                .expect_err("missing startup root is fatal");
+
+            assert!(matches!(
+                error,
+                CanonicalSessionError::StartupFileUnavailable { ref name }
+                    if name == "missing.tex"
+            ));
+            assert_eq!(lines.prompts, ["**"]);
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::FatalErrorStop
+            );
         }
     }
 

@@ -649,6 +649,21 @@ impl CanonicalMainControl {
     /// banner and `**` line precede the root file's own `(`. See
     /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
+        self.begin_job_with_terminal_banner(stores, first_line, true);
+    }
+
+    /// Opens the transcript and catches up §534 after a driver already
+    /// emitted §61's terminal headline before interactive root acquisition.
+    pub fn begin_job_after_terminal_headline(&mut self, stores: &mut Universe, first_line: &str) {
+        self.begin_job_with_terminal_banner(stores, first_line, false);
+    }
+
+    fn begin_job_with_terminal_banner(
+        &mut self,
+        stores: &mut Universe,
+        first_line: &str,
+        print_terminal_banner: bool,
+    ) {
         let binary = self
             .engine_binary
             .unwrap_or_else(|| match self.command_profile().dialect() {
@@ -663,18 +678,34 @@ impl CanonicalMainControl {
         // terminal level; a driver that frames the job here rather than
         // scanning the line through `scan_startup_file_name` supplies it here.
         first_line.clone_into(&mut self.startup_terminal_line);
-        crate::job::begin_job(
-            &mut self.job,
-            stores,
-            &mut self.capabilities,
-            self.initex,
-            self.preloaded_format.as_ref(),
-            crate::job::JobEngineFraming {
-                binary,
-                extended_mode: etex,
-            },
-            first_line,
-        );
+        let engine = crate::job::JobEngineFraming {
+            binary,
+            extended_mode: etex,
+        };
+        if print_terminal_banner {
+            crate::job::begin_job(
+                &mut self.job,
+                stores,
+                &mut self.capabilities,
+                self.initex,
+                self.preloaded_format.as_ref(),
+                engine,
+                first_line,
+            );
+        } else {
+            crate::job::begin_job_with_terminal_banner(
+                &mut self.job,
+                stores,
+                &mut self.capabilities,
+                self.initex,
+                self.preloaded_format.as_ref(),
+                engine,
+                crate::job::StartupLineFraming {
+                    first_line,
+                    terminal_banner: false,
+                },
+            );
+        }
     }
 
     /// Prints and accounts for the retained driver's already-open root input.
@@ -854,6 +885,25 @@ impl CanonicalMainControl {
         self.command
             .open_registered_source(id)
             .expect("freshly registered source must be openable");
+        Ok(id)
+    }
+
+    /// Registers the startup root and immediately renders its §537 opening
+    /// after the driver has opened the transcript.
+    pub fn register_startup_root_source(
+        &mut self,
+        stores: &mut Universe,
+        source: SourceRegistration,
+        startup_name: &str,
+    ) -> Result<tex_state::SourceId, SourceRegistrationError> {
+        let has_resolved_name = source.name().is_some();
+        let id = self.register_root_source(source)?;
+        if has_resolved_name {
+            self.command
+                .render_file_framing_events(&mut stores.command_context());
+        } else {
+            crate::job::open_startup_input_after_log(stores, startup_name);
+        }
         Ok(id)
     }
 

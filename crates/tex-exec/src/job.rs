@@ -89,6 +89,11 @@ pub(crate) struct JobEngineFraming {
     pub extended_mode: bool,
 }
 
+pub(crate) struct StartupLineFraming<'a> {
+    pub first_line: &'a str,
+    pub terminal_banner: bool,
+}
+
 /// Enough job state to make [`begin_job`] a one-shot.
 ///
 /// This is engine state that lives outside `Universe`, alongside
@@ -257,6 +262,29 @@ pub(crate) fn begin_job(
     engine: JobEngineFraming,
     first_line: &str,
 ) {
+    begin_job_with_terminal_banner(
+        job,
+        stores,
+        capabilities,
+        initex,
+        format,
+        engine,
+        StartupLineFraming {
+            first_line,
+            terminal_banner: true,
+        },
+    );
+}
+
+pub(crate) fn begin_job_with_terminal_banner(
+    job: &mut JobFraming,
+    stores: &mut Universe,
+    capabilities: &mut CommandHostCapabilities,
+    initex: bool,
+    format: Option<&PreloadedFormat>,
+    engine: JobEngineFraming,
+    startup: StartupLineFraming<'_>,
+) {
     if job.started {
         return;
     }
@@ -264,7 +292,7 @@ pub(crate) fn begin_job(
     // §537's `a_make_name_string`-derived `\jobname` reuses tex.web's own
     // stem derivation rather than re-deriving it here; see
     // `CommandHostCapabilities::set_startup_job_name`.
-    capabilities.set_startup_job_name(first_line);
+    capabilities.set_startup_job_name(startup.first_line);
 
     // §61: the terminal's very first output -- `format_ident` and a
     // terminating `print_ln`, no clock (the clock is §536's log-only
@@ -274,10 +302,12 @@ pub(crate) fn begin_job(
     // advance `term_offset`/`file_offset`; it is longer than
     // `max_print_line` and must stay one unbroken line.
     let banner = engine.binary.banner();
-    let terminal_banner = format!("{banner}{}\n", terminal_format_ident(format, initex));
-    stores
-        .world_mut()
-        .write_text_unmetered(PrintSink::Terminal, &terminal_banner);
+    if startup.terminal_banner {
+        let terminal_banner = format!("{banner}{}\n", terminal_format_ident(format, initex));
+        stores
+            .world_mut()
+            .write_text_unmetered(PrintSink::Terminal, &terminal_banner);
+    }
 
     // §536 `open_log_file`: the log's banner additionally carries
     // `format_ident` and the clock, with no trailing newline yet -- §534's
@@ -316,7 +346,7 @@ pub(crate) fn begin_job(
     // shows the typed `**` prompt line.
     Printer::new(stores, Selector::LogOnly)
         .print_nl("**")
-        .print(first_line)
+        .print(startup.first_line)
         .print_ln();
 }
 
@@ -350,6 +380,10 @@ pub(crate) fn report_unclosed_groups(stores: &mut Universe) {
 /// see it when `\end` or `\dump` abandons the still-open root.
 pub(crate) fn open_startup_input(stores: &mut Universe, name: &str) {
     tex_state::file_framing::print_startup_file_open(stores, name);
+}
+
+pub(crate) fn open_startup_input_after_log(stores: &mut Universe, name: &str) {
+    tex_state::file_framing::print_startup_file_open_after_log(stores, name);
 }
 
 /// tex.web §1335's "(see the transcript file for additional information)"
