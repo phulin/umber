@@ -266,6 +266,23 @@ fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
 }
 
 #[test]
+fn tracingrestores_reports_dimension_register_restoration() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\dimen9=1.25pt}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\dimen9=0.0pt}\n"
+    );
+}
+
+#[test]
 fn tracingrestores_reports_restored_box_register_value() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

@@ -5660,6 +5660,15 @@ impl Universe {
                     format!("count{}", cell.index()),
                     (record.old() as u32 as i32).to_string(),
                 ),
+                BankTag::Dimen => (
+                    format!("dimen{}", cell.index()),
+                    format!(
+                        "{}pt",
+                        format_restore_scaled(crate::scaled::Scaled::from_raw(
+                            record.old() as u32 as i32,
+                        ))
+                    ),
+                ),
                 BankTag::IntParam if cell.index() < 128 => {
                     let Some(name) = IntParam::new(cell.index() as u16).tex82_name() else {
                         continue;
@@ -6970,6 +6979,22 @@ impl Universe {
     pub fn node_memory_columns(&self) -> Vec<crate::node_arena::NodeMemoryColumn> {
         self.stores.node_memory_columns()
     }
+}
+
+fn format_restore_scaled(value: crate::scaled::Scaled) -> String {
+    let raw = i64::from(value.raw());
+    let sign = if raw < 0 { "-" } else { "" };
+    let magnitude = raw.abs();
+    let whole = magnitude / 65_536;
+    let fraction = magnitude % 65_536;
+    if fraction == 0 {
+        return format!("{sign}{whole}.0");
+    }
+    let mut digits = format!("{:05}", (fraction * 100_000 + 32_768) / 65_536);
+    while digits.ends_with('0') {
+        digits.pop();
+    }
+    format!("{sign}{whole}.{digits}")
 }
 
 /// A mutable dimension field of a box register's top-level box.
