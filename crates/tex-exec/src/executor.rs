@@ -693,6 +693,17 @@ impl<'a> ExecutionContext<'a> {
         self.emit_dvi
     }
 
+    /// Selects whether shipout traverses pages for DVI emission.
+    ///
+    /// Direct hosts configure this before wrapping the context in an
+    /// [`ExecutionRun`]; PDF-only output must disable DVI traversal so
+    /// deferred PDF nodes reach the PDF driver boundary.
+    #[must_use]
+    pub fn with_dvi_output(mut self, enabled: bool) -> Self {
+        self.emit_dvi = enabled;
+        self
+    }
+
     pub(crate) fn command_fuel(&mut self) -> &mut tex_command::CommandFuel {
         self.command_fuel
             .as_mut()
@@ -1857,11 +1868,13 @@ where {
         let job_name = execution.job_name.clone();
         let detached =
             std::mem::replace(execution, ExecutionContext::detached_placeholder(&job_name));
+        let emit_dvi = detached.emits_dvi();
         let (state, input_resolver, font_resolver, image_resolver, recorder) =
             detached.into_owned_parts();
         let nest = std::mem::take(&mut self.nest);
         let mut run = ExecutionRun::from_parts(&job_name, nest, state, publish_job_start)
-            .with_budget_counters(self.budget_counters);
+            .with_budget_counters(self.budget_counters)
+            .with_dvi_output(emit_dvi);
         let cancellation = Cancellation::new();
         let mut services = ExecutionServices {
             input,
@@ -1907,7 +1920,8 @@ where {
             font_resolver,
             image_resolver,
             recorder,
-        );
+        )
+        .with_dvi_output(emit_dvi);
         result
     }
 }

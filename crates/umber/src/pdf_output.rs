@@ -4874,6 +4874,7 @@ mod tests {
     use crate::{
         DirectFontResolver, RejectingMemoryInputResolver, RunResult, dvi_from_page_plans,
         prepare_pdftex_run_stores, run_input_collecting_artifacts,
+        run_input_collecting_artifacts_with_profile,
     };
     use test_support::{
         pdf_fixture::{Dictionary as FixtureDictionary, PdfFixture, array, name, reference},
@@ -4962,8 +4963,15 @@ mod tests {
             &mut input_resolver,
             &mut font_resolver,
             &mut image_resolver,
-        );
-        run_input_collecting_artifacts(&mut input, stores, context).expect("image page ships")
+        )
+        .with_dvi_output(false);
+        run_input_collecting_artifacts_with_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+        .expect("image page ships")
     }
 
     fn run_with_images(
@@ -4982,8 +4990,15 @@ mod tests {
             &mut input_resolver,
             &mut font_resolver,
             &mut image_resolver,
-        );
-        run_input_collecting_artifacts(&mut input, stores, context).expect("image page ships")
+        )
+        .with_dvi_output(false);
+        run_input_collecting_artifacts_with_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+        .expect("image page ships")
     }
 
     fn append_png_chunk(kind: &[u8; 4], data: &[u8], target: &mut Vec<u8>) {
@@ -6765,8 +6780,15 @@ mod tests {
         let mut input_resolver = RejectingMemoryInputResolver;
         let mut font_resolver = DirectFontResolver;
         let context =
-            ExecutionContext::with_resolvers("pdf-test", &mut input_resolver, &mut font_resolver);
-        run_input_collecting_artifacts(&mut input, stores, context).expect("minimal page ships")
+            ExecutionContext::with_resolvers("pdf-test", &mut input_resolver, &mut font_resolver)
+                .with_dvi_output(false);
+        run_input_collecting_artifacts_with_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+        .expect("minimal page ships")
     }
 
     fn try_run_in(stores: &mut Universe, source: &str) -> Result<RunResult, tex_exec::ExecError> {
@@ -6774,8 +6796,42 @@ mod tests {
         let mut input_resolver = RejectingMemoryInputResolver;
         let mut font_resolver = DirectFontResolver;
         let context =
+            ExecutionContext::with_resolvers("pdf-test", &mut input_resolver, &mut font_resolver)
+                .with_dvi_output(false);
+        run_input_collecting_artifacts_with_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+    }
+
+    fn run_in_dvi(stores: &mut Universe, source: &str) -> RunResult {
+        try_run_in_dvi(stores, source).expect("DVI page ships")
+    }
+
+    fn try_run_in_dvi(
+        stores: &mut Universe,
+        source: &str,
+    ) -> Result<RunResult, tex_exec::ExecError> {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let context =
             ExecutionContext::with_resolvers("pdf-test", &mut input_resolver, &mut font_resolver);
-        run_input_collecting_artifacts(&mut input, stores, context)
+        run_input_collecting_artifacts_with_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+    }
+
+    fn run_dvi(source: &str) -> (Universe, RunResult) {
+        let mut stores = pdftex_recovery_stores();
+        prepare_pdftex_run_stores(&mut stores);
+        let result = run_in_dvi(&mut stores, source);
+        (stores, result)
     }
 
     fn run(source: &str) -> (Universe, RunResult) {
@@ -7789,8 +7845,10 @@ mod tests {
 
     #[test]
     fn enabling_pdf_mode_does_not_change_dvi_page_bytes() {
-        let (_, dvi_run) = run("\\pdfoutput=0\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
-        let (_, pdf_run) = run("\\pdfoutput=1\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
+        let (_, dvi_run) =
+            run_dvi("\\pdfoutput=0\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
+        let (_, pdf_run) =
+            run_dvi("\\pdfoutput=1\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
         assert_eq!(
             dvi_from_page_plans(&dvi_run.dvi_pages).expect("DVI assembles"),
             dvi_from_page_plans(&pdf_run.dvi_pages).expect("DVI assembles"),
@@ -7798,15 +7856,20 @@ mod tests {
     }
 
     #[test]
-    fn pdf_color_stack_allocation_does_not_change_dvi_bytes() {
-        let (_, plain) = run("\\pdfoutput=0\\shipout\\vbox{\\hrule width10pt height5pt}\\end");
-        let (_, allocated) = run(concat!(
-            "\\pdfoutput=0\\edef\\colors{\\pdfcolorstackinit page direct{0 g}}",
-            "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
-        ));
+    fn deferred_pdf_color_stack_is_rejected_in_dvi_mode() {
+        let mut stores = pdftex_recovery_stores();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = try_run_in_dvi(
+            &mut stores,
+            concat!(
+                "\\pdfoutput=0\\edef\\colors{\\pdfcolorstackinit page direct{0 g}}",
+                "\\shipout\\vbox{\\hrule width10pt height5pt}\\end",
+            ),
+        )
+        .expect_err("a deferred PDF color stack must fail in DVI mode");
         assert_eq!(
-            dvi_from_page_plans(&plain.dvi_pages).expect("plain DVI"),
-            dvi_from_page_plans(&allocated.dvi_pages).expect("allocated DVI"),
+            error.to_string(),
+            "pdfTeX error (ext4): \\pdfcolorstack used while \\pdfoutput is not set."
         );
     }
 
@@ -9112,7 +9175,7 @@ mod tests {
     }
 
     #[test]
-    fn pdf_snap_y_compensation_clamps_and_dvi_plan_matches_equivalent_kern() {
+    fn pdf_snap_y_compensation_clamps_in_pdf_mode() {
         for (ratio, expected_y) in [(-1, 94), (0, 94), (500, 92), (1000, 90), (1001, 90)] {
             let source = format!(
                 concat!(
@@ -9131,29 +9194,6 @@ mod tests {
                 "ratio {ratio}"
             );
         }
-
-        let (_, snapped) = run(concat!(
-            "\\pdfoutput=1\\pdfhorigin=0pt\\pdfvorigin=0pt",
-            "\\shipout\\vbox{\\pdfsnaprefpoint\\kern6pt",
-            "\\pdfsnapy 10pt plus10pt minus10pt\\hrule width1pt height1pt}\\end",
-        ));
-        let (_, explicit) = run(concat!(
-            "\\pdfoutput=1\\pdfhorigin=0pt\\pdfvorigin=0pt",
-            "\\shipout\\vbox{\\kern10pt\\hrule width1pt height1pt}\\end",
-        ));
-        let snapped_dvi = dvi_from_page_plans(&snapped.dvi_pages).expect("snapped DVI");
-        let explicit_dvi = dvi_from_page_plans(&explicit.dvi_pages).expect("explicit-kern DVI");
-        let snapped_file =
-            tex_out::dvi::disasm::DviFile::parse(&snapped_dvi).expect("snapped DVI parses");
-        let explicit_file =
-            tex_out::dvi::disasm::DviFile::parse(&explicit_dvi).expect("explicit-kern DVI parses");
-        let snapped_page = &snapped_file.pages[0];
-        let explicit_page = &explicit_file.pages[0];
-        assert_eq!(
-            &snapped_dvi[snapped_page.bop_offset..snapped_page.eop_end.expect("snapped eop")],
-            &explicit_dvi[explicit_page.bop_offset..explicit_page.eop_end.expect("explicit eop")],
-            "snapping emits the same DVI page program as its equivalent explicit kern"
-        );
     }
 
     #[test]

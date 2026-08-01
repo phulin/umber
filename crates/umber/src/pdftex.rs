@@ -489,6 +489,24 @@ mod tests {
         FileModificationDate, JobClock, PdfDocumentFragmentKind, ShellEscapePolicy, World,
     };
 
+    fn run_pdf_memory(source: &str, stores: &mut Universe) -> Result<String, tex_exec::ExecError> {
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = crate::RejectingMemoryInputResolver;
+        let mut font_resolver = crate::DirectFontResolver;
+        let context = tex_exec::ExecutionContext::with_resolvers(
+            "texput",
+            &mut input_resolver,
+            &mut font_resolver,
+        )
+        .with_dvi_output(false);
+        crate::run_input_with_context_and_profile(
+            &mut input,
+            stores,
+            context,
+            tex_command::CommandProfile::PDFTEX14027,
+        )
+    }
+
     /// The engine state these oracle comparisons run against.
     ///
     /// The pinned pdfTeX references are captured with
@@ -558,7 +576,7 @@ mod tests {
     fn pdfxform_consumes_box_and_captures_options_and_dimensions() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\setbox0=\\hbox to 10pt{}",
@@ -575,7 +593,7 @@ mod tests {
         assert_eq!(form.width(), Scaled::from_raw(10 * 65_536));
         assert!(form.attr().is_some());
         assert!(form.resources().is_some());
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             "\\message{name=\\pdfxformname1,last=\\the\\pdflastxform}\\end",
             &mut stores,
         )
@@ -587,13 +605,13 @@ mod tests {
     fn pdfxform_rejects_void_boxes_and_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores("\\pdfoutput=1\\pdfxform0\\end", &mut stores)
+        let error = run_pdf_memory("\\pdfoutput=1\\pdfxform0\\end", &mut stores)
             .expect_err("void form box must fail");
         assert_eq!(
             error.to_string(),
             "pdfTeX error (ext1): \\pdfxform cannot be used with a void box"
         );
-        crate::run_memory_with_stores("\\setbox0=\\hbox{}\\pdfxform0\\end", &mut stores)
+        run_pdf_memory("\\setbox0=\\hbox{}\\pdfxform0\\end", &mut stores)
             .expect("form allocation continues after the failed reserved identity");
         let form = stores
             .pdf_form(3)
@@ -602,7 +620,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores("\\pdfxform0\\end", &mut stores)
+        let error = run_pdf_memory("\\pdfxform0\\end", &mut stores)
             .expect_err("DVI mode must reject forms");
         assert_eq!(
             error.to_string(),
@@ -617,7 +635,7 @@ mod tests {
         let survivor_roots_before = stores.testing_live_survivor_slot_count();
         let snapshot = stores.snapshot();
         let source = "\\pdfoutput=1\\setbox0=\\hbox{}\\pdfxform0\\end";
-        crate::run_memory_with_stores(source, &mut stores).expect("first form run");
+        run_pdf_memory(source, &mut stores).expect("first form run");
         let first_hash = stores.testing_state_hash();
         assert_eq!(stores.pdf_last_form(), 1);
         stores.rollback(&snapshot);
@@ -628,7 +646,7 @@ mod tests {
             survivor_roots_before,
             "rolling back the form ledger releases its durable node owner"
         );
-        crate::run_memory_with_stores(source, &mut stores).expect("replayed form run");
+        run_pdf_memory(source, &mut stores).expect("replayed form run");
         assert_eq!(stores.pdf_last_form(), 1);
         assert_eq!(stores.testing_state_hash(), first_hash);
     }
@@ -637,7 +655,7 @@ mod tests {
     fn lazy_pdf_form_created_inside_box_build_survives_until_shipout_normalization() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1 ",
                 "\\setbox9=\\hbox{\\setbox0=\\hbox{}\\pdfxform0} ",
@@ -685,7 +703,7 @@ mod tests {
                 include_bytes!("../../tex-fonts/tests/fixtures/cm/cmex10.tfm").to_vec(),
             )
             .expect("seed extension font fixture");
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_form_state/pdf_form_state.tex"),
             &mut stores,
         )
@@ -715,7 +733,7 @@ mod tests {
         assert!(traversal_diagnostic.contains("1 unmatched \\pdfsave after form ship"));
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores(
+        let error = run_pdf_memory(
             include_str!(
                 "../../../tests/corpus/tex_exec/pdf_form_diagnostics/pdf_form_diagnostics.tex"
             ),
@@ -732,7 +750,7 @@ mod tests {
     fn pdf_objects_reserve_initialize_reference_and_report_last_object() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\pdfobj reserveobjnum",
@@ -764,7 +782,7 @@ mod tests {
     fn pdf_accessibility_controls_scan_globally_and_reject_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\def\\spacename{fixture}",
@@ -790,11 +808,8 @@ mod tests {
         ] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
-            let error = crate::run_memory_with_stores(
-                &format!("\\pdfoutput=0{primitive}\\end"),
-                &mut stores,
-            )
-            .expect_err("PDF-only accessibility primitive must fail in DVI mode");
+            let error = run_pdf_memory(&format!("\\pdfoutput=0{primitive}\\end"), &mut stores)
+                .expect_err("PDF-only accessibility primitive must fail in DVI mode");
             assert!(
                 error.to_string().contains("not allowed in DVI mode"),
                 "{primitive}: {error}"
@@ -806,7 +821,7 @@ mod tests {
     fn pdf_annotations_and_links_allocate_pair_and_anchor_typed_effects() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\pdfannot reserveobjnum",
@@ -857,7 +872,7 @@ mod tests {
     fn pdf_link_level_mismatch_warns_and_closes_the_active_link() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfoutput=1 X\\hbox{\\pdfstartlink user{/Subtype /Link}",
                 "inside}\\pdfendlink\\end",
@@ -888,7 +903,7 @@ mod tests {
         for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
-            let output = crate::run_memory_with_stores(
+            let output = run_pdf_memory(
                 &format!(
                     "\\pdfoutput=1\\setbox0=\\hbox{{\\pdfdest name{{same}} fit\\pdfdest name{{same}} fit}}\\pdfsuppresswarningdupdest={suppression}\\shipout\\box0\\end"
                 ),
@@ -927,7 +942,7 @@ mod tests {
         const NUMBER_WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (num7) has been already used, duplicate ignored\n";
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\shipout\\hbox{\\pdfdest name{7} fit\\pdfdest num 7 fit}",
@@ -988,7 +1003,7 @@ mod tests {
     fn pdfpageref_expands_to_shipped_page_object_and_zero_for_missing_pages() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             "\\pdfoutput=1\\shipout\\hbox{}\\message{page=\\pdfpageref1,missing=\\pdfpageref2}\\end",
             &mut stores,
         )
@@ -1004,7 +1019,7 @@ mod tests {
     fn pdf_article_thread_scanner_allocates_and_commits_typed_beads() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1\\pdfthreadmargin=2pt",
                 "\\shipout\\hbox{\\pdfthread depth 3pt width 10pt height 4pt ",
@@ -1041,7 +1056,7 @@ mod tests {
     fn local_thread_actions_reserve_thread_objects_without_destination_aliases() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\pdfoutline thread num 17 {Missing thread}",
@@ -1067,7 +1082,7 @@ mod tests {
     fn running_thread_lifecycle_reports_hlist_and_nesting_errors() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             "\\pdfoutput=1\\shipout\\hbox{\\pdfstartthread name{bad}\\pdfendthread}\\end",
             &mut stores,
         )
@@ -1083,7 +1098,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{nested}\\vbox{\\pdfendthread}}\\end",
             &mut stores,
         )
@@ -1100,7 +1115,7 @@ mod tests {
     fn thread_identifier_is_required_before_any_ledger_or_artifact_publication() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores(
+        let error = run_pdf_memory(
             "\\pdfoutput=1\\shipout\\hbox{\\pdfthread width1pt}\\end",
             &mut stores,
         )
@@ -1121,7 +1136,7 @@ mod tests {
         for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
-            let output = crate::run_memory_with_stores(
+            let output = run_pdf_memory(
                 &format!(
                     "\\pdfoutput=1\\shipout\\hbox{{\\pdfdest num 7 fit}}\\pdfsuppresswarningdupdest={suppression}\\setbox0=\\hbox{{\\pdfdest num 7 fit}}\\end"
                 ),
@@ -1143,7 +1158,7 @@ mod tests {
     fn pdf_objects_match_reference_errors_and_useobjnum_recovery() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfoutput=1\\message{retval0=\\the\\pdfretval}",
                 "\\pdfobj useobjnum 99 {fallback}",
@@ -1167,7 +1182,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores("\\pdfoutput=1\\pdfrefobj 99\\end", &mut stores)
+        let error = run_pdf_memory("\\pdfoutput=1\\pdfrefobj 99\\end", &mut stores)
             .expect_err("invalid reference must be fatal");
         assert_eq!(
             error.to_string(),
@@ -1176,7 +1191,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores(
+        let error = run_pdf_memory(
             "\\pdfoutput=1\\immediate\\pdfobj reserveobjnum\\end",
             &mut stores,
         )
@@ -1254,7 +1269,7 @@ mod tests {
         prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
         stores.enable_pdf_output();
-        let initial = crate::run_memory_with_stores(
+        let initial = run_pdf_memory(
             "\\message{initial=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth}",
             &mut stores,
         )
@@ -1289,7 +1304,7 @@ mod tests {
             .expect("allocate raster image");
         let raster_snapshot = stores.snapshot();
         let raster_hash = stores.testing_state_hash();
-        let raster_output = crate::run_memory_with_stores(
+        let raster_output = run_pdf_memory(
             concat!(
                 "\\message{raster=\\the\\pdflastximagepages/",
                 "\\the\\pdflastximagecolordepth}",
@@ -1333,7 +1348,7 @@ mod tests {
                 0,
             )
             .expect("allocate PDF image");
-        let pdf_output = crate::run_memory_with_stores(
+        let pdf_output = run_pdf_memory(
             "\\message{pdf=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth}",
             &mut stores,
         )
@@ -1351,7 +1366,7 @@ mod tests {
     fn pdfrefobj_is_applied_only_when_its_owning_list_ships() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             "\\pdfoutput=1\\pdfobj{x}\\setbox0=\\hbox{\\pdfrefobj 1}\\end",
             &mut stores,
         )
@@ -1365,7 +1380,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1\\pdfobj{x}",
                 "\\setbox0=\\hbox{\\pdfrefobj 1}\\shipout\\box0\\end",
@@ -1386,7 +1401,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\def\\value{one}",
                 "\\pdfinfo{/First (\\value)}",
@@ -1431,7 +1446,7 @@ mod tests {
     fn pdf_document_fragments_match_dvi_mode_consumption() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             "\\pdfinfo{/Ignored true}\\message{continued}\\end",
             &mut stores,
         )
@@ -1447,7 +1462,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let error = crate::run_memory_with_stores("\\pdfnames{/Forbidden true}\\end", &mut stores)
+        let error = run_pdf_memory("\\pdfnames{/Forbidden true}\\end", &mut stores)
             .expect_err("pdfnames must fail before scanning in DVI mode");
         assert_eq!(
             error.to_string(),
@@ -1460,7 +1475,7 @@ mod tests {
         ] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
-            let error = crate::run_memory_with_stores(source, &mut stores)
+            let error = run_pdf_memory(source, &mut stores)
                 .expect_err("object actions are forbidden in DVI mode");
             assert_eq!(
                 error.to_string(),
@@ -1473,7 +1488,7 @@ mod tests {
     fn pdfcatalog_openaction_scans_expanded_actions_and_rejects_duplicates() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\pdfoutput=1\\def\\view{/FitH 10}",
                 "\\pdfcatalog{/PageMode /UseNone} openaction goto page 1 {\\view}",
@@ -1493,7 +1508,7 @@ mod tests {
         assert_eq!(number, 1);
         assert_eq!(token_list_text(&stores, view), "/FitH 10");
 
-        let error = crate::run_memory_with_stores(
+        let error = run_pdf_memory(
             "\\pdfcatalog{} openaction user{<< /S /Named >>}\\end",
             &mut stores,
         )
@@ -1508,7 +1523,7 @@ mod tests {
     fn pdfcatalog_openaction_is_consumed_without_allocation_in_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfcatalog{} openaction goto file{other.pdf} page 2 {/Fit} newwindow",
                 "\\pdfcatalog{} openaction user{<< /S /Named /N /Print >>}",
@@ -1883,7 +1898,7 @@ mod tests {
     fn pdfmatch_state_is_global_and_compile_failures_preserve_it() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfmatch{(a)}{xa}\\message{before=\\pdflastmatch1} ",
                 "{\\pdfmatch{(b)}{yb}}\\message{group=\\pdflastmatch1} ",
@@ -1910,7 +1925,7 @@ mod tests {
     fn pdftex_random_primitives_match_seeded_reference_sequence() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfsetrandomseed 1 ",
                 "\\message{seed=\\the\\pdfrandomseed}",
@@ -1954,7 +1969,7 @@ mod tests {
             .world_mut()
             .set_shell_escape_policy(ShellEscapePolicy::Restricted);
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\message{elapsed=\\the\\pdfelapsedtime}",
                 "\\message{shell=\\the\\pdfshellescape}",
@@ -1984,7 +1999,7 @@ mod tests {
         world.set_shell_escape_policy(ShellEscapePolicy::Enabled);
         let mut loaded = Universe::from_format(world, &format).expect("load with fresh World");
         crate::install_pdftex_format_primitives(&mut loaded);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\message{seed=\\the\\pdfrandomseed}",
                 "\\message{elapsed=\\the\\pdfelapsedtime}",
@@ -2002,7 +2017,7 @@ mod tests {
     fn pdftex_random_scanners_report_and_recover_bounds() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfsetrandomseed 999999999999 ",
                 "\\message{seed=\\the\\pdfrandomseed}",
@@ -2150,7 +2165,7 @@ mod tests {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         seed_pdftex_file_facts(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\message{O=[\\pdffiledump offset -1 length 2 {asset.bin}]} ",
                 "\\message{L=[\\pdffiledump offset 1 length -2 {asset.bin}]}\\end",
@@ -2168,7 +2183,7 @@ mod tests {
     fn primitive_identity_and_absolute_conditionals_match_pdftex() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\ifpdfprimitive\\count\\message{count-original}\\else\\message{count-bad}\\fi ",
                 "\\let\\countalias=\\count ",
@@ -2226,7 +2241,7 @@ mod tests {
         let mut loaded = Universe::from_format(World::default(), &format).expect("load format");
         crate::install_pdftex_format_primitives(&mut loaded);
 
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\ifpdfprimitive\\count\\message{count-bad}\\else\\message{count-shadowed}\\fi ",
                 "\\pdfprimitive\\count0=41 ",
@@ -2306,7 +2321,7 @@ mod tests {
     fn pdftex_parameters_obey_groups_globaldefs_and_legacy_aliases() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfcompresslevel=7 ",
                 "\\pdfhorigin=10pt ",
@@ -2376,7 +2391,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_image_config/pdf_image_config.tex"),
             &mut stores,
         )
@@ -2415,7 +2430,7 @@ mod tests {
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_font_config/pdf_font_config.tex"),
             &mut stores,
         )
@@ -2461,7 +2476,7 @@ mod tests {
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!(
                 "../../../tests/corpus/tex_exec/pdf_microtype_effects/pdf_microtype_effects.tex"
             ),
@@ -2497,7 +2512,7 @@ mod tests {
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_font_codes/pdf_font_codes.tex"),
             &mut stores,
         )
@@ -2544,7 +2559,7 @@ mod tests {
 
         let mut stores = pdftex_oracle_stores();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_output_policy/pdf_output_policy.tex"),
             &mut stores,
         )
@@ -2590,7 +2605,7 @@ mod tests {
     fn pdf_insert_height_reads_live_page_insertion_accounting() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\vsize=100pt ",
                 "\\count254=1000 \\dimen254=100pt \\skip254=0pt ",
@@ -2616,13 +2631,12 @@ mod tests {
             Some(Scaled::from_raw(16 * Scaled::UNITY))
         );
 
-        crate::run_memory_with_stores("\\end", &mut stores)
-            .expect("finish the page containing insertions");
+        run_pdf_memory("\\end", &mut stores).expect("finish the page containing insertions");
         assert_eq!(stores.page_insertion_height(254), None);
 
         let mut split_stores = Universe::default();
         prepare_pdftex_run_stores(&mut split_stores);
-        let split_output = crate::run_memory_with_stores(
+        let split_output = run_pdf_memory(
             concat!(
                 "\\vsize=100pt ",
                 "\\count254=1000 \\dimen254=5pt \\skip254=0pt ",
@@ -2678,7 +2692,7 @@ mod tests {
             )
             .expect("register raster metadata");
 
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             concat!(
                 "\\message{bbox=[\\pdfximagebbox7 1]/[\\pdfximagebbox7 2]/",
                 "[\\pdfximagebbox7 3]/[\\pdfximagebbox7 4]}",
@@ -2724,7 +2738,7 @@ mod tests {
     fn pdf_ximage_bbox_rejects_missing_objects_and_bad_indices() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let missing = crate::run_memory_with_stores("\\message{\\pdfximagebbox99 1}", &mut stores)
+        let missing = run_pdf_memory("\\message{\\pdfximagebbox99 1}", &mut stores)
             .expect_err("missing external image must be fatal");
         assert_eq!(
             missing.to_string(),
@@ -2740,7 +2754,7 @@ mod tests {
             )
             .expect("register image metadata");
         for index in [0, 5, -1] {
-            let error = crate::run_memory_with_stores(
+            let error = run_pdf_memory(
                 &format!("\\message{{\\pdfximagebbox7 {index}}}"),
                 &mut stores,
             )
@@ -2768,7 +2782,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!(
                 "../../../tests/corpus/tex_exec/pdf_metadata_config/pdf_metadata_config.tex"
             ),
@@ -2806,8 +2820,8 @@ mod tests {
         }
         source.push_str("} \\end");
 
-        let output = crate::run_memory_with_stores(&source, &mut stores)
-            .expect("all pdfTeX page parameters assign");
+        let output =
+            run_pdf_memory(&source, &mut stores).expect("all pdfTeX page parameters assign");
         for &(name, parameter, _) in PDFTEX_DIMEN_PARAMETERS {
             assert!(
                 output.contains(&format!("L{name}=2.0pt")),
@@ -2834,7 +2848,7 @@ mod tests {
     fn pdftex_line_dimension_overrides_follow_ignore_and_precedence_rules() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        crate::run_memory_with_stores(
+        run_pdf_memory(
             concat!(
                 "\\setbox0=\\vbox{\\hsize=10pt ",
                 "\\pdfeachlineheight=11pt \\pdfeachlinedepth=12pt ",
@@ -2976,7 +2990,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_compatibility_controls/pdf_compatibility_controls.tex"),
             &mut stores,
         )
@@ -3014,7 +3028,7 @@ mod tests {
             .set_memory_file("cmr10.tfm", CMR10.to_vec())
             .expect("seed cmr10");
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!(
                 "../../../tests/corpus/tex_exec/pdf_move_chars_warning/pdf_move_chars_warning.tex"
             ),
@@ -3053,7 +3067,7 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = crate::run_memory_with_stores(
+        let output = run_pdf_memory(
             include_str!("../../../tests/corpus/tex_exec/pdf_ignored_dimen_effects/pdf_ignored_dimen_effects.tex"),
             &mut stores,
         )

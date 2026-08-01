@@ -9877,6 +9877,7 @@ fn shipout_replay_box(
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
     let mut write_diagnostics = Vec::new();
+    let emit_dvi = !command.state.profile().capabilities().supports_pdftex();
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
@@ -9956,7 +9957,7 @@ fn shipout_replay_box(
         },
         stores,
         &mut expansion,
-        true,
+        emit_dvi,
         &mut expand_write,
     )?;
     if let Some(receipt) = receipt.as_mut() {

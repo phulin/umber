@@ -4590,6 +4590,7 @@ fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
         \\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
+        outputs: OutputCapabilitySet::PDF,
         ..SessionOptions::default()
     })
     .expect("session");

@@ -276,7 +276,13 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
         .expect("retained replay session starts");
     let checkpoint = stores.snapshot();
 
-    umber::run_memory_with_stores(&source, &mut stores).expect("first PDF execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("first PDF execution");
     let raw_objects = stores.pdf_raw_objects();
     assert_eq!(raw_objects.len(), 2);
     assert_eq!(raw_objects[0].id().raw(), 1);
@@ -304,7 +310,13 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
     let first_hash = stores.snapshot().state_hash();
 
     stores.rollback(&checkpoint);
-    umber::run_memory_with_stores(&source, &mut stores).expect("replayed PDF execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("replayed PDF execution");
     let replayed_artifacts = stores.world().committed_artifacts().to_vec();
     let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replayed_artifacts)
         .expect("replayed PDF finalization");
@@ -329,7 +341,13 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
         .expect("retained navigation replay session starts");
     let checkpoint = stores.snapshot();
 
-    umber::run_memory_with_stores(&source, &mut stores).expect("first navigation execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("first navigation execution");
     let first_artifacts = stores.world().committed_artifacts().to_vec();
     let first = umber::pdf_from_committed_artifacts(&mut stores, &first_artifacts)
         .expect("first navigation PDF finalization");
@@ -340,7 +358,13 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
     }
 
     stores.rollback(&checkpoint);
-    umber::run_memory_with_stores(&source, &mut stores).expect("replayed navigation execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("replayed navigation execution");
     let replayed_artifacts = stores.world().committed_artifacts().to_vec();
     let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replayed_artifacts)
         .expect("replayed navigation PDF finalization");
@@ -379,7 +403,13 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
         .expect("retained form replay session starts");
     let checkpoint = stores.snapshot();
 
-    umber::run_memory_with_stores(&source, &mut stores).expect("first form execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("first form execution");
     assert_eq!(
         stores
             .pdf_forms()
@@ -410,7 +440,13 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     let first_hash = stores.snapshot().state_hash();
 
     stores.rollback(&checkpoint);
-    umber::run_memory_with_stores(&source, &mut stores).expect("replayed form execution");
+    umber::run_memory_with_stores_and_profile(
+        &source,
+        &mut stores,
+        tex_command::CommandProfile::PDFTEX14027,
+        false,
+    )
+    .expect("replayed form execution");
     let replay_pages = stores.world().committed_artifacts().to_vec();
     let replayed = umber::pdf_from_committed_artifacts(&mut stores, &replay_pages)
         .expect("replayed form PDF finalization");

@@ -446,7 +446,12 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         let committed_artifacts = self.stores.world().committed_artifacts();
         let run_artifacts = &committed[artifact_start..];
         let run_committed = &committed_artifacts[artifact_start..];
-        if receipts.len() != run_artifacts.len()
+        let emits_dvi = !self
+            .canonical
+            .command_profile()
+            .capabilities()
+            .supports_pdftex();
+        if (emits_dvi && receipts.len() != run_artifacts.len())
             || receipts
                 .iter()
                 .zip(run_artifacts)
@@ -1792,6 +1797,17 @@ pub fn run_input_with_context(
     run_input_collecting_artifacts(input, stores, context).map(|result| result.terminal_text)
 }
 
+/// Runs an already-open input stack with the explicitly selected command profile.
+pub fn run_input_with_context_and_profile(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    context: ExecutionContext<'_>,
+    profile: CommandProfile,
+) -> Result<String, tex_exec::ExecError> {
+    run_input_collecting_artifacts_with_profile(input, stores, context, profile)
+        .map(|result| result.terminal_text)
+}
+
 /// Runs input and returns the artifact ids emitted by `\shipout` in order.
 pub fn run_input_collecting_artifacts(
     input: &mut InputStack,
@@ -1799,6 +1815,21 @@ pub fn run_input_collecting_artifacts(
     context: ExecutionContext<'_>,
 ) -> Result<RunResult, tex_exec::ExecError> {
     EngineSession::new(input, stores, context).execute()
+}
+
+/// Runs input under an explicitly selected command profile and returns its artifacts.
+///
+/// Primitive/state preparation and command-profile selection are separate host
+/// responsibilities. In particular, a pdfTeX store must be paired with
+/// [`CommandProfile::PDFTEX14027`] so shipout finalizes PDF-only deferred nodes as
+/// PDF rather than applying the exact DVI-mode rejection.
+pub fn run_input_collecting_artifacts_with_profile(
+    input: &mut InputStack,
+    stores: &mut Universe,
+    context: ExecutionContext<'_>,
+    profile: CommandProfile,
+) -> Result<RunResult, tex_exec::ExecError> {
+    EngineSession::with_command_profile(input, stores, context, profile).execute()
 }
 
 /// Reads committed page artifacts from `World` and writes a complete DVI file.
@@ -1910,6 +1941,22 @@ pub fn run_memory_with_stores(
     let context =
         ExecutionContext::with_resolvers("texput", &mut input_resolver, &mut font_resolver);
     run_input_with_context(&mut input, stores, context)
+}
+
+/// Runs in-memory input with an explicit command profile and output backend.
+pub fn run_memory_with_stores_and_profile(
+    source: &str,
+    stores: &mut Universe,
+    profile: CommandProfile,
+    emit_dvi: bool,
+) -> Result<String, tex_exec::ExecError> {
+    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut input_resolver = RejectingMemoryInputResolver;
+    let mut font_resolver = DirectFontResolver;
+    let context =
+        ExecutionContext::with_resolvers("texput", &mut input_resolver, &mut font_resolver)
+            .with_dvi_output(emit_dvi);
+    run_input_with_context_and_profile(&mut input, stores, context, profile)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -2048,12 +2095,14 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DriverFile, EngineSession, FinalizationCommit, FinalizationError, PlannedFinalization,
-        dvi_from_committed_artifacts, dvi_from_page_plans, uncommitted_terminal_text,
+        DirectFontResolver, DriverFile, EngineSession, FinalizationCommit, FinalizationError,
+        PlannedFinalization, RejectingMemoryInputResolver, dvi_from_committed_artifacts,
+        dvi_from_page_plans, prepare_pdftex_run_stores,
+        run_input_collecting_artifacts_with_profile, uncommitted_terminal_text,
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use tex_command::{PdfImageResource, RegisteredSourceKind};
+    use tex_command::{CommandProfile, PdfImageResource, RegisteredSourceKind};
     use tex_exec::{
         CanonicalResourceNeed, CanonicalStepResult, ExecutionContext, MainControlStep,
         install_unexpandable_primitives,
@@ -2063,6 +2112,54 @@ mod tests {
     use tex_state::{PrintSink, StreamSlot, Universe, World};
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+
+    #[test]
+    fn deferred_pdf_nodes_follow_the_explicit_session_profile() {
+        let source = "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral{q}}\\end";
+        for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
+            let mut stores = Universe::default();
+            prepare_pdftex_run_stores(&mut stores);
+            let mut input = InputStack::new(MemoryInput::new(source));
+            let mut input_resolver = RejectingMemoryInputResolver;
+            let mut font_resolver = DirectFontResolver;
+            let context = ExecutionContext::with_resolvers(
+                "profile-boundary",
+                &mut input_resolver,
+                &mut font_resolver,
+            );
+            let error = run_input_collecting_artifacts_with_profile(
+                &mut input,
+                &mut stores,
+                context,
+                profile,
+            )
+            .expect_err("TeX and e-TeX profiles must traverse deferred nodes in DVI mode");
+            assert_eq!(
+                error.to_string(),
+                "pdfTeX error (ext4): \\pdfliteral used while \\pdfoutput is not set."
+            );
+        }
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let mut input = InputStack::new(MemoryInput::new(source));
+        let mut input_resolver = RejectingMemoryInputResolver;
+        let mut font_resolver = DirectFontResolver;
+        let context = ExecutionContext::with_resolvers(
+            "profile-boundary",
+            &mut input_resolver,
+            &mut font_resolver,
+        )
+        .with_dvi_output(false);
+        let result = run_input_collecting_artifacts_with_profile(
+            &mut input,
+            &mut stores,
+            context,
+            CommandProfile::PDFTEX14027,
+        )
+        .expect("pdfTeX profile accepts deferred PDF nodes in PDF mode");
+        assert_eq!(result.committed_artifacts.len(), 1);
+    }
 
     #[test]
     fn canonical_bridge_registers_only_acquired_root_and_nested_sources() {
@@ -2349,7 +2446,7 @@ mod tests {
         let mut session = EngineSession::with_command_profile(
             &mut input,
             &mut stores,
-            ExecutionContext::new("canonical-pdf-effects"),
+            ExecutionContext::new("canonical-pdf-effects").with_dvi_output(false),
             tex_command::CommandProfile::PDFTEX14027,
         );
         session
@@ -2406,7 +2503,7 @@ mod tests {
             let mut session = EngineSession::with_command_profile(
                 &mut input,
                 &mut stores,
-                ExecutionContext::new("canonical-pdf-page-builder"),
+                ExecutionContext::new("canonical-pdf-page-builder").with_dvi_output(false),
                 tex_command::CommandProfile::PDFTEX14027,
             );
             session
@@ -2483,7 +2580,7 @@ mod tests {
         let mut retry = EngineSession::with_command_profile(
             &mut retry_input,
             &mut retry_stores,
-            ExecutionContext::new("canonical-pdf-retry"),
+            ExecutionContext::new("canonical-pdf-retry").with_dvi_output(false),
             tex_command::CommandProfile::PDFTEX14027,
         );
         retry
@@ -2521,7 +2618,7 @@ mod tests {
         let mut fresh = EngineSession::with_command_profile(
             &mut fresh_input,
             &mut fresh_stores,
-            ExecutionContext::new("canonical-pdf-fresh"),
+            ExecutionContext::new("canonical-pdf-fresh").with_dvi_output(false),
             tex_command::CommandProfile::PDFTEX14027,
         );
         fresh

@@ -875,7 +875,12 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         let commits = self.stores.world().artifact_commits();
         let artifacts = &commits[self.artifact_cursor..];
-        if receipts.len() != artifacts.len()
+        let emits_dvi = !self
+            .control
+            .command_profile()
+            .capabilities()
+            .supports_pdftex();
+        if (emits_dvi && receipts.len() != artifacts.len())
             || receipts
                 .iter()
                 .zip(artifacts)
