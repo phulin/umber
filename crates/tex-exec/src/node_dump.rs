@@ -365,11 +365,25 @@ fn dump_math_field(
             out.push(marker);
             dump_math_char(*ch, out);
         }
-        MathField::SubBox(list) | MathField::SubMlist(list) => {
+        MathField::SubBox(list) => {
             let old_len = out.len();
             dump_list(stores, *list, config, depth, ListContext::Neutral, out);
             if old_len < out.len() {
                 out.replace_range(old_len..old_len + 1, &marker.to_string());
+            }
+        }
+        MathField::SubMlist(list) => {
+            let old_len = out.len();
+            dump_list(stores, *list, config, depth, ListContext::Neutral, out);
+            if old_len < out.len() {
+                out.replace_range(old_len..old_len + 1, &marker.to_string());
+            } else {
+                // TeX82 §681 represents an empty sub-mlist by a present field
+                // whose info pointer is null. Section 692's subsidiary-data
+                // printer still emits the field marker and newline; only an
+                // `empty` math_type is silent.
+                write_prefix(depth - 1, out);
+                let _ = writeln!(out, "{marker}");
             }
         }
     }

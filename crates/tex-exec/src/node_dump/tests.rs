@@ -4,7 +4,7 @@
 use super::*;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
-use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
+use tex_state::math::{LimitType, MathChar, MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{BoxNodeFields, KernKind, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -223,5 +223,77 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
             },
         ),
         "\\mathord [] []\n",
+    );
+}
+
+/// TeX82 §681 (`tex.web:13366-13426`) gives an empty sub-mlist a nonempty
+/// math-field type with a null list pointer. Section 692 prints its subsidiary
+/// marker and newline, unlike the wholly absent `empty` field.
+#[test]
+fn math_dump_distinguishes_empty_submlist() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let list = stores.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(empty),
+        )),
+    ]);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        "\\mathord\n\\mathord\n.\n",
+    );
+}
+
+/// TeX82 §§689--690 (`tex.web:13581-13622`) visit all four choice arms;
+/// §692 applies the same depth cutoff independently within each arm.
+#[test]
+fn math_dump_depth_and_choice_arms() {
+    let mut stores = Universe::new();
+    let arm = |stores: &mut Universe, ch| {
+        stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(math_char(0, ch)),
+        ))])
+    };
+    let display = arm(&mut stores, 'D');
+    let text = arm(&mut stores, 'T');
+    let script = arm(&mut stores, 'S');
+    let script_script = arm(&mut stores, 's');
+    let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
+        display,
+        text,
+        script,
+        script_script,
+    })]);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 0,
+            },
+        ),
+        concat!(
+            "\\mathchoice\n",
+            "D\\mathord []\n",
+            "T\\mathord []\n",
+            "S\\mathord []\n",
+            "s\\mathord []\n",
+        ),
     );
 }

@@ -12,6 +12,10 @@ use crate::input::{
     TracedTokenList,
 };
 use crate::macro_store::MacroMeaning;
+use crate::math::{
+    FractionThickness, MathChar, MathChoice, MathField, MathFraction, MathListNode, MathNoad,
+    MathStyle, NoadClass, NoadKind,
+};
 use crate::meaning::{Meaning, MeaningFlags, RawMeaning};
 use crate::node::{BoxNode, BoxNodeFields, GlueKind, KernKind, LeaderPayload, Node, Sign};
 use crate::page::{PageDimension, PageInteger, PageMark};
@@ -530,6 +534,81 @@ fn semantic_format_is_deterministic_validated_and_world_independent() {
         Universe::from_format(World::memory(), &corrupted),
         Err(super::FormatError::Checksum)
     ));
+}
+
+/// TeX82 §§681, 683, 688--689 (`tex.web:13366-13426`,
+/// `tex.web:13457-13497`, `tex.web:13551-13599`) define the child-bearing
+/// math records that a format must retain without collapsing field variants.
+#[test]
+fn format_roundtrip_complete_math_graph() {
+    let mut universe = Universe::new();
+    let leaf = universe.freeze_node_list(&[Node::Penalty(17)]);
+    let empty = universe.freeze_node_list(&[]);
+    let math_char = |character| MathChar {
+        family: 3,
+        character,
+        origin: OriginId::UNKNOWN,
+    };
+    let noad = MathNoad {
+        kind: NoadKind::Accent {
+            accent: math_char('^'),
+        },
+        nucleus: MathField::SubMlist(empty),
+        subscript: MathField::MathTextChar(math_char('t')),
+        superscript: MathField::SubBox(leaf),
+    };
+    let display = universe.freeze_node_list(&[Node::MathNoad(noad.clone())]);
+    let text = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::Empty,
+    ))]);
+    let script = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Bin),
+        MathField::MathChar(math_char('+')),
+    ))]);
+    let script_script = universe.freeze_node_list(&[Node::MathStyle(MathStyle::ScriptScript)]);
+    let nested = universe.freeze_node_list(&[Node::MathChoice(MathChoice {
+        display,
+        text,
+        script,
+        script_script,
+    })]);
+    let root = universe.freeze_node_list(&[
+        Node::MathOn(Scaled::from_raw(1)),
+        Node::MathNoad(noad),
+        Node::FractionNoad(MathFraction {
+            numerator: nested,
+            denominator: empty,
+            thickness: FractionThickness::Explicit(Scaled::from_raw(2)),
+            left_delimiter: Some(0x12345),
+            right_delimiter: Some(0x23456),
+        }),
+        Node::Nonscript,
+        Node::MathStyle(MathStyle::Display),
+        Node::MathList(MathListNode {
+            display: true,
+            content: nested,
+        }),
+        Node::MathOff(Scaled::from_raw(3)),
+    ]);
+    universe.set_box_reg(23, root);
+    let expected_semantic_id = universe
+        .stores
+        .node_semantic_id(universe.box_reg(23).expect("promoted math graph"));
+    let image = universe.dump_format().expect("complete math graph encodes");
+
+    let restored =
+        Universe::from_format(World::memory(), &image).expect("complete math graph restores");
+    let restored_root = restored.box_reg(23).expect("math graph root restores");
+    assert_eq!(
+        restored.stores.node_semantic_id(restored_root),
+        expected_semantic_id
+    );
+    assert_eq!(restored.nodes(restored_root).testing_decoded().len(), 7);
+    assert_eq!(
+        restored.dump_format().expect("complete math graph redumps"),
+        image
+    );
 }
 
 #[test]
