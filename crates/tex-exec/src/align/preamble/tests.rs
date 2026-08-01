@@ -146,6 +146,36 @@ fn preamble_tabskip_span_expansion_and_delimiter_identity() {
 }
 
 #[test]
+fn periodic_preamble_repeats_u_v_templates_and_tabskip_exactly() {
+    // TeX82 §§791--795 copy the periodic preamble's template and tabskip
+    // identities; they do not rescan or reintern the repeated material.
+    let (stores, state) = scan(
+        UnexpandablePrimitive::HAlign,
+        "{a#A&\\tabskip=2pt&#B&\\tabskip=3pt c#C\\cr}",
+    );
+    assert_eq!(state.loop_start(), Some(1));
+
+    for (column, source) in [(3, 1), (4, 2), (5, 1), (6, 2)] {
+        assert_eq!(
+            state.column_for(column),
+            state.columns().get(source),
+            "periodic column {column} must copy column {source}'s frozen identities"
+        );
+        assert_eq!(
+            state.tabskip_for_boundary(column + 1),
+            state.tabskips()[source + 1],
+            "periodic boundary after column {column} must copy its source tabskip"
+        );
+    }
+    assert_ne!(state.columns()[1], state.columns()[2]);
+    assert_ne!(state.tabskips()[2], state.tabskips()[3]);
+    assert_eq!(
+        stores.tokens(state.column_for(5).expect("periodic column").v_template),
+        stores.tokens(state.columns()[1].v_template)
+    );
+}
+
+#[test]
 fn scan_u_v_templates_empty_nested_and_malformed() {
     let (empty_stores, empty) = scan(UnexpandablePrimitive::HAlign, "{#\\cr}");
     assert_eq!(empty_stores.tokens(empty.columns()[0].u_template), &[]);

@@ -248,6 +248,69 @@ fn materialize_spanned_cell_adds_tabskip_and_empty_boxes() {
 }
 
 #[test]
+fn set_alignment_preserves_final_node_order_and_running_rules() {
+    // TeX82 §§803--807 traverse the alignment list in place: non-row nodes
+    // retain their relative positions, running rules use prototype dimensions,
+    // and each unset row becomes a set box at that same position.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let empty = stores.freeze_node_list(&[]);
+    let cell = Node::Unset(unset_cell(
+        UnsetKind::HBox,
+        4,
+        1,
+        GlueTotals {
+            stretch: 0,
+            stretch_order: Order::Normal,
+            shrink: 0,
+            shrink_order: Order::Normal,
+        },
+        empty,
+    ));
+    let children =
+        stores.freeze_node_list(&[tabskip_node(GlueId::ZERO), cell, tabskip_node(GlueId::ZERO)]);
+    let row = Node::Unset(UnsetNode::new(UnsetNodeFields {
+        kind: UnsetKind::HBox,
+        width: sp(4),
+        height: sp(2),
+        depth: sp(1),
+        span_count: 1,
+        stretch: Scaled::from_raw(0),
+        stretch_order: Order::Normal,
+        shrink: Scaled::from_raw(0),
+        shrink_order: Order::Normal,
+        children,
+    }));
+    let marker = Node::Penalty(731);
+    let set = set_alignment_nodes(
+        AlignmentKind::HAlign,
+        &[
+            marker.clone(),
+            Node::Rule {
+                width: None,
+                height: Some(sp(2)),
+                depth: Some(sp(1)),
+            },
+            row,
+            marker.clone(),
+        ],
+        &ResolvedWidths {
+            columns: vec![sp(4)],
+            tabskips: vec![GlueId::ZERO; 2],
+        },
+        &Prototype {
+            box_node: box_node(9, 2, empty),
+        },
+        empty,
+        Scaled::from_raw(0),
+        &mut stores,
+    )
+    .expect("final traversal succeeds");
+    assert!(
+        matches!(set.as_slice(), [Node::Penalty(731), Node::Rule { width: Some(width), .. }, Node::HList(_), Node::Penalty(731)] if *width == sp(9))
+    );
+}
+
+#[test]
 fn convert_unset_cell_computes_tex82_glue_ratio_matrix() {
     let mut stores = Universe::new_with_plain_catcodes();
     let empty = stores.freeze_node_list(&[]);

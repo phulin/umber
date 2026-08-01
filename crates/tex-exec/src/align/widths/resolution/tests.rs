@@ -71,7 +71,7 @@ fn state(columns: usize, tabskips: Vec<GlueId>) -> AlignState {
 fn span_width_list_orders_counts_and_keeps_maximum() {
     let mut stores = Universe::new_with_plain_catcodes();
     let middle = glue(&mut stores, 1);
-    let state = state(3, vec![GlueId::ZERO, middle, middle, GlueId::ZERO]);
+    let alignment = state(3, vec![GlueId::ZERO, middle, middle, GlueId::ZERO]);
     let empty = stores.freeze_node_list(&[]);
     let rows = [
         row(
@@ -95,7 +95,7 @@ fn span_width_list_orders_counts_and_keeps_maximum() {
     );
 
     let resolved =
-        resolve_widths(&state, &rows, &stores).expect("ordered span requirements resolve");
+        resolve_widths(&alignment, &rows, &stores).expect("ordered span requirements resolve");
     assert_eq!(resolved.columns, vec![sp(2), sp(7), sp(9)]);
 }
 
@@ -130,4 +130,30 @@ fn resolve_alignment_widths_zeroes_null_column_tabskip() {
     assert_eq!(resolved.columns, vec![sp(4), Scaled::from_raw(0)]);
     assert_eq!(resolved.tabskips[1], middle);
     assert_eq!(resolved.tabskips[2], GlueId::ZERO);
+}
+
+#[test]
+fn alignment_width_resolution_negative_zero_and_competing_span_matrix() {
+    // TeX82 §§800--802 merge equal span counts by maximum width, process
+    // shorter counts first, and retain negative residual requirements.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let middle = glue(&mut stores, 2);
+    let alignment = state(3, vec![GlueId::ZERO, middle, middle, GlueId::ZERO]);
+    let empty = stores.freeze_node_list(&[]);
+    let rows = [
+        row(&mut stores, &[cell(empty, 10, 1)]),
+        row(&mut stores, &[cell(empty, 5, 2)]),
+        row(&mut stores, &[cell(empty, 18, 2)]),
+        row(&mut stores, &[cell(empty, 25, 3)]),
+    ];
+
+    let resolved = resolve_widths(&alignment, &rows, &stores).expect("§802 recurrence resolves");
+    assert_eq!(resolved.columns, vec![sp(10), sp(6), sp(5)]);
+
+    let empty_state = state(2, vec![GlueId::ZERO, middle, GlueId::ZERO]);
+    let empty_rows = [row(&mut stores, &[cell(empty, -3, 2)])];
+    let resolved = resolve_widths(&empty_state, &empty_rows, &stores)
+        .expect("negative residual and null leading column resolve");
+    assert_eq!(resolved.columns, vec![Scaled::from_raw(0), sp(-3)]);
+    assert_eq!(resolved.tabskips[1], GlueId::ZERO);
 }

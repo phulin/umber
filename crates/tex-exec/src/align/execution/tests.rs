@@ -322,6 +322,47 @@ fn fin_row_packages_modes_adjustments_every_cr_and_peek() {
 }
 
 #[test]
+fn cell_adjustments_leave_cells_in_exact_row_order() {
+    // TeX82 §§796 and 799 migrate each halign cell's adjustments out of the
+    // packaged cell, then splice them immediately after the completed row in
+    // cell order.
+    let (stores, nest, align_level, extra) = execute_test_row(
+        AlignmentKind::HAlign,
+        2,
+        None,
+        "\\kern1pt\\vadjust{\\kern2pt}&\\kern3pt\\vadjust{\\kern4pt}\\cr",
+        true,
+    );
+    assert!(!extra);
+    let nodes = nest
+        .list(align_level)
+        .expect("alignment list remains available")
+        .nodes();
+    let [
+        Node::Unset(row),
+        Node::Kern { amount: first, .. },
+        Node::Kern { amount: second, .. },
+    ] = nodes
+    else {
+        panic!("§799 must leave one row followed by its two cell adjustments: {nodes:?}");
+    };
+    assert_eq!(
+        (*first, *second),
+        (
+            Scaled::from_raw(2 * Scaled::UNITY),
+            Scaled::from_raw(4 * Scaled::UNITY)
+        )
+    );
+    let row_children = stores.nodes(row.children).testing_decoded();
+    assert!(
+        row_children
+            .iter()
+            .all(|node| !matches!(node, Node::Adjust(_))),
+        "migrated adjustments must not remain inside either packaged cell"
+    );
+}
+
+#[test]
 fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
     for enclosing in [Mode::InternalVertical, Mode::RestrictedHorizontal] {
         let mut stores = crate::test_harness::universe_with_plain_catcodes();

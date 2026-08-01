@@ -154,6 +154,9 @@ Focused regressions live at the owning boundary:
   `crates/tex-exec/src/command_replay/tests.rs`.
 - structural nesting projection across nested `fin_align`/`pop_alignment`:
   `tools/tex-command-stream/src/lib.rs`.
+- TeX82 §§791--805 periodic template/tabskip identity, cell-adjustment
+  migration, quarterword span bounds and merge fields, width recurrence, and
+  final set-list traversal: `crates/tex-exec/src/align/{preamble,execution,packaging,widths}/`.
 
 The fixture-only native correctness gate remains `cargo test --tests`; format
 and clippy remain `scripts/check.sh`.

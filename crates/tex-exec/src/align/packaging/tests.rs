@@ -69,3 +69,44 @@ fn package_unset_cell_records_natural_extent_and_glue_orders() {
         assert_eq!(cell.shrink, sp(4));
     }
 }
+
+#[test]
+fn span_record_256_limit_and_merge_fields() {
+    // TeX82 §§797--798 store the one-based span count in a quarterword. The
+    // largest legal cell therefore spans 256 columns; one more succumbs with
+    // the canonical confusion, without losing the packed metric fields.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let children = stores.freeze_node_list(&[Node::Rule {
+        width: Some(sp(9)),
+        height: Some(sp(2)),
+        depth: Some(sp(1)),
+    }]);
+    let Node::Unset(limit) = make_unset_node(
+        &mut stores,
+        children,
+        UnsetKind::HBox,
+        256,
+        UnsetPackContext::Cell,
+    )
+    .expect("§798 permits max_quarterword span steps") else {
+        panic!("legal span must remain unset");
+    };
+    assert_eq!(limit.span_count, 256);
+    assert_eq!(
+        (limit.width, limit.height, limit.depth),
+        (sp(9), sp(2), sp(1))
+    );
+
+    let error = make_unset_node(
+        &mut stores,
+        children,
+        UnsetKind::HBox,
+        257,
+        UnsetPackContext::Cell,
+    )
+    .expect_err("the 256th delimiter exceeds §798's quarterword field");
+    assert!(matches!(
+        error,
+        ExecError::Fatal(fatal) if fatal == FatalError::confusion("256 spans")
+    ));
+}
