@@ -68,6 +68,9 @@ impl std::error::Error for FontExpansionConfigError {}
 /// Largest TeX font-parameter number representable in a fontdimen cell key.
 pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 
+/// TeX82's shared `font_info` word capacity (tex.web §11).
+pub const FONT_INFO_CAPACITY: usize = 20_000;
+
 /// Largest dense font id representable in a fontdimen cell key.
 ///
 /// A font owns `2^17` possible parameter slots inside `CellId`'s 32-bit
@@ -283,6 +286,15 @@ impl FontStore {
             exact_immutable_identities,
             identities,
         })
+    }
+
+    pub(crate) fn would_allocate(&self, font: &LoadedFont) -> bool {
+        !matches!(font.construction(), FontConstruction::Loaded)
+            || !self.by_key.contains_key(&FontKey {
+                name: font.name().to_owned(),
+                size: font.size(),
+                content_hash: font.content_hash(),
+            })
     }
 
     pub(crate) fn intern(&mut self, font: LoadedFont) -> Result<FontId, FontStoreCapacityError> {

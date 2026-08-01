@@ -270,6 +270,8 @@ pub enum FontParameterError {
     ParameterCountOutOfRange { count: usize, maximum: u32 },
     /// Loading another distinct font would exceed the fontdimen font field.
     TooManyFonts { maximum: u32 },
+    /// Growing the shared TeX82 `font_info` pool would exceed its capacity.
+    FontInfoCapacity { capacity: usize },
     /// Only the most recently loaded font may grow its parameter table.
     CannotGrow {
         font: FontId,
@@ -1435,6 +1437,14 @@ impl Stores {
                 count: parameter_len,
                 maximum: crate::font::MAX_FONT_DIMEN,
             })?;
+        if self.fonts.would_allocate(&font)
+            && parameter_len
+                > crate::font::FONT_INFO_CAPACITY.saturating_sub(self.font_info_words())
+        {
+            return Err(FontParameterError::FontInfoCapacity {
+                capacity: crate::font::FONT_INFO_CAPACITY,
+            });
+        }
         let parameters = font.parameters().to_vec();
         let id = self
             .fonts
@@ -1963,9 +1973,23 @@ impl Stores {
                     last_loaded_font: self.last_loaded_font,
                 });
             }
+            let growth = (number - current_len) as usize;
+            let used = self.font_info_words();
+            if growth > crate::font::FONT_INFO_CAPACITY.saturating_sub(used) {
+                return Err(FontParameterError::FontInfoCapacity {
+                    capacity: crate::font::FONT_INFO_CAPACITY,
+                });
+            }
             self.env.set_font_param_len_global(font, number);
         }
         Ok(index)
+    }
+
+    fn font_info_words(&self) -> usize {
+        let fonts = self.fonts.watermark().len as usize;
+        (0..fonts)
+            .map(|raw| self.env.font_param_len(FontId::new(raw as u32)) as usize)
+            .sum()
     }
 
     /// Creates a fresh owned scratch node-list builder.

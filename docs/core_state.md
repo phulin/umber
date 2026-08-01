@@ -47,6 +47,12 @@ small value projection and never receives raw store access. The aggregate
 retains componentwise high-water values before rollback, so speculative or
 checkpointed allocation is still represented at job termination.
 
+Mutable font parameter banks also share TeX82's 20,000-word `font_info`
+capacity. Only the most recently loaded font can grow, and the state boundary
+preflights the complete growth delta against all live banks before changing
+its length. Exhaustion therefore leaves the font unchanged and lets execution
+issue §580's fatal `font memory` overflow.
+
 The state-owned diagnostic printer also preserves TeX's distinction between
 §58 `print_char` and §68 `print_ASCII`. The latter crosses the one-character
 string table, so missing control characters use canonical `^^` notation while

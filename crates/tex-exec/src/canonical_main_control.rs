@@ -11535,7 +11535,10 @@ fn apply_scanned_step(
             let loaded = load_canonical_font(&request, resource)?;
             let id = match stores.try_intern_font_with_identifier(loaded, request.target) {
                 Ok(id) => id,
-                Err(tex_state::FontParameterError::TooManyFonts { .. }) => {
+                Err(
+                    tex_state::FontParameterError::TooManyFonts { .. }
+                    | tex_state::FontParameterError::FontInfoCapacity { .. },
+                ) => {
                     let selector = stores.resolve(request.target).to_owned();
                     crate::assignments::fonts::report_font_capacity(
                         stores,
@@ -11788,9 +11791,18 @@ fn apply_scanned_step(
                 None => {
                     let number = u32::try_from(number)
                         .expect("a writable parameter number is a positive u32");
-                    stores
-                        .set_font_dimen(font, number, value)
-                        .expect("§578 accepted this parameter number during the scan");
+                    match stores.set_font_dimen(font, number, value) {
+                        Ok(()) => {}
+                        Err(tex_state::FontParameterError::FontInfoCapacity { capacity }) => {
+                            return Err(ExecError::Fatal(tex_command::FatalError::overflow(
+                                "font memory",
+                                i32::try_from(capacity).expect("font capacity fits TeX integer"),
+                            )));
+                        }
+                        Err(_) => {
+                            unreachable!("§578 accepted this parameter number during the scan")
+                        }
+                    }
                 }
             }
             Ok(ReplayStep::Continue)

@@ -164,7 +164,10 @@ pub(super) fn execute_font_definition(
     };
     let id = match stores.try_intern_font_with_identifier(loaded, target) {
         Ok(id) => id,
-        Err(tex_state::FontParameterError::TooManyFonts { .. }) => {
+        Err(
+            tex_state::FontParameterError::TooManyFonts { .. }
+            | tex_state::FontParameterError::FontInfoCapacity { .. },
+        ) => {
             // TeX.web §567 has already validated the TFM when it discovers
             // that the font table has no room. The destination remains the
             // provisional null font and the failed row is not committed.

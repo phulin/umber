@@ -384,6 +384,12 @@ fn set_font_dimen_recovering(
 ) -> Result<(), ExecError> {
     match stores.set_font_dimen(font, number, value) {
         Ok(()) => Ok(()),
+        Err(tex_state::FontParameterError::FontInfoCapacity { capacity }) => {
+            Err(ExecError::Fatal(tex_command::FatalError::overflow(
+                "font memory",
+                i32::try_from(capacity).expect("font capacity fits TeX integer"),
+            )))
+        }
         Err(tex_state::FontParameterError::CannotGrow { current_len, .. }) => {
             // TeX.web §579 names the font by `print_esc(font_id_text(f))`,
             // the control sequence it was loaded under, not by its file name.

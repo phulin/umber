@@ -185,6 +185,15 @@ impl StoreFormat {
                 ));
             }
         }
+        let font_info_words = parameter_counts
+            .iter()
+            .map(|count| count.expect("all font counts validated above"))
+            .sum::<usize>();
+        if font_info_words > crate::font::FONT_INFO_CAPACITY {
+            return Err(StoreFormatError::Invalid(
+                "shared font-info capacity exceeded",
+            ));
+        }
         for (font, slot) in dimension_slots {
             if slot > parameter_counts[font].expect("all font counts validated above") {
                 return Err(StoreFormatError::Invalid(

@@ -528,7 +528,10 @@ fn font_capacity_reports_not_loaded_and_rolls_back() {
                 survivor = id;
                 serial += 1;
             }
-            Err(tex_state::FontParameterError::TooManyFonts { .. }) => break,
+            Err(
+                tex_state::FontParameterError::TooManyFonts { .. }
+                | tex_state::FontParameterError::FontInfoCapacity { .. },
+            ) => break,
             Err(error) => panic!("unexpected font fill error: {error:?}"),
         }
     }
@@ -571,37 +574,35 @@ fn font_properties_are_inherently_global() {
 
 /// TeX.web §580 grows the final loaded font's parameter bank until the
 /// fixed `font_mem_size` pool is exhausted, then calls `overflow("font
-/// memory", font_mem_size)`. Umber currently has only a per-font address-space
-/// bound, not the canonical shared `font_info` capacity (umber2-e51h.62.5).
+/// memory", font_mem_size)`. The rejected word must not extend or otherwise
+/// mutate the final loaded font.
 #[test]
-#[ignore = "umber2-e51h.62.5: shared WEB font_info capacity is not implemented"]
 fn fontdimen_growth_reports_font_memory_capacity() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\fontdimen1\\f=1pt \\fontdimen131072\\f=2pt \\fontdimen131073\\f=9pt \\message{first=\\the\\fontdimen1\\f,max=\\the\\fontdimen131072\\f,bad=\\the\\fontdimen131073\\f}\\end",
+        "\\font\\f=cmr10 \\relax \\fontdimen1\\f=1pt \\fontdimen19993\\f=2pt \\fontdimen19994\\f=9pt \\end",
     ));
 
-    Executor::new()
+    let error = Executor::new()
         .run(&mut input, &mut stores)
-        .expect("out-of-range fontdimen assignment recovers");
+        .expect_err("font-memory exhaustion is fatal");
+
+    assert_eq!(
+        error.as_fatal(),
+        Some(tex_command::FatalError::overflow("font memory", 20_000))
+    );
 
     let font = font_meaning(&stores, "f");
-    assert_eq!(stores.font_parameter_count(font), 131_072);
+    assert_eq!(stores.font_parameter_count(font), 19_993);
     assert_eq!(
         stores.font_parameter(font, 1),
         Scaled::from_raw(Scaled::UNITY)
     );
     assert_eq!(
-        stores.font_parameter(font, 131_072),
+        stores.font_parameter(font, 19_993),
         Scaled::from_raw(2 * Scaled::UNITY)
     );
-    let output = terminal_effect_text(&stores);
-    assert!(
-        output.contains("TeX capacity exceeded, sorry [font memory size="),
-        "{output:?}"
-    );
-    assert!(output.contains("first=1.0pt,max=2.0pt,bad=0.0pt"));
 }
 
 #[test]

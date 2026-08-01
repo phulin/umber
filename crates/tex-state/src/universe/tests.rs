@@ -2,7 +2,7 @@ use super::{
     FormatError, GenerationForkError, TakeUnboxResult, UnboxKind, Universe, utf8_scalar_len_at,
 };
 use crate::env::banks::{IntParam, TokParam};
-use crate::font::{MAX_FONT_DIMEN, NULL_FONT};
+use crate::font::{FONT_INFO_CAPACITY, MAX_FONT_DIMEN, NULL_FONT};
 use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{ArenaRef, FontId, NodeListId, TokenListId};
@@ -215,7 +215,10 @@ fn unknown_meaning_flags_participate_in_semantic_hashes() {
 }
 
 #[test]
-fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
+fn font_info_capacity_boundary_is_grouped_rollback_safe_and_format_stable() {
+    // `nullfont` permanently owns seven words, leaving this many shared
+    // `font_info` words for the only loaded font in this test.
+    const LAST_PARAMETER: u32 = (FONT_INFO_CAPACITY - 7) as u32;
     let mut universe = Universe::new();
     let identifier = universe.intern("boundaryfont");
     let font =
@@ -230,30 +233,30 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
 
     universe.enter_group();
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(22))
-        .expect("maximum fontdimen is writable");
+        .set_font_dimen(font, LAST_PARAMETER, Scaled::from_raw(22))
+        .expect("last shared font-info word is writable");
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN),
+        universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(22)
     );
     assert_ne!(universe.testing_state_hash(), baseline_hash);
     assert!(universe.leave_group().is_empty());
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN),
+        universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(22)
     );
     let grouped_write_hash = universe.testing_state_hash();
     assert_ne!(grouped_write_hash, baseline_hash);
 
     let invalid = universe
-        .set_font_dimen(font, MAX_FONT_DIMEN + 1, Scaled::from_raw(99))
-        .expect_err("fontdimen above the slot domain is rejected");
+        .set_font_dimen(font, LAST_PARAMETER + 1, Scaled::from_raw(99))
+        .expect_err("fontdimen above the shared capacity is rejected");
     assert!(matches!(
         invalid,
-        super::FontParameterError::NumberOutOfRange { .. }
+        super::FontParameterError::FontInfoCapacity { .. }
     ));
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN + 1),
+        universe.font_dimen(font, LAST_PARAMETER + 1),
         Scaled::from_raw(0)
     );
     assert_eq!(universe.font_dimen(font, 1), Scaled::from_raw(11));
@@ -261,31 +264,31 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
 
     universe.rollback(&baseline);
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN),
+        universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(0)
     );
     assert_eq!(universe.testing_state_hash(), baseline_hash);
 
     universe.enter_group();
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(33))
-        .expect("global maximum fontdimen is writable");
+        .set_font_dimen(font, LAST_PARAMETER, Scaled::from_raw(33))
+        .expect("global capacity-boundary fontdimen is writable");
     assert!(universe.leave_group().is_empty());
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN),
+        universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(33)
     );
     universe.rollback(&baseline);
     assert_eq!(
-        universe.font_dimen(font, MAX_FONT_DIMEN),
+        universe.font_dimen(font, LAST_PARAMETER),
         Scaled::from_raw(0)
     );
     assert_eq!(universe.testing_state_hash(), baseline_hash);
     assert_eq!(universe.snapshot().state_hash(), baseline_snapshot_hash);
 
     universe
-        .set_font_dimen(font, MAX_FONT_DIMEN, Scaled::from_raw(44))
-        .expect("maximum fontdimen is format-visible");
+        .set_font_dimen(font, LAST_PARAMETER, Scaled::from_raw(44))
+        .expect("capacity-boundary fontdimen is format-visible");
     let bytes = universe.dump_format().expect("boundary format encodes");
     let mut restored =
         Universe::from_format(World::memory(), &bytes).expect("boundary format restores");
@@ -294,7 +297,7 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
         panic!("restored font identifier meaning");
     };
     assert_eq!(
-        restored.font_dimen(restored_font, MAX_FONT_DIMEN),
+        restored.font_dimen(restored_font, LAST_PARAMETER),
         Scaled::from_raw(44)
     );
     assert_eq!(restored.font_dimen(restored_font, 1), Scaled::from_raw(11));
@@ -305,8 +308,8 @@ fn maximum_fontdimen_is_distinct_grouped_rollback_safe_and_format_stable() {
     let restored_snapshot = restored.snapshot();
     let restored_hash = restored_snapshot.state_hash();
     restored
-        .set_font_dimen(restored_font, MAX_FONT_DIMEN, Scaled::from_raw(55))
-        .expect("restored maximum fontdimen remains writable");
+        .set_font_dimen(restored_font, LAST_PARAMETER, Scaled::from_raw(55))
+        .expect("restored capacity-boundary fontdimen remains writable");
     restored.rollback(&restored_snapshot);
     assert_eq!(restored.snapshot().state_hash(), restored_hash);
 }
