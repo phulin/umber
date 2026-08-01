@@ -88,7 +88,7 @@ pub(crate) fn finish_eq_no(
     let nodes = convert_math_hlist(stores, content, Style::TEXT, false, &params);
     let list = stores.freeze_node_list(&nodes);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
-    boxed.display = true;
+    boxed.box_lr = tex_state::node::BoxLr::DList;
     FinishedEqNo { side, boxed }
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn finish_display_math(
         hpack_params(stores),
     )
     .node;
-    display_box.display = true;
+    display_box.box_lr = tex_state::node::BoxLr::DList;
     let natural_display_width = display_box.width;
 
     // TeX.web after_math variables: w=display width, z=line width, s=line indent,
@@ -144,12 +144,12 @@ pub(crate) fn finish_display_math(
                 hpack_params(stores),
             )
             .node;
-            display_box.display = true;
+            display_box.box_lr = tex_state::node::BoxLr::DList;
         } else {
             e = Scaled::from_raw(0);
             if w > z {
                 display_box = hpack_with_overfull_rule(stores, display_list, PackSpec::Exactly(z));
-                display_box.display = true;
+                display_box.box_lr = tex_state::node::BoxLr::DList;
             }
         }
         w = display_box.width;
@@ -309,7 +309,7 @@ pub(crate) fn finish_display_alignment(
 /// `shift_amount` field -- can receive it at all.
 fn display_alignment_node(mut node: Node) -> Node {
     if let Node::HList(box_node) | Node::VList(box_node) = &mut node {
-        box_node.display = true;
+        box_node.box_lr = tex_state::node::BoxLr::DList;
     }
     node
 }

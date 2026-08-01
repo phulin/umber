@@ -280,7 +280,7 @@ impl Stores {
         hasher.i32(box_node.height.raw());
         hasher.i32(box_node.depth.raw());
         hasher.i32(box_node.shift.raw());
-        hasher.bool(box_node.display);
+        hasher.u8(box_node.box_lr as u8);
         hasher.i32(box_node.glue_set.numerator());
         hasher.i32(box_node.glue_set.denominator());
         hash_sign(box_node.glue_sign, hasher);

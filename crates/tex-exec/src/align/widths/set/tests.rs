@@ -13,7 +13,7 @@ fn box_node(width: i32, height: i32, empty: NodeListId) -> BoxNode {
         height: sp(height),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,

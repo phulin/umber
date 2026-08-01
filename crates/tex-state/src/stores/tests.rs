@@ -57,7 +57,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
         height: Scaled::from_raw(2),
         depth: Scaled::from_raw(3),
         shift: Scaled::from_raw(4),
-        display: true,
+        box_lr: crate::node::BoxLr::DList,
         glue_set: GlueSetRatio::from_raw(5),
         glue_sign: Sign::Shrinking,
         glue_order: Order::Fill,
@@ -215,6 +215,34 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
         fork.node_semantic_id(fork_root),
         direct.node_semantic_id(direct_root)
     );
+}
+
+#[test]
+fn box_lr_is_part_of_canonical_node_semantic_identity() {
+    let mut stores = Stores::new();
+    let empty = stores.freeze_node_list(&[]);
+    let mut identities = Vec::new();
+    for box_lr in [
+        crate::node::BoxLr::Normal,
+        crate::node::BoxLr::Reversed,
+        crate::node::BoxLr::DList,
+    ] {
+        let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: scaled(0),
+            height: scaled(0),
+            depth: scaled(0),
+            shift: scaled(0),
+            box_lr,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        }))]);
+        identities.push(stores.node_semantic_id(list));
+    }
+    assert_ne!(identities[0], identities[1]);
+    assert_ne!(identities[0], identities[2]);
+    assert_ne!(identities[1], identities[2]);
 }
 
 #[test]
@@ -1368,7 +1396,7 @@ fn finish_node_list_rejects_foreign_child_node_list() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(0),
-        display: false,
+        box_lr: crate::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -1884,7 +1912,7 @@ fn survivor_recycling_carries_word_and_box_rule_sidecars_together() {
             height: Scaled::from_raw(0),
             depth: Scaled::from_raw(0),
             shift: Scaled::from_raw(0),
-            display: false,
+            box_lr: crate::node::BoxLr::Normal,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
@@ -2121,7 +2149,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(0),
-        display: false,
+        box_lr: crate::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -2132,7 +2160,7 @@ fn promoted_nested_box_remaps_children_to_same_survivor_root() {
         height: scaled(9),
         depth: scaled(4),
         shift: scaled(0),
-        display: false,
+        box_lr: crate::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -2173,7 +2201,7 @@ fn promotion_canonicalizes_shared_survivor_children_into_new_root() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(0),
-        display: false,
+        box_lr: crate::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -2219,7 +2247,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
         height: scaled(2),
         depth: scaled(3),
         shift: scaled(4),
-        display: false,
+        box_lr: crate::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -2319,7 +2347,7 @@ fn promotion_copies_overlapping_source_spans_independently() {
             height: scaled(1),
             depth: scaled(0),
             shift: scaled(0),
-            display: false,
+            box_lr: crate::node::BoxLr::Normal,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
@@ -2412,7 +2440,7 @@ fn promotion_handles_pathologically_deep_box_nesting() {
             height: scaled(1),
             depth: scaled(0),
             shift: scaled(0),
-            display: false,
+            box_lr: crate::node::BoxLr::Normal,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,

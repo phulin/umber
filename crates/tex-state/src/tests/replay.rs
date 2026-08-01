@@ -370,7 +370,7 @@ fn build_nodes(
             height: Scaled::from_raw(2),
             depth: Scaled::from_raw(3),
             shift: Scaled::from_raw(4),
-            display: false,
+            box_lr: crate::node::BoxLr::Normal,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,

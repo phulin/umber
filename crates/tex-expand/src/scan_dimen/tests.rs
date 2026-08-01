@@ -604,7 +604,7 @@ fn scales_box_dimensions_used_as_internal_units() {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(-559_403),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,

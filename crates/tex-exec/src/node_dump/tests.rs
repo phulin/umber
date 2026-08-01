@@ -22,13 +22,40 @@ fn hbox_with_one_point_kern(stores: &mut Universe) -> NodeListId {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
         children,
     }));
     stores.freeze_node_list(&[hbox])
+}
+
+#[test]
+fn box_lr_has_exact_canonical_node_dump_evidence() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    for (box_lr, suffix) in [
+        (tex_state::node::BoxLr::Normal, ""),
+        (tex_state::node::BoxLr::Reversed, ", reversed"),
+        (tex_state::node::BoxLr::DList, ", display"),
+    ] {
+        let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        }))]);
+        assert_eq!(
+            dump_node_list(&stores, list, DumpConfig::read(&stores)),
+            format!("\\hbox(0.0+0.0)x0.0{suffix}\n"),
+        );
+    }
 }
 
 /// bd `umber2-alfh.6`: with `\showboxbreadth`/`\showboxdepth` left at

@@ -603,7 +603,7 @@ fn detached_page_episode_replays_before_output_fire_up() {
                 height: Scaled::from_raw(20),
                 depth: Scaled::from_raw(3),
                 shift: Scaled::from_raw(0),
-                display: false,
+                box_lr: tex_state::node::BoxLr::Normal,
                 glue_set: tex_state::scaled::GlueSetRatio::ZERO,
                 glue_sign: tex_state::node::Sign::Normal,
                 glue_order: tex_state::glue::Order::Normal,
@@ -4575,7 +4575,11 @@ fn vtop_normalizes_paragraph_parameters_locally_before_display() {
         .nodes(vtop.children)
         .iter()
         .find_map(|node| match node {
-            tex_state::node_arena::NodeRef::HList(node) if node.display => Some(node),
+            tex_state::node_arena::NodeRef::HList(node)
+                if node.box_lr == tex_state::node::BoxLr::DList =>
+            {
+                Some(node)
+            }
             _ => None,
         })
         .expect("display box");

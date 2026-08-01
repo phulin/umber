@@ -92,7 +92,7 @@ fn clean_vcenter_box(ctx: &mut Context<'_, impl MathTypesetState>, nucleus: &Mat
             shift: boxed.shift,
             list,
             axis: BoxAxis::Vertical,
-            display: boxed.display,
+            display: boxed.box_lr == tex_state::node::BoxLr::DList,
             glue_set: boxed.glue_set,
             glue_sign: boxed.glue_sign,
             glue_order: boxed.glue_order,

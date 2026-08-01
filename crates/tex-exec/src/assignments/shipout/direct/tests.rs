@@ -1,6 +1,33 @@
 use super::*;
 
 #[test]
+fn reversed_box_identity_prevents_a_second_shipout_permutation() {
+    let mut stores = Universe::new();
+    let list = stores.freeze_node_list(&[
+        Node::Direction(Direction::BeginR),
+        Node::Penalty(1),
+        Node::Penalty(2),
+        Node::Direction(Direction::EndR),
+    ]);
+
+    assert_eq!(
+        normalize::direction_permutation_for_box(
+            stores.nodes(list),
+            tex_state::node::BoxLr::Normal,
+        ),
+        Some(vec![2, 1]),
+    );
+    assert_eq!(
+        normalize::direction_permutation_for_box(
+            stores.nodes(list),
+            tex_state::node::BoxLr::Reversed,
+        ),
+        None,
+        "merged e-TeX WEB §53a trusts box_lr instead of inferring reversal from children",
+    );
+}
+
+#[test]
 fn ordinary_page_effects_do_not_require_positioned_shipout() {
     assert!(!needs_positioned_shipout(&[
         PageEffect::Write {

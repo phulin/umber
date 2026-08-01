@@ -373,7 +373,11 @@ fn lower_math_box(boxed: &MathBox, children: tex_state::ids::NodeListId) -> BoxN
         height: boxed.height,
         depth: boxed.depth,
         shift: boxed.shift,
-        display: boxed.display,
+        box_lr: if boxed.display {
+            tex_state::node::BoxLr::DList
+        } else {
+            tex_state::node::BoxLr::Normal
+        },
         glue_set: boxed.glue_set,
         glue_sign: boxed.glue_sign,
         glue_order: boxed.glue_order,

@@ -59,7 +59,7 @@ fn boxed(stores: &mut Universe, height: i32, depth: i32, vertical: bool) -> Node
         height: s(height),
         depth: s(depth),
         shift: s(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,

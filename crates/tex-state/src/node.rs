@@ -358,7 +358,8 @@ pub struct BoxNode {
     pub depth: Scaled,
     /// TeX.web `shift_amount`: positive moves down in an hlist and right in a vlist.
     pub shift: Scaled,
-    pub display: bool,
+    /// Merged e-TeX WEB §53a's `box_lr` subtype.
+    pub box_lr: BoxLr,
     pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
@@ -374,7 +375,7 @@ impl BoxNode {
             height: fields.height,
             depth: fields.depth,
             shift: fields.shift,
-            display: fields.display,
+            box_lr: fields.box_lr,
             glue_set: fields.glue_set,
             glue_sign: fields.glue_sign,
             glue_order: fields.glue_order,
@@ -390,11 +391,26 @@ pub struct BoxNodeFields {
     pub height: Scaled,
     pub depth: Scaled,
     pub shift: Scaled,
-    pub display: bool,
+    pub box_lr: BoxLr,
     pub glue_set: GlueSetRatio,
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: NodeListId,
+}
+
+/// Direction/reversal identity carried by an e-TeX horizontal box.
+///
+/// The numeric values are the canonical hlist subtypes from merged e-TeX WEB
+/// §53a. Vertical boxes retain [`BoxLr::Normal`].
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize,
+)]
+#[repr(u8)]
+pub enum BoxLr {
+    #[default]
+    Normal = 0,
+    Reversed = 1,
+    DList = 2,
 }
 
 /// Repeated material attached to a leader glue node.

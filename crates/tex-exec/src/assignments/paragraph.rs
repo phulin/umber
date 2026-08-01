@@ -241,7 +241,7 @@ pub(crate) fn make_indent_box(stores: &mut Universe) -> Node {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,

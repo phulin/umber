@@ -248,7 +248,7 @@ mod tests {
             height: sp(height),
             depth: sp(depth),
             shift: sp(0),
-            display: false,
+            box_lr: tex_state::node::BoxLr::Normal,
             glue_set: GlueSetRatio::ZERO,
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,

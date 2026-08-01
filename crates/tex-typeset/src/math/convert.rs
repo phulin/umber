@@ -932,7 +932,7 @@ pub(crate) fn source_node(ctx: &mut Context<'_, impl MathTypesetState>, node: &N
                 } else {
                     BoxAxis::Vertical
                 },
-                display: box_node.display,
+                display: box_node.box_lr == tex_state::node::BoxLr::DList,
                 glue_set: box_node.glue_set,
                 glue_sign: box_node.glue_sign,
                 glue_order: box_node.glue_order,

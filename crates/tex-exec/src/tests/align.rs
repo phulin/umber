@@ -1881,7 +1881,9 @@ fn display_halign_splices_rows_instead_of_math_packing_them() {
     let nodes = stores.nodes(vbox.children).testing_decoded();
     let display_rows = nodes
         .iter()
-        .filter(|node| matches!(node, Node::HList(row) if row.display))
+        .filter(
+            |node| matches!(node, Node::HList(row) if row.box_lr == tex_state::node::BoxLr::DList),
+        )
         .count();
 
     assert_eq!(

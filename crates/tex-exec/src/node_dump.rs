@@ -709,8 +709,10 @@ fn dump_box(
             format_scaled_without_unit(box_node.shift)
         );
     }
-    if box_node.display {
-        out.push_str(", display");
+    match box_node.box_lr {
+        tex_state::node::BoxLr::Normal => {}
+        tex_state::node::BoxLr::Reversed => out.push_str(", reversed"),
+        tex_state::node::BoxLr::DList => out.push_str(", display"),
     }
     if depth + 1 >= config.depth {
         if !stores.nodes(box_node.children).is_empty() {

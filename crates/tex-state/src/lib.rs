@@ -37,10 +37,12 @@
 /// stream groups maximal same-font character runs.
 /// Version 26 includes token-parameter presence, distinguishing an absent
 /// parameter cell from a present cell whose value is the empty token list.
+/// Version 27 adopts node semantic-identity v4, which includes merged e-TeX
+/// WEB §53a's three-state `box_lr` identity.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 26;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 27;
 
 pub mod cell;
 pub mod code_tables;

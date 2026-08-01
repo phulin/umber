@@ -8,8 +8,8 @@ use super::{FormatNode, FormatNodeList, StoreFormat, StoreFormatError};
 use bincode::Options;
 
 pub(crate) const FROZEN_NODES_SECTION: u32 = 512;
-// Version 2 stores node semantic-identity v3 fingerprints.
-const VERSION: u32 = 2;
+// Version 3 stores node semantic-identity v4 fingerprints and e-TeX box_lr.
+const VERSION: u32 = 3;
 const HEADER_LEN: usize = 32;
 const RECORD_LEN: usize = 40;
 

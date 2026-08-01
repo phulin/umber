@@ -2200,7 +2200,7 @@ fn install_test_hbox(stores: &mut Universe, register: u16, width: Scaled) {
             height: Scaled::from_raw(2),
             depth: Scaled::from_raw(3),
             shift: Scaled::from_raw(0),
-            display: false,
+            box_lr: tex_state::node::BoxLr::Normal,
             glue_set: tex_state::scaled::GlueSetRatio::ZERO,
             glue_sign: tex_state::node::Sign::Normal,
             glue_order: Order::Normal,

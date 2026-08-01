@@ -57,7 +57,7 @@ impl NodeSemanticId {
 
 /// Current node semantic-identity scheme. Changing node tags, dependency
 /// framing, or child-identity semantics requires a version migration.
-pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 3;
+pub(crate) const NODE_SEMANTIC_ID_VERSION: u8 = 4;
 const NODE_STREAM_V3_DOMAIN: u64 = 0x6e6f_6433_5f73_7472;
 const NODE_ID_V3_DOMAIN: u64 = 0x6e6f_6433_5f69_6465;
 

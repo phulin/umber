@@ -6,8 +6,8 @@ use crate::math::{
     NoadClass, NoadKind,
 };
 use crate::node::{
-    BoxNode, BoxNodeFields, Direction, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign,
-    UnsetKind, UnsetNode, UnsetNodeFields, Whatsit,
+    BoxLr, BoxNode, BoxNodeFields, Direction, DiscKind, GlueKind, KernKind, LeaderPayload, Node,
+    Sign, UnsetKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
 use crate::scaled::{GlueSetRatio, Scaled};
 use proptest::prelude::*;
@@ -54,7 +54,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         height: scaled(7),
         depth: scaled(3),
         shift: scaled(1),
-        display: false,
+        box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -68,7 +68,7 @@ fn nested_lists_build_bottom_up_and_read_back() {
         height: scaled(9),
         depth: scaled(4),
         shift: scaled(0),
-        display: false,
+        box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::from_raw(1_500_000),
         glue_sign: Sign::Stretching,
         glue_order: Order::Fil,
@@ -430,7 +430,7 @@ fn shipout_normalization_predicate_rejects_inert_compact_tags() {
         height: scaled(2),
         depth: scaled(3),
         shift: scaled(4),
-        display: false,
+        box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -473,7 +473,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         height: scaled(2),
         depth: scaled(3),
         shift: scaled(4),
-        display: true,
+        box_lr: BoxLr::DList,
         glue_set: GlueSetRatio::from_raw(5),
         glue_sign: Sign::Shrinking,
         glue_order: Order::Fill,
@@ -605,7 +605,7 @@ fn append_reserves_every_column_of_selected_sidecar_tables() {
                 height: scaled(0),
                 depth: scaled(0),
                 shift: scaled(0),
-                display: false,
+                box_lr: BoxLr::Normal,
                 glue_set: GlueSetRatio::ZERO,
                 glue_sign: Sign::Normal,
                 glue_order: Order::Normal,

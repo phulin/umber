@@ -60,14 +60,14 @@ fn stage_form_inner(
         .first()
         .map(|node| node.to_owned())
         .ok_or(ExecError::PdfXFormVoidBox)?;
-    let (root, children, vertical) = match root_node {
-        Node::HList(node) => (lower_box_header(&node), node.children, false),
-        Node::VList(node) => (lower_box_header(&node), node.children, true),
+    let (root, children, vertical, box_lr) = match root_node {
+        Node::HList(node) => (lower_box_header(&node), node.children, false, node.box_lr),
+        Node::VList(node) => (lower_box_header(&node), node.children, true, node.box_lr),
         _ => return Err(ExecError::PdfXFormVoidBox),
     };
     let overlay = normalize_page(
         children,
-        vertical,
+        (vertical, box_lr),
         (
             PendingPageEffects {
                 effects: Vec::new(),
@@ -186,9 +186,19 @@ pub(super) fn stage_shipout(
         page_width: stores.dimen_param(DimenParam::PDF_PAGE_WIDTH),
         page_height: stores.dimen_param(DimenParam::PDF_PAGE_HEIGHT),
     };
-    let (root, children, vertical) = match node {
-        Node::HList(box_node) => (lower_box_header(&box_node), box_node.children, false),
-        Node::VList(box_node) => (lower_box_header(&box_node), box_node.children, true),
+    let (root, children, vertical, root_box_lr) = match node {
+        Node::HList(box_node) => (
+            lower_box_header(&box_node),
+            box_node.children,
+            false,
+            box_node.box_lr,
+        ),
+        Node::VList(box_node) => (
+            lower_box_header(&box_node),
+            box_node.children,
+            true,
+            box_node.box_lr,
+        ),
         Node::Unset(_) => {
             return Err(ExecError::UnsupportedShipoutNode {
                 node: "unset alignment",
@@ -208,7 +218,7 @@ pub(super) fn stage_shipout(
     let overlay = expansion.with_nested(|expansion| {
         normalize_page(
             children,
-            vertical,
+            (vertical, root_box_lr),
             (pending_effects, output_open_context),
             stores,
             expansion,

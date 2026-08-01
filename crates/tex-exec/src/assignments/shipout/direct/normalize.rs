@@ -32,13 +32,14 @@ struct NormalizeExpansion<'a, 'b> {
 
 pub(super) fn normalize_page(
     root: NodeListId,
-    root_vertical: bool,
+    root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String),
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     write_expander: &mut super::WriteExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
+    let (root_vertical, root_box_lr) = root_box;
     let (pending, output_open_context) = effects_and_context;
     let PendingPageEffects {
         effects,
@@ -93,9 +94,12 @@ pub(super) fn normalize_page(
         stores,
         &mut expansion,
         root,
-        false,
-        !root_vertical,
-        1,
+        NormalizeListContext {
+            suppress_deferred_streams: false,
+            in_hlist: !root_vertical,
+            box_lr: root_box_lr,
+            depth: 1,
+        },
         &mut overlay,
     )?;
     Ok(overlay)
@@ -103,7 +107,7 @@ pub(super) fn normalize_page(
 
 enum NormalizeNode {
     Leaf,
-    List(NodeListId, bool, bool),
+    List(NodeListId, bool, bool, tex_state::node::BoxLr),
     Lists([NodeListId; 3]),
     Whatsit(Whatsit),
     Math(tex_state::math::MathListNode),
@@ -116,22 +120,34 @@ struct NormalizeLocation {
     depth: usize,
 }
 
+#[derive(Clone, Copy)]
+struct NormalizeListContext {
+    suppress_deferred_streams: bool,
+    in_hlist: bool,
+    box_lr: tex_state::node::BoxLr,
+    depth: usize,
+}
+
 fn normalize_list(
     stores: &mut Universe,
     expansion: &mut NormalizeExpansion<'_, '_>,
     list: NodeListId,
-    suppress_deferred_streams: bool,
-    in_hlist: bool,
-    depth: usize,
+    context: NormalizeListContext,
     overlay: &mut PageOverlay,
 ) -> Result<(), ExecError> {
+    let NormalizeListContext {
+        suppress_deferred_streams,
+        in_hlist,
+        box_lr,
+        depth,
+    } = context;
     check_depth(depth)?;
     let (active_indices, permutation) = {
         let nodes = stores.nodes(list);
         if !nodes.requires_shipout_normalization() {
             return Ok(());
         }
-        let permutation = direction_permutation(nodes);
+        let permutation = direction_permutation_for_box(nodes, box_lr);
         let mut active_indices = SmallVec::<[usize; 32]>::new();
         if let Some(order) = permutation.as_deref() {
             active_indices.extend(order.iter().copied().filter(|&index| {
@@ -183,29 +199,41 @@ fn normalize_index(
             .get(index)
             .expect("normalization index belongs to the frozen list");
         match node {
-            NodeRef::HList(box_node) => {
-                NormalizeNode::List(box_node.children, suppress_deferred_streams, true)
-            }
-            NodeRef::VList(box_node) => {
-                NormalizeNode::List(box_node.children, suppress_deferred_streams, false)
-            }
+            NodeRef::HList(box_node) => NormalizeNode::List(
+                box_node.children,
+                suppress_deferred_streams,
+                true,
+                box_node.box_lr,
+            ),
+            NodeRef::VList(box_node) => NormalizeNode::List(
+                box_node.children,
+                suppress_deferred_streams,
+                false,
+                box_node.box_lr,
+            ),
             NodeRef::Glue {
                 leader: Some(StateLeaderPayload::HList(box_node)),
                 ..
-            } => NormalizeNode::List(box_node.children, true, true),
+            } => NormalizeNode::List(box_node.children, true, true, box_node.box_lr),
             NodeRef::Glue {
                 leader: Some(StateLeaderPayload::VList(box_node)),
                 ..
-            } => NormalizeNode::List(box_node.children, true, false),
+            } => NormalizeNode::List(box_node.children, true, false, box_node.box_lr),
             NodeRef::Disc {
                 pre, post, replace, ..
             } => NormalizeNode::Lists([pre, post, replace]),
-            NodeRef::Ins { content, .. } => {
-                NormalizeNode::List(content, suppress_deferred_streams, in_hlist)
-            }
-            NodeRef::Adjust(adjust) => {
-                NormalizeNode::List(adjust.content, suppress_deferred_streams, in_hlist)
-            }
+            NodeRef::Ins { content, .. } => NormalizeNode::List(
+                content,
+                suppress_deferred_streams,
+                in_hlist,
+                tex_state::node::BoxLr::Normal,
+            ),
+            NodeRef::Adjust(adjust) => NormalizeNode::List(
+                adjust.content,
+                suppress_deferred_streams,
+                in_hlist,
+                tex_state::node::BoxLr::Normal,
+            ),
             NodeRef::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit.clone()),
             NodeRef::MathList(math) => NormalizeNode::Math(math),
             NodeRef::Unset(_) => NormalizeNode::Unsupported("unset alignment"),
@@ -229,14 +257,17 @@ fn normalize_index(
     };
     match action {
         NormalizeNode::Leaf => {}
-        NormalizeNode::List(child, suppress, child_in_hlist) => {
+        NormalizeNode::List(child, suppress, child_in_hlist, child_box_lr) => {
             normalize_list(
                 stores,
                 expansion,
                 child,
-                suppress,
-                child_in_hlist,
-                depth + 1,
+                NormalizeListContext {
+                    suppress_deferred_streams: suppress,
+                    in_hlist: child_in_hlist,
+                    box_lr: child_box_lr,
+                    depth: depth + 1,
+                },
                 overlay,
             )?;
         }
@@ -246,9 +277,12 @@ fn normalize_index(
                     stores,
                     expansion,
                     child,
-                    suppress_deferred_streams,
-                    in_hlist,
-                    depth + 1,
+                    NormalizeListContext {
+                        suppress_deferred_streams,
+                        in_hlist,
+                        box_lr: tex_state::node::BoxLr::Normal,
+                        depth: depth + 1,
+                    },
                     overlay,
                 )?;
             }
@@ -273,9 +307,12 @@ fn normalize_index(
                 stores,
                 expansion,
                 replacement,
-                suppress_deferred_streams,
-                in_hlist,
-                depth + 1,
+                NormalizeListContext {
+                    suppress_deferred_streams,
+                    in_hlist,
+                    box_lr: tex_state::node::BoxLr::Normal,
+                    depth: depth + 1,
+                },
                 overlay,
             )?;
         }
@@ -776,6 +813,16 @@ fn expand_pdf_literal_tokens(
         diagnostics::append_token_show_text(stores, token, &mut text);
     }
     Ok(text.into_bytes())
+}
+
+pub(super) fn direction_permutation_for_box(
+    nodes: NodeList<'_>,
+    box_lr: tex_state::node::BoxLr,
+) -> Option<Vec<usize>> {
+    if box_lr == tex_state::node::BoxLr::Reversed {
+        return None;
+    }
+    direction_permutation(nodes)
 }
 
 fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {

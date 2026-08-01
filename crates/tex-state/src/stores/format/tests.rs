@@ -3,7 +3,10 @@ use super::{
 };
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::IntParam;
-use crate::node::Node;
+use crate::glue::Order;
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+use crate::node_arena::NodeRef;
+use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -117,6 +120,46 @@ fn format_dump_resets_only_the_optional_etex_state_cell() {
 
     assert_eq!(restored.int_param(IntParam::TEX_XET_STATE), 0);
     assert_eq!(restored.int_param(IntParam::SAVING_V_DISCARDS), 2);
+}
+
+#[test]
+fn format_round_trip_preserves_all_box_lr_states() {
+    let mut stores = Stores::new();
+    let empty = stores.freeze_node_list(&[]);
+    for (register, box_lr) in [
+        (10, BoxLr::Normal),
+        (11, BoxLr::Reversed),
+        (12, BoxLr::DList),
+    ] {
+        let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        }))]);
+        stores.set_box_reg(register, list);
+    }
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture box_lr format")
+        .restore()
+        .expect("restore box_lr format");
+    for (register, expected) in [
+        (10, BoxLr::Normal),
+        (11, BoxLr::Reversed),
+        (12, BoxLr::DList),
+    ] {
+        let list = restored.box_reg(register).expect("restored box register");
+        let Some(NodeRef::HList(box_node)) = restored.nodes(list).first() else {
+            panic!("expected restored hlist")
+        };
+        assert_eq!(box_node.box_lr, expected);
+    }
 }
 
 #[test]

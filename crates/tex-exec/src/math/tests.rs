@@ -101,7 +101,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         height: sp(2),
         depth: sp(1),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: tex_state::node::BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -134,8 +134,8 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
             Node::Glue { spec: below_spec, kind: GlueKind::BelowDisplaySkip, .. },
         ] if *above_spec == above
             && *below_spec == below
-            && first_row.display
-            && second_row.display
+            && first_row.box_lr == tex_state::node::BoxLr::DList
+            && second_row.box_lr == tex_state::node::BoxLr::DList
             // §812's display insertion only marks the material as display
             // content; the `\displayindent` shift is §800's `o`, applied by
             // §806/§807 while `fin_align` sets the boxes.
@@ -303,7 +303,7 @@ fn pre_display_size_uses_natural_glue_width_until_the_set_ratio_matters() {
             height: Scaled::from_raw(0),
             depth: Scaled::from_raw(0),
             shift: sp(3),
-            display: false,
+            box_lr: tex_state::node::BoxLr::Normal,
             glue_set: GlueSetRatio::from_ratio_parts(37, 10),
             glue_sign,
             glue_order,
@@ -440,7 +440,7 @@ fn finish_display_math_packages_width_equation_number_and_migration_matrix() {
             .current_page_nodes()
             .iter()
             .chain(stores.page_contributions().iter())
-            .any(|node| matches!(node, Node::HList(boxed) if boxed.display))
+            .any(|node| matches!(node, Node::HList(boxed) if boxed.box_lr == tex_state::node::BoxLr::DList))
     );
     assert!(matches!(
         next_semantic(&mut closing, &mut stores),
