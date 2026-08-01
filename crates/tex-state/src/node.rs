@@ -528,6 +528,7 @@ pub enum GlueKind {
     SplitTopSkip,
     LeftSkip,
     RightSkip,
+    ParSkip,
     ParFillSkip,
     AboveDisplaySkip,
     BelowDisplaySkip,

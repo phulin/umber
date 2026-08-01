@@ -3883,7 +3883,7 @@ fn paragraph_start_resets_prevgraf_and_inserts_parskip_only_at_a_nonempty_bounda
         .filter_map(|(index, node)| match node {
             Node::Glue {
                 spec,
-                kind: tex_state::node::GlueKind::Normal,
+                kind: tex_state::node::GlueKind::ParSkip,
                 ..
             } if stores.glue(*spec).width.raw() == 7 * Scaled::UNITY => Some(index),
             _ => None,
@@ -4450,7 +4450,7 @@ fn outer_paragraph_retains_zero_parskip_after_existing_material() {
                 Node::Rule { .. },
                 Node::Glue {
                     spec,
-                    kind: tex_state::node::GlueKind::Normal,
+                    kind: tex_state::node::GlueKind::ParSkip,
                     leader: None,
                 },
             ] if stores.glue(*spec) == GlueSpec::ZERO

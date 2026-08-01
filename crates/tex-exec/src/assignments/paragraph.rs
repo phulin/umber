@@ -112,7 +112,9 @@ pub(crate) fn start_canonical_paragraph(
                     stores,
                     Node::Glue {
                         spec: parskip,
-                        kind: GlueKind::Normal,
+                        // §1091's `new_param_glue(par_skip_code)` retains the
+                        // parameter subtype that §182 displays.
+                        kind: GlueKind::ParSkip,
                         leader: None,
                     },
                 );
@@ -194,7 +196,9 @@ fn start_paragraph(
                     stores,
                     Node::Glue {
                         spec: parskip,
-                        kind: GlueKind::Normal,
+                        // §1091's `new_param_glue(par_skip_code)` retains the
+                        // parameter subtype that §182 displays.
+                        kind: GlueKind::ParSkip,
                         leader: None,
                     },
                 );

@@ -936,6 +936,7 @@ impl GlueKindDump for GlueKind {
             Self::SplitTopSkip => "\\glue(\\splittopskip) ",
             Self::LeftSkip => "\\glue(\\leftskip) ",
             Self::RightSkip => "\\glue(\\rightskip) ",
+            Self::ParSkip => "\\glue(\\parskip) ",
             Self::ParFillSkip => "\\glue(\\parfillskip) ",
             Self::AboveDisplaySkip => "\\glue(\\abovedisplayskip) ",
             Self::BelowDisplaySkip => "\\glue(\\belowdisplayskip) ",

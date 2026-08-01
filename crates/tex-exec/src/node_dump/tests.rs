@@ -241,6 +241,7 @@ fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
         (GlueKind::SplitTopSkip, None, "\\glue(\\splittopskip) 1.0\n"),
         (GlueKind::LeftSkip, None, "\\glue(\\leftskip) 1.0\n"),
         (GlueKind::RightSkip, None, "\\glue(\\rightskip) 1.0\n"),
+        (GlueKind::ParSkip, None, "\\glue(\\parskip) 1.0\n"),
         (GlueKind::ParFillSkip, None, "\\glue(\\parfillskip) 1.0\n"),
         (
             GlueKind::AboveDisplaySkip,
