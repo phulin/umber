@@ -2978,6 +2978,312 @@ fn print_cmd_chr_preserves_delivered_command_operands_and_aliases() {
 }
 
 #[test]
+fn print_cmd_chr_renders_all_parameter_and_register_names() {
+    use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+    use tex_state::font::{FontMetrics, LoadedFont};
+    use tex_state::meaning::UnexpandablePrimitive as U;
+    use tex_state::scaled::Scaled;
+
+    // tex.web §§224, 230, and 298: named eqtb quantities print the inverse
+    // primitive name, while register aliases print the register family and
+    // numeric operand.  Keep the complete TeX82 parameter vocabulary here as
+    // a direct table so two slots cannot silently acquire the same spelling.
+    const INT_PARAMS: &[(&str, u16)] = &[
+        ("pretolerance", 0),
+        ("tolerance", 1),
+        ("linepenalty", 2),
+        ("hyphenpenalty", 3),
+        ("exhyphenpenalty", 4),
+        ("clubpenalty", 5),
+        ("widowpenalty", 6),
+        ("displaywidowpenalty", 7),
+        ("brokenpenalty", 8),
+        ("binoppenalty", 9),
+        ("relpenalty", 10),
+        ("predisplaypenalty", 11),
+        ("postdisplaypenalty", 12),
+        ("interlinepenalty", 13),
+        ("doublehyphendemerits", 14),
+        ("finalhyphendemerits", 15),
+        ("adjdemerits", 16),
+        ("mag", 17),
+        ("delimiterfactor", 18),
+        ("looseness", 19),
+        ("time", 20),
+        ("day", 21),
+        ("month", 22),
+        ("year", 23),
+        ("showboxbreadth", 24),
+        ("showboxdepth", 25),
+        ("hbadness", 26),
+        ("vbadness", 27),
+        ("pausing", 28),
+        ("tracingonline", 29),
+        ("tracingmacros", 30),
+        ("tracingstats", 31),
+        ("globaldefs", 32),
+        ("tracingparagraphs", 33),
+        ("tracingpages", 34),
+        ("tracingoutput", 35),
+        ("tracinglostchars", 36),
+        ("tracingcommands", 37),
+        ("tracingrestores", 38),
+        ("uchyph", 39),
+        ("escapechar", 40),
+        ("defaulthyphenchar", 41),
+        ("defaultskewchar", 42),
+        ("endlinechar", 48),
+        ("newlinechar", 49),
+        ("language", 50),
+        ("lefthyphenmin", 51),
+        ("righthyphenmin", 52),
+        ("holdinginserts", 53),
+        ("errorcontextlines", 54),
+        ("outputpenalty", 55),
+        ("maxdeadcycles", 56),
+        ("hangafter", 57),
+        ("floatingpenalty", 58),
+        ("fam", 59),
+    ];
+    const ETEX_INT_PARAMS: &[(&str, u16)] = &[
+        ("tracingscantokens", 61),
+        ("TeXXeTstate", 62),
+        ("predisplaydirection", 63),
+        ("tracingassigns", 64),
+        ("tracinggroups", 65),
+        ("tracingifs", 66),
+        ("tracingnesting", 67),
+        ("savingvdiscards", 68),
+        ("lastlinefit", 69),
+        ("savinghyphcodes", 70),
+    ];
+    const DIMEN_PARAMS: &[(&str, u16)] = &[
+        ("parindent", 0),
+        ("mathsurround", 1),
+        ("lineskiplimit", 2),
+        ("hsize", 3),
+        ("vsize", 4),
+        ("maxdepth", 5),
+        ("splitmaxdepth", 6),
+        ("boxmaxdepth", 7),
+        ("hfuzz", 8),
+        ("vfuzz", 9),
+        ("delimitershortfall", 10),
+        ("nulldelimiterspace", 11),
+        ("scriptspace", 12),
+        ("predisplaysize", 13),
+        ("displaywidth", 14),
+        ("displayindent", 15),
+        ("overfullrule", 16),
+        ("hangindent", 17),
+        ("hoffset", 18),
+        ("voffset", 19),
+        ("emergencystretch", 20),
+    ];
+    const GLUE_PARAMS: &[(&str, u16)] = &[
+        ("lineskip", 0),
+        ("baselineskip", 1),
+        ("parskip", 2),
+        ("abovedisplayskip", 3),
+        ("belowdisplayskip", 4),
+        ("abovedisplayshortskip", 5),
+        ("belowdisplayshortskip", 6),
+        ("leftskip", 7),
+        ("rightskip", 8),
+        ("topskip", 9),
+        ("splittopskip", 10),
+        ("tabskip", 11),
+        ("spaceskip", 12),
+        ("xspaceskip", 13),
+        ("parfillskip", 14),
+    ];
+    const MU_GLUE_PARAMS: &[(&str, u16)] =
+        &[("thinmuskip", 15), ("medmuskip", 16), ("thickmuskip", 17)];
+    const TOK_PARAMS: &[(&str, u16)] = &[
+        ("output", 0),
+        ("everypar", 1),
+        ("everymath", 2),
+        ("everydisplay", 3),
+        ("everyhbox", 4),
+        ("everyvbox", 5),
+        ("everyjob", 6),
+        ("everycr", 7),
+        ("errhelp", 8),
+    ];
+    const ETEX_TOK_PARAMS: &[(&str, u16)] = &[("everyeof", 13)];
+
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let initial_escape = universe.int_param(IntParam::ESCAPE_CHAR);
+    let initial_hsize = universe.dimen_param(DimenParam::H_SIZE);
+    let initial_baseline = universe.glue_param(GlueParam::BASELINE_SKIP);
+    let initial_every_par = universe.tok_param(TokParam::EVERY_PAR);
+
+    let mut assert_named = |name: &str, meaning: Meaning| {
+        universe.register_primitive_meaning(name, meaning);
+        let canonical = universe.intern(name).symbol();
+        let alias = universe.intern(&format!("alias-{name}")).symbol();
+        universe.set_meaning(canonical, meaning);
+        universe.set_meaning(alias, meaning);
+        for symbol in [canonical, alias] {
+            let command = {
+                let mut state = universe.command_context();
+                CurrentCommand::resolve(
+                    traced(Token::Cs(symbol)),
+                    crate::command::DeliveryStamp::new(0, 0, 0),
+                    None,
+                    false,
+                    &mut state,
+                )
+            };
+            let expected = format!("\\{name}");
+            assert_eq!(
+                print_cmd_chr_text(
+                    &universe.command_context(),
+                    PrintCommand::from_current(&command)
+                ),
+                expected,
+                "print_cmd_chr name for {name}",
+            );
+            assert_eq!(
+                meaning_text(&universe.command_context(), &command),
+                expected
+            );
+        }
+    };
+
+    for &(name, slot) in INT_PARAMS.iter().chain(ETEX_INT_PARAMS) {
+        assert_named(name, Meaning::IntParam(slot));
+    }
+    for &(name, slot) in DIMEN_PARAMS {
+        assert_named(name, Meaning::DimenParam(slot));
+    }
+    for &(name, slot) in GLUE_PARAMS {
+        assert_named(name, Meaning::GlueParam(slot));
+    }
+    for &(name, slot) in MU_GLUE_PARAMS {
+        assert_named(name, Meaning::MuGlueParam(slot));
+    }
+    for &(name, slot) in TOK_PARAMS {
+        assert_named(name, Meaning::TokParam(slot));
+    }
+    for &(name, slot) in ETEX_TOK_PARAMS {
+        assert_named(name, Meaning::TokParam(slot));
+    }
+    for (family, make) in [
+        ("count", Meaning::CountRegister as fn(u16) -> Meaning),
+        ("dimen", Meaning::DimenRegister),
+        ("skip", Meaning::SkipRegister),
+        ("muskip", Meaning::MuskipRegister),
+        ("toks", Meaning::ToksRegister),
+    ] {
+        for index in [0, 255, 256, 32_767] {
+            let alias = universe.intern(&format!("alias-{family}-{index}")).symbol();
+            universe.set_meaning(alias, make(index));
+            let command = {
+                let mut state = universe.command_context();
+                CurrentCommand::resolve(
+                    traced(Token::Cs(alias)),
+                    crate::command::DeliveryStamp::new(0, u64::from(index), 0),
+                    None,
+                    false,
+                    &mut state,
+                )
+            };
+            let expected = format!("\\{family}{index}");
+            assert_eq!(
+                print_cmd_chr_text(
+                    &universe.command_context(),
+                    PrintCommand::from_current(&command)
+                ),
+                expected,
+            );
+            assert_eq!(
+                meaning_text(&universe.command_context(), &command),
+                expected
+            );
+        }
+    }
+
+    // Families whose selector is carried by an unexpandable command still
+    // use the canonical primitive name through an alias.
+    for (name, primitive) in [
+        ("catcode", U::CatCode),
+        ("lccode", U::LcCode),
+        ("uccode", U::UcCode),
+        ("sfcode", U::SfCode),
+        ("mathcode", U::MathCode),
+        ("delcode", U::DelCode),
+        ("setbox", U::SetBox),
+        ("box", U::Box),
+        ("copy", U::Copy),
+        ("font", U::Font),
+        ("fontdimen", U::FontDimen),
+    ] {
+        let meaning = Meaning::UnexpandablePrimitive(primitive);
+        universe.register_primitive_meaning(name, meaning);
+        let alias = universe.intern(&format!("alias-{name}")).symbol();
+        universe.set_meaning(alias, meaning);
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(alias)),
+                crate::command::DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        assert_eq!(
+            print_cmd_chr_text(
+                &universe.command_context(),
+                PrintCommand::from_current(&command)
+            ),
+            format!("\\{name}"),
+        );
+    }
+
+    let font = universe.intern_font(LoadedFont::new(
+        "cmr10",
+        "cmr10.tfm",
+        [7; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(12 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::default(),
+    ));
+    let font_alias = universe.intern("font-alias").symbol();
+    universe.set_meaning(font_alias, Meaning::Font(font));
+    let font_command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(font_alias)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+    assert_eq!(
+        print_cmd_chr_text(
+            &universe.command_context(),
+            PrintCommand::from_current(&font_command)
+        ),
+        "select font cmr10 at 12.0pt",
+    );
+
+    // Rendering is an immutable observation: representative cells from each
+    // parameter bank retain their exact pre-render values.
+    assert_eq!(universe.int_param(IntParam::ESCAPE_CHAR), initial_escape);
+    assert_eq!(universe.dimen_param(DimenParam::H_SIZE), initial_hsize);
+    assert_eq!(
+        universe.glue_param(GlueParam::BASELINE_SKIP),
+        initial_baseline
+    );
+    assert_eq!(universe.tok_param(TokParam::EVERY_PAR), initial_every_par);
+}
+
+#[test]
 fn etex_print_cmd_chr_selector_table_is_exact_for_primitives_registers_and_aliases() {
     use tex_state::meaning::UnexpandablePrimitive as U;
 
