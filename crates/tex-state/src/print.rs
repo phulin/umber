@@ -305,9 +305,17 @@ impl<'a> Printer<'a> {
         self.print(text)
     }
 
-    /// tex.web §65's `print_int`.
-    pub fn print_int(&mut self, value: i32) -> &mut Self {
-        self.print(&value.to_string())
+    /// pdftex.web §65's `print_int` over Web2C's widened `longinteger`.
+    pub fn print_int(&mut self, value: impl Into<i64>) -> &mut Self {
+        self.print(&value.into().to_string())
+    }
+
+    /// pdftex.web §65's `print_two`: the last two digits of the absolute
+    /// value, padded with a leading zero.
+    pub fn print_two(&mut self, value: i32) -> &mut Self {
+        let digits = value.unsigned_abs() % 100;
+        self.print_char(char::from(b'0' + (digits / 10) as u8));
+        self.print_char(char::from(b'0' + (digits % 10) as u8))
     }
 
     /// tex.web §103's `print_scaled`. The unit, if any, is the caller's.
@@ -902,6 +910,16 @@ impl ErrorChannel {
 }
 
 impl Universe {
+    /// pdftex.web §73's `print_ignored_err`: an original-TeX error that
+    /// pdfTeX deliberately records only in the transcript, without the word
+    /// `error` that humans and tooling treat specially.
+    pub fn print_ignored_err(&mut self, text: &str) {
+        Printer::new(self, Selector::LogOnly)
+            .print_ln()
+            .print("ignored: ")
+            .print(text);
+    }
+
     /// tex.web §73's `print_err`, opening a recoverable-error report.
     pub fn print_err(&mut self, text: &str) -> ErrorReport<'_> {
         ErrorReport::begin(self, text)

@@ -224,9 +224,10 @@ fn month_name(month: i32) -> &'static str {
         .expect("MONTH_NAMES is a fixed ASCII table")
 }
 
-/// tex.web §65's `print_two`: zero-padded to two digits.
+/// pdftex.web §65's `print_two`: the absolute value's final two digits,
+/// zero-padded to two digits.
 fn print_two(value: i32) -> String {
-    format!("{:02}", value.rem_euclid(100))
+    format!("{:02}", value.unsigned_abs() % 100)
 }
 
 /// §536's clock suffix: `"  " print_int(day) " " month print_int(year) " "

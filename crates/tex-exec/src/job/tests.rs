@@ -9,6 +9,13 @@ use super::*;
 use tex_command::{CommandHostCapabilities, RegisteredSourceKind, SourceRegistration};
 use tex_state::{EffectRecord, InteractionMode, JobClock, PrintSink, World};
 
+#[test]
+fn print_two_uses_absolute_last_two_digits() {
+    for (value, expected) in [(-1, "01"), (-9, "09"), (-10, "10"), (101, "01")] {
+        assert_eq!(super::print_two(value), expected);
+    }
+}
+
 use crate::{CanonicalMainControl, MainControlStep};
 
 fn channel_text(stores: &Universe, matches_sink: impl Fn(PrintSink) -> bool) -> String {

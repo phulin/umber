@@ -81,6 +81,64 @@ fn batch_mode_selects_the_transcript_and_every_other_mode_selects_both() {
 }
 
 #[test]
+fn pdftex_integer_printers_cover_widened_and_negative_boundaries() {
+    let mut universe = Universe::new();
+    let before_interaction = universe.interaction_mode();
+    let before_history = universe.world().error_channel().history();
+    let before_error_count = universe.world().error_channel().error_count();
+
+    {
+        let mut printer = Printer::new(&mut universe, Selector::TermAndLog);
+        for value in [i64::from(i32::MIN), -1, 0, 1, i64::from(i32::MAX), i64::MAX] {
+            printer.print_int(value).print_char('|');
+        }
+        for value in [-1, -9, -10, i32::MIN] {
+            printer.print_two(value).print_char('|');
+        }
+    }
+
+    assert_eq!(
+        sink_text(&universe, PrintSink::Terminal),
+        "-2147483648|-1|0|1|2147483647|9223372036854775807|01|09|10|48|"
+    );
+    assert_eq!(universe.interaction_mode(), before_interaction);
+    assert_eq!(universe.world().error_channel().history(), before_history);
+    assert_eq!(
+        universe.world().error_channel().error_count(),
+        before_error_count
+    );
+}
+
+#[test]
+fn pdftex_ignored_error_is_exactly_transcript_only_in_every_interaction_mode() {
+    for interaction in [
+        InteractionMode::Batch,
+        InteractionMode::Nonstop,
+        InteractionMode::Scroll,
+        InteractionMode::ErrorStop,
+    ] {
+        let mut universe = Universe::new();
+        universe.set_interaction_mode(interaction);
+        let before_history = universe.world().error_channel().history();
+        let before_error_count = universe.world().error_channel().error_count();
+
+        universe.print_ignored_err("Infinite glue shrinkage found");
+
+        assert_eq!(sink_text(&universe, PrintSink::Terminal), "");
+        assert_eq!(
+            sink_text(&universe, PrintSink::Log),
+            "\nignored: Infinite glue shrinkage found"
+        );
+        assert_eq!(universe.interaction_mode(), interaction);
+        assert_eq!(universe.world().error_channel().history(), before_history);
+        assert_eq!(
+            universe.world().error_channel().error_count(),
+            before_error_count
+        );
+    }
+}
+
+#[test]
 fn print_err_prefixes_the_message_and_error_terminates_it_with_a_period() {
     let mut universe = Universe::new();
     universe.set_interaction_mode(InteractionMode::Nonstop);
