@@ -79,6 +79,31 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
+fn routed_text(stores: &Universe, terminal: bool) -> String {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { sink, text }
+                if matches!(
+                    (terminal, sink),
+                    (
+                        true,
+                        tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog
+                    ) | (
+                        false,
+                        tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
+                    )
+                ) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn letter(ch: char) -> Token {
     Token::Char {
         ch,
@@ -646,6 +671,66 @@ fn prepare_mag_bounds_and_freezes_first_effective_value() {
             Some(PrepareMagDiagnostic::IllegalMagnification { attempted: 32_769 })
         )
     );
+}
+
+#[test]
+fn prepare_mag_accepts_one_and_preserves_exact_errors() {
+    fn run(source: &[u8]) -> Universe {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(InteractionMode::Nonstop);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut stores);
+        stores
+    }
+
+    let legal = run(br"\mag=1\dimen0=1truept\end");
+    assert_eq!(legal.mag(), 1);
+    assert_eq!(legal.prepared_mag(), Some(1));
+    assert_eq!(legal.dimen(0), Scaled::from_raw(1_000 * Scaled::UNITY));
+    assert_eq!(routed_text(&legal, true), "");
+    assert_eq!(routed_text(&legal, false), "");
+
+    let illegal = run(br"\mag=0\dimen0=1truept\end");
+    assert_eq!(illegal.mag(), 1_000);
+    assert_eq!(illegal.prepared_mag(), Some(1_000));
+    let illegal_terminal = concat!(
+        "! Illegal magnification has been changed to 1000 (0).\n",
+        "l.1 \\mag=0\\dimen0=1true\n",
+        "                       pt\\end\n",
+        "(see the transcript file for additional information)",
+    );
+    assert_eq!(routed_text(&illegal, true), illegal_terminal);
+    let illegal_log = concat!(
+        "! Illegal magnification has been changed to 1000 (0).\n",
+        "l.1 \\mag=0\\dimen0=1true\n",
+        "                       pt\\end\n",
+        "The magnification ratio must be between 1 and 32768.\n\n",
+    );
+    assert_eq!(routed_text(&illegal, false), illegal_log);
+
+    let incompatible = run(br"\mag=1200\dimen0=1truept\mag=2000\dimen1=1truept\end");
+    assert_eq!(incompatible.mag(), 1_200);
+    assert_eq!(incompatible.prepared_mag(), Some(1_200));
+    assert_eq!(incompatible.dimen(0), Scaled::from_raw(54_613));
+    assert_eq!(incompatible.dimen(1), Scaled::from_raw(54_613));
+    let incompatible_terminal = concat!(
+        "! Incompatible magnification (2000);\n",
+        " the previous value will be retained (1200).\n",
+        "l.1 \\mag=1200\\dimen0=1truept\\mag=2000\\dimen1=1true\n",
+        "                                                  pt\\end\n",
+        "(see the transcript file for additional information)",
+    );
+    assert_eq!(routed_text(&incompatible, true), incompatible_terminal);
+    let incompatible_log = concat!(
+        "! Incompatible magnification (2000);\n",
+        " the previous value will be retained (1200).\n",
+        "l.1 \\mag=1200\\dimen0=1truept\\mag=2000\\dimen1=1true\n",
+        "                                                  pt\\end\n",
+        "I can handle only one magnification ratio per job. So I've\n",
+        "reverted to the magnification you used earlier on this run.\n\n",
+    );
+    assert_eq!(routed_text(&incompatible, false), incompatible_log);
 }
 
 #[test]
