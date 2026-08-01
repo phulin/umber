@@ -1154,9 +1154,14 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                 {
                     Some((i + 1, i + 1, 0, false, Widths::zero(), self.prefix))
                 }
-                Node::Penalty(penalty) if *penalty < INF_PENALTY => {
-                    Some((i + 1, i, *penalty, false, Widths::zero(), before))
-                }
+                Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
+                    i + 1,
+                    i,
+                    (*penalty).max(EJECT_PENALTY),
+                    false,
+                    Widths::zero(),
+                    before,
+                )),
                 Node::Disc { pre, .. } => Some((
                     i + 1,
                     i,

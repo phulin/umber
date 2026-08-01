@@ -705,6 +705,24 @@ pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) -> Result<()
     Ok(())
 }
 
+/// TeX82 §825's once-per-paragraph infinite-shrink recovery.
+pub(crate) fn report_paragraph_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
+    let context = show_context(stores, stores.input_summary());
+    crate::error_report::report_error(
+        stores,
+        "Infinite glue shrinkage found in a paragraph",
+        &[
+            "The paragraph just ended includes some glue that has",
+            "infinite shrinkability, e.g., `\\hskip 0pt minus 1fil'.",
+            "Such glue doesn't belong there---it allows a paragraph",
+            "of any length to fit on one line. But it's safe to proceed,",
+            "since the offensive shrinkability has been made finite.",
+        ],
+        context,
+    )?;
+    Ok(())
+}
+
 /// TeX82 §976's `<Update the current height and depth measurements with
 /// respect to a glue or kern node p>`.
 pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {

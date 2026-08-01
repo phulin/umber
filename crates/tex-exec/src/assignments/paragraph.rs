@@ -559,7 +559,7 @@ fn break_current_paragraph(
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
     let active_directions = active_text_directions(nest.current_list().nodes());
-    let params = snapshot_paragraph_params(nest, stores);
+    let mut params = snapshot_paragraph_params(nest, stores);
     {
         let mut list = nest.current_list_mutation();
         if matches!(list.nodes().last(), Some(Node::Glue { .. })) {
@@ -573,8 +573,9 @@ fn break_current_paragraph(
         leader: None,
     });
     let mut level = crate::assignments::commit_current_list(nest, stores, fuel)?;
-    let hlist =
+    let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
+    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist)?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps =
@@ -690,6 +691,39 @@ fn break_current_paragraph(
         finished_nodes,
         line_count,
     })
+}
+
+/// TeX82 §825: paragraph glue may shrink only at normal order. Each
+/// offending specification is copied and normalized, while recovery is
+/// reported at most once for the whole paragraph.
+fn normalize_paragraph_infinite_shrink(
+    stores: &mut Universe,
+    params: &mut ParagraphParams,
+    nodes: &mut [Node],
+) -> Result<(), ExecError> {
+    let mut reported = false;
+    let mut normalize = |spec: &mut tex_state::ids::GlueId| -> Result<(), ExecError> {
+        let mut glue = stores.glue(*spec);
+        if glue.shrink.raw() == 0 || glue.shrink_order == Order::Normal {
+            return Ok(());
+        }
+        if !reported {
+            crate::diagnostics::report_paragraph_infinite_shrinkage(stores)?;
+            reported = true;
+        }
+        glue.shrink_order = Order::Normal;
+        *spec = stores.intern_glue(glue);
+        Ok(())
+    };
+
+    normalize(&mut params.left_skip)?;
+    normalize(&mut params.right_skip)?;
+    for node in nodes {
+        if let Node::Glue { spec, .. } = node {
+            normalize(spec)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn apply_line_expansion(

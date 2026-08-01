@@ -54,6 +54,82 @@ fn tracing_records_second_and_emergency_pass_boundaries_without_effects() {
     );
 }
 
+/// tex.web §828: positive `emergency_stretch` keeps the tolerance threshold
+/// and obtains a real feasible route instead of the final-pass artificial one.
+#[test]
+fn positive_emergency_stretch_uses_the_real_tolerance_route() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        rule(100),
+        Node::Glue {
+            spec: zero,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(200),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(200);
+    parameters.pretolerance = -1;
+    parameters.tolerance = 100;
+    parameters.emergency_stretch = sp(100);
+
+    let (plan, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
+
+    assert_eq!(plan.breaks.last().map(|br| br.position), Some(nodes.len()));
+    assert_eq!(
+        trace
+            .iter()
+            .filter_map(|event| match event {
+                LineBreakTrace::Pass(pass) => Some(*pass),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [LineBreakPass::Second, LineBreakPass::Emergency]
+    );
+    assert!(
+        trace.iter().any(|event| matches!(
+            event,
+            LineBreakTrace::Feasible {
+                badness: Some(100),
+                demerits: Some(_),
+                breakpoint: TraceBreakpoint::Glue,
+                ..
+            }
+        )),
+        "{trace:?}"
+    );
+}
+
+/// tex.web §831: penalties at or above `inf_penalty` inhibit a break,
+/// while values at or below `eject_penalty` are normalized to a forced break.
+#[test]
+fn penalty_boundaries_match_infinite_and_eject_semantics() {
+    let universe = Universe::new();
+    let cases = [
+        (-10_001, Some(EJECT_PENALTY)),
+        (-10_000, Some(EJECT_PENALTY)),
+        (-9_999, Some(-9_999)),
+        (9_999, Some(9_999)),
+        (10_000, None),
+        (10_001, None),
+    ];
+
+    for (input, expected) in cases {
+        let nodes = vec![rule(1), Node::Penalty(input), rule(1)];
+        let breakpoints = legal_breakpoints(&universe, &nodes, &params(100));
+        assert_eq!(
+            breakpoints
+                .iter()
+                .find(|breakpoint| breakpoint.position == 2)
+                .map(|breakpoint| breakpoint.penalty),
+            expected,
+            "penalty {input}"
+        );
+    }
+}
+
 #[test]
 fn pdf_image_reference_contributes_width_to_line_measurement() {
     let mut universe = Universe::new();

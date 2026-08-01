@@ -4145,6 +4145,56 @@ fn page_builder_reports_and_normalizes_infinite_shrink_glue() {
     assert_eq!(page_glue.shrink_order, tex_state::glue::Order::Normal);
 }
 
+/// tex.web §825: all offending glue in one paragraph is copied with finite
+/// shrink order, but the recovery error is issued only once for the paragraph.
+#[test]
+fn paragraph_infinite_shrink_reports_once_per_paragraph_and_normalizes_glue() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\hsize=100pt \\parindent=0pt \\noindent\\vrule width1pt\
+         \\hskip1pt minus 1fil\\vrule width1pt\
+         \\hskip2pt minus 2fill\\vrule width1pt\\par",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paragraph infinite-shrink recovery executes");
+
+    assert_eq!(
+        terminal_effect_text(&stores)
+            .matches("Infinite glue shrinkage found in a paragraph")
+            .count(),
+        1
+    );
+    let line_lists: Vec<_> = stores
+        .current_page_nodes()
+        .into_iter()
+        .filter_map(|node| match node {
+            Node::HList(line) => Some(line.children),
+            _ => None,
+        })
+        .collect();
+    assert!(!line_lists.is_empty(), "materialized paragraph lines");
+    let mut shrinking = Vec::new();
+    for children in line_lists {
+        for node in stores.nodes(children) {
+            if let tex_state::node_arena::NodeRef::Glue { spec, .. } = node {
+                let spec = stores.glue(spec);
+                if spec.shrink.raw() != 0 {
+                    shrinking.push(spec);
+                }
+            }
+        }
+    }
+    assert_eq!(shrinking.len(), 2);
+    assert!(
+        shrinking
+            .iter()
+            .all(|spec| spec.shrink_order == tex_state::glue::Order::Normal)
+    );
+}
+
 #[test]
 fn writable_page_scalars_read_after_page_freeze() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
