@@ -1351,6 +1351,7 @@ impl CanonicalMainControl {
                 mode,
                 job_is_all_over,
                 main_loop_active,
+                &mut self.shown_mode,
                 &mut diagnostics,
             )?;
             diagnostics.extend(
@@ -1371,7 +1372,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
+        report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -1688,7 +1689,7 @@ impl CanonicalMainControl {
                         .map(PendingDiagnostic::Command),
                 );
             }
-            report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
+            report_pending_diagnostics(stores, diagnostics)?;
             self.open_discretionary_part(stores)?;
             return Ok(ReplayStep::Continue);
         }
@@ -1842,6 +1843,7 @@ impl CanonicalMainControl {
                     innermost_group,
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
+                    &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
                 None => scan_replay_step(
@@ -1853,6 +1855,7 @@ impl CanonicalMainControl {
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
                     self.main_loop_active,
+                    &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
             };
@@ -1874,7 +1877,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
+        report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -3163,6 +3166,7 @@ impl CanonicalMainControl {
                     innermost_group,
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
+                    &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
                 None => scan_replay_step(
@@ -3174,6 +3178,7 @@ impl CanonicalMainControl {
                     job_is_all_over,
                     self.modes.current_list().display_eq_no().is_some(),
                     self.main_loop_active,
+                    &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
             };
@@ -3195,7 +3200,7 @@ impl CanonicalMainControl {
         stores.set_current_input_line(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
         );
-        report_pending_diagnostics(stores, diagnostics, &mut self.shown_mode)?;
+        report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
@@ -4896,6 +4901,7 @@ fn scan_replay_step(
     job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
+    shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     if let Some((alignment, phase)) = alignment_preamble {
@@ -4934,6 +4940,7 @@ fn scan_replay_step(
                 innermost_group,
                 mode,
                 job_is_all_over,
+                shown_mode,
                 diagnostics,
             ),
             AlignmentPreamblePhase::CellDelivery => scan_alignment_delivery_step(
@@ -4944,6 +4951,7 @@ fn scan_replay_step(
                 mode,
                 job_is_all_over,
                 main_loop_active,
+                shown_mode,
                 diagnostics,
             ),
         };
@@ -4956,6 +4964,7 @@ fn scan_replay_step(
         job_is_all_over,
         display_eq_no,
         main_loop_active,
+        shown_mode,
         diagnostics,
     )
 }
@@ -5060,6 +5069,7 @@ fn scan_alignment_peek(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // carries command-owned noalign replay facts
 fn scan_noalign_body(
     processor: &mut CommandProcessor<'_>,
     alignment: AlignmentIdentity,
@@ -5067,12 +5077,13 @@ fn scan_noalign_body(
     innermost_group: Option<GroupKind>,
     mode: Mode,
     job_is_all_over: bool,
+    shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
-    queue_command_trace(processor, mode, &command, diagnostics);
+    report_command_trace(processor, mode, &command, shown_mode);
     match command.meaning() {
         Meaning::CharToken {
             cat: Catcode::EndGroup,
@@ -5091,6 +5102,7 @@ fn scan_noalign_body(
             innermost_group,
             job_is_all_over,
             false,
+            shown_mode,
             diagnostics,
         ),
     }
@@ -5109,6 +5121,7 @@ fn scan_alignment_delivery_step(
     mode: Mode,
     job_is_all_over: bool,
     main_loop_active: bool,
+    shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     match processor
@@ -5124,7 +5137,7 @@ fn scan_alignment_delivery_step(
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
-            queue_command_trace(processor, mode, &command, diagnostics);
+            report_command_trace(processor, mode, &command, shown_mode);
             // TeX82 §1132 dispatches every right brace seen with an active
             // `align_group` through the missing-\cr recovery, independent of
             // `align_state`. The command-owned fast path emits a structural
@@ -5183,6 +5196,7 @@ fn scan_alignment_delivery_step(
                 innermost_group,
                 job_is_all_over,
                 false,
+                shown_mode,
                 diagnostics,
             )
         }
@@ -5217,6 +5231,7 @@ fn scan_step(
     job_is_all_over: bool,
     display_eq_no: bool,
     main_loop_active: bool,
+    shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     // TeX82 §1030 has two fetch labels, not one. `big_switch` uses
@@ -5237,7 +5252,7 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
-    queue_command_trace(processor, mode, &command, diagnostics);
+    report_command_trace(processor, mode, &command, shown_mode);
     if main_loop_active
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(
@@ -5257,6 +5272,7 @@ fn scan_step(
         innermost_group,
         job_is_all_over,
         display_eq_no,
+        shown_mode,
         diagnostics,
     )
 }
@@ -5293,6 +5309,7 @@ fn dispatch_main_control_command(
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
+    shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
@@ -5377,6 +5394,7 @@ fn dispatch_main_control_command(
                 return Ok(ScannedStep::EndOfInput);
             };
             command = next;
+            report_command_trace(processor, mode, &command, shown_mode);
             continue;
         }
         if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
@@ -5397,6 +5415,7 @@ fn dispatch_main_control_command(
                     | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
             );
             command = next;
+            report_command_trace(processor, mode, &command, shown_mode);
             continue;
         }
         // TeX82 §1214 resolves `\globaldefs` exactly once, before entering
@@ -5442,20 +5461,23 @@ fn dispatch_main_control_command(
     }
 }
 
-/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` immediately
-/// after `big_switch` fetches. Commands fetched by a case before `goto
-/// reswitch` -- including §1211's prefix loop -- do not pass this boundary.
-fn queue_command_trace(
-    processor: &CommandProcessor<'_>,
+/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` at `reswitch`,
+/// reached after `big_switch` and after cases such as §1045 `ignore_spaces`
+/// fetch a replacement command. §1211's prefix loop does not return to that
+/// label, so its internal fetches remain untraced.
+fn report_command_trace(
+    processor: &mut CommandProcessor<'_>,
     mode: Mode,
     command: &tex_command::CurrentCommand,
-    diagnostics: &mut Vec<PendingDiagnostic>,
+    shown_mode: &mut Option<Mode>,
 ) {
     if processor.int_param(IntParam::TRACING_COMMANDS) > 0 {
-        diagnostics.push(PendingDiagnostic::CommandTrace(
-            mode,
+        let mode_prefix = (*shown_mode != Some(mode)).then(|| mode_text_for_command_trace(mode));
+        *shown_mode = Some(mode);
+        processor.print_command_trace(
+            mode_prefix,
             tex_command::PrintCommand::from_current(command),
-        ));
+        );
     }
 }
 
@@ -10127,7 +10149,7 @@ fn shipout_replay_box(
     // otherwise its transcript effects are consumed as staging scratch.
     // `write_diagnostics` contains scanner recoveries, never §1030 command
     // traces; writes execute outside main control's `shown_mode` owner.
-    report_pending_diagnostics(stores, write_diagnostics, &mut None)?;
+    report_pending_diagnostics(stores, write_diagnostics)?;
     print_ship_out_marker_close(stores, tracing_output);
     // The closing bracket prints after `shipout_node_with_input_summary`'s
     // own transaction has committed, so without this call it would sit as a
@@ -15044,8 +15066,6 @@ fn schedule_everymath(command: &mut CommandState, stores: &mut Universe, display
 /// §362's `)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PendingDiagnostic {
-    /// TeX82 §§299/1030's `show_cur_cmd_chr` at `reswitch`.
-    CommandTrace(Mode, tex_command::PrintCommand),
     /// A command-owned diagnostic whose semantic transition completed before
     /// the World-facing executor could render it.
     Command(tex_command::CommandSemanticDiagnostic),
@@ -15082,7 +15102,6 @@ fn printed_command(stores: &Universe, meaning: Meaning) -> String {
 fn report_pending_diagnostics(
     stores: &mut Universe,
     diagnostics: Vec<PendingDiagnostic>,
-    shown_mode: &mut Option<Mode>,
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         match diagnostic {
@@ -15096,17 +15115,6 @@ fn report_pending_diagnostics(
                 } else {
                     output.print_nl(&text);
                 }
-                output.end(false);
-            }
-            PendingDiagnostic::CommandTrace(mode, command) => {
-                let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
-                let mut output = stores.begin_diagnostic();
-                output.print_nl("{");
-                if *shown_mode != Some(mode) {
-                    output.print(mode_text_for_command_trace(mode)).print(": ");
-                    *shown_mode = Some(mode);
-                }
-                output.print(&command).print_char('}');
                 output.end(false);
             }
             PendingDiagnostic::Command(

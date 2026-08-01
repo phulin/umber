@@ -157,6 +157,21 @@ impl ProcessorFuel<'_> {
 }
 
 impl<'a> CommandProcessor<'a> {
+    /// Prints TeX82 §§299/1030's command trace at the fetch boundary.
+    ///
+    /// This must run before operand scanning because restricted scanners can
+    /// report recoverable errors of their own before the command completes.
+    pub fn print_command_trace(&mut self, mode_prefix: Option<&str>, command: PrintCommand) {
+        let command = print_cmd_chr_text(&self.state, command);
+        let mut output = self.state.begin_diagnostic();
+        output.print_nl("{");
+        if let Some(mode_prefix) = mode_prefix {
+            output.print(mode_prefix).print(": ");
+        }
+        output.print(&command).print_char('}');
+        output.end(false);
+    }
+
     /// Borrows every ownership domain needed by one command operation.
     #[must_use]
     pub fn new(

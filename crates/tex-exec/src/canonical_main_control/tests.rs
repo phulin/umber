@@ -82,6 +82,26 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
 }
 
 #[test]
+fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=1 \\tracingonline=1 \\openout-1=trace.out\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    let trace = output
+        .find("{\\openout}")
+        .unwrap_or_else(|| panic!("§1030 command trace: {output:?}"));
+    let error = output.find("! Bad number (-1).").expect("§435 recovery");
+    assert!(trace < error, "{output:?}");
+}
+
+#[test]
 fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
     // TeX82 §§58--59/63/298: `print_cmd_chr` reaches `print_esc`, whose
     // escape prefix is printed as a one-character string rather than by the
@@ -120,10 +140,10 @@ fn global_escapechar_survives_off_save_inserted_group_recovery() {
 }
 
 #[test]
-fn tracingcommands_does_not_trace_prefix_or_reswitch_internal_fetches() {
-    // TeX82 §§1030/1045/1211: neither a later prefix, a prefixed target, nor
-    // the command fetched by `\ignorespaces` passes through `big_switch`'s
-    // diagnostic boundary. The next ordinary main-control fetch does.
+fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
+    // TeX82 §§1030/1045/1211: `reswitch` precedes the diagnostic boundary, so
+    // the command fetched by `\ignorespaces` is traced. A later prefix and
+    // its target are fetched inside `prefixed_command` and remain untraced.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
@@ -135,11 +155,10 @@ fn tracingcommands_does_not_trace_prefix_or_reswitch_internal_fetches() {
 
     let terminal = pending_sink_text(&stores, true);
     assert!(
-        terminal.contains("{\\global}\n{\\ignorespaces}\n{\\end}"),
+        terminal.contains("{\\global}\n{\\ignorespaces}\n{\\relax}\n{\\end}"),
         "{terminal:?}"
     );
     assert!(!terminal.contains("count"), "{terminal:?}");
-    assert!(!terminal.contains("relax"), "{terminal:?}");
 }
 
 #[test]
