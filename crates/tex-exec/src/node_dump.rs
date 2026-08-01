@@ -232,7 +232,23 @@ fn dump_node(
         Node::MathList(list) => dump_math_list(stores, list, config, depth, out),
         Node::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
         Node::Whatsit(whatsit) => dump_whatsit(stores, whatsit, out),
-        Node::Ins { .. } => out.push_str("[]\n"),
+        Node::Ins {
+            class,
+            size,
+            split_top_skip,
+            split_max_depth,
+            floating_penalty,
+            content,
+        } => {
+            let _ = writeln!(
+                out,
+                "\\insert{class}, natural size {}; split({},{}); float cost {floating_penalty}",
+                format_scaled_without_unit(*size),
+                format_glue(stores.glue(*split_top_skip)),
+                format_scaled_without_unit(*split_max_depth),
+            );
+            dump_list(stores, *content, config, depth + 1, ListContext::VList, out);
+        }
     }
 }
 

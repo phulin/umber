@@ -22,6 +22,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
 - `src/assignments/admissibility.rs`: authoritative assignment-family and math-mode pass-through metadata.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
+- `src/assignments/boxes/tests.rs`: focused box-list operation tests, including pdfTeX margin-kern removal and immutable source-list identity during unboxing.
 - `src/assignments/boxes/vsplit/tests.rs`: direct TeX82 `\vsplit` void-box and wrong-box recovery tests.
 - `src/assignments/fonts.rs`: `\font` scanning and driver-resolved TFM/OpenType selection loading, plus font parameter, hyphenchar, and skewchar assignment behavior.
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.

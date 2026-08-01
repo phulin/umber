@@ -16,6 +16,8 @@ use crate::{ExecError, Mode, ModeNest};
 
 mod leaders;
 mod packaging;
+#[cfg(test)]
+mod tests;
 pub(crate) mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
@@ -819,7 +821,25 @@ fn append_unboxed(
         }
     };
     flush_pending_hchars(nest, stores, fuel)?;
-    for node in stores.nodes(children).to_vec() {
+    // pdfTeX's margin-kern nodes are line-breaking annotations owned by the
+    // containing packed line. Copying the box preserves them, but either
+    // unboxing primitive removes them while splicing the remaining children;
+    // the frozen source list itself must remain immutable for `\unhcopy`.
+    for node in stores
+        .nodes(children)
+        .iter()
+        .map(|node| node.to_owned())
+        .filter(|node| {
+            !matches!(
+                node,
+                Node::Kern {
+                    kind: KernKind::LeftMargin | KernKind::RightMargin,
+                    ..
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+    {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
             append_vertical_contribution(nest, stores, node);
         } else {

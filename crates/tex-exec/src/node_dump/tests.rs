@@ -91,6 +91,62 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
 }
 
+/// pdfTeX §§190/193 retain insertion and numbered-mark identity in list
+/// diagnostics, in node order, without consuming or rewriting either frozen
+/// source list. This is the exact body printed for the equivalent
+/// `\vbox{\insert3{\hrule height5pt}\marks12{hello}}`.
+#[test]
+fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let zero = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
+    let insertion_content = stores.freeze_node_list(&[Node::Rule {
+        width: None,
+        height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
+        depth: Some(Scaled::from_raw(0)),
+    }]);
+    let mark_tokens = stores.intern_token_list(&[
+        tex_state::token::Token::Char {
+            ch: 'h',
+            cat: tex_state::token::Catcode::Letter,
+        },
+        tex_state::token::Token::Char {
+            ch: 'i',
+            cat: tex_state::token::Catcode::Letter,
+        },
+    ]);
+    let nodes = [
+        Node::Ins {
+            class: 3,
+            size: Scaled::from_raw(5 * Scaled::UNITY),
+            split_top_skip: zero,
+            split_max_depth: Scaled::MAX_DIMEN,
+            floating_penalty: 17,
+            content: insertion_content,
+        },
+        Node::Mark {
+            class: 12,
+            tokens: mark_tokens,
+        },
+    ];
+    let source = stores.freeze_node_list(&nodes);
+
+    let expected = concat!(
+        "\\insert3, natural size 5.0; split(0.0,16383.99998); float cost 17\n",
+        ".\\rule(5.0+0.0)x*\n",
+        "\\marks12{hi}\n",
+    );
+    let config = DumpConfig {
+        breadth: 100,
+        depth: 100,
+    };
+    assert_eq!(dump_node_list(&stores, source, config), expected);
+    assert_eq!(
+        stores.nodes(source),
+        nodes.as_slice(),
+        "dumping is immutable"
+    );
+}
+
 fn math_char(family: u8, character: char) -> MathChar {
     MathChar {
         family,
