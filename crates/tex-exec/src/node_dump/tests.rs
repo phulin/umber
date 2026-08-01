@@ -788,6 +788,57 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
     );
 }
 
+/// TeX82 §200 prints a class-zero mark as `\\mark{<tokens>}`. Rendering is
+/// observational: it neither consumes the frozen token list nor exposes the
+/// e-TeX class field or any arena bookkeeping.
+#[test]
+fn mark_dump_prints_token_list_once() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let foo = stores.intern_relaxed_control_sequence("foo");
+    let literal = stores.intern_token_list(&[tex_state::token::Token::Char {
+        ch: 'A',
+        cat: tex_state::token::Catcode::Letter,
+    }]);
+    let control_sequence = stores.intern_token_list(&[tex_state::token::Token::Cs(foo.symbol())]);
+    let empty = tex_state::ids::TokenListId::EMPTY;
+    let nodes = [
+        Node::Mark {
+            class: 0,
+            tokens: literal,
+        },
+        Node::Mark {
+            class: 0,
+            tokens: control_sequence,
+        },
+        Node::Mark {
+            class: 0,
+            tokens: empty,
+        },
+    ];
+    let source = stores.freeze_node_list(&nodes);
+    let literal_before = stores.tokens(literal).to_vec();
+    let control_sequence_before = stores.tokens(control_sequence).to_vec();
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            source,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        "\\mark{A}\n\\mark{\\foo}\n\\mark{}\n"
+    );
+    assert_eq!(stores.nodes(source), nodes.as_slice());
+    assert_eq!(stores.tokens(literal), literal_before.as_slice());
+    assert_eq!(
+        stores.tokens(control_sequence),
+        control_sequence_before.as_slice()
+    );
+    assert!(stores.tokens(empty).is_empty());
+}
+
 /// TeX82 §193's insertion-node arm prints every symbolic field before
 /// recursively displaying the insertion list. Formatting is observational:
 /// neither the insertion payload nor its child order may be consumed or
