@@ -247,3 +247,35 @@ fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, widt
     }
     boxed.width = width;
 }
+
+#[cfg(test)]
+pub(crate) fn test_rebox(
+    state: &impl MathTypesetState,
+    params: &super::MathParams,
+    source_width: Scaled,
+    target_width: Scaled,
+    empty: bool,
+) -> (super::MathLayout, MathBox) {
+    let mut ctx = Context {
+        state,
+        params,
+        style: super::Style::TEXT,
+        mu: Scaled::from_raw(0),
+        layout: super::MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+    };
+    let list = if empty {
+        ctx.layout.empty()
+    } else {
+        ctx.layout.hlist([super::MathNode::Kern {
+            amount: source_width,
+            kind: super::KernKind::Explicit,
+        }])
+    };
+    let mut boxed = ctx.layout.hpack(list);
+    assert_eq!(boxed.width, source_width);
+    rebox(&mut ctx, &mut boxed, target_width);
+    let layout = ctx.layout.finish(boxed.list);
+    (layout, boxed)
+}

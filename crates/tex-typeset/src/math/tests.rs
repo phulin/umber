@@ -703,6 +703,160 @@ fn var_delimiter_searches_small_chain_before_large_and_builds_extensible() {
 }
 
 #[test]
+fn delimiter_fallback_and_extensible_recipe_matrix() {
+    // TeX.web §§706--711 (tex.web:13890--14007): the small-family chain is
+    // exhausted before the large-family chain, the largest undersized glyph
+    // remains the fallback, and a wholly missing delimiter becomes a null box.
+    let mut universe = setup_universe();
+    universe.set_dimen_param(DimenParam::NULL_DELIMITER_SPACE, sc(37));
+    let params = MathParams::read(&universe);
+
+    let cases = [
+        (delimiter_code(0, 0, 0, 0), sc(1), None, (37, 0, 0, -3)),
+        (
+            delimiter_code(1, b'(', 1, b'!'),
+            sc(100),
+            Some(b'['),
+            (6, 20, 10, 2),
+        ),
+        (
+            delimiter_code(1, b'(', 1, b'|'),
+            sc(10),
+            Some(b'('),
+            (5, 8, 4, -1),
+        ),
+        (
+            delimiter_code(1, b'?', 1, b'('),
+            sc(10),
+            Some(b'('),
+            (5, 8, 4, -1),
+        ),
+    ];
+    for (delimiter, target, expected_char, geometry) in cases {
+        let (layout, boxed) =
+            test_var_delimiter(&universe, &params, delimiter, MathFontSize::Text, target);
+        assert_eq!(
+            (
+                boxed.width.raw(),
+                boxed.height.raw(),
+                boxed.depth.raw(),
+                boxed.shift.raw()
+            ),
+            geometry
+        );
+        match expected_char {
+            Some(ch) => assert!(matches!(
+                list_nodes(&layout, boxed.list).as_slice(),
+                [MathNode::Char { ch: actual, .. }] if *actual == char::from(ch)
+            )),
+            None => assert!(list_nodes(&layout, boxed.list).is_empty()),
+        }
+    }
+
+    // TeX.web §§712--713 (tex.web:14008--14054): recipes without a
+    // middle use one repeat run; recipes with a middle duplicate that run.
+    for (delimiter, target, geometry, expected) in [
+        (
+            delimiter_code(0, 0, 1, b'|'),
+            sc(35),
+            (6, 4, 34, -18),
+            vec![b'^', b'!', b'!', b'!', b'v'],
+        ),
+        (
+            delimiter_code(0, 0, 1, b'{'),
+            sc(20),
+            (7, 2, 27, -15),
+            vec![b'T', b'R', b'R', b'M', b'R', b'R', b'B'],
+        ),
+    ] {
+        let (layout, boxed) =
+            test_var_delimiter(&universe, &params, delimiter, MathFontSize::Text, target);
+        assert_eq!(
+            (
+                boxed.width.raw(),
+                boxed.height.raw(),
+                boxed.depth.raw(),
+                boxed.shift.raw()
+            ),
+            geometry
+        );
+        let actual = list_nodes(&layout, boxed.list)
+            .into_iter()
+            .map(|node| {
+                let MathNode::HList(piece) = node else {
+                    panic!("expected boxed recipe component, got {node:?}");
+                };
+                let [MathNode::Char { ch, .. }] = list_nodes(&layout, piece.list).as_slice() else {
+                    panic!("expected one recipe glyph");
+                };
+                *ch as u8
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn mu_glue_kern_signed_rounding_and_rebox_boundaries() {
+    // TeX.web §§716 (tex.web:14086--14113): normal-order glue components
+    // and mu kerns use TeX's signed fixed-point rounding independently.
+    let mu = sc(65_537);
+    for (value, expected) in [
+        (sc(65_536), sc(65_537)),
+        (sc(-65_536), sc(-65_537)),
+        (sc(32_768), sc(32_768)),
+        (sc(-32_768), sc(-32_768)),
+        (sc(1), sc(1)),
+        (sc(-1), sc(-1)),
+    ] {
+        assert_eq!(math_kern(value, mu), expected, "value={value:?}");
+    }
+    let glue = math_glue(
+        GlueSpec {
+            width: sc(-32_768),
+            stretch: sc(32_768),
+            stretch_order: Order::Normal,
+            shrink: sc(-77),
+            shrink_order: Order::Fil,
+        },
+        mu,
+    );
+    assert_eq!((glue.width, glue.stretch), (sc(-32_768), sc(32_768)));
+    assert_eq!(glue.shrink, sc(-77), "infinite-order mu is not scaled");
+
+    // TeX.web §§715 (tex.web:14066--14085): empty and already-exact
+    // boxes gain no material, while odd positive and negative slack is split
+    // with TeX's half() rule and the remainder on the right.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    for (source, target, empty, expected_kerns) in [
+        (0, 7, true, vec![]),
+        (11, 11, false, vec![11]),
+        (11, 18, false, vec![4, 11, 3]),
+        (11, 4, false, vec![-3, 11, -4]),
+    ] {
+        let (layout, boxed) =
+            fractions::test_rebox(&universe, &params, sc(source), sc(target), empty);
+        assert_eq!(boxed.width, sc(target));
+        let actual = list_nodes(&layout, boxed.list)
+            .into_iter()
+            .flat_map(|node| match node {
+                MathNode::Kern { amount, .. } => vec![amount.raw()],
+                MathNode::Sequence(list) => list_nodes(&layout, *list)
+                    .into_iter()
+                    .map(|nested| match nested {
+                        MathNode::Kern { amount, .. } => amount.raw(),
+                        _ => panic!("expected source kern, got {nested:?}"),
+                    })
+                    .collect(),
+                _ => panic!("expected rebox kern or source sequence, got {node:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected_kerns);
+    }
+}
+
+#[test]
 fn make_fraction_uses_default_rule_and_delimiter_target() {
     let mut universe = setup_universe();
     let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
@@ -1776,6 +1930,11 @@ fn delimiter_font(name: &str) -> LoadedFont {
         ('^', 6, 4, 0, CharTag::None),
         ('!', 6, 5, 5, CharTag::None),
         ('v', 6, 0, 4, CharTag::None),
+        ('{', 7, 1, 1, CharTag::Extensible(1)),
+        ('T', 7, 2, 0, CharTag::None),
+        ('M', 7, 3, 1, CharTag::None),
+        ('B', 7, 0, 3, CharTag::None),
+        ('R', 7, 4, 1, CharTag::None),
     ] {
         chars[ch as usize] = Some(CharMetrics {
             width: sc(width),
@@ -1798,12 +1957,20 @@ fn delimiter_font(name: &str) -> LoadedFont {
             Vec::new(),
             None,
             None,
-            vec![tex_fonts::metrics::ExtensibleRecipe {
-                top: Some(b'^'),
-                middle: None,
-                bottom: Some(b'v'),
-                repeated: b'!',
-            }],
+            vec![
+                tex_fonts::metrics::ExtensibleRecipe {
+                    top: Some(b'^'),
+                    middle: None,
+                    bottom: Some(b'v'),
+                    repeated: b'!',
+                },
+                tex_fonts::metrics::ExtensibleRecipe {
+                    top: Some(b'T'),
+                    middle: Some(b'M'),
+                    bottom: Some(b'B'),
+                    repeated: b'R',
+                },
+            ],
         ),
     )
 }
