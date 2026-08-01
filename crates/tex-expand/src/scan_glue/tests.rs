@@ -250,6 +250,51 @@ fn keeps_mixed_component_orders_independent() {
     assert_eq!(spec.shrink_order, Order::Fil);
 }
 
+/// TeX.web §461 reads a complete internal glue specification before §430
+/// applies its leading sign: every component changes sign, while finite and
+/// infinite orders remain unchanged.
+#[test]
+fn negative_glue_preserves_component_signs_and_orders() {
+    for order in [Order::Normal, Order::Fil, Order::Fill, Order::Filll] {
+        let mut stores = Universe::new();
+        let glue = stores.intern_glue(GlueSpec {
+            width: Scaled::from_raw(Scaled::UNITY),
+            stretch: Scaled::from_raw(2 * Scaled::UNITY),
+            stretch_order: order,
+            shrink: Scaled::from_raw(3 * Scaled::UNITY),
+            shrink_order: order,
+        });
+        stores.set_skip(7, glue);
+        let alias = stores.intern("signedskip");
+        stores.set_meaning(alias, Meaning::SkipRegister(7));
+        let mut input = InputStack::new(MemoryInput::new("-\\signedskip x"));
+        let scanned = scan_glue(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores),
+            context(),
+        )
+        .expect("negative internal glue scans");
+
+        assert_eq!(
+            stores.glue(scanned.id()),
+            GlueSpec {
+                width: Scaled::from_raw(-Scaled::UNITY),
+                stretch: Scaled::from_raw(-2 * Scaled::UNITY),
+                stretch_order: order,
+                shrink: Scaled::from_raw(-3 * Scaled::UNITY),
+                shrink_order: order,
+            },
+            "negative glue retains the {order:?} component orders",
+        );
+        assert_eq!(
+            input
+                .next_token(&mut tex_state::ExpansionContext::new(&mut stores))
+                .expect("remaining token lexes"),
+            Some(char_token('x', Catcode::Letter)),
+        );
+    }
+}
+
 #[test]
 fn restores_partially_matched_component_keyword_tokens() {
     let (spec, next) = scan("1pt plux 2pt");

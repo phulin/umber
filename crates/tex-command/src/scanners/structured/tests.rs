@@ -1380,6 +1380,73 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
     ));
 }
 
+/// TeX.web §463 starts rules with orientation-specific running dimensions
+/// and the canonical 0.4pt thickness. Every subsequently scanned dimension
+/// assignment replaces the preceding value for that keyword.
+#[test]
+fn rule_spec_defaults_and_last_keyword_are_observable() {
+    let default_rule = Scaled::from_raw(26_214);
+    for (primitive, source_text, expected) in [
+        (
+            UnexpandablePrimitive::VRule,
+            "!",
+            ScannedRuleSpec {
+                width: Some(default_rule),
+                height: None,
+                depth: None,
+            },
+        ),
+        (
+            UnexpandablePrimitive::HRule,
+            "!",
+            ScannedRuleSpec {
+                width: None,
+                height: Some(default_rule),
+                depth: Some(Scaled::from_raw(0)),
+            },
+        ),
+        (
+            UnexpandablePrimitive::VRule,
+            "width1pt width2pt height3pt height4pt depth5pt depth6pt!",
+            ScannedRuleSpec {
+                width: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+                height: Some(Scaled::from_raw(4 * Scaled::UNITY)),
+                depth: Some(Scaled::from_raw(6 * Scaled::UNITY)),
+            },
+        ),
+    ] {
+        let mut command = CommandState::default();
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source_text.as_bytes()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(
+            processor
+                .scan_rule_spec(primitive)
+                .expect("rule specification scans"),
+            expected,
+        );
+        assert!(matches!(
+            processor
+                .get_x_token()
+                .expect("terminator delivers")
+                .expect("terminator exists")
+                .meaning(),
+            Meaning::CharToken { ch: '!', .. }
+        ));
+    }
+}
+
 #[test]
 fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
     let mut command = CommandState::default();
