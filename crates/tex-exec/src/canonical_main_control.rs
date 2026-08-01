@@ -11385,7 +11385,9 @@ fn apply_scanned_step(
             // e-TeX 2.6 change [49.1248] commits every selector through
             // `define(q, shape_ref, p)`, so this uses the same save-stack and
             // `\globaldefs`-adjusted scope bit as TeX82 §1214/§1248.
+            let old = stores.penalty_array(kind);
             stores.set_penalty_array(kind, &values, global);
+            crate::assignments::tracing::trace_penalty_array(stores, kind, global, &old, &values);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {

@@ -200,6 +200,66 @@ fn tracingassigns_reports_token_parameters_as_their_replacement_text() {
 }
 
 #[test]
+fn tracingassigns_reports_exact_penalty_array_show_eqtb_values_and_scope() {
+    // Merged etex.web §17 extends show_eqtb for all four penalty-array
+    // locations: empty arrays print `0`, populated arrays print their count
+    // and first value (plus `\ETC.` when more follow), and group restoration
+    // supplies the pre-image observed by the next assignment.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingonline=1\tracingassigns=1
+           \interlinepenalties=2 10 -20
+           {\interlinepenalties=1 7}
+           \interlinepenalties=0
+           \clubpenalties=0
+           \clubpenalties=2 30 40
+           \widowpenalties=1 -50
+           \displaywidowpenalties=3 60 70 80
+           \global\displaywidowpenalties=0
+           \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    let array_lines: Vec<_> = log
+        .lines()
+        .filter(|line| {
+            [
+                "interlinepenalties",
+                "clubpenalties",
+                "widowpenalties",
+                "displaywidowpenalties",
+            ]
+            .iter()
+            .any(|name| line.contains(name))
+        })
+        .collect();
+    assert_eq!(
+        array_lines,
+        [
+            "{changing \\interlinepenalties=0}",
+            "{into \\interlinepenalties=2 10\\ETC.}",
+            "{changing \\interlinepenalties=2 10\\ETC.}",
+            "{into \\interlinepenalties=1 7}",
+            // The local singleton was restored at group exit.
+            "{changing \\interlinepenalties=2 10\\ETC.}",
+            "{into \\interlinepenalties=0}",
+            "{reassigning \\clubpenalties=0}",
+            "{changing \\clubpenalties=0}",
+            "{into \\clubpenalties=2 30\\ETC.}",
+            "{changing \\widowpenalties=0}",
+            "{into \\widowpenalties=1 -50}",
+            "{changing \\displaywidowpenalties=0}",
+            "{into \\displaywidowpenalties=3 60\\ETC.}",
+            "{globally changing \\displaywidowpenalties=3 60\\ETC.}",
+            "{into \\displaywidowpenalties=0}",
+        ]
+    );
+}
+
+#[test]
 fn tracingassigns_reports_catcode_table_writes() {
     let (mut stores, mut control) = etex_control();
     register_source(

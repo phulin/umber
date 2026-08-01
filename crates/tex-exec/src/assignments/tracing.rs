@@ -21,11 +21,11 @@
 //! group-exit boundary, where ordered old-value records remain available;
 //! this module renders only the four `\tracingassigns` labels.
 
-use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{GlueId, TokenListId};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
+use tex_state::{PenaltyArrayKind, Universe};
 
 use super::primitives::{dimen_param_name, glue_param_name, int_param_name, tok_param_name};
 use crate::node_dump::{format_glue_with_unit, format_scaled_for_diagnostics};
@@ -299,6 +299,55 @@ pub(crate) fn trace_toks_register(
         tracing_before,
         global,
         old != new,
+        &name,
+        &old_text,
+        &new_text,
+    );
+}
+
+/// Renders one of e-TeX's four penalty arrays as merged `etex.web` §17
+/// `show_eqtb` does: the empty shape is `0`, a singleton prints its count and
+/// value, and a longer shape abbreviates everything after its first value as
+/// `\ETC.`.
+fn penalty_array_text(stores: &mut Universe, values: &[i32]) -> String {
+    let mut text = values.len().to_string();
+    if let Some(first) = values.first() {
+        text.push(' ');
+        text.push_str(&first.to_string());
+        if values.len() > 1 {
+            text.push_str(&escaped(stores, "ETC."));
+        }
+    }
+    text
+}
+
+/// Traces e-TeX's shape-backed penalty-array assignment through the same
+/// merged `etex.web` §17 `assign_trace`/`show_eqtb` contract as ordinary
+/// eqtb writes. Every populated assignment allocates a fresh shape node, so
+/// even equal values are a change; only two null (empty) shapes are the same
+/// local equivalent and therefore produce `reassigning`.
+pub(crate) fn trace_penalty_array(
+    stores: &mut Universe,
+    kind: PenaltyArrayKind,
+    global: bool,
+    old: &[i32],
+    new: &[i32],
+) {
+    let raw_name = match kind {
+        PenaltyArrayKind::InterLine => "interlinepenalties",
+        PenaltyArrayKind::Club => "clubpenalties",
+        PenaltyArrayKind::Widow => "widowpenalties",
+        PenaltyArrayKind::DisplayWidow => "displaywidowpenalties",
+    };
+    let name = escaped(stores, raw_name);
+    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    let old_text = penalty_array_text(stores, old);
+    let new_text = penalty_array_text(stores, new);
+    trace_scalar(
+        stores,
+        tracing_before,
+        global,
+        !old.is_empty() || !new.is_empty(),
         &name,
         &old_text,
         &new_text,
