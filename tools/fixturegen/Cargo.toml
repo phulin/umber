@@ -16,8 +16,8 @@ sha2 = "0.10"
 tempfile = "3"
 test-support = { path = "../../crates/test-support" }
 tex-arith = { path = "../../crates/tex-arith" }
+tex-command = { path = "../../crates/tex-command" }
 tex-fonts = { path = "../../crates/tex-fonts" }
-tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state" }
 
 [lints.rust]

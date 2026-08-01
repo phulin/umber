@@ -18,9 +18,12 @@ use anyhow::{Context, Result, bail};
 use refexec::{RefTex, RunOpts, RunOutput};
 use tempfile::TempDir;
 use test_support::{corpus_cases, corpus_root, fixture_path, normalize};
-use tex_lex::{Lexer, WorldInput};
+use tex_command::{
+    CatcodeQueries, CharacterCode, CommandDialect, CommandProfile, CommandState,
+    SourceRegistration, SourceToken, SourceTokenizationStep,
+};
 use tex_state::env::banks::IntParam;
-use tex_state::token::{Catcode, Token};
+use tex_state::token::Catcode;
 use tex_state::{Universe, World};
 
 const TEXT_AREAS: &[&str] = &[
@@ -677,25 +680,31 @@ fn lex_ignored_character_fixture() -> String {
 }
 
 fn lex_invalid_character_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("invalid_character");
+    let (mut state, mut stores) = lexer_fixture("invalid_character");
     stores.set_catcode('?', Catcode::Invalid);
     let mut actual = String::new();
 
     loop {
-        match lexer.next_token(&mut stores) {
-            Ok(Some(token)) => push_token(&mut actual, token, &stores),
-            Ok(None) => break,
-            Err(err) => {
-                actual.push_str(&format!("error:{err}\n"));
+        match next_source_step(&mut state, &stores) {
+            SourceTokenizationStep::Token(token) => push_token(&mut actual, token),
+            SourceTokenizationStep::InvalidCharacter(invalid) => {
+                let code = invalid
+                    .code()
+                    .to_byte()
+                    .expect("exact-byte invalid character");
+                actual.push_str(&format!(
+                    "error:input contains invalid TeX character U+{code:04X}\n"
+                ));
                 break;
             }
+            SourceTokenizationStep::End => break,
         }
     }
 
     actual
 }
 
-fn lexer_fixture(case: &str) -> (Lexer, Universe) {
+fn lexer_fixture(case: &str) -> (CommandState, Universe) {
     let path = source_path("lexer_dynamic", case);
     let mut stores = Universe::with_world(World::real());
     let content = stores
@@ -703,34 +712,60 @@ fn lexer_fixture(case: &str) -> (Lexer, Universe) {
         .read_file(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
     stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    (Lexer::new(WorldInput::from_content(content)), stores)
+    let mut state = CommandState::new(CommandProfile::exact(CommandDialect::Tex82));
+    let source = state
+        .register_source(SourceRegistration::world(content))
+        .expect("dynamic lexer fixture source should register");
+    state
+        .open_registered_source(source)
+        .expect("dynamic lexer fixture source should open");
+    (state, stores)
 }
 
-fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
-    while let Some(token) = lexer
-        .next_token(stores)
-        .expect("dynamic lexer fixture should succeed")
-    {
-        push_token(actual, token, stores);
+fn push_remaining_tokens(actual: &mut String, state: &mut CommandState, stores: &mut Universe) {
+    loop {
+        match next_source_step(state, stores) {
+            SourceTokenizationStep::Token(token) => push_token(actual, token),
+            SourceTokenizationStep::InvalidCharacter(invalid) => {
+                panic!("dynamic lexer fixture contains invalid character: {invalid:?}")
+            }
+            SourceTokenizationStep::End => break,
+        }
     }
 }
 
-fn push_next_token(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
-    let token = lexer
-        .next_token(stores)
-        .expect("dynamic lexer fixture should succeed")
-        .expect("dynamic lexer fixture ended early");
-    push_token(actual, token, stores);
+fn push_next_token(actual: &mut String, state: &mut CommandState, stores: &mut Universe) {
+    match next_source_step(state, stores) {
+        SourceTokenizationStep::Token(token) => push_token(actual, token),
+        SourceTokenizationStep::InvalidCharacter(invalid) => {
+            panic!("dynamic lexer fixture contains invalid character: {invalid:?}")
+        }
+        SourceTokenizationStep::End => panic!("dynamic lexer fixture ended early"),
+    }
 }
 
-fn push_token(actual: &mut String, token: Token, stores: &Universe) {
+fn next_source_step(state: &mut CommandState, stores: &Universe) -> SourceTokenizationStep {
+    state.next_exact_source_step(
+        stores.int_param(IntParam::END_LINE_CHAR),
+        &mut CatcodeQueries(|code: CharacterCode| {
+            stores.catcode(char::from(code.to_byte().expect("exact-byte source code")))
+        }),
+    )
+}
+
+fn push_token(actual: &mut String, token: SourceToken) {
     let line = match token {
-        Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
-        Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
-        Token::Param(slot) => format!("param:{slot}"),
-        token if token.is_frozen_end_template() => "frozen:endtemplate".to_owned(),
-        token if token.is_frozen_endv() => "frozen:endv".to_owned(),
-        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
+        SourceToken::Character { code, catcode, .. } => format!(
+            "char:{}:{}",
+            code.to_byte().expect("exact-byte character token"),
+            catcode as u8
+        ),
+        SourceToken::ControlSequence { name, .. } => format!(
+            "cs:{}",
+            name.into_iter()
+                .map(|code| char::from(code.to_byte().expect("exact-byte control sequence")))
+                .collect::<String>()
+        ),
     };
     actual.push_str(&line);
     actual.push('\n');

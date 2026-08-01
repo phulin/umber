@@ -342,8 +342,8 @@ dependencies = [
  "tempfile",
  "test-support",
  "tex-arith",
+ "tex-command",
  "tex-fonts",
- "tex-lex",
  "tex-state",
 ]
 
@@ -864,6 +864,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-command"
+version = "0.1.0"
+dependencies = [
+ "tex-fonts",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-content"
 version = "0.1.0"
 
@@ -880,14 +888,6 @@ dependencies = [
  "tex-arith",
  "ttf-parser",
  "woff2-patched",
-]
-
-[[package]]
-name = "tex-lex"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "tex-state",
 ]
 
 [[package]]
