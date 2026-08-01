@@ -893,6 +893,40 @@ fn dvi_finalization_zero_page_and_unfinished_nesting_paths_match_tex82() {
     assert_eq!(dvi[page_eop(&dvi, 16)], EOP);
 }
 
+/// TeX.web §542 copies the TFM header checksum into every DVI font
+/// definition, rather than deriving an identity from the font name.
+#[test]
+fn loaded_tfm_checksum_is_emitted_in_dvi() {
+    let dvi = write_dvi(&[glyph_page(1)]).expect("loaded-font page writes");
+    let definition = font_def_bytes(3, "cmr10");
+    assert!(
+        dvi.windows(definition.len())
+            .any(|bytes| bytes == definition),
+        "the exact checksum-bearing definition must occur"
+    );
+}
+
+/// TeX.web §§512, 519, and 550 retain the separately scanned font area and
+/// name and emit both byte strings in the DVI definition.
+#[test]
+fn explicit_font_area_reaches_dvi_font_definition() {
+    let mut page = glyph_page(1);
+    page.testing_mut().fonts[0].name = "texfonts/cm/cmr10".to_owned();
+    let dvi = write_dvi(&[page]).expect("area-qualified font page writes");
+    let mut definition = vec![FNT_DEF1, 3];
+    definition.extend_from_slice(&0x1234_5678_u32.to_be_bytes());
+    definition.extend_from_slice(&655_360_i32.to_be_bytes());
+    definition.extend_from_slice(&655_360_i32.to_be_bytes());
+    definition.extend_from_slice(&[12, 5]);
+    definition.extend_from_slice(b"texfonts/cm/");
+    definition.extend_from_slice(b"cmr10");
+    assert!(
+        dvi.windows(definition.len())
+            .any(|bytes| bytes == definition),
+        "the exact area/name definition must occur"
+    );
+}
+
 fn glyph_page(count0: i32) -> PageArtifact {
     crate::UnvalidatedPageArtifact {
         job: JobInfo {

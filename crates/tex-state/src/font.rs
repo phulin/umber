@@ -69,10 +69,13 @@ impl std::error::Error for FontExpansionConfigError {}
 pub const MAX_FONT_DIMEN: u32 = 1 << 17;
 
 /// Largest dense font id representable in a fontdimen cell key.
-pub const MAX_FONT_DIMEN_FONT_ID: u32 = (1 << 15) - 1;
+///
+/// A font owns `2^17` possible parameter slots inside `CellId`'s 30-bit
+/// index, leaving 13 bits for the dense font number.
+pub const MAX_FONT_DIMEN_FONT_ID: u32 = (1 << 13) - 1;
 
 /// Maximum number of loaded fonts, including `nullfont`.
-pub(crate) const MAX_FONT_COUNT: usize = 1 << 15;
+pub(crate) const MAX_FONT_COUNT: usize = 1 << 13;
 const IMMUTABLE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f69_6d6d;
 const COMPLETE_FONT_HASH_DOMAIN: u64 = 0x666f_6e74_5f63_6d70;
 

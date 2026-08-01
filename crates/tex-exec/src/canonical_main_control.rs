@@ -11483,7 +11483,29 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             let loaded = load_canonical_font(&request, resource)?;
-            let id = stores.try_intern_font_with_identifier(loaded, request.target)?;
+            let id = match stores.try_intern_font_with_identifier(loaded, request.target) {
+                Ok(id) => id,
+                Err(tex_state::FontParameterError::TooManyFonts { .. }) => {
+                    let selector = stores.resolve(request.target).to_owned();
+                    crate::assignments::fonts::report_font_capacity(
+                        stores,
+                        &selector,
+                        &request.name,
+                        request.size,
+                    )?;
+                    if global {
+                        stores.set_meaning_global(
+                            request.target,
+                            Meaning::Font(tex_state::font::NULL_FONT),
+                        );
+                    } else {
+                        stores
+                            .set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
+                    }
+                    return Ok(ReplayStep::Continue);
+                }
+                Err(error) => return Err(error.into()),
+            };
             if global {
                 stores.set_meaning_global(request.target, Meaning::Font(id));
             } else {

@@ -503,6 +503,54 @@ fn malformed_tfm_uses_not_loadable_recovery() {
     assert!(output.contains("continued"));
 }
 
+/// TeX.web §567 reports capacity exhaustion after validating the TFM, leaves
+/// the selector at nullfont, and commits no partial font row.
+#[test]
+fn font_capacity_reports_not_loaded_and_rolls_back() {
+    let mut stores = stores_with_fonts();
+    let mut serial = 0_u32;
+    let mut survivor = tex_state::font::NULL_FONT;
+    loop {
+        let mut content_hash = [0_u8; 32];
+        content_hash[..4].copy_from_slice(&serial.to_le_bytes());
+        let font = tex_fonts::LoadedFont::new(
+            format!("capacity-{serial}"),
+            format!("capacity-{serial}.tfm"),
+            content_hash,
+            serial,
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Scaled::from_raw(10 * Scaled::UNITY),
+            Vec::new(),
+            tex_fonts::FontMetrics::default(),
+        );
+        match stores.try_intern_font(font) {
+            Ok(id) => {
+                survivor = id;
+                serial += 1;
+            }
+            Err(tex_state::FontParameterError::TooManyFonts { .. }) => break,
+            Err(error) => panic!("unexpected font fill error: {error:?}"),
+        }
+    }
+    let survivor_name = stores.font(survivor).name().to_owned();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\overflow=cmr10 \\message{continued}\\end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font capacity error is recoverable");
+
+    assert_eq!(
+        font_meaning(&stores, "overflow"),
+        tex_state::font::NULL_FONT
+    );
+    assert_eq!(stores.font(survivor).name(), survivor_name);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Font \\overflow=cmr10 not loaded: Not enough room left"));
+    assert!(output.contains("continued"));
+}
+
 #[test]
 fn font_properties_are_inherently_global() {
     let mut stores = stores_with_fonts();
@@ -676,6 +724,70 @@ fn scanner_em_ex_units_are_zero_for_nullfont() {
 
     assert_eq!(stores.dimen(0).raw(), 0);
     assert_eq!(stores.dimen(1).raw(), 0);
+}
+
+/// TeX.web §§552--556 initialize the complete nullfont record, including the
+/// two mutable character codes that do not come from later font defaults.
+#[test]
+fn nullfont_has_all_canonical_defaults() {
+    let stores = stores_with_fonts();
+    let null = stores.font(tex_state::font::NULL_FONT);
+    assert_eq!(null.name(), "nullfont");
+    assert_eq!(null.path(), std::path::Path::new("nullfont"));
+    assert_eq!(null.checksum(), 0);
+    assert_eq!(null.design_size().raw(), 0);
+    assert_eq!(null.size().raw(), 0);
+    assert_eq!(stores.font_parameter_count(tex_state::font::NULL_FONT), 7);
+    assert!((1..=7).all(|number| {
+        stores
+            .font_parameter(tex_state::font::NULL_FONT, number)
+            .raw()
+            == 0
+    }));
+    assert_eq!(stores.font_hyphen_char(tex_state::font::NULL_FONT), 45);
+    assert_eq!(stores.font_skew_char(tex_state::font::NULL_FONT), -1);
+    assert!((0_u8..=u8::MAX).all(|ch| !null.character_exists(char::from(ch))));
+    assert!(matches!(
+        null.construction(),
+        tex_fonts::FontConstruction::Loaded
+    ));
+}
+
+/// TeX.web §§548 and 560 dump and restore every loaded-font field needed to
+/// reuse the same TeX82 font allocation and mutable parameter state.
+#[test]
+fn loaded_tfm_font_survives_format_round_trip() {
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\fixture=cmr10 at 12pt \\fontdimen2\\fixture=7pt \\hyphenchar\\fixture=99 \\skewchar\\fixture=98 \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("loaded font state executes");
+    let original = font_meaning(&stores, "fixture");
+    let expected = stores.font(original).clone();
+    stores.set_input_summary(tex_state::InputSummary::default());
+    let image = stores.dump_format().expect("loaded-font format dumps");
+
+    let restored = Universe::from_format(tex_state::World::memory(), &image)
+        .expect("loaded-font format restores");
+    let font = font_meaning(&restored, "fixture");
+    assert_eq!(font.raw(), original.raw());
+    let loaded = restored.font(font);
+    assert_eq!(loaded.name(), expected.name());
+    assert_eq!(loaded.content_hash(), expected.content_hash());
+    assert_eq!(loaded.checksum(), expected.checksum());
+    assert_eq!(loaded.design_size(), expected.design_size());
+    assert_eq!(loaded.size(), expected.size());
+    assert_eq!(loaded.parameters(), expected.parameters());
+    assert_eq!(loaded.metrics(), expected.metrics());
+    assert_eq!(loaded.construction(), expected.construction());
+    assert_eq!(
+        restored.font_parameter(font, 2),
+        Scaled::from_raw(7 * Scaled::UNITY)
+    );
+    assert_eq!(restored.font_hyphen_char(font), 99);
+    assert_eq!(restored.font_skew_char(font), 98);
 }
 
 #[test]

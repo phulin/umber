@@ -34,7 +34,7 @@ use crate::{Mode, ModeNest};
 mod admissibility;
 mod arithmetic;
 mod boxes;
-mod fonts;
+pub(super) mod fonts;
 mod hmode;
 mod hyphenation;
 mod macros;

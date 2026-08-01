@@ -51,6 +51,9 @@ absent capability is a typed font suspension, so the enclosing aggregate rolls
 back before a fresh processor episode retries; a completed unavailable lookup
 instead recovers the target to `nullfont`. Font capabilities and loaded
 resources never enter command snapshots or durable summaries.
+If a valid TFM reaches the font-bank bound, replay follows TeX.web §567: it
+reports `not loaded: Not enough room left`, retains the provisional
+`nullfont` meaning, and commits no partial font row.
 
 The same boundary has a typed canonical math-request vocabulary for TeX82
 §§691–734 and §1030+: math characters and family selectors, text-field and

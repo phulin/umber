@@ -162,7 +162,24 @@ pub(super) fn execute_font_definition(
             LoadedFont::new_opentype(logical_name, logical_name, design_size, size, selection)
         }
     };
-    let id = stores.try_intern_font_with_identifier(loaded, target)?;
+    let id = match stores.try_intern_font_with_identifier(loaded, target) {
+        Ok(id) => id,
+        Err(tex_state::FontParameterError::TooManyFonts { .. }) => {
+            // TeX.web §567 has already validated the TFM when it discovers
+            // that the font table has no room. The destination remains the
+            // provisional null font and the failed row is not committed.
+            let selector = stores.resolve(target).to_owned();
+            report_font_capacity(stores, &selector, &font_name, size_spec)?;
+            let meaning = Meaning::Font(tex_state::font::NULL_FONT);
+            if apply_globaldefs(prefixes.global, stores) {
+                stores.set_meaning_global(target, meaning);
+            } else {
+                stores.set_meaning(target, meaning);
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
     let meaning = Meaning::Font(id);
     if apply_globaldefs(prefixes.global, stores) {
         stores.set_meaning_global(target, meaning);
@@ -459,6 +476,38 @@ fn report_font_not_loadable(
             "[Wizards can fix TFM files using TFtoPL/PLtoTF.]",
             "You might try inserting a different font spec;",
             "e.g., type `I\\font<same font id>=<substitute font name>'.",
+        ])
+        .context(context);
+    report.error().jump_out()?;
+    Ok(())
+}
+
+/// TeX.web §567's capacity apology after a valid TFM has been read.
+pub(crate) fn report_font_capacity(
+    stores: &mut Universe,
+    selector: &str,
+    font_name: &str,
+    size_spec: FontSizeSpec,
+) -> Result<(), ExecError> {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err("Font ");
+    report.print_esc(selector).print("=").print(font_name);
+    match size_spec {
+        FontSizeSpec::At(size) => {
+            report.print(" at ").print_scaled(size).print("pt");
+        }
+        FontSizeSpec::Scale(scale) => {
+            report.print(" scaled ").print_int(scale);
+        }
+        FontSizeSpec::Design => {}
+    }
+    report
+        .print(" not loaded: Not enough room left")
+        .help(&[
+            "I'm afraid I won't be able to make use of this font,",
+            "because my memory for character-size data is too small.",
+            "If you're really stuck, ask a wizard to enlarge me.",
+            "Or maybe try `I\\font<same font id>=<name of loaded font>'.",
         ])
         .context(context);
     report.error().jump_out()?;

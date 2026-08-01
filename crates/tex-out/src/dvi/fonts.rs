@@ -14,10 +14,11 @@ use super::{
 // emitted in that order.  framing.rs mirrors TeX's final descending
 // `font_ptr` walk when it repeats used definitions in the postamble.
 //
-// Umber policy: detached artifacts carry stable u32 resource numbers and no
-// separate TeX font-area string, so the area length is zero; the shortest DVI
-// fnt/fnt_def width is selected instead of TeX82's at-most-256-font shortcut.
-// Cross-page identity checks prevent one DVI number from changing meaning.
+// Detached artifacts retain TeX's packed area/name spelling in `name`; DVI
+// emission splits it at the final slash so §§512, 519, and 550 preserve both
+// byte strings and their lengths. The shortest DVI fnt/fnt_def width is
+// selected instead of TeX82's at-most-256-font shortcut. Cross-page identity
+// checks prevent one DVI number from changing meaning.
 
 impl<W: std::io::Write> DviWriter<W> {
     pub(super) fn index_page_fonts(&mut self, page: &PageArtifact) -> Result<(), DviError> {
@@ -120,7 +121,12 @@ impl<W: std::io::Write> DviWriter<W> {
     }
 
     pub(super) fn fnt_def(&mut self, number: u32, font: &FontResource) -> Result<(), DviError> {
-        let name = limited_bytes("font name", &font.name)?;
+        let (area, name) = font
+            .name
+            .rfind('/')
+            .map_or(("", font.name.as_str()), |end| font.name.split_at(end + 1));
+        let area = limited_bytes("font area", area)?;
+        let name = limited_bytes("font name", name)?;
         if name.is_empty() {
             return Err(DviError::EmptyFontName {
                 font_id: font.font_id,
@@ -147,8 +153,9 @@ impl<W: std::io::Write> DviWriter<W> {
         self.u32(font.tfm_checksum);
         self.scaled(font.at_size);
         self.scaled(font.design_size);
-        self.u8(0);
+        self.u8(area.len() as u8);
         self.u8(name.len() as u8);
+        self.raw(area);
         self.raw(name);
         Ok(())
     }

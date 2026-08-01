@@ -442,6 +442,10 @@ impl Stores {
         stores.set_int_param(IntParam::ESCAPE_CHAR, b'\\'.into());
         stores.set_int_param(IntParam::END_LINE_CHAR, 13);
         stores.initialize_font_banks(NULL_FONT, 7, &[]);
+        // TeX.web §§552--556 define these directly on `nullfont`; they do not
+        // come from the mutable defaults used for subsequently loaded fonts.
+        stores.set_font_hyphen_char(NULL_FONT, i32::from(b'-'));
+        stores.set_font_skew_char(NULL_FONT, -1);
         stores.initialize_exact_env_identity();
         stores
     }
