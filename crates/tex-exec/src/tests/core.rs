@@ -5285,14 +5285,23 @@ fn show_macro_renders_parameter_tokens_and_replacement_exactly_without_mutation(
     );
 }
 
-/// TeX82 §295 can print `CLOBBERED.` after a damaged token-list link. Umber's
-/// immutable `TokenListId` has no public or test-only constructor for an
-/// invalid link, and every macro installation validates both list handles, so
-/// that memory-corruption state is intentionally unrepresentable today.
+/// TeX82 §295 can print `CLOBBERED.` after `show_token_list` follows a damaged
+/// linked-memory pointer. Umber has no corresponding traversal: a macro owns
+/// two generation-tagged `TokenListId`s, `intern_macro` rejects either handle
+/// unless it is live in the same `Universe`, and diagnostic rendering resolves
+/// each live handle directly to an immutable token slice.
+///
+/// This is permanently unrepresentable by the safe state model. A constructor
+/// for a stale/foreign handle or a mutable corruption hook would weaken the
+/// production invariant. Injecting a synthetic failure only into the renderer
+/// would instead test a branch that no production state can reach, rather than
+/// TeX82's damaged-link behavior. Keep this exact-output case as an explicit
+/// xfail unless the production token-list representation itself gains a safe,
+/// fallible traversal corresponding to tex.web's links.
 #[test]
-#[ignore = "xfail: immutable validated TokenListId cannot represent tex.web's clobbered link"]
+#[ignore = "permanent xfail: validated immutable TokenListId has no malformed link traversal"]
 fn show_macro_renders_clobbered_token_list_marker() {
-    panic!("enable only with a deliberate malformed-list test seam")
+    panic!("unrepresentable TeX82 §295 output: CLOBBERED.")
 }
 
 #[test]
