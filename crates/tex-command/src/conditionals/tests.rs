@@ -2112,6 +2112,59 @@ fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
 }
 
 #[test]
+fn etex_box_conditionals_read_sparse_register_kinds() {
+    // e-TeX 2.6 [28.505] replaces TeX82 §505's eight-bit selector with
+    // `scan_register_num; fetch_box(p)` for all three box predicates.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    let dense_sentinel = box_with_content(&mut universe, true, false);
+    let sparse_hbox = box_with_content(&mut universe, false, false);
+    let sparse_vbox = box_with_content(&mut universe, true, false);
+    universe.set_box_reg(0, dense_sentinel);
+    universe.set_box_reg(300, sparse_hbox);
+    universe.set_box_reg(301, sparse_vbox);
+
+    let mut tokens = Vec::new();
+    for (primitive, register) in [
+        (ExpandablePrimitive::IfHBox, "300"),
+        (ExpandablePrimitive::IfVBox, "301"),
+        (ExpandablePrimitive::IfVoid, "302"),
+    ] {
+        append_boolean_case(
+            &mut universe,
+            &mut tokens,
+            &format!("etex-box-{register}"),
+            primitive,
+            chars(register),
+        );
+    }
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .with_observer(&mut recorder);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(next_character(&mut processor), 't');
+    drop(processor);
+    let branches = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Condition(record)
+                if record.transition == "branch" && record.limit == "evaluating" =>
+            {
+                record.branch.as_deref()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(branches, ["true", "true", "true"]);
+}
+
+#[test]
 fn if_ifcat_and_ifx_complete_operand_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

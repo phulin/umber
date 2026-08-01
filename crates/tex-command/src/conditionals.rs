@@ -594,13 +594,12 @@ impl CommandProcessor<'_> {
                 crate::ConditionalMode::Math
             )),
             ConditionalKind::IfInner => Ok(self.host.conditional_state().is_inner()),
-            // TeX.web §505: `scan_eight_bit_int; p:=box(cur_val)`. The
-            // selector is §433's restricted class, not an ordinary
-            // `scan_int`: an index outside `0..=255` reports "Bad register
-            // code" and recovers as register zero, so the predicate still
-            // reads a real register and still answers.
+            // TeX.web §505 uses `scan_eight_bit_int; p:=box(cur_val)`, while
+            // e-TeX 2.6 [28.505] widens that exact selector to
+            // `scan_register_num; fetch_box(p)`. The shared profile scan keeps
+            // TeX82's recover-to-zero behavior and reads e-TeX's sparse bank.
             ConditionalKind::IfVoid | ConditionalKind::IfHBox | ConditionalKind::IfVBox => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 let box_kind = self.state.box_kind(index);
                 Ok(match kind {
                     ConditionalKind::IfVoid => box_kind.is_none(),
