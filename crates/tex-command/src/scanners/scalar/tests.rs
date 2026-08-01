@@ -86,6 +86,26 @@ fn diagnostic_text(universe: &Universe) -> String {
         .collect()
 }
 
+fn diagnostic_channels(universe: &Universe) -> (String, String) {
+    let mut terminal = String::new();
+    let mut log = String::new();
+    for effect in universe.world().effect_records() {
+        let EffectRecord::StreamWrite { sink, text } = effect else {
+            continue;
+        };
+        match sink {
+            PrintSink::Terminal => terminal.push_str(text),
+            PrintSink::Log => log.push_str(text),
+            PrintSink::TerminalAndLog => {
+                terminal.push_str(text);
+                log.push_str(text);
+            }
+            PrintSink::Stream(_) => {}
+        }
+    }
+    (terminal, log)
+}
+
 #[test]
 fn scalar_forms_recovery_and_snapshot_use_only_command_input() {
     let mut command = CommandState::default();
@@ -5707,6 +5727,142 @@ fn scanner_recoveries_emit_tex82_error_reports_without_changing_values() {
         "I'm going to assume that 1mu=1pt when they're mixed.",
     ] {
         assert!(text.contains(message), "missing {message:?} in {text}");
+    }
+}
+
+#[test]
+fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
+    fn scan(
+        profile: CommandProfile,
+        source: &str,
+        mag: Option<i32>,
+    ) -> (i32, Token, String, String) {
+        let mut universe = crate::test_harness::universe();
+        if let Some(mag) = mag {
+            universe.set_mag_global(mag);
+        }
+        let mut command = CommandState::new(profile);
+        push(&mut command, scanner_tokens(source));
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let (value, next) = {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            let value = processor
+                .scan_dimension()
+                .expect("dimension fixture scans")
+                .value
+                .raw();
+            let next = processor
+                .get_x_token()
+                .expect("following token delivers")
+                .expect("fixture retains a following token")
+                .spelling()
+                .semantic_token();
+            (value, next)
+        };
+        let (terminal, log) = diagnostic_channels(&universe);
+        (value, next, terminal, log)
+    }
+
+    let tex82 = CommandProfile::exact(CommandDialect::Tex82);
+    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14027);
+    let tex_unknown_terminal = "! Illegal unit of measure (pt inserted).\n<to be read again> \n                   w\n<to be read again> 1w\n                     at=\n";
+    let tex_unknown_log = format!(
+        "{tex_unknown_terminal}\
+Dimensions can be in units of em, ex, in, pt, pc,\n\
+cm, mm, dd, cc, bp, or sp; but yours is a new one!\n\
+I'll assume that you meant to say pt, for printer's points.\n\
+To recover gracefully from this error, it's best to\n\
+delete the erroneous units; e.g., type `2' to delete\n\
+two letters. (See Chapter 27 of The TeXbook.)\n\n"
+    );
+    let pdf_unknown_log = tex_unknown_log.replace(
+        "cm, mm, dd, cc, bp, or sp",
+        "cm, mm, dd, cc, nd, nc, bp, or sp",
+    );
+    let positive_large_terminal =
+        "! Dimension too large.\n<to be read again> 20000pt\n                          =\n";
+    let negative_large_terminal =
+        "! Dimension too large.\n<to be read again> -20000pt\n                           =\n";
+    let large_help = "I can't work with sizes bigger than about 19 feet.\n\
+Continue and I'll use the largest value I can.\n\n";
+    let positive_large_log = format!("{positive_large_terminal}{large_help}");
+    let negative_large_log = format!("{negative_large_terminal}{large_help}");
+    let true_terminal = "! Illegal magnification has been changed to 1000 (40000).\n<to be read again> 1true\n                        pt=\n";
+    let true_log =
+        format!("{true_terminal}The magnification ratio must be between 1 and 32768.\n\n");
+
+    for (name, actual, expected) in [
+        (
+            "TeX82 unknown unit",
+            scan(tex82, "1wat=", None),
+            (
+                Scaled::UNITY,
+                'w',
+                tex_unknown_terminal,
+                tex_unknown_log.as_str(),
+            ),
+        ),
+        (
+            "TeX82 positive overflow",
+            scan(tex82, "20000pt=", None),
+            (
+                Scaled::MAX_DIMEN.raw(),
+                '=',
+                positive_large_terminal,
+                positive_large_log.as_str(),
+            ),
+        ),
+        (
+            "TeX82 negative overflow",
+            scan(tex82, "-20000pt=", None),
+            (
+                -Scaled::MAX_DIMEN.raw(),
+                '=',
+                negative_large_terminal,
+                negative_large_log.as_str(),
+            ),
+        ),
+        (
+            "TeX82 true-unit prepare_mag ordering",
+            scan(tex82, "1truept=", Some(40_000)),
+            (Scaled::UNITY, '=', true_terminal, true_log.as_str()),
+        ),
+        (
+            "pdfTeX nd",
+            scan(pdftex, "1nd=", None),
+            (69_925, '=', "", ""),
+        ),
+        (
+            "pdfTeX nc",
+            scan(pdftex, "1nc=", None),
+            (839_105, '=', "", ""),
+        ),
+        (
+            "pdfTeX unknown unit",
+            scan(pdftex, "1wat=", None),
+            (
+                Scaled::UNITY,
+                'w',
+                tex_unknown_terminal,
+                pdf_unknown_log.as_str(),
+            ),
+        ),
+    ] {
+        let (value, next, terminal, log) = actual;
+        let (expected_value, expected_next, expected_terminal, expected_log) = expected;
+        assert_eq!(value, expected_value, "{name} value");
+        assert!(
+            matches!(next, Token::Char { ch, .. } if ch == expected_next),
+            "{name} next-token backup ownership: {next:?}"
+        );
+        assert_eq!(terminal, expected_terminal, "{name} terminal report");
+        assert_eq!(log, expected_log, "{name} transcript report");
     }
 }
 
