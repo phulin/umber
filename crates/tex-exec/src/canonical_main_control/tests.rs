@@ -5805,7 +5805,7 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
     assert!(control.dumped_format());
     assert_eq!(terminal_text(&stores), "");
     let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
-    assert_eq!(receipt.format_ident.name, "bounded-dump");
+    assert_eq!(receipt.format_ident.format_name, "bounded-dump");
     crate::confirm_format_dump_publication(&mut stores, &mut receipt, "alternate-name.fmt");
     assert_eq!(
         terminal_text(&stores),

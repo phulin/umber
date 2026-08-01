@@ -1290,12 +1290,14 @@ fn format_worker_launcher() -> umber::FormatWorkerLauncher {
 fn raw_tex82_recipe() -> umber::FormatRecipe {
     let mut recipe = umber::FormatRecipe::raw_tex82();
     recipe.format_name = "production".into();
+    recipe.format_ident_name = "production".into();
     recipe
 }
 
 fn raw_etex26_recipe() -> umber::FormatRecipe {
     let mut recipe = umber::FormatRecipe::raw_etex26();
     recipe.format_name = "etex-loaded".into();
+    recipe.format_ident_name = "etex-loaded".into();
     // This loaded-profile cohort intentionally observes both a macro that
     // survives §1309's format-memory compaction and e-TeX change [50.1307]'s
     // reset of optional state immediately before the dump.

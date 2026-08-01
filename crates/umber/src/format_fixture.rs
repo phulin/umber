@@ -82,7 +82,10 @@ pub enum LoadedFormatResource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormatRecipe {
     pub engine: EngineMode,
+    /// web2c's selected `dump_name`, used by §61's terminal banner.
     pub format_name: String,
+    /// The dump job name embedded by TeX82 §1328 and restored for §536's log.
+    pub format_ident_name: String,
     pub construction_source_name: String,
     pub construction_source: Arc<[u8]>,
     pub resources: Vec<FormatResource>,
@@ -102,6 +105,7 @@ impl FormatRecipe {
         Self {
             engine: EngineMode::Tex82,
             format_name: "raw-tex82".into(),
+            format_ident_name: "raw-tex82".into(),
             construction_source_name: "raw-tex82.ini".into(),
             construction_source: Arc::from(&b"\\dump\n"[..]),
             resources: Vec::new(),
@@ -129,6 +133,7 @@ impl FormatRecipe {
         Self {
             engine: EngineMode::ETex,
             format_name: "raw-etex26".into(),
+            format_ident_name: "raw-etex26".into(),
             construction_source_name: "raw-etex26.ini".into(),
             construction_source: Arc::from(&b"\\dump\n"[..]),
             resources: Vec::new(),
@@ -159,6 +164,7 @@ impl FormatRecipe {
         Self {
             engine: EngineMode::PdfTex,
             format_name: "production".into(),
+            format_ident_name: "production".into(),
             construction_source_name: "production-pdftex14027.ini".into(),
             construction_source: Arc::from(&b"\\dump\n"[..]),
             resources: Vec::new(),
@@ -218,6 +224,7 @@ impl FormatRecipe {
             env!("CARGO_PKG_VERSION").as_bytes(),
             build_feature_contract(),
             self.format_name.as_bytes(),
+            self.format_ident_name.as_bytes(),
         ]);
         Ok(FormatCacheIdentity::fixture(FormatFixtureIdentity {
             engine_mode: cache_mode(self.engine),
@@ -340,7 +347,8 @@ impl LoadedFormatFixture {
         let mut session =
             CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_preloaded_format(tex_exec::PreloadedFormat {
-            name: self.recipe.format_name.clone(),
+            dump_name: self.recipe.format_name.clone(),
+            format_name: self.recipe.format_ident_name.clone(),
             year: self.recipe.clock.year,
             month: self.recipe.clock.month,
             day: self.recipe.clock.day,

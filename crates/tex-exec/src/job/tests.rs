@@ -491,7 +491,8 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
     let mut job = JobFraming::default();
     let mut capabilities = CommandHostCapabilities::default();
     let format = PreloadedFormat {
-        name: "etex-loaded".to_owned(),
+        dump_name: "etex-loaded".to_owned(),
+        format_name: "etex-loaded".to_owned(),
         year: 2026,
         month: 7,
         day: 9,
@@ -529,7 +530,8 @@ fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_tex
     let mut job = JobFraming::default();
     let mut capabilities = CommandHostCapabilities::default();
     let format = PreloadedFormat {
-        name: "trip".to_owned(),
+        dump_name: "umber-tex82-oracle".to_owned(),
+        format_name: "trip".to_owned(),
         year: 2026,
         month: 7,
         day: 9,
@@ -551,7 +553,7 @@ fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_tex
     let terminal = terminal_text(&stores);
     assert_eq!(
         terminal,
-        format!("{TEX82_BANNER} (preloaded format=trip)\n")
+        format!("{TEX82_BANNER} (preloaded format=umber-tex82-oracle)\n")
     );
     assert!(!terminal.contains("pdfTeX"));
     assert!(!terminal.contains("e-TeX"));

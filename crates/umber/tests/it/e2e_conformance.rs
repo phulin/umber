@@ -291,6 +291,9 @@ fn trip_format_recipe(
 ) -> FormatRecipe {
     let mut recipe = profile.recipe();
     recipe.format_name = profile.format_name().into();
+    // TeX82 §1328 persists the dump job name independently of web2c §61's
+    // selected `dump_name` used by the terminal banner.
+    recipe.format_ident_name = fixture_name.to_owned();
     recipe.construction_source_name = source_name.to_owned();
     recipe.construction_source = source;
     recipe.resources = vec![
@@ -366,6 +369,7 @@ fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
         assert_eq!(recipe.engine, engine);
         assert_eq!(recipe.engine.command_profile(), engine.command_profile());
         assert_eq!(recipe.format_name, format_name);
+        assert_eq!(recipe.format_ident_name, fixture_name);
         assert_eq!(recipe.construction_source_name, source_name);
         assert_eq!(recipe.construction_source, source);
         assert_eq!(
@@ -621,6 +625,7 @@ fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
     Ok(FormatRecipe {
         engine: EngineMode::Tex82,
         format_name: "repository-plain-tex82".into(),
+        format_ident_name: "repository-plain-tex82".into(),
         construction_source_name: "repository-plain-tex82.ini".into(),
         construction_source: Arc::from(&b"\\input plain.tex\n\\dump\n"[..]),
         resources,
@@ -1976,7 +1981,7 @@ fn run_two_phase_fixture(
 }
 
 #[test]
-#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.421"]
+#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.424"]
 fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture(TripEngineProfile::Tex82, "trip.tex", "trip.tex", gate);

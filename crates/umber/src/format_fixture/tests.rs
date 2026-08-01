@@ -25,6 +25,21 @@ impl CommandObserver for Recorder {
     }
 }
 
+#[test]
+fn dumped_format_identity_uses_the_construction_job_name_not_the_dump_selector() {
+    let mut recipe = FormatRecipe::raw_tex82();
+    recipe.format_name = "selected-format".into();
+    recipe.format_ident_name = "dump-job".into();
+    assert_ne!(recipe.format_name, recipe.format_ident_name);
+    assert_ne!(
+        recipe.identity().expect("split format identity").key(),
+        FormatRecipe::raw_tex82()
+            .identity()
+            .expect("raw format identity")
+            .key()
+    );
+}
+
 fn test_world() -> World {
     World::memory_with_clock(JobClock {
         time: 7 * 60,

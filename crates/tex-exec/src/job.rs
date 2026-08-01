@@ -168,15 +168,17 @@ impl PdfJobFinalizationReport {
 }
 
 /// A job started from a dumped format: web2c's `dump_name` (the `-fmt=`
-/// argument) plus the `\year`/`\month`/`\day` that were current when
-/// tex.web §1328's `store_fmt_file` built the dumped `format_ident`.
+/// argument), the dump job name in tex.web §1328's `format_ident`, and the
+/// `\year`/`\month`/`\day` that were current when the format was built.
 ///
 /// Both are carried because a real run prints *different* text from them on
 /// the two sinks; see [`terminal_format_ident`] and [`log_format_ident`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreloadedFormat {
     /// web2c's `dump_name`, e.g. `etex-loaded` for `-fmt=etex-loaded`.
-    pub name: String,
+    pub dump_name: String,
+    /// The dump job name embedded in tex.web §1328's `format_ident`.
+    pub format_name: String,
     /// `\year`, `\month`, `\day` at the moment the format was dumped.
     pub year: i32,
     pub month: i32,
@@ -200,7 +202,8 @@ impl FormatDumpReceipt {
     pub fn new(name: String, year: i32, month: i32, day: i32) -> Self {
         Self {
             format_ident: PreloadedFormat {
-                name,
+                dump_name: name.clone(),
+                format_name: name,
                 year,
                 month,
                 day,
@@ -226,7 +229,7 @@ impl FormatDumpReceipt {
 /// `else` arm's `slow_print(format_ident)` has something to print.
 fn terminal_format_ident(format: Option<&PreloadedFormat>, initex: bool) -> String {
     match (format, initex) {
-        (Some(format), _) => format!(" (preloaded format={})", format.name),
+        (Some(format), _) => format!(" (preloaded format={})", format.dump_name),
         (None, true) => " (INITEX)".to_owned(),
         // Unreached in practice: a job is either INITEX or started from a
         // format. tex.web's own remaining honest branch for neither.
@@ -244,7 +247,7 @@ fn log_format_ident(format: Option<&PreloadedFormat>, initex: bool) -> String {
     match (format, initex) {
         (Some(format), _) => format!(
             " (preloaded format={} {}.{}.{})",
-            format.name, format.year, format.month, format.day
+            format.format_name, format.year, format.month, format.day
         ),
         (None, true) => " (INITEX)".to_owned(),
         (None, false) => " (no format preloaded)".to_owned(),
@@ -736,7 +739,7 @@ pub fn confirm_format_dump_publication(
         .print_nl("Beginning to dump on file ")
         .print(displayed_file_name)
         .print_nl(" (preloaded format=")
-        .print(&ident.name)
+        .print(&ident.format_name)
         .print_char(' ')
         .print_int(ident.year)
         .print_char('.')

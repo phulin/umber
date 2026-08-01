@@ -34,13 +34,13 @@ use crate::format_fixture::{
     construct_format_in_worker,
 };
 
-const PROTOCOL: u32 = 2;
+const PROTOCOL: u32 = 3;
 const AUTH_KEY_BYTES: usize = 32;
-const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V2\0";
-const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V2\0";
+const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V3\0";
+const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V3\0";
 const TEST_WORKER_ENV: &str = "UMBER_INTERNAL_CURRENT_IMAGE_TEST_WORKER";
 const PRODUCTION_WORKER_ARGUMENT: &str = "__format-worker";
-const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v2\0";
+const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v3\0";
 const FRAME_LENGTH_BYTES: usize = size_of::<u64>();
 const MAX_WORKER_REQUEST_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 16 * 1024 * 1024;
 const MAX_WORKER_STDOUT_BYTES: usize =
@@ -55,6 +55,7 @@ struct Request {
     identity: [u8; 32],
     engine: u8,
     format_name: String,
+    format_ident_name: String,
     source_name: String,
     source: Vec<u8>,
     resources: Vec<Resource>,
@@ -839,6 +840,7 @@ impl Request {
             identity,
             engine: engine_tag(recipe.engine),
             format_name: recipe.format_name.clone(),
+            format_ident_name: recipe.format_ident_name.clone(),
             source_name: recipe.construction_source_name.clone(),
             source: recipe.construction_source.to_vec(),
             resources: recipe.resources.iter().map(Resource::from).collect(),
@@ -870,6 +872,7 @@ impl Request {
         let recipe = FormatRecipe {
             engine: decode_engine(self.engine)?,
             format_name: self.format_name,
+            format_ident_name: self.format_ident_name,
             construction_source_name: self.source_name,
             construction_source: Arc::from(self.source),
             resources: self
