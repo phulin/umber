@@ -8115,6 +8115,107 @@ mod tests {
         );
     }
 
+    #[test]
+    fn texxet_page_form_write_leader_artifact_oracle_matrix() {
+        use sha2::{Digest, Sha256};
+        use tex_out::positioned::PositionedEvent;
+
+        struct Case {
+            name: &'static str,
+            source: &'static str,
+            artifact_hash: &'static str,
+            pdf_hash: &'static str,
+            dvi_hash: &'static str,
+            rule_widths: &'static [i32],
+        }
+
+        let cases = [
+            Case {
+                name: "page-write",
+                source: concat!(
+                    "\\pdfoutput=1\\TeXXeTstate=1",
+                    "\\shipout\\hbox{\\vrule width4pt height1pt\\beginR",
+                    "\\vrule width1pt height1pt\\write16{page-write}",
+                    "\\vrule width2pt height1pt\\endR\\vrule width3pt height1pt}\\end",
+                ),
+                artifact_hash: "77089378472da588f27a4a43c289be17bce9ad60f64005540ca36cc3b6450932",
+                pdf_hash: "221f3230975c7ce5ef7a4405d28f10a041ae5705701c1c1dc930f16ae450add5",
+                dvi_hash: "27ee7d1495129a3f43eede4dfe7fa990439eb8ebbbf38b5078d72a991413102a",
+                rule_widths: &[262_144, 131_072, 65_536, 196_608],
+            },
+            Case {
+                name: "page-leader",
+                source: concat!(
+                    "\\pdfoutput=1\\TeXXeTstate=1",
+                    "\\shipout\\hbox{\\vrule width4pt height1pt\\beginR",
+                    "\\vrule width1pt height1pt\\leaders\\hrule height1pt\\hskip20pt",
+                    "\\vrule width2pt height1pt\\endR\\vrule width3pt height1pt}\\end",
+                ),
+                artifact_hash: "4d6397131890cbe19a345437e7dbacac4e6c4ba83403ed97484cfe7f25a5dbb5",
+                pdf_hash: "b44f66c9508f2e8f3493b224978bf45ce730f962472c8cfeb2f7cf54bfc28409",
+                dvi_hash: "177d63e05fd3188179623e9baa08c43dd11b8bcb00c2df2e63b16df6ecaf92b5",
+                rule_widths: &[262_144, 131_072, 1_310_720, 65_536, 196_608],
+            },
+        ];
+
+        for case in cases {
+            let (mut stores, run) = run(case.source);
+            let bytes = run.committed_artifacts[0].bytes().to_vec();
+            let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+            let positioned = tex_out::positioned::lower_page(&artifact, 0).expect("position page");
+            let widths = positioned
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    PositionedEvent::Rule(rule) => Some(rule.width.raw()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(widths, case.rule_widths, "{} RTL geometry", case.name);
+            assert!(
+                !format!("{artifact:?}").contains("Direction"),
+                "{} leaked direction metadata",
+                case.name
+            );
+
+            let artifact_hash = artifact.content_hash().expect("artifact hash").hex();
+            assert_eq!(artifact_hash, case.artifact_hash, "{} artifact", case.name);
+            let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+                .expect("PDF assembles");
+            let pdf_hash = format!("{:x}", Sha256::digest(&pdf));
+            assert_eq!(pdf_hash, case.pdf_hash, "{} raw PDF", case.name);
+            let dvi = tex_out::dvi::write_dvi(std::slice::from_ref(&artifact))
+                .expect("raw DVI assembles");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(dvi)),
+                case.dvi_hash,
+                "{} raw DVI",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "pdfxform traversal currently selects DVI policy for an RTL-normalized form containing a deferred node; tracked by umber2-ei1n"]
+    fn texxet_form_write_leader_artifact_oracle_matrix() {
+        for content in [
+            "\\vrule width1pt height1pt\\write16{form-write}\\vrule width2pt height1pt",
+            "\\vrule width1pt height1pt\\leaders\\hrule height1pt\\hskip20pt\\vrule width2pt height1pt",
+        ] {
+            let source = format!(
+                "\\pdfoutput=1\\TeXXeTstate=1\\setbox0=\\hbox{{\\vrule width4pt height1pt\\beginR{content}\\endR\\vrule width3pt height1pt}}\\pdfxform0\\shipout\\hbox{{\\pdfrefxform1}}\\end"
+            );
+            let (mut stores, run) = run(&source);
+            let form = stores
+                .pdf_form_artifact(1)
+                .expect("referenced form artifact");
+            let artifact = tex_out::PageArtifact::from_bytes(form.bytes()).expect("form parses");
+            tex_out::positioned::lower_page(&artifact, 0).expect("form positions");
+            pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+                .expect("RTL form finalizes in PDF mode");
+        }
+    }
+
     fn retarget_form_reference(stores: &mut Universe, form: u32, target: u32) {
         let artifact = stores
             .pdf_form_artifact(form)
