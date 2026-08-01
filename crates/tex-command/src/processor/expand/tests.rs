@@ -4,7 +4,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::page::PageMark;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{Universe, World};
+use tex_state::{EffectRecord, PrintSink, Universe, World};
 
 use super::*;
 use crate::input::{ReplayTrace, RetirementBehavior};
@@ -1043,6 +1043,83 @@ fn rendered(processor: &mut CommandProcessor<'_>) -> String {
         text.push(ch);
     }
     text
+}
+
+fn diagnostic_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_invalid_operand_reports_exactly_and_does_not_replay_it() {
+    // TeX82 §§465/467: `the_toks` owns its operand. A non-internal command is
+    // consumed by the recovery, replaced with integer zero, and expansion
+    // resumes at the following source token without replaying the operand.
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(br"\the\hbox Z".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+    let hbox = universe.intern("hbox").symbol();
+    universe.set_meaning(hbox, Meaning::UnexpandablePrimitive(P::HBox));
+    let mut capabilities = CommandHostCapabilities::default();
+
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let zero = processor
+            .get_x_token()
+            .expect("invalid operand recovers")
+            .expect("zero substitution");
+        assert_eq!(
+            zero.spelling().semantic_token(),
+            Token::Char {
+                ch: '0',
+                cat: Catcode::Other
+            }
+        );
+        let following = processor
+            .get_x_token()
+            .expect("expansion resumes")
+            .expect("following source token");
+        assert_eq!(
+            following.spelling().semantic_token(),
+            Token::Char {
+                ch: 'Z',
+                cat: Catcode::Letter
+            }
+        );
+        while let Some(command) = processor.get_x_token().expect("source retires") {
+            assert_ne!(
+                command.spelling().semantic_token(),
+                Token::Cs(hbox),
+                "the invalid operand is consumed exactly once"
+            );
+        }
+    }
+    assert_eq!(
+        diagnostic_text(&universe),
+        "! You can't use `\\hbox' after \\the.\nl.1 \\the\\hbox\n              Z\nI'm forgetting what you said and using zero instead.\n\n"
+    );
 }
 
 fn chars(processor: &mut CommandProcessor<'_>) -> String {

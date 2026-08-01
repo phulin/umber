@@ -1107,7 +1107,7 @@ impl CommandProcessor<'_> {
                 let context = self.command.output_open_context(&self.state);
                 let mut report = self
                     .state
-                    .print_err(&format!("You can't use `{rendered}' after \\the."));
+                    .print_err(&format!("You can't use `{rendered}' after \\the"));
                 report
                     .help(&["I'm forgetting what you said and using zero instead."])
                     .context(context);
