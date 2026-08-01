@@ -33,12 +33,20 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": { "line": 9, "expected": "Runaway text?", "actual": "! File ended while scanning text of ." }
+          "mismatch": {
+            "line": 11,
+            "expected": "! File ended while scanning text of \\toks.",
+            "actual": "! File ended while scanning text of ."
+          }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": { "line": 11, "expected": "Runaway text?", "actual": "! File ended while scanning text of ." }
+          "mismatch": {
+            "line": 13,
+            "expected": "! File ended while scanning text of \\toks.",
+            "actual": "! File ended while scanning text of ."
+          }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
