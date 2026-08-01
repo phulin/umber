@@ -1703,6 +1703,23 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// TeX82 §418's wrong-mode half of `set_aux` while fetching an
+    /// internal value. The value is still published as zero after the report.
+    fn improper_auxiliary_error(&mut self, name: &str) -> Result<(), CommandError> {
+        let context = self.command.output_open_context(&self.state);
+        let mut report = self.state.print_err(&format!("Improper \\{name}"));
+        report
+            .help(&[
+                "You can refer to \\spacefactor only in horizontal mode;",
+                "you can refer to \\prevdepth only in vertical mode; and",
+                "neither of these is meaningful inside \\write. So",
+                "I'm forgetting what you said and using zero instead.",
+            ])
+            .context(context);
+        report.error().jump_out()?;
+        Ok(())
+    }
+
     fn illegal_unit_mu_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
@@ -2178,7 +2195,11 @@ impl CommandProcessor<'_> {
             // expanded definition can still scan `\the\spacefactor` through
             // the ordinary internal-value path.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
-                InternalValue::Integer(self.host.space_factor().unwrap_or(0))
+                let value = self.host.space_factor();
+                if value.is_none() {
+                    self.improper_auxiliary_error("spacefactor")?;
+                }
+                InternalValue::Integer(value.unwrap_or(0))
             }
             // TeX82 §418's "Fetch the `space_factor` or the `prev_depth`":
             // `\prevdepth` is the vertical-mode half of `set_aux` and reads at
@@ -2189,7 +2210,11 @@ impl CommandProcessor<'_> {
             // number would change every `\ifdim\prevdepth>-1000pt` vertical
             // spacing decision.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-                InternalValue::Dimension(self.host.prev_depth().unwrap_or(Scaled::from_raw(0)))
+                let value = self.host.prev_depth();
+                if value.is_none() {
+                    self.improper_auxiliary_error("prevdepth")?;
+                }
+                InternalValue::Dimension(value.unwrap_or(Scaled::from_raw(0)))
             }
             // TeX82 §422's "Fetch the `prev_graf`": the paragraph count of the
             // nearest enclosing vertical level, at `int_val`. `None` records

@@ -2215,31 +2215,83 @@ fn prev_depth_and_prev_graf_read_through_the_host_capability() {
 }
 
 #[test]
-fn prev_depth_outside_vertical_mode_reads_zero() {
-    // §418's `if abs(mode)<>m then ... scanned_result(0)(dimen_val)`: an
-    // absent capability is the improper-mode case, which reads zero rather
-    // than the last vertical list's depth.
+fn auxiliary_internal_values_report_wrong_mode_and_preserve_write_zero() {
+    // §418 reports the two unavailable mode-owned values through the
+    // ordinary error selector and then publishes zero. By contrast, §422's
+    // `mode=0` case is a silent zero for `\prevgraf` inside `\write`.
+    use crate::{RegisteredSourceKind, SourceRegistration};
     use tex_state::meaning::UnexpandablePrimitive as P;
 
-    let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
+    for (name, primitive, dimension) in [
+        ("spacefactor", P::SpaceFactor, false),
+        ("prevdepth", P::PrevDepth, true),
+    ] {
+        let mut command = CommandState::default();
+        let source_text = format!("\\{name}");
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                std::sync::Arc::<[u8]>::from(source_text.as_bytes()),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+        let mut capabilities = CommandHostCapabilities::default();
+        {
+            let mut processor = CommandProcessor::new(
+                &mut command,
+                &mut runtime,
+                universe.command_context(),
+                CommandHostContext::new(&mut capabilities),
+            );
+            if dimension {
+                assert_eq!(
+                    processor
+                        .scan_dimension()
+                        .expect("zero dimension")
+                        .value
+                        .raw(),
+                    0
+                );
+            } else {
+                assert_eq!(processor.scan_integer().expect("zero integer").value, 0);
+            }
+        }
+
+        let output = diagnostic_text(&universe);
+        assert!(
+            output.contains(&format!("! Improper \\{name}.")),
+            "{output}"
+        );
+        for line in [
+            "You can refer to \\spacefactor only in horizontal mode;",
+            "you can refer to \\prevdepth only in vertical mode; and",
+            "neither of these is meaningful inside \\write. So",
+            "I'm forgetting what you said and using zero instead.",
+        ] {
+            assert!(output.contains(line), "missing {line:?}: {output}");
+        }
+        assert!(output.contains("l.1"), "source context is routed: {output}");
+    }
+
     let mut universe = crate::test_harness::universe();
-    let prev_depth = universe.intern("prevdepth").symbol();
-    universe.set_meaning(prev_depth, Meaning::UnexpandablePrimitive(P::PrevDepth));
-    push(&mut command, vec![Token::Cs(prev_depth)]);
-
-    let mut capabilities = CommandHostCapabilities::default();
-    capabilities.set_prev_depth(None);
-    let mut processor = CommandProcessor::new(
-        &mut command,
-        &mut runtime,
-        universe.command_context(),
-        CommandHostContext::new(&mut capabilities),
+    let prev_graf = universe.intern("prevgraf").symbol();
+    universe.set_meaning(prev_graf, Meaning::UnexpandablePrimitive(P::PrevGraf));
+    assert_eq!(
+        scan_with(&mut universe, vec![Token::Cs(prev_graf)], |processor| {
+            processor
+                .scan_integer()
+                .expect("write-mode zero scans")
+                .value
+        }),
+        0
     );
-
-    let scanned = processor.scan_dimension().expect("improper mode recovers");
-    assert_eq!(scanned.value.raw(), 0);
-    assert_eq!(scanned.recovery, ScalarRecovery::None);
+    assert!(diagnostic_text(&universe).is_empty());
 }
 
 #[test]
