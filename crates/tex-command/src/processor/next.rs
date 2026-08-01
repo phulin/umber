@@ -518,6 +518,7 @@ impl CommandProcessor<'_> {
 
     /// Delivers one unexpanded raw command through canonical `get_next`.
     pub fn get_next(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.apply_error_stop_recovery()?;
         self.last_delivery = None;
         loop {
             self.charge_command_action()?;
@@ -572,6 +573,7 @@ impl CommandProcessor<'_> {
     /// without assigning it a meaning, so the policy boundary is explicit
     /// even before diagnostic-only interning is separated further.
     pub fn get_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.apply_error_stop_recovery()?;
         self.last_delivery = None;
         loop {
             self.charge_command_action()?;
@@ -586,6 +588,31 @@ impl CommandProcessor<'_> {
                 None => return Ok(None),
             }
         }
+    }
+
+    /// Applies tex.web §§84/87's ErrorStop input mutation at the sole raw
+    /// command/input ownership boundary.
+    pub(crate) fn apply_error_stop_recovery(&mut self) -> Result<(), CommandError> {
+        while let Some(request) = self.state.take_error_recovery_request() {
+            match request {
+                tex_state::print::ErrorRecoveryRequest::Delete(count) => {
+                    for _ in 0..count {
+                        if self.get_token()?.is_none() {
+                            break;
+                        }
+                    }
+                    let context = self.error_context();
+                    self.state.printer().print_rendered(&context);
+                    self.state.continue_error_stop_dialog(&context).jump_out()?;
+                }
+                tex_state::print::ErrorRecoveryRequest::Insert(line) => {
+                    self.command
+                        .open_error_insert_line(line.into_bytes())
+                        .map_err(|_| CommandError::input_invariant())?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Restores the immediately preceding raw delivery to TeX's input.

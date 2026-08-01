@@ -135,6 +135,7 @@ impl CommandProcessor<'_> {
     /// canonical command state and restarts here; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.apply_error_stop_recovery()?;
         self.get_x_token_from(None, ExpandedFetch::GetXToken)
     }
 
@@ -365,6 +366,7 @@ impl CommandProcessor<'_> {
     pub fn get_x_token_with_replay_completion(
         &mut self,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.apply_error_stop_recovery()?;
         self.command.transient.active_expansion_depth += 1;
         let result = self.get_x_token_scalar();
         self.command.transient.active_expansion_depth -= 1;
@@ -385,6 +387,7 @@ impl CommandProcessor<'_> {
     /// `char_num` is deliberately *not* in the raw set: §1038 accepts it only
     /// after `x_token`, because `\char` can be reached by expansion.
     pub fn main_loop_lookahead(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        self.apply_error_stop_recovery()?;
         self.command.transient.active_expansion_depth += 1;
         let result = self.main_loop_lookahead_scalar();
         self.command.transient.active_expansion_depth -= 1;

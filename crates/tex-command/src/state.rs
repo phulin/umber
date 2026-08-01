@@ -1027,6 +1027,36 @@ impl CommandState {
         Ok(identity)
     }
 
+    /// Pushes tex.web §87's replacement line above the suspended input.
+    pub(crate) fn open_error_insert_line(
+        &mut self,
+        bytes: impl Into<std::sync::Arc<[u8]>>,
+    ) -> Result<(), SourceRegistrationError> {
+        let source = self.register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            bytes,
+        ))?;
+        let registered = self
+            .input
+            .registered_sources
+            .iter()
+            .find(|registered| registered.id == source)
+            .cloned()
+            .expect("a source registered above is present");
+        let identity = self.push_source_level(
+            registered,
+            SourceNameClass::Terminal,
+            crate::input::SourceRetirement::Pop,
+            None,
+        );
+        let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
+            unreachable!("the inserted replacement source was just pushed");
+        };
+        assert_eq!(active.identity, identity);
+        active.cursor.pending_acquired_line = true;
+        Ok(())
+    }
+
     /// Installs the immutable bytes acquired for an already-active §483
     /// `begin_file_reading` level.
     pub(crate) fn finish_read_line(

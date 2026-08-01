@@ -5166,6 +5166,61 @@ fn errorstop_show_reports_live_source_context_before_prompting_and_resumes() {
 }
 
 #[test]
+fn error_stop_deletes_requested_tokens_before_retry() {
+    // TeX82 §§84--85: a one- or two-digit response consumes that many
+    // unexpanded tokens, displays the resulting context, and prompts again.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("2")
+        .expect("deletion response queues");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("")
+        .expect("retry response queues");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\show\errorstopmode ab\count0=17\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.count(0),
+        17,
+        "only the two ignored letters disappear"
+    );
+    let terminal = terminal_text(&stores);
+    assert_eq!(terminal.matches("? ").count(), 2, "{terminal:?}");
+}
+
+#[test]
+fn error_stop_inserts_replacement_line_before_suspended_input_once() {
+    // TeX82 §87 opens the typed replacement as a new terminal source level;
+    // it retires once, then the exact suspended source resumes underneath it.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("I")
+        .expect("insertion response queues");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("\\count0=17")
+        .expect("replacement line queues");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\show\errorstopmode\advance\count1 by 23\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(0), 17);
+    assert_eq!(stores.count(1), 23);
+    let log = pending_sink_text(&stores, false);
+    assert_eq!(log.matches("\\count0=17").count(), 1, "{log:?}");
+    assert!(log.contains("insert> \\count0=17\n"), "{log:?}");
+}
+
+#[test]
 fn display_content_preserves_future_multiple_leading_newlines() {
     // The structured scanner never produces this malformed/future content.
     // If that contract expands, replay must still pass the content verbatim

@@ -30,11 +30,9 @@
 //!   terminal EOF inside §83's dialog are modelled; the reports each one
 //!   prints on the way out are printed here, exactly where tex.web prints
 //!   them.
-//! - **`deletions_allowed` is effectively false** and §87's `I` insertion is
-//!   unavailable, because §84's digit and `I` options both drive the input
-//!   stack. Both fall to §84's `othercases do_nothing`, which is exactly
-//!   what tex.web does when `deletions_allowed` is false: §85's menu is
-//!   printed and the prompt repeats.
+//! - §83's dialog records deletion and insertion requests in the error
+//!   channel. The canonical command processor applies them at its next raw
+//!   input demand, where it exclusively owns the suspended input stack.
 
 mod error_context;
 
@@ -453,6 +451,13 @@ pub enum ErrorOutcome {
     JumpOut(JumpOut),
 }
 
+/// Input mutation requested by tex.web §§84/87's ErrorStop dialog.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ErrorRecoveryRequest {
+    Delete(u8),
+    Insert(String),
+}
+
 impl ErrorOutcome {
     /// Splits §82's `exit` from its `jump_out` so a caller can write
     /// `report.error().jump_out()?` and let `?` carry the fatal verdict into
@@ -680,8 +685,38 @@ impl<'a> ErrorReport<'a> {
             let Some(line) = self.terminal_input() else {
                 return Some(self.fatal_error("End of file on the terminal!", context));
             };
-            let code = line.bytes().next().map(|byte| byte.to_ascii_uppercase())?;
+            let first = line.bytes().next()?;
+            let code = first.to_ascii_uppercase();
             match code {
+                b'0'..=b'9' => {
+                    let mut count = code - b'0';
+                    if let Some(second @ b'0'..=b'9') = line.as_bytes().get(1).copied() {
+                        count = count * 10 + second - b'0';
+                    }
+                    self.printer
+                        .universe
+                        .world_mut()
+                        .error_channel_mut()
+                        .request_recovery(ErrorRecoveryRequest::Delete(count));
+                    return None;
+                }
+                b'I' => {
+                    let insertion = if line.len() > 1 {
+                        line[1..].to_owned()
+                    } else {
+                        self.printer.print("insert> ");
+                        let Some(line) = self.terminal_input() else {
+                            return Some(self.fatal_error("End of file on the terminal!", context));
+                        };
+                        line
+                    };
+                    self.printer
+                        .universe
+                        .world_mut()
+                        .error_channel_mut()
+                        .request_recovery(ErrorRecoveryRequest::Insert(insertion));
+                    return None;
+                }
                 // §89's `<Print the help information and goto continue>`.
                 b'H' => self.show_help(),
                 // §86's `<Change the interaction level and return>`.
@@ -835,10 +870,8 @@ impl<'a> ErrorReport<'a> {
         self.printer.print("...").print_ln();
     }
 
-    /// tex.web §85's `<Print the menu of available options>`. Umber offers
-    /// neither `E` nor token deletion yet, but the menu still describes the
-    /// canonical `I` and `1` through `9` commands. Unsupported answers take
-    /// §84's `othercases do_nothing` path and redisplay this menu.
+    /// tex.web §85's `<Print the menu of available options>`. Deletion and
+    /// insertion are supported; only the editor handoff's `E` line is absent.
     fn show_menu(&mut self) {
         self.printer
             .print("Type <return> to proceed, S to scroll future error messages,")
@@ -855,6 +888,7 @@ pub struct ErrorChannel {
     error_count: i32,
     long_help_seen: bool,
     history: ErrorHistory,
+    pending_recovery: Option<ErrorRecoveryRequest>,
 }
 
 /// tex.web §76's ordered `history` severities.
@@ -868,6 +902,16 @@ pub enum ErrorHistory {
 }
 
 impl ErrorChannel {
+    fn request_recovery(&mut self, request: ErrorRecoveryRequest) {
+        debug_assert!(self.pending_recovery.is_none());
+        self.pending_recovery = Some(request);
+    }
+
+    /// Transfers one ErrorStop input mutation to the canonical command owner.
+    pub fn take_recovery_request(&mut self) -> Option<ErrorRecoveryRequest> {
+        self.pending_recovery.take()
+    }
+
     /// tex.web §82's `incr(error_count)`, returning the incremented count so
     /// the report owner can perform the 100-error terminal transition.
     pub const fn record_scrolled_error(&mut self) -> i32 {
@@ -971,6 +1015,22 @@ impl Universe {
             help: deferred.help,
             err_help: deferred.err_help,
             context: deferred.context,
+        }
+    }
+
+    /// Re-enters tex.web §83 after §84 deleted tokens and displayed the new
+    /// input context.
+    pub fn continue_error_stop_dialog(&mut self, context: &str) -> ErrorOutcome {
+        let selector = Selector::for_interaction(self.interaction_mode());
+        let mut report = ErrorReport {
+            printer: Printer::new(self, selector),
+            help: Vec::new(),
+            err_help: None,
+            context: None,
+        };
+        match report.users_advice(Some(context)) {
+            Some(jump) => ErrorOutcome::JumpOut(jump),
+            None => ErrorOutcome::Continue,
         }
     }
 

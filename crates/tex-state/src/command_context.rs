@@ -111,6 +111,19 @@ impl CommandContext<'_> {
         self.universe.resume_error_report(deferred)
     }
 
+    /// Takes one ErrorStop request for mutation by the canonical input owner.
+    pub fn take_error_recovery_request(&mut self) -> Option<crate::print::ErrorRecoveryRequest> {
+        self.universe
+            .world_mut()
+            .error_channel_mut()
+            .take_recovery_request()
+    }
+
+    /// Re-enters the ErrorStop advice loop after token deletion.
+    pub fn continue_error_stop_dialog(&mut self, context: &str) -> crate::print::ErrorOutcome {
+        self.universe.continue_error_stop_dialog(context)
+    }
+
     /// Registers immutable command input before its first source delivery.
     ///
     /// The command processor retains the backing and supplies the descriptor;
