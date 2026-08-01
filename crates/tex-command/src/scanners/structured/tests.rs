@@ -2996,6 +2996,60 @@ fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
 }
 
 #[test]
+fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
+    let mut capabilities = CommandHostCapabilities::default();
+    let empty = universe.intern_token_list(&[]);
+    let endwrite = universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    universe.register_primitive_meaning(
+        "endwrite",
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition: endwrite,
+        },
+    );
+    push(&mut command, text_tokens("x"));
+    let words = [
+        traced(Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        }),
+        traced(Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        }),
+        traced(Token::Char {
+            ch: 'b',
+            cat: Catcode::Letter,
+        }),
+    ];
+    let tokens = universe.finish_traced_token_list(&words);
+    let expanded = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .expand_write_text(tokens)
+        .expect("write text expands");
+
+    assert!(expanded.unbalanced);
+    let context = expanded
+        .error_context
+        .expect("TeX82 §1372 captures context before consuming to endwrite");
+    let write = context
+        .find("<write> ")
+        .unwrap_or_else(|| panic!("write list remains visible: {context:?}"));
+    let inserted = context[write..]
+        .find("<inserted text> ")
+        .map(|offset| write + offset)
+        .unwrap_or_else(|| panic!("artificial stopper remains visible: {context:?}"));
+    let backed_up = context[inserted..]
+        .find("<to be read again> ")
+        .map(|offset| inserted + offset)
+        .unwrap_or_else(|| panic!("enclosing backed-up level remains visible: {context:?}"));
+    assert!(write < inserted && inserted < backed_up, "{context}");
+}
+
+#[test]
 fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

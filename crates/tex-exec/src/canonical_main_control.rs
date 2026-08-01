@@ -9908,10 +9908,6 @@ fn shipout_replay_box(
     let mut expansion = tex_expand::ExpansionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
-    // §1372's recovery reports from inside the write expansion, after the
-    // enclosing `command` borrow has moved into the closure below, so the
-    // context it needs is captured here alongside the shipout's own copy.
-    let unbalanced_context = output_open_context.clone();
     // Effects live at this point are genuine whatsit output carried forward
     // from before the page; everything after it -- §638's own marker
     // included -- belongs to this shipout and must not be swept into the
@@ -9981,7 +9977,9 @@ fn shipout_replay_box(
                         "On this page there's a \\write with fewer real {'s than }'s.",
                         "I can't handle that very well; good luck.",
                     ],
-                    unbalanced_context.clone(),
+                    expanded
+                        .error_context
+                        .expect("unbalanced write retains its live input context"),
                 )?;
             }
             let mut text = String::new();

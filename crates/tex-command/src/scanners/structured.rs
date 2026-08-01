@@ -49,10 +49,13 @@ pub struct ScannedBalancedText {
     pub provenance: StructuredProvenance,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExpandedWriteText {
     pub tokens: TracedTokenList,
     pub unbalanced: bool,
+    /// TeX82 §1372's live §310 context, captured before recovery consumes
+    /// the artificial write input episode.
+    pub error_context: Option<String>,
 }
 
 /// The two immutable lists collected for a macro definition.
@@ -2345,6 +2348,10 @@ impl CommandProcessor<'_> {
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;
         self.outer_recovered_while_absorbing = false;
+        // §1372 calls `error` before its recovery loop consumes through the
+        // frozen stopper. Preserve that instant: the write and inserted-list
+        // levels are gone by the time shipout can render the queued report.
+        let error_context = unbalanced.then(|| self.command.output_open_context(&self.state));
         while stopper.spelling().semantic_token() != endwrite {
             stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         }
@@ -2359,6 +2366,7 @@ impl CommandProcessor<'_> {
         Ok(ExpandedWriteText {
             tokens: expanded,
             unbalanced,
+            error_context,
         })
     }
 

@@ -614,7 +614,7 @@ fn deferred_write_scanner_diagnostic_survives_shipout_before_later_reports() {
 #[test]
 fn deferred_write_unbalanced_recovery_stops_at_endwrite() {
     let stores = run_source(
-        br"\def\missingright{\iftrue{\else}\fi}\shipout\hbox{\write16{before\missingright after}}\count0=37\end",
+        br"\errorcontextlines=10\def\extra{\iffalse{\else}\fi}\shipout\hbox{\write16{before\extra after}}\count0=37\end",
     );
     let terminal = std::str::from_utf8(
         stores
@@ -636,6 +636,14 @@ fn deferred_write_unbalanced_recovery_stops_at_endwrite() {
         terminal.contains("Unbalanced write command"),
         "{terminal:?}"
     );
+    let write = terminal
+        .find("<write> ")
+        .unwrap_or_else(|| panic!("write context is live: {terminal:?}"));
+    let inserted = terminal[write..]
+        .find("<inserted text> ")
+        .map(|offset| write + offset)
+        .expect("synthetic stopper context is live");
+    assert!(write < inserted, "{terminal}");
     assert_eq!(stores.count(0), 37, "following source input must survive");
 }
 
