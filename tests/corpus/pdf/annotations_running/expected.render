@@ -3,5 +3,5 @@ renderer pdftoppm version 25.08.0
 arguments -r 72 -gray -singlefile
 comparison exact-gray-pixels
 reference-pdf-sha256 ec76816991e66b21fe02bbe5f95670dd8b5fcc67ed8305ee5eb3f48ceb3d8f85
-umber-pdf-sha256 e0dbff5875a77def780cd99f57e2762e41d67bd45c09a3bb3e926905402cb89d
+umber-pdf-sha256 21f12af148e969659978572ae1bb84a5fb8b44e1cb39b0387396053775b02bae
 pgm-sha256 8b51d646d3d37547724008db839f4dca2ccecec7753860861afa0ca9cbdbfc0c
