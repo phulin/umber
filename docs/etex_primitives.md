@@ -76,11 +76,36 @@ before the ordinary terminal/transcript rendering. `\showgroups` walks the
 live checkpointed group stack. `\showifs` uses `etex.ch` [17.3703--3732]'s
 innermost-first traversal of a typed detached conditional snapshot, including
 `\unless`, `\else`, and saved source-line rendering, without mutating command
-state. `\tracingassigns`,
-`\tracinggroups`, `\tracingifs`, and `\tracingnesting`
-are implemented as group-scoped integer parameters. Exact diagnostic trace
-text parity for those four parameters is explicitly deferred; it is not part
-of the primitive-completeness gate.
+state. `\tracingassigns`, `\tracinggroups`, `\tracingifs`, and
+`\tracingnesting` are implemented as group-scoped integer parameters, and
+three of the four render `etex.ch`'s exact rendered trace text:
+
+- `\tracinggroups` renders `etex.ch` [19.274/19.281]'s `group_trace`
+  `{entering ...}`/`{leaving ...}` lines from `Universe::enter_group_with_kind_at_line`/
+  `leave_group_with_kind` (`crates/tex-state/src/etex_tracing.rs`), so every
+  group-open/close call site is covered uniformly.
+- `\tracingassigns` renders `etex.ch` [17.687-750]'s `assign_trace`/
+  `restore_trace` `{into ...}`/`{reassigning ...}`/`{changing ...}`/
+  `{globally changing ...}` lines (`crates/tex-exec/src/assignments/tracing.rs`),
+  hooked at `canonical_main_control.rs`'s `apply_scanned_step` for the
+  integer/dimension/glue/mu-glue/token register and parameter families, the
+  six code tables, and `\def`/`\edef`/`\gdef`/`\xdef`/`\let`/`\futurelet`
+  meaning assignments. `\setbox`, `\font`/`\textfont`-family font selection,
+  and page-builder scalars (not eqtb-resident in real TeX82, so page
+  integers/dimensions are correctly untraced) remain open in `umber2-38hs`.
+- `\tracingifs` renders `etex.ch` [28.498/28.494/28.510]'s extra
+  `show_cur_cmd_chr` calls at conditional entry, at an ordinarily-arriving
+  `\or`/`\else`/`\fi`, and at one found while `pass_text` skips unselected
+  material (`crates/tex-command/src/conditionals.rs`), including the
+  `\unless` prefix and `(level N) entered on line L` suffix. It does not yet
+  render `show_cur_cmd_chr`'s own mode-change prefix (`umber2-wb0m`), since
+  that state is owned by the executor's mode nest, a layer the command core
+  does not reach.
+
+`\tracingnesting` remains unimplemented (`umber2-aqx9`): it is a
+substantially different mechanism (per-input-file group/conditional balance
+warnings, `etex.ch`'s `group_warning`/`if_warning`/`file_warning`) from the
+other three parameters' assignment/group/conditional tracing.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 
@@ -130,5 +155,11 @@ family and the compatibility-mode visibility boundary.
 - Focused corpus: exact expansion, diagnostics, state, node-list, and DVI
   parity for every family above. Fixture regeneration uses only
   `scripts/regen-fixtures.sh`.
-- Diagnostic trace wording for `\tracingassigns`, `\tracinggroups`,
-  `\tracingifs`, and `\tracingnesting` is deferred by scope.
+- Diagnostic trace wording for `\tracingassigns`, `\tracinggroups`, and
+  `\tracingifs` is pinned by
+  `crates/tex-exec/src/canonical_main_control/etex_diagnostic_tracing.rs`'s
+  focused fixtures, against real e-TeX/pdfTeX 1.40.25 output captured with
+  each parameter set in isolation. `\tracingnesting` remains unimplemented
+  (`umber2-aqx9`); `\tracingassigns` coverage of box registers, font
+  selection, and `\tracingifs`'s mode-change prefix remain open (`umber2-38hs`,
+  `umber2-wb0m`).
