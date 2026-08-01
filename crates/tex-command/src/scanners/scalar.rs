@@ -906,6 +906,8 @@ impl CommandProcessor<'_> {
 
     /// Scans a normal or mu glue specification.
     pub fn scan_glue(&mut self, mu: bool) -> Result<ScannedScalar<GlueSpec>, CommandError> {
+        self.scanned_glue_identity = None;
+        self.scanned_glue_skip_index = None;
         // TeX82 §461's `<Get the next non-blank non-sign token>`: `scan_glue`
         // owns its own leading signs so that §430 can negate an internal
         // glue's three components as a unit (`\skip0=-\skip1`). Routing a
@@ -1038,6 +1040,10 @@ impl CommandProcessor<'_> {
                 )
             }
         };
+        if negative {
+            self.scanned_glue_identity = None;
+            self.scanned_glue_skip_index = None;
+        }
         if !internal_glue {
             if self.scan_keyword("plus")?.value {
                 let (stretch, order) = self.scan_dimension_with_order(true, mu)?;
@@ -1950,11 +1956,16 @@ impl CommandProcessor<'_> {
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
                 let index = self.scan_eight_bit_register_index()?;
-                InternalValue::Glue(self.state.glue(self.state.skip(index)))
+                let identity = self.state.skip(index);
+                self.scanned_glue_identity = Some(identity);
+                self.scanned_glue_skip_index = Some(index);
+                InternalValue::Glue(self.state.glue(identity))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
                 let index = self.scan_eight_bit_register_index()?;
-                InternalValue::MuGlue(self.state.glue(self.state.muskip(index)))
+                let identity = self.state.muskip(index);
+                self.scanned_glue_identity = Some(identity);
+                InternalValue::MuGlue(self.state.glue(identity))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
                 let index = self.scan_eight_bit_register_index()?;
@@ -2174,16 +2185,25 @@ impl CommandProcessor<'_> {
                 InternalValue::Dimension(self.state.page_dimension(dimension))
             }
             Meaning::SkipRegister(index) => {
-                InternalValue::Glue(self.state.glue(self.state.skip(index)))
+                let identity = self.state.skip(index);
+                self.scanned_glue_identity = Some(identity);
+                self.scanned_glue_skip_index = Some(index);
+                InternalValue::Glue(self.state.glue(identity))
             }
             Meaning::MuskipRegister(index) => {
-                InternalValue::MuGlue(self.state.glue(self.state.muskip(index)))
+                let identity = self.state.muskip(index);
+                self.scanned_glue_identity = Some(identity);
+                InternalValue::MuGlue(self.state.glue(identity))
             }
             Meaning::GlueParam(index) => {
-                InternalValue::Glue(self.state.glue(self.state.glue_param(index)))
+                let identity = self.state.glue_param(index);
+                self.scanned_glue_identity = Some(identity);
+                InternalValue::Glue(self.state.glue(identity))
             }
             Meaning::MuGlueParam(index) => {
-                InternalValue::MuGlue(self.state.glue(self.state.glue_param(index)))
+                let identity = self.state.glue_param(index);
+                self.scanned_glue_identity = Some(identity);
+                InternalValue::MuGlue(self.state.glue(identity))
             }
             Meaning::ToksRegister(index) => InternalValue::Tokens {
                 tokens: self.state.toks(index),

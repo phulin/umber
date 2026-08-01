@@ -94,6 +94,10 @@ pub struct CommandProcessor<'a> {
     /// e-TeX expression primitives. Parentheses use `scan_expr`'s explicit
     /// stack and do not enter this counter.
     pub(crate) expression_depth: u32,
+    /// Canonical glue-node identity retained only while an internal glue or
+    /// e-TeX expression result remains pointer-identical to its source.
+    pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
+    pub(crate) scanned_glue_skip_index: Option<u16>,
 }
 
 impl CommandProcessor<'_> {
@@ -108,6 +112,18 @@ impl CommandProcessor<'_> {
     #[must_use]
     pub const fn profile(&self) -> crate::CommandProfile {
         self.command.profile()
+    }
+
+    /// Returns the glue node retained by the most recent glue scan when the
+    /// result is still pointer-identical to an internal source quantity.
+    #[must_use]
+    pub const fn scanned_glue_identity(&self) -> Option<tex_state::ids::GlueId> {
+        self.scanned_glue_identity
+    }
+
+    #[must_use]
+    pub const fn scanned_glue_skip_index(&self) -> Option<u16> {
+        self.scanned_glue_skip_index
     }
 
     /// TeX82 §578's `find_font_dimen` decision for a scanned parameter number.
@@ -166,6 +182,8 @@ impl<'a> CommandProcessor<'a> {
             outer_recovered_while_absorbing: false,
             eof_recovered_while_matching: false,
             expression_depth: 0,
+            scanned_glue_identity: None,
+            scanned_glue_skip_index: None,
         }
     }
 

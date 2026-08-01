@@ -4492,6 +4492,48 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
 }
 
 #[test]
+fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
+    // e-TeX expression change [53a.4945--5360] leaves a glue factor's node
+    // untouched when no operator requires a copy. Section 277 therefore
+    // classifies the local assignment back to the same register as a
+    // reassignment. An equal literal, an expression that applies an operator,
+    // and a global assignment are controls: all allocate or define and remain
+    // observable.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\skip0=1pt \skip0=\glueexpr\skip0\relax \skip0=1pt \skip0=\glueexpr\skip0+0pt\relax \global\skip0=\glueexpr\skip0\relax \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("e-TeX glue-expression reassignments execute")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.key.as_deref() == Some("skip:0") => {
+                Some(record.global)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(mutations, [false, false, false, true]);
+}
+
+#[test]
 fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_values() {
     // e-TeX 2.6 change [49.1248] routes all four selectors through
     // TeX82 §1248's `set_shape`; e-TeX §§6336-6366 define the selector

@@ -77,6 +77,11 @@ pub struct CanonicalMainControl {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     active_discretionaries: Vec<ActiveDiscretionary>,
+    /// Physical glue-store identity plus the canonical pointer source of the
+    /// last skip-register definition. The second component is `None` when
+    /// scanning allocated a fresh TeX glue node that Umber subsequently
+    /// hash-consed with an equal existing node.
+    skip_pointer_sources: Vec<Option<(GlueId, Option<GlueId>)>>,
     /// True while `main_control` is parked at TeX82 §1034's
     /// `main_loop_lookahead` rather than at §1030's `big_switch`.
     ///
@@ -510,6 +515,37 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    fn etex_redundant_local_skip_assignment(
+        &self,
+        stores: &Universe,
+        scanned: &ScannedStep,
+    ) -> bool {
+        let ScannedStep::Skip {
+            index,
+            source_identity: Some(source_identity),
+            source_skip_index,
+            global: false,
+            ..
+        } = scanned
+        else {
+            return false;
+        };
+        if stores.int_param(IntParam::ETEX_EXTENDED_MODE) <= 0 {
+            return false;
+        }
+        if *source_skip_index == Some(*index) {
+            return true;
+        }
+        let physical = stores.skip(*index);
+        let canonical_source = self
+            .skip_pointer_sources
+            .get(usize::from(*index))
+            .and_then(|entry| *entry)
+            .filter(|(recorded_physical, _)| *recorded_physical == physical)
+            .map_or(Some(physical), |(_, source)| source);
+        canonical_source == Some(*source_identity)
+    }
+
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
 
     /// Creates command-owned state without changing the shared `Universe`.
@@ -3151,7 +3187,7 @@ impl CanonicalMainControl {
             }
             ControlFlow::Continue(scanned) => scanned,
         };
-        let scanned = match scanned {
+        let mut scanned = match scanned {
             ScannedStep::ShowGroups { diagnostic: None } => ScannedStep::ShowGroups {
                 diagnostic: Some(detached_showgroups(
                     stores,
@@ -3162,6 +3198,10 @@ impl CanonicalMainControl {
             },
             scanned => scanned,
         };
+        let redundant_skip = self.etex_redundant_local_skip_assignment(stores, &scanned);
+        if let ScannedStep::Skip { redundant, .. } = &mut scanned {
+            *redundant = redundant_skip;
+        }
         let mutation = applied_mutation_observation(&scanned, stores, self.command_profile());
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
         let suspends_alignment = begins_alignment && self.active_alignment.is_some();
@@ -3221,6 +3261,21 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &mut self.prepared_dvi_pages,
         );
+        if result.is_ok()
+            && !redundant_skip
+            && let ScannedStep::Skip {
+                index,
+                source_identity,
+                ..
+            } = &scanned
+        {
+            if self.skip_pointer_sources.len() <= usize::from(*index) {
+                self.skip_pointer_sources
+                    .resize(usize::from(*index) + 1, None);
+            }
+            self.skip_pointer_sources[usize::from(*index)] =
+                Some((stores.skip(*index), *source_identity));
+        }
         if result.is_ok() && self.initex && matches!(scanned, ScannedStep::End { dump: true, .. }) {
             self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
                 self.capabilities.job_name().to_owned(),
@@ -4110,6 +4165,9 @@ enum ScannedStep {
     Skip {
         index: u16,
         value: GlueSpec,
+        source_identity: Option<tex_state::ids::GlueId>,
+        source_skip_index: Option<u16>,
+        redundant: bool,
         global: bool,
     },
     Muskip {
@@ -6051,18 +6109,28 @@ fn scan_command(
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
+            let source_identity = processor.scanned_glue_identity();
+            let source_skip_index = processor.scanned_glue_skip_index();
             Ok(ScannedStep::Skip {
                 index,
                 value,
+                source_identity,
+                source_skip_index,
+                redundant: false,
                 global,
             })
         }
         Meaning::SkipRegister(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
+            let source_identity = processor.scanned_glue_identity();
+            let source_skip_index = processor.scanned_glue_skip_index();
             Ok(ScannedStep::Skip {
                 index,
                 value,
+                source_identity,
+                source_skip_index,
+                redundant: false,
                 global,
             })
         }
@@ -9140,6 +9208,7 @@ fn applied_mutation_observation(
             index,
             value,
             global,
+            ..
         } => MutationRecord {
             target: "register",
             value: glue_mutation_value(value),
@@ -11014,12 +11083,14 @@ fn apply_scanned_step(
             index,
             value,
             global,
+            redundant,
+            ..
         } => {
             let old = stores.skip(index);
             let value = stores.intern_glue(value);
             if global {
                 stores.set_skip_global(index, value);
-            } else {
+            } else if !redundant {
                 stores.set_skip(index, value);
             }
             crate::assignments::tracing::trace_glue_register(stores, index, global, old, value);
@@ -13943,6 +14014,9 @@ fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep
             stores.glue_param(GlueParam::new(*index)),
             value,
         ),
+        ScannedStep::Skip {
+            redundant: true, ..
+        } => true,
         ScannedStep::CodeTable {
             primitive,
             character,
