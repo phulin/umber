@@ -1066,6 +1066,47 @@ fn pdfdraftmode_does_not_replace_the_requested_pdf_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
+    let temp_dir = tempfile::tempdir().expect("create fatal-finalization output temp dir");
+    let source = temp_dir.path().join("fatal-finalization.tex");
+    let pdf = temp_dir.path().join("fatal-finalization.pdf");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 1\\end\n",
+    )
+    .expect("write fatal-finalization fixture");
+    fs::write(&pdf, b"existing output\n").expect("seed existing PDF path");
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .arg("run")
+            .arg("--pdftex")
+            .arg("--pdf")
+            .arg(&pdf)
+            .arg(&source)
+            .output()
+            .expect("run fatal-finalization fixture")
+    };
+    let first = run();
+    let second = run();
+
+    assert!(!first.status.success());
+    assert!(!second.status.success());
+    assert_eq!(first.stderr, second.stderr, "fatal diagnostics are stable");
+    assert_eq!(
+        String::from_utf8(first.stderr).expect("stderr is utf-8"),
+        "umber: referenced PDF object 1 was reserved but never initialized\n"
+    );
+    assert_eq!(
+        fs::read(&pdf).expect("read preserved output"),
+        b"existing output\n",
+        "fatal detached finalization must publish no partial artifact"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn pdf_lowering_omits_dvi_special_and_publishes_all_driver_output() {
     let temp_dir = tempfile::tempdir().expect("create DVI-special temp dir");
     let source = temp_dir.path().join("text.tex");

@@ -7580,10 +7580,30 @@ mod tests {
     #[test]
     fn referenced_reserved_object_fails_before_pdf_writer_publication() {
         let (mut stores, run_result) = run("\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 1\\end");
+        let first = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+            .expect_err("an uninitialized referenced object is fatal");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)
+            .expect_err("repeated finalization remains fatal");
+
         assert!(matches!(
-            pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts),
-            Err(PdfBuildError::ReferencedRawObjectUninitialized(1))
+            first,
+            PdfBuildError::ReferencedRawObjectUninitialized(1)
         ));
+        assert!(matches!(
+            second,
+            PdfBuildError::ReferencedRawObjectUninitialized(1)
+        ));
+        assert_eq!(
+            first.to_string(),
+            "referenced PDF object 1 was reserved but never initialized"
+        );
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(
+            stores.pdf_next_object_id(),
+            next_after_first,
+            "failed retries reuse the typed final-document ledger"
+        );
     }
 
     #[test]
