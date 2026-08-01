@@ -212,7 +212,111 @@ fn configure_primitive(universe: &mut Universe, install: bool, name: &str, meani
 
 #[cfg(test)]
 mod tests {
+    use tex_state::token::{OriginId, Token, TracedTokenWord};
+
     use super::*;
+    use crate::command::{CurrentCommand, DeliveryStamp};
+    use crate::processor::{PrintCommand, print_cmd_chr_text};
+
+    fn tex82_input_mark_and_conditional_primitives() -> [(&'static str, ExpandablePrimitive); 24] {
+        [
+            ("input", ExpandablePrimitive::Input),
+            ("endinput", ExpandablePrimitive::EndInput),
+            ("topmark", ExpandablePrimitive::TopMark),
+            ("firstmark", ExpandablePrimitive::FirstMark),
+            ("botmark", ExpandablePrimitive::BotMark),
+            ("splitfirstmark", ExpandablePrimitive::SplitFirstMark),
+            ("splitbotmark", ExpandablePrimitive::SplitBotMark),
+            ("if", ExpandablePrimitive::If),
+            ("ifcat", ExpandablePrimitive::IfCat),
+            ("ifx", ExpandablePrimitive::IfX),
+            ("ifnum", ExpandablePrimitive::IfNum),
+            ("ifdim", ExpandablePrimitive::IfDim),
+            ("ifodd", ExpandablePrimitive::IfOdd),
+            ("ifcase", ExpandablePrimitive::IfCase),
+            ("ifvmode", ExpandablePrimitive::IfVMode),
+            ("ifhmode", ExpandablePrimitive::IfHMode),
+            ("ifmmode", ExpandablePrimitive::IfMMode),
+            ("ifinner", ExpandablePrimitive::IfInner),
+            ("ifvoid", ExpandablePrimitive::IfVoid),
+            ("ifhbox", ExpandablePrimitive::IfHBox),
+            ("ifvbox", ExpandablePrimitive::IfVBox),
+            ("ifeof", ExpandablePrimitive::IfEof),
+            ("iftrue", ExpandablePrimitive::IfTrue),
+            ("iffalse", ExpandablePrimitive::IfFalse),
+        ]
+    }
+
+    fn print_token(universe: &mut Universe, token: Token) -> String {
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                TracedTokenWord::pack(token, OriginId::UNKNOWN),
+                DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        print_cmd_chr_text(
+            &universe.command_context(),
+            PrintCommand::from_current(&command),
+        )
+    }
+
+    #[test]
+    fn all_tex82_mark_and_conditional_primitives_survive_fresh_and_loaded_registration() {
+        let cases = tex82_input_mark_and_conditional_primitives();
+
+        let mut fresh = Universe::new_with_plain_catcodes();
+        install_tex82_expandable_primitives(&mut fresh);
+        for (name, primitive) in cases {
+            let meaning = Meaning::ExpandablePrimitive(primitive);
+            let symbol = fresh.symbol(name).expect("installed control sequence");
+            assert_eq!(fresh.meaning(symbol), meaning, "live meaning for \\{name}");
+            assert_eq!(
+                fresh.primitive_meaning(name),
+                Some(meaning),
+                "immutable meaning for \\{name}"
+            );
+            assert_eq!(
+                print_token(&mut fresh, Token::Cs(symbol.symbol())),
+                format!("\\{name}"),
+                "print_cmd_chr spelling for installed \\{name}"
+            );
+        }
+
+        let replacement = Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
+        let mut loaded = Universe::new_with_plain_catcodes();
+        for (name, _) in cases {
+            let symbol = loaded.intern(name);
+            loaded.set_meaning(symbol, replacement);
+        }
+        register_tex82_expandable_primitives(&mut loaded);
+
+        for (name, primitive) in cases {
+            let meaning = Meaning::ExpandablePrimitive(primitive);
+            let symbol = loaded.symbol(name).expect("prepopulated control sequence");
+            assert_eq!(
+                loaded.meaning(symbol),
+                replacement,
+                "format meaning for \\{name} must survive registry reconstruction"
+            );
+            assert_eq!(
+                loaded.primitive_meaning(name),
+                Some(meaning),
+                "reconstructed immutable meaning for \\{name}"
+            );
+            let frozen = loaded
+                .primitive_token(name)
+                .expect("frozen primitive token");
+            assert_eq!(
+                print_token(&mut loaded, frozen),
+                format!("\\{name}"),
+                "print_cmd_chr spelling for reconstructed \\{name}"
+            );
+        }
+    }
 
     #[test]
     fn install_and_register_preserve_format_meanings() {
