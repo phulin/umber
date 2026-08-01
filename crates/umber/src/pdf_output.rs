@@ -229,7 +229,6 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
     let annotations_started = std::time::Instant::now();
     let mut page_annotations =
         lower_page_annotations(stores, &positioned_pages, &page_link_margins)?;
-    assign_annotation_objects(stores, &mut page_annotations)?;
     let annotations_ns = annotations_started.elapsed().as_nanos();
     let include_info = stores.int_param(IntParam::PDF_OMIT_INFO_DICT) == 0;
     let document_ids = stores
@@ -246,6 +245,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
             .expect("PDF finalization allocates the page tree"),
     )?;
     let mut next_object = stores.pdf_next_object_id();
+    assign_annotation_objects(&mut page_annotations, &mut next_object)?;
     let outline_output = outline_objects(stores, &page_records, &mut next_object)?;
     let destination_output = destination_objects(
         stores,
@@ -2522,17 +2522,19 @@ fn marker_rect_with_right(
 }
 
 fn assign_annotation_objects(
-    stores: &mut Universe,
     pages: &mut [Vec<ShippedAnnotation>],
+    next_object: &mut u32,
 ) -> Result<(), PdfBuildError> {
     let mut used = BTreeSet::new();
     for annotation in pages.iter_mut().flatten() {
         annotation.object = if used.insert(annotation.source_object) {
             annotation.source_object
         } else {
-            stores
-                .reserve_pdf_link_continuation()
-                .map_err(|_| PdfBuildError::ObjectCapacity)?
+            let object = *next_object;
+            *next_object = next_object
+                .checked_add(1)
+                .ok_or(PdfBuildError::ObjectCapacity)?;
+            object
         };
     }
     Ok(())
@@ -6328,7 +6330,8 @@ mod tests {
         assert_eq!(shipped[0][0].rect.right, Scaled::from_raw(112));
         assert_eq!(shipped[1][0].rect.left, Scaled::from_raw(2));
         assert_eq!(shipped[1][0].rect.right, Scaled::from_raw(28));
-        assign_annotation_objects(&mut stores, &mut shipped).expect("continuation object");
+        let mut next_object = stores.pdf_next_object_id();
+        assign_annotation_objects(&mut shipped, &mut next_object).expect("continuation object");
         assert_eq!(shipped[0][0].object, link.object());
         assert_ne!(shipped[1][0].object, link.object());
     }
@@ -8192,6 +8195,87 @@ mod tests {
                 String::from_utf8_lossy(marker)
             );
         }
+    }
+
+    #[test]
+    fn navigation_and_resource_finalization_is_byte_and_structure_stable() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\immediate\\pdfobj{<< /Kind /NavigationFixture >>}\\pdfrefobj1",
+            "\\pdfoutline goto name{chapter} count 1 {Root (raw)}",
+            "\\pdfoutline user{/S /Named /N /NextPage} {Leaf}",
+            "\\shipout\\vbox{\\hbox{",
+            "\\pdfdest name{chapter} xyz zoom 1250 ",
+            "\\pdfannot width 4pt height 3pt {/Subtype /Text /Contents (note)}",
+            "\\pdfstartlink width 5pt user{/Subtype /Link /A << /S /URI /URI (u) >>}",
+            "\\kern5pt\\pdfendlink",
+            "\\pdfthread width 6pt height 2pt name{article}",
+            "}}",
+            "\\end",
+        ));
+
+        let commits_before = stores.world().artifact_commits().to_vec();
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("composed navigation document finalizes");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("composed navigation document finalizes repeatedly");
+        assert_eq!(second, first, "finalization must be byte deterministic");
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+
+        let normalized = test_support::pdf::normalize_structure(&first)
+            .expect("composed PDF has normalized structure");
+        for marker in [
+            "names ",
+            "outlines ",
+            "threads ",
+            "object <</Kind /NavigationFixture>>",
+        ] {
+            assert!(
+                normalized.contains(marker),
+                "missing {marker:?}: {normalized}"
+            );
+        }
+
+        // The structure projection deliberately normalizes string syntax and
+        // object framing, so retain byte-level assertions for those contracts.
+        for marker in [
+            b"Root (raw)".as_slice(),
+            b"/Subtype /Text",
+            b"/Subtype /Link",
+            b"/Threads",
+            b"/Kind /NavigationFixture",
+        ] {
+            assert!(
+                first.windows(marker.len()).any(|window| window == marker),
+                "raw PDF missing {:?}",
+                String::from_utf8_lossy(marker)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_openaction_page_is_exact_retry_stable_and_publishes_nothing() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcatalog{} openaction goto page 2 {/Fit}",
+            "\\shipout\\hbox{}\\end",
+        ));
+        let commits_before = stores.world().artifact_commits().to_vec();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("missing action page must fail finalization");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("missing action page must fail identically on retry");
+        assert!(matches!(first, PdfBuildError::OpenActionPageNotFound(2)));
+        assert_eq!(
+            first.to_string(),
+            "PDF open action references missing page 2"
+        );
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
     }
 
     #[test]
