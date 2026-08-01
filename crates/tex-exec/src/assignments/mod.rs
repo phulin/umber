@@ -108,6 +108,8 @@ pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
 pub(crate) use paragraph::break_hlist as test_break_hlist;
 pub use paragraph::cached_pretolerance_plan;
 #[cfg(test)]
+pub(crate) use paragraph::test_apply_pdf_line_dimensions;
+#[cfg(test)]
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{

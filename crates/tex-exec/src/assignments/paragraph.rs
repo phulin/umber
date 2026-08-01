@@ -836,6 +836,18 @@ fn pdf_line_dimensions(stores: &Universe) -> PdfLineDimensions {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_apply_pdf_line_dimensions(
+    stores: &Universe,
+    lines: &mut [tex_state::node::BoxNode],
+) {
+    let dimensions = pdf_line_dimensions(stores);
+    let total = lines.len();
+    for (index, line) in lines.iter_mut().enumerate() {
+        dimensions.apply(line, index, total);
+    }
+}
+
 fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
     let mut active = Vec::new();
     for node in nodes {

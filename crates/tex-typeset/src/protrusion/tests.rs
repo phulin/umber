@@ -122,3 +122,81 @@ fn nonzero_material_blocks_edge_search() {
 
     assert_eq!(line_protrusion(&state, &nodes).left, sp(0));
 }
+
+/// pdftex.web's `find_protchar_left`/`find_protchar_right` distinguish
+/// transparent bookkeeping from material with horizontal extent. Keep the
+/// complete distinction table here: it is easy for a newly added node kind to
+/// accidentally inherit the wrong edge behavior from a catch-all arm.
+#[test]
+fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
+    let mut state = Universe::new();
+    let font = state.intern_font(protruding_font());
+    state.set_pdf_font_code(PdfFontCode::Lp, font, b'A', 500);
+    state.set_pdf_font_code(PdfFontCode::Rp, font, b'A', 500);
+    let empty = state.freeze_node_list(&[]);
+    let zero_glue = state.intern_glue(GlueSpec::ZERO);
+    let wide_glue = state.intern_glue(GlueSpec {
+        width: sp(1),
+        ..GlueSpec::ZERO
+    });
+
+    let transparent = [
+        Node::Penalty(123),
+        Node::Kern {
+            amount: sp(0),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: zero_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Disc {
+            kind: tex_state::node::DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
+        },
+    ];
+    for node in transparent {
+        assert_eq!(
+            line_protrusion(&state, &[node.clone(), character(font, 'A')]).left,
+            sp(5 * 65_536),
+            "left edge should skip {node:?}"
+        );
+        assert_eq!(
+            line_protrusion(&state, &[character(font, 'A'), node.clone()]).right,
+            sp(5 * 65_536),
+            "right edge should skip {node:?}"
+        );
+    }
+
+    let blockers = [
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: wide_glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Rule {
+            width: Some(sp(0)),
+            height: Some(sp(0)),
+            depth: Some(sp(0)),
+        },
+    ];
+    for node in blockers {
+        assert_eq!(
+            line_protrusion(&state, &[node.clone(), character(font, 'A')]).left,
+            sp(0),
+            "left edge should stop at {node:?}"
+        );
+        assert_eq!(
+            line_protrusion(&state, &[character(font, 'A'), node.clone()]).right,
+            sp(0),
+            "right edge should stop at {node:?}"
+        );
+    }
+}
