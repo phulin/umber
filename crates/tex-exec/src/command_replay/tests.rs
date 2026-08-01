@@ -10364,12 +10364,13 @@ fn canonical_delete_last_rejects_prefix_then_executes_without_consuming_followin
 }
 
 #[test]
-fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise() {
+fn last_item_queries_select_current_tail_or_page_memo_by_mode() {
     // TeX82 §424's "Fetch an item in the current node, if appropriate":
     // `\lastkern` reads the tail when it really is a kern node, while
     // `\lastpenalty`/`\lastskip` see a type mismatch and fall back to their
     // own level's zero, exactly like an empty list would.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.update_page_last_from_node(&Node::Penalty(91));
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control
         .modes
@@ -10379,6 +10380,7 @@ fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise()
         amount: Scaled::from_raw(65536 * 3),
         kind: tex_state::node::KernKind::Explicit,
     });
+    let nested_tail = control.modes.current_list().nodes().to_vec();
     register_source(
         &mut control,
         br"\showthe\lastkern\showthe\lastpenalty\showthe\lastskip",
@@ -10389,6 +10391,16 @@ fn canonical_last_item_reads_the_matching_current_list_tail_and_zero_otherwise()
     assert!(text.contains("> 3.0pt."), "{text}");
     assert!(text.contains("> 0."), "{text}");
     assert!(text.contains("> 0.0pt."), "{text}");
+    assert_eq!(
+        control.modes.current_list().nodes(),
+        nested_tail,
+        "scanning must not consume or rewrite the nested-list tail"
+    );
+    assert_eq!(
+        universe.page_last_penalty(),
+        91,
+        "nested-list scanning must not disturb the distinct page memo"
+    );
 }
 
 #[test]
@@ -10400,6 +10412,7 @@ fn canonical_last_item_outer_vertical_prefers_real_contribution_tail_over_page_m
     let mut universe = Universe::new_with_plain_catcodes();
     universe.update_page_last_from_node(&Node::Penalty(99));
     universe.append_page_contribution(Node::Penalty(7));
+    let contribution_tail = universe.page_contributions().clone();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\showthe\lastpenalty");
     run_to_end(&mut control, &mut universe);
@@ -10409,6 +10422,8 @@ fn canonical_last_item_outer_vertical_prefers_real_contribution_tail_over_page_m
         "the real contribution tail (7), not the stale page memo (99): {}",
         terminal_text(&universe)
     );
+    assert_eq!(universe.page_last_penalty(), 99);
+    assert_eq!(universe.page_contributions(), &contribution_tail);
 }
 
 #[test]
@@ -10426,6 +10441,7 @@ fn canonical_last_item_outer_vertical_falls_back_to_page_memo_when_contribution_
         kind: tex_state::node::GlueKind::Normal,
         leader: None,
     });
+    let page_skip = universe.page_last_skip();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\showthe\lastskip\showthe\lastpenalty");
     run_to_end(&mut control, &mut universe);
@@ -10433,6 +10449,8 @@ fn canonical_last_item_outer_vertical_falls_back_to_page_memo_when_contribution_
     let text = terminal_text(&universe);
     assert!(text.contains("> 5.0pt."), "{text}");
     assert!(text.contains("> 0."), "{text}");
+    assert_eq!(universe.page_last_skip(), page_skip);
+    assert!(universe.page_contributions().is_empty());
 }
 
 #[test]
@@ -10452,6 +10470,7 @@ fn canonical_last_skip_reads_an_explicit_mskip_at_mu_val_level() {
         kind: tex_state::node::GlueKind::MuSkip,
         leader: None,
     });
+    let math_tail = control.modes.current_list().nodes().to_vec();
     register_source(&mut control, br"\showthe\lastskip");
     run_to_end(&mut control, &mut universe);
 
@@ -10460,6 +10479,7 @@ fn canonical_last_skip_reads_an_explicit_mskip_at_mu_val_level() {
         "{}",
         terminal_text(&universe)
     );
+    assert_eq!(control.modes.current_list().nodes(), math_tail);
 }
 
 #[test]
