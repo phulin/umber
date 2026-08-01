@@ -1915,3 +1915,53 @@ fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
         })
     ));
 }
+
+#[test]
+fn ffi_reconstitution_suppresses_an_unsynchronized_second_hyphenation_point() {
+    // TeX82 §§904 and 913-916 ignore a second point before the two branches
+    // have synchronized beyond the ligature that contains the first point.
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    stores.add_hyphenation_exception(ExceptionSpec {
+        word: "office".to_owned(),
+        positions: vec![2, 3],
+    });
+    stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 1);
+    stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 1);
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let pending: Vec<_> = "office"
+        .chars()
+        .map(|ch| PendingHChar {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        })
+        .collect();
+    let nodes = reconstitute(&mut stores, &pending, false, false);
+    assert!(
+        nodes.iter().any(
+            |node| matches!(node, Node::Lig { orig, .. } if orig.as_slice() == ['f', 'f', 'i'])
+        )
+    );
+
+    let hyphenated = super::super::hyphenation::test_hyphenated_word(&mut stores, &nodes);
+
+    assert_eq!(
+        hyphenated
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count(),
+        1,
+        "the point inside the same ffi synchronization span must be suppressed: {hyphenated:?}"
+    );
+}

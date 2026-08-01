@@ -302,6 +302,65 @@ fn paragraph_hyphenation_stops_at_a_font_change() {
 }
 
 #[test]
+fn punctuation_and_whatsits_preserve_the_next_hyphenation_candidate() {
+    // TeX82 §896 skips nonletters and whatsits while seeking the first letter.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{tes-ting} \\lefthyphenmin=1 \\righthyphenmin=1 \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("candidate-boundary setup executes");
+    let font = stores.current_font();
+    let mut nodes = vec![
+        Node::Char {
+            font,
+            ch: ',',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Whatsit(tex_state::node::Whatsit::Special {
+            class: "dvi".to_owned(),
+            payload: Vec::new(),
+        }),
+    ];
+    nodes.extend("testing".chars().map(|ch| Node::Char {
+        font,
+        ch,
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }));
+
+    let hyphenated = crate::assignments::test_hyphenated_hlist(&mut stores, &nodes);
+
+    assert!(matches!(
+        hyphenated.first(),
+        Some(Node::Char { ch: ',', .. })
+    ));
+    assert!(matches!(hyphenated.get(1), Some(Node::Whatsit(_))));
+    assert_eq!(
+        hyphenated
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn automatic_discretionary_rejects_replacement_counts_above_127() {
+    // TeX82 §918 discards the discretionary when r_count exceeds 127.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let replacement = vec![Node::Penalty(0); 128];
+
+    assert!(
+        crate::assignments::test_automatic_discretionary(&mut stores, &replacement[..127])
+            .is_some()
+    );
+    assert!(crate::assignments::test_automatic_discretionary(&mut stores, &replacement).is_none());
+}
+
+#[test]
 fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

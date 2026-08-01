@@ -739,15 +739,31 @@ fn discretionary_through_node(
     let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    let pre = stores.freeze_node_list(&pre);
-    let post = stores.freeze_node_list(&post);
-    let replace = stores.freeze_node_list(&[replacement]);
-    Ok(Node::Disc {
+    Ok(automatic_discretionary(stores, &pre, &post, &[replacement])
+        .expect("a single replacement node fits TeX82's quarterword count"))
+}
+
+/// Freezes a §914 automatic discretionary when §918's replacement count fits.
+fn automatic_discretionary(
+    stores: &mut Universe,
+    pre: &[Node],
+    post: &[Node],
+    replace: &[Node],
+) -> Option<Node> {
+    (replace.len() <= 127).then(|| Node::Disc {
         kind: DiscKind::AutomaticHyphen,
-        pre,
-        post,
-        replace,
+        pre: stores.freeze_node_list(pre),
+        post: stores.freeze_node_list(post),
+        replace: stores.freeze_node_list(replace),
     })
+}
+
+#[cfg(test)]
+pub(crate) fn test_automatic_discretionary(
+    stores: &mut Universe,
+    replace: &[Node],
+) -> Option<Node> {
+    automatic_discretionary(stores, &[], &[], replace)
 }
 
 fn node_original_len(node: &Node) -> usize {

@@ -94,6 +94,8 @@ pub(crate) use hmode::{
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]
+pub(crate) use hyphenation::test_automatic_discretionary;
+#[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word_text;
