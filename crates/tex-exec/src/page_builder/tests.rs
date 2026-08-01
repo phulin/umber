@@ -130,11 +130,52 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
 #[test]
 fn page_builder_output_active_boundary_preserves_pending_contributions() {
     let mut stores = Universe::new();
+    // TeX.web §§980--990: the frozen page specifications and all accumulated
+    // quantities survive calls made while §989's output boundary is pending.
+    params(&mut stores, 1_000, 19, 0);
+    stores.freeze_page_specs(PageContents::BoxThere);
+    for (dimension, value) in [
+        (PageDimension::Total, 101),
+        (PageDimension::Stretch, 102),
+        (PageDimension::FilStretch, 103),
+        (PageDimension::FillStretch, 104),
+        (PageDimension::FilllStretch, 105),
+        (PageDimension::Shrink, 106),
+        (PageDimension::Depth, 107),
+    ] {
+        stores.set_page_dimension(dimension, s(value));
+    }
+    stores.set_page_integer(PageInteger::InsertPenalties, 11);
     stores.record_best_page_break(0, s(23), 0);
     stores.record_page_fire_up(0);
+    stores.set_output_routine_active(true);
     stores.append_page_contribution(Node::Penalty(17));
+    stores.append_page_contribution(rule(5, 2));
     build_page(&mut stores).expect("white-box operation succeeds");
-    assert_eq!(stores.page_contribution_front(), Some(&Node::Penalty(17)));
+    assert_eq!(
+        stores
+            .page_contributions()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>(),
+        [Node::Penalty(17), rule(5, 2)]
+    );
+    assert_eq!(stores.page_contents(), PageContents::BoxThere);
+    assert_eq!(stores.page_dimension(PageDimension::Goal), s(1_000));
+    assert_eq!(stores.page_max_depth(), s(19));
+    for (dimension, value) in [
+        (PageDimension::Total, 101),
+        (PageDimension::Stretch, 102),
+        (PageDimension::FilStretch, 103),
+        (PageDimension::FillStretch, 104),
+        (PageDimension::FilllStretch, 105),
+        (PageDimension::Shrink, 106),
+        (PageDimension::Depth, 107),
+    ] {
+        assert_eq!(stores.page_dimension(dimension), s(value));
+    }
+    assert_eq!(stores.insert_penalties(), 11);
+    assert!(stores.output_routine_is_active());
     assert_eq!(
         stores
             .page_fire_up()

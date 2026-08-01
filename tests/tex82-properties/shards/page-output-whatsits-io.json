@@ -960,8 +960,8 @@
           "test": "page_builder_output_active_boundary_preserves_pending_contributions"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.242"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.page.reset-and-box-recovery",

@@ -467,6 +467,9 @@ glue-set metadata remain unchanged.
 The page builder lives in `tex-exec` with its mutable roots owned by
 `Universe`. It tracks the contribution queue, page dimensions, insertion
 classes, best break, marks, and output-routine state in TeX order.
+TeX.web §§980--990's frozen `vsize` and `max_depth`, seven accumulated page
+dimensions, insertion penalties, and ordered pending contribution queue remain
+unchanged across an output-active build-page boundary.
 
 When the best break fires, execution packages the page into `\box255`, enters
 the output routine when configured, and resumes page building afterward.
