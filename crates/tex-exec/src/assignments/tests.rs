@@ -677,10 +677,9 @@ fn read_to_definition_scans_stream_keyword_target_and_installs_tokens() {
 }
 
 #[test]
-#[ignore = "umber2-gwhy: scan_keyword mismatch retirement hides the read target"]
 fn read_missing_to_and_invalid_target_recover_exactly() {
     let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(InteractionMode::ErrorStop);
+    stores.set_interaction_mode(InteractionMode::Scroll);
     stores
         .world_mut()
         .push_memory_terminal_line("first")

@@ -1927,63 +1927,17 @@ impl CommandProcessor<'_> {
                     report.context(context);
                     report.error().jump_out()?;
                 }
-                // §1215's `get_r_token`. A frozen or non-control-sequence
-                // target still needs §1215's "Missing control sequence
-                // inserted" recovery, which Umber cannot yet name because it
-                // has no `Symbol` for `frozen_protection` (umber2-vq14).
-                // Keep an invalid target out of the live input stack while
-                // `read_toks` temporarily owns its pseudo-file level. TeX's
-                // backed-up token remains logically pending, but restoring it
-                // after the line collector retires preserves the same next
-                // delivery without violating the command core's level
-                // ownership invariant.
-                let target_command = match self.next_non_space_raw()? {
-                    Some(command) => command,
-                    None => self
-                        .next_non_space_raw()?
-                        .ok_or(CommandError::input_invariant())?,
-                };
-                let spelling_target = match target_command.spelling().semantic_token() {
-                    tex_state::token::Token::Cs(target) => Some(target),
-                    tex_state::token::Token::Char {
-                        ch,
-                        cat: tex_state::token::Catcode::Active,
-                    } => Some(self.state.intern_active_character(ch)),
-                    _ => None,
-                };
-                let (target, rejected_target) = if let Some(target) = spelling_target {
-                    (target, None)
-                } else {
-                    let context = self.command.output_open_context(&self.state);
-                    let mut report = self.state.print_err("Missing control sequence inserted");
-                    report
-                        .help(&[
-                            "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
-                            "I've inserted an inaccessible control sequence so that your",
-                            "definition will be completed without mixing me up too badly.",
-                            "You can recover graciously from this error, if you're",
-                            "careful; see exercise 27.2 in The TeXbook.",
-                        ])
-                        .context(context);
-                    report.error().jump_out()?;
-                    (
-                        self.state.intern_control_sequence("inaccessible"),
-                        (!matches!(
-                            target_command.spelling().semantic_token(),
-                            tex_state::token::Token::Frozen(_)
-                        ))
-                        .then_some(target_command.spelling()),
-                    )
-                };
+                // §1215's `get_r_token` backs a rejected ordinary target up
+                // immediately. Its §325 stack-conservation step first retires
+                // the exhausted keyword-mismatch backup, leaving the rejected
+                // target live below §483's temporary read-line source.
+                let target = self.scan_definition_target()?;
                 // TeX82 §1225: `\\read` scans `n`, `to`, and `r`, then runs
                 // §482's `read_toks(n,r)` on the spot. The collector needs
                 // live input levels, category codes, `align_state`, and
                 // `scanner_status`, all of which are the command core's.
                 let tokens =
                     self.read_toks(stream, target, primitive == UnexpandablePrimitive::ReadLine)?;
-                if let Some(rejected_target) = rejected_target {
-                    self.back_input_token(rejected_target)?;
-                }
                 Ok(InputStreamRequest::Read {
                     stream,
                     target,
