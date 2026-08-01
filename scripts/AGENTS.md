@@ -101,7 +101,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   publishes separate clean and instrumented eight-bit executables, gates exact
   DVI/PDF smoke plus shared, expansion/scanner, and state/enquiry/effect
   schema-v1 traces, including an exact extended-versus-compatibility e-TeX
-  boundary matrix, audits the exact canonical primitive inventory, proves
+  boundary matrix with focused recovery and executor/list-state jobs, audits
+  the exact canonical primitive inventory, proves
   byte and independently normalized PDF transparency plus determinism, supports
   offline reuse, and records complete build identities.
 - `test-oracle-regeneration.sh`: hermetic validation of the pinned three-engine

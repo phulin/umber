@@ -80,7 +80,8 @@ programs, focused extension/state programs, and exact primitive audit.
 smoke inputs, focused shared-command transition inputs and an executable
 semantic-event matrix, an exact-eight-bit expansion/scanner extension matrix,
 an exact cross-profile matrix that runs shared e-TeX grammar boundaries both
-with and without pdfTeX's `-etex` selector, and a state matrix covering named parameters, font code tables,
+with and without pdfTeX's `-etex` selector, focused recovery and executor/list-
+state jobs, a format-loaded saved-hyphen-code job, and a state matrix covering named parameters, font code tables,
 object-independent enquiries, random/timer transitions, and committed
 PDF-facing effects. The live workflow proves the 549-entry ownership
 inventory, schema-validates and repeatability-checks all three traces, and

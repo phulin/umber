@@ -19,7 +19,7 @@
 \ifdefined\pdftexprofilemissing
   \message{IFCSNAME-LEAKED}
 \else
-  \message{IFCSNAME-ROLLBACK}
+  \immediate\write16{ROLLBACK-OK}
 \fi
 \message{INTERACTION=\number\interactionmode}
 \count255=255 \count256=256 \count32767=32767
@@ -35,8 +35,8 @@
 \lastlinefit=500
 \savingvdiscards=1
 \savinghyphcodes=1
-\everyeof={\message{SCANTOKENS-EOF}}
-\scantokens{\message{SCANTOKENS-BODY}}
+\everyeof={\immediate\write16{SCANTOKENS-EOF}}
+\scantokens{\immediate\write16{SCANTOKENS-BODY}}
 \immediate\openout1=etex-profile-boundaries-effects.out
 \immediate\write1{PDFTEX-ETEX-BOUNDARIES}
 \immediate\closeout1

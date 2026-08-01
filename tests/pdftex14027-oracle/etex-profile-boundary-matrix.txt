@@ -17,4 +17,10 @@ mutation|lastlinefit state|"value":"lastlinefit"|absent
 mutation|saved vertical discards state|"value":"savingvdiscards"|absent
 mutation|saved hyphen codes state|"value":"savinghyphcodes"|absent
 token_list|scantokens body construction|"purpose":"scantokens"|absent
-input|scantokens everyeof framing|"name":"every_eof"|absent
+input|scantokens everyeof framing|"control_sequence":"everyeof"|absent
+recovery|invalid interactionmode assignment dispatch|"command":"set_page_int","operand":{"type":"integer","value":2},"control_sequence":"interactionmode"|absent
+recovery|malformed middle delimiter dispatch|"command":"left_right","operand":{"type":"integer","value":1},"control_sequence":"middle"|absent
+executor|TeXXeT direction mismatch commands|"control_sequence":"beginL"|absent
+executor|saved page discards destructive splice|"control_sequence":"pagediscards"|absent
+executor|saved split discards destructive splice|"control_sequence":"splitdiscards"|absent
+hyphenation|saved hyphen-code pattern construction|"command":"hyph_data","operand":{"type":"integer","value":1},"control_sequence":"patterns"|absent

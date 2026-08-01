@@ -31,6 +31,9 @@ extension_bytes_input="${repo_root}/tests/pdftex14027-oracle/extensions-bytes.tx
 extension_event_matrix="${repo_root}/tests/pdftex14027-oracle/extension-event-matrix.txt"
 etex_profile_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundaries.tex"
 etex_profile_compatibility_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-compatibility.tex"
+etex_profile_recovery_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-recovery.tex"
+etex_profile_hyph_format_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-hyph-format.tex"
+etex_profile_hyph_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-hyph.tex"
 etex_profile_matrix="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundary-matrix.txt"
 state_input="${repo_root}/tests/pdftex14027-oracle/state.tex"
 state_event_matrix="${repo_root}/tests/pdftex14027-oracle/state-event-matrix.txt"
@@ -430,7 +433,7 @@ run_etex_profile_boundaries() {
   grep -q "$marker" "${run_dir}/${stem}.log" ||
     fail "$profile e-TeX boundary marker is absent"
   if [[ "$profile" == *-extended ]]; then
-    grep -q 'IFCSNAME-ROLLBACK' "${run_dir}/${stem}.log" ||
+    grep -q 'ROLLBACK-OK' "${run_dir}/${stem}.log" ||
       fail 'pdfTeX-profile ifcsname rollback marker is absent'
     grep -q 'COUNTS=255,256,32767' "${run_dir}/${stem}.log" ||
       fail 'pdfTeX-profile extended-register boundary is absent'
@@ -439,6 +442,83 @@ run_etex_profile_boundaries() {
     grep -q 'SCANTOKENS-EOF' "${run_dir}/${stem}.log" ||
       fail 'pdfTeX-profile scantokens EOF boundary is absent'
   fi
+}
+
+run_etex_profile_recovery() {
+  local executable="$1" profile="$2" status=0
+  local run_dir="${out_dir}/etex-profile/${profile}-recovery"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$etex_profile_recovery_input" "${run_dir}/etex-profile-recovery.tex"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/kpathsea" \
+      "$executable" -ini -etex -interaction=batchmode etex-profile-recovery.tex \
+      >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -eq 1 ]] ||
+    fail "$profile e-TeX recovery run exited with status $status instead of 1"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  local log="${run_dir}/etex-profile-recovery.log"
+  grep -q 'Bad interaction mode (4)' "$log" &&
+    grep -q 'INTERACTION-RECOVERED=0' "$log" ||
+    fail "$profile interactionmode recovery evidence is absent"
+  grep -q 'Extra \\middle' "$log" &&
+    grep -q 'MIDDLE-MISSING-DELIMITER-RECOVERED' "$log" ||
+    fail "$profile middle-delimiter recovery evidence is absent"
+  grep -q '\\endL or \\endR problem (1 missing, 1 extra)' "$log" ||
+    fail "$profile TeXXeT mismatch evidence is absent"
+  grep -q 'SPLIT-FIRST=5.0pt' "$log" &&
+    grep -q 'SPLIT-SECOND=0.0pt' "$log" ||
+    fail "$profile destructive saved-discard splice evidence is absent"
+  [[ -f "${run_dir}/etex-profile-recovery.dvi" &&
+    -f "${run_dir}/etex-profile-recovery-effects.out" ]] ||
+    fail "$profile e-TeX recovery artifacts are absent"
+}
+
+run_etex_profile_saved_hyph_codes() {
+  local executable="$1" profile="$2" setup_status=0 status=0
+  local run_dir="${out_dir}/etex-profile/${profile}-saved-hyph-codes"
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$etex_profile_hyph_format_input" "${run_dir}/etex-profile-hyph-format.tex"
+  cp "$etex_profile_hyph_input" "${run_dir}/etex-profile-hyph.tex"
+  cp "$state_font_input" "${run_dir}/cmr10.tfm"
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/kpathsea" \
+      "$executable" -ini -etex -interaction=batchmode etex-profile-hyph-format.tex \
+      >format-terminal.txt 2>&1
+  ) || setup_status="$?"
+  [[ "$setup_status" -eq 0 ]] ||
+    fail "$profile saved-hyphen-code format run exited with status $setup_status"
+  if [[ -f "${run_dir}/pdftex14027-events.jsonl" ]]; then
+    mv "${run_dir}/pdftex14027-events.jsonl" \
+      "${run_dir}/format-events.jsonl"
+  fi
+  (
+    cd "$run_dir"
+    env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C TZ=UTC \
+      SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+      TEXMFCNF="${source_dir}/texk/kpathsea" \
+      "$executable" -fmt=etex-profile-hyph-format -interaction=batchmode \
+      etex-profile-hyph.tex >terminal.txt 2>&1
+  ) || status="$?"
+  [[ "$status" -eq 0 ]] ||
+    fail "$profile saved-hyphen-code loaded run exited with status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  grep -q 'UMBER-PDFTEX14027-SAVED-HYPH-CODES' \
+    "${run_dir}/etex-profile-hyph.log" &&
+    grep -q '@\\discretionary' "${run_dir}/etex-profile-hyph.log" &&
+    grep -q 'SAVED-HYPH-CODES-PARAGRAPH-COMPLETE' \
+      "${run_dir}/etex-profile-hyph.log" ||
+    fail "$profile saved hyphen codes did not survive changed lccodes"
+  [[ -f "${run_dir}/etex-profile-hyph.dvi" ]] ||
+    fail "$profile saved-hyphen-code DVI is absent"
 }
 
 run_state() {
@@ -522,6 +602,12 @@ write_build_record() {
       "$(sha_digest 256 "$etex_profile_input")"
     printf 'etex-profile-compatibility-input-sha256 %s\n' \
       "$(sha_digest 256 "$etex_profile_compatibility_input")"
+    printf 'etex-profile-recovery-input-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_recovery_input")"
+    printf 'etex-profile-hyph-format-input-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_hyph_format_input")"
+    printf 'etex-profile-hyph-input-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_hyph_input")"
     printf 'etex-profile-boundary-matrix-sha256 %s\n' \
       "$(sha_digest 256 "$etex_profile_matrix")"
     printf 'state-event-matrix-sha256 %s\n' \
@@ -714,6 +800,8 @@ for profile in clean instrumented; do
   run_state "$(profile_executable "$profile")" "$profile"
   run_etex_profile_boundaries "$(profile_executable "$profile")" "${profile}-extended"
   run_etex_profile_boundaries "$(profile_executable "$profile")" "${profile}-compatibility"
+  run_etex_profile_recovery "$(profile_executable "$profile")" "$profile"
+  run_etex_profile_saved_hyph_codes "$(profile_executable "$profile")" "$profile"
 done
 compare_smoke_channels dvi
 compare_smoke_channels pdf
@@ -739,6 +827,15 @@ compare_channels "compatibility pdfTeX-profile boundary oracle" \
   "${out_dir}/etex-profile/instrumented-compatibility" \
   terminal.txt status.txt etex-profile-compatibility.log \
   etex-profile-compatibility.dvi
+compare_channels "pdfTeX-profile e-TeX recovery oracle" \
+  "${out_dir}/etex-profile/clean-recovery" \
+  "${out_dir}/etex-profile/instrumented-recovery" \
+  terminal.txt status.txt etex-profile-recovery.log \
+  etex-profile-recovery.dvi etex-profile-recovery-effects.out
+compare_channels "pdfTeX-profile saved-hyphen-code oracle" \
+  "${out_dir}/etex-profile/clean-saved-hyph-codes" \
+  "${out_dir}/etex-profile/instrumented-saved-hyph-codes" \
+  terminal.txt status.txt etex-profile-hyph.log etex-profile-hyph.dvi
 compare_channels "independently normalized PDF state oracle" \
   "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
   normalized-pdf.txt
@@ -764,12 +861,20 @@ while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
 done <"$extension_event_matrix"
 etex_profile_trace="${out_dir}/etex-profile/instrumented-extended/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_trace"
+etex_profile_recovery_trace="${out_dir}/etex-profile/instrumented-recovery/pdftex14027-events.jsonl"
+etex_profile_hyph_format_trace="${out_dir}/etex-profile/instrumented-saved-hyph-codes/format-events.jsonl"
+etex_profile_hyph_trace="${out_dir}/etex-profile/instrumented-saved-hyph-codes/pdftex14027-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_recovery_trace"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_hyph_format_trace"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_hyph_trace"
 while IFS='|' read -r family boundary pattern compatibility extra; do
   [[ -z "$family" || "$family" == \#* ]] && continue
   [[ -n "$boundary" && -n "$pattern" && "$compatibility" == absent &&
     -z "${extra:-}" ]] ||
     fail "malformed pdfTeX-profile boundary matrix row for ${family:-unknown}"
-  grep -Fq "$pattern" "$etex_profile_trace" ||
+  grep -Fq "$pattern" "$etex_profile_trace" \
+    "$etex_profile_recovery_trace" "$etex_profile_hyph_format_trace" \
+    "$etex_profile_hyph_trace" ||
     fail "pdfTeX extended profile is missing $family/$boundary"
   if [[ -f "${out_dir}/etex-profile/instrumented-compatibility/pdftex14027-events.jsonl" ]]; then
     ! grep -Fq "$pattern" \
@@ -804,6 +909,8 @@ run_extensions "$(profile_executable instrumented)" instrumented-repeat
 run_state "$(profile_executable instrumented)" instrumented-repeat
 run_etex_profile_boundaries "$(profile_executable instrumented)" instrumented-repeat-extended
 run_etex_profile_boundaries "$(profile_executable instrumented)" instrumented-repeat-compatibility
+run_etex_profile_recovery "$(profile_executable instrumented)" instrumented-repeat
+run_etex_profile_saved_hyph_codes "$(profile_executable instrumented)" instrumented-repeat
 compare_channels "repeated instrumented transition oracle" \
   "${out_dir}/transitions/instrumented" \
   "${out_dir}/transitions/instrumented-repeat" \
@@ -830,5 +937,16 @@ compare_channels "repeated compatibility pdfTeX-profile boundary oracle" \
   "${out_dir}/etex-profile/instrumented-repeat-compatibility" \
   terminal.txt status.txt etex-profile-compatibility.log \
   etex-profile-compatibility.dvi pdftex14027-events.jsonl
+compare_channels "repeated pdfTeX-profile e-TeX recovery oracle" \
+  "${out_dir}/etex-profile/instrumented-recovery" \
+  "${out_dir}/etex-profile/instrumented-repeat-recovery" \
+  terminal.txt status.txt etex-profile-recovery.log \
+  etex-profile-recovery.dvi etex-profile-recovery-effects.out \
+  pdftex14027-events.jsonl
+compare_channels "repeated pdfTeX-profile saved-hyphen-code oracle" \
+  "${out_dir}/etex-profile/instrumented-saved-hyph-codes" \
+  "${out_dir}/etex-profile/instrumented-repeat-saved-hyph-codes" \
+  terminal.txt status.txt etex-profile-hyph.log etex-profile-hyph.dvi \
+  format-events.jsonl pdftex14027-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

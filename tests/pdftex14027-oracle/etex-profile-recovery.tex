@@ -1,0 +1,30 @@
+\catcode `{ = 1
+\catcode `} = 2
+\catcode `$ = 3
+\catcode `^ = 7
+\delcode`|=0
+\delcode`(=0
+\delcode`)=0
+\immediate\write16{UMBER-PDFTEX14027-ETEX-RECOVERY}
+\interactionmode=4 \immediate\write16{INTERACTION-RECOVERED=\the\interactionmode}
+$x\middle|y$\immediate\write16{MIDDLE-EXTRA-RECOVERED}
+$\left(x\middle\right)$\immediate\write16{MIDDLE-MISSING-DELIMITER-RECOVERED}
+\TeXXeTstate=1
+\setbox0=\hbox{\beginL X\endR}
+\immediate\write16{TEXXET-MISMATCH-RECOVERED=\the\wd0}
+\savingvdiscards=1
+\vskip5pt \setbox0=\hbox{}\copy0
+\setbox1=\vbox{\pagediscards}
+\setbox2=\vbox{\pagediscards}
+\immediate\write16{PAGE-DISCARDS=\the\ht1,\the\ht2}
+\setbox0=\vbox{\hbox{}\vskip5pt\hbox{}}
+\setbox1=\vsplit0 to0pt
+\setbox3=\vbox{\splitdiscards}
+\setbox4=\vbox{\splitdiscards}
+\immediate\write16{SPLIT-FIRST=\the\ht3}
+\immediate\write16{SPLIT-SECOND=\the\ht4}
+\immediate\openout1=etex-profile-recovery-effects.out
+\immediate\write1{PDFTEX-ETEX-RECOVERY}
+\immediate\closeout1
+\shipout\hbox{}
+\end
