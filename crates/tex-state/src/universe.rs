@@ -5485,23 +5485,26 @@ impl Universe {
 
     pub fn enter_group(&mut self) {
         self.stores.enter_group();
-        self.dependencies
-            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
-        self.dependencies
-            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
+        self.mark_group_entry_dependencies();
+        self.trace_group_enter(GroupKind::Simple, self.stores.env_group_depth(), 0);
     }
 
     pub fn enter_group_with_kind(&mut self, kind: GroupKind) {
         self.stores.enter_group_with_kind(kind);
-        self.dependencies
-            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
-        self.dependencies
-            .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupType));
+        self.mark_group_entry_dependencies();
+        self.trace_group_enter(kind, self.stores.env_group_depth(), 0);
     }
 
     pub fn enter_group_with_kind_at_line(&mut self, kind: GroupKind, entered_line: u32) {
         self.stores
             .enter_group_with_kind_at_line(kind, entered_line);
+        self.mark_group_entry_dependencies();
+        // e-TeX 2.6 [19.274]: `group_trace(false)` fires once the new frame
+        // is live, so the displayed level already counts it.
+        self.trace_group_enter(kind, self.stores.env_group_depth(), entered_line);
+    }
+
+    fn mark_group_entry_dependencies(&mut self) {
         self.dependencies
             .mark_changed(DependencyKey::Engine(DependencyEngineField::GroupLevel));
         self.dependencies
@@ -5514,6 +5517,7 @@ impl Universe {
 
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
+        self.trace_leaving_group();
         let (tokens, changed_cells, code_before, code_after) =
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
@@ -5525,12 +5529,23 @@ impl Universe {
         &mut self,
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
+        self.trace_leaving_group();
         let (tokens, changed_cells, code_before, code_after) = self
             .stores
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         Ok(tokens)
+    }
+
+    /// e-TeX 2.6 [19.281]'s `group_trace(true)`, fired against the still-live
+    /// top frame before `unsave` pops it.
+    fn trace_leaving_group(&mut self) {
+        let Some(frame) = self.stores.group_frames().next_back() else {
+            return;
+        };
+        let (kind, entered_line) = (frame.kind(), frame.entered_line());
+        self.trace_group_leave(kind, self.stores.env_group_depth(), entered_line);
     }
 
     fn mark_group_exit_dependencies(

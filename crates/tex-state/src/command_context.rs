@@ -55,6 +55,17 @@ impl CommandContext<'_> {
             .contains_hyphenation_pattern_for_language(language, letters)
     }
 
+    /// Opens tex.web §245's shared `\tracing*` diagnostic channel through the
+    /// live command aggregate borrow.
+    ///
+    /// e-TeX's `\tracingifs` renders its `{...}` trace lines from inside the
+    /// command core itself (tex.web part 28's `conditional`/`pass_text`),
+    /// unlike the executor-driven `\tracingassigns`/`\tracinggroups` traces,
+    /// so it needs this channel directly rather than a queued diagnostic.
+    pub fn begin_diagnostic(&mut self) -> crate::diagnostic::Diagnostic<'_> {
+        self.universe.begin_diagnostic()
+    }
+
     /// Opens tex.web §73's recoverable-error report through the live command
     /// aggregate borrow.
     ///

@@ -131,6 +131,31 @@ impl GroupKind {
         }
     }
 
+    /// e-TeX 2.6 [49.1293]'s `print_group` group-kind name, shared by
+    /// `\showgroups` and `\tracinggroups`'s `{entering ...}`/`{leaving ...}`
+    /// display.
+    #[must_use]
+    pub const fn group_text(self) -> &'static str {
+        match self {
+            Self::Simple => "simple group",
+            Self::HBox => "hbox group",
+            Self::AdjustedHBox => "adjusted hbox group",
+            Self::VBox => "vbox group",
+            Self::VTop => "vtop group",
+            Self::Align => "align group",
+            Self::NoAlign => "no align group",
+            Self::Output => "output group",
+            Self::Math => "math group",
+            Self::Disc => "disc group",
+            Self::Insert => "insert group",
+            Self::VCenter => "vcenter group",
+            Self::MathChoice => "math choice group",
+            Self::SemiSimple => "semi simple group",
+            Self::MathShift => "math shift group",
+            Self::MathLeft => "math left group",
+        }
+    }
+
     #[must_use]
     pub const fn etex_code(self) -> i32 {
         match self {

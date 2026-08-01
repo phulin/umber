@@ -49,6 +49,7 @@ pub mod dependency;
 pub mod diagnostic;
 pub mod env;
 pub mod epoch;
+pub mod etex_tracing;
 pub mod file_framing;
 pub mod font;
 mod format_container;
