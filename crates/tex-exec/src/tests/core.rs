@@ -2770,6 +2770,294 @@ fn uncopy_primitives_unbox_without_clearing_registers() {
     ));
 }
 
+fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
+    use tex_state::font::NULL_FONT;
+    use tex_state::glue::Order;
+    use tex_state::node::{
+        AdjustNode, BoxLr, BoxNode, BoxNodeFields, DiscKind, GlueKind, LeaderPayload, MathBoundary,
+        Sign, UnsetKind, UnsetNode, UnsetNodeFields,
+    };
+    use tex_state::scaled::GlueSetRatio;
+
+    let leaf = stores.freeze_node_list(&[
+        Node::Penalty(19),
+        Node::Rule {
+            width: Some(Scaled::from_raw(101)),
+            height: Some(Scaled::from_raw(102)),
+            depth: Some(Scaled::from_raw(103)),
+        },
+    ]);
+    let box_node = |children| {
+        BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(201),
+            height: Scaled::from_raw(202),
+            depth: Scaled::from_raw(203),
+            shift: Scaled::from_raw(204),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Stretching,
+            glue_order: Order::Fill,
+            children,
+        })
+    };
+    let glue = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(301),
+        stretch: Scaled::from_raw(302),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(303),
+        shrink_order: Order::Filll,
+    });
+    let tokens = stores.intern_token_list(&[
+        Token::Char {
+            ch: 'm',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        },
+    ]);
+    let pre = stores.freeze_node_list(&[Node::Char {
+        font: NULL_FONT,
+        ch: 'p',
+        origin: OriginId::UNKNOWN,
+    }]);
+    let post = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(401),
+        kind: tex_state::node::KernKind::Explicit,
+    }]);
+    let replace = stores.freeze_node_list(&[Node::Lig {
+        font: NULL_FONT,
+        ch: 'L',
+        orig: vec!['f', 'i'],
+        origins: vec![OriginId::UNKNOWN; 2],
+    }]);
+
+    let children = stores.freeze_node_list(&[
+        Node::Rule {
+            width: Some(Scaled::from_raw(1)),
+            height: None,
+            depth: Some(Scaled::from_raw(3)),
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Leaders,
+            leader: Some(LeaderPayload::HList(box_node(leaf))),
+        },
+        Node::Ins {
+            class: 7,
+            size: Scaled::from_raw(501),
+            split_top_skip: glue,
+            split_max_depth: Scaled::from_raw(502),
+            floating_penalty: 503,
+            content: leaf,
+        },
+        Node::Mark { class: 9, tokens },
+        Node::Adjust(AdjustNode {
+            content: post,
+            pre: true,
+        }),
+        Node::MathOn(Scaled::from_raw(601)),
+        Node::MathOff(Scaled::from_raw(602)),
+        Node::Direction(MathBoundary::BeginR),
+        Node::Lig {
+            font: NULL_FONT,
+            ch: 'L',
+            orig: vec!['f', 'i'],
+            origins: vec![OriginId::UNKNOWN; 2],
+        },
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre,
+            post,
+            replace,
+        },
+        Node::HList(box_node(pre)),
+        Node::VList(box_node(post)),
+        Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::HBox,
+            width: Scaled::from_raw(701),
+            height: Scaled::from_raw(702),
+            depth: Scaled::from_raw(703),
+            span_count: 4,
+            stretch: Scaled::from_raw(704),
+            stretch_order: Order::Fill,
+            shrink: Scaled::from_raw(705),
+            shrink_order: Order::Fil,
+            children: replace,
+        })),
+    ]);
+    stores.freeze_node_list(&[Node::HList(box_node(children))])
+}
+
+fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId) -> String {
+    use tex_state::node::{LeaderPayload, Node};
+
+    stores
+        .nodes(list)
+        .testing_decoded()
+        .iter()
+        .map(|node| match node {
+            Node::HList(box_node) | Node::VList(box_node) => format!(
+                "box={}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/children={}",
+                if matches!(node, Node::HList(_)) {
+                    "h"
+                } else {
+                    "v"
+                },
+                box_node.width,
+                box_node.height,
+                box_node.depth,
+                box_node.shift,
+                box_node.box_lr,
+                box_node.glue_set,
+                box_node.glue_sign,
+                box_node.glue_order,
+                recursive_node_signature(stores, box_node.children)
+            ),
+            Node::Unset(unset) => format!(
+                "unset={:?}/{:?}/{:?}/{:?}/{}/{:?}/{:?}/{:?}/{:?}/children={}",
+                unset.kind,
+                unset.width,
+                unset.height,
+                unset.depth,
+                unset.span_count,
+                unset.stretch,
+                unset.stretch_order,
+                unset.shrink,
+                unset.shrink_order,
+                recursive_node_signature(stores, unset.children)
+            ),
+            Node::Glue { spec, leader, .. } => {
+                let leader = leader.map(|leader| match leader {
+                    LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node) => format!(
+                        "box={}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/children={}",
+                        if matches!(leader, LeaderPayload::HList(_)) {
+                            "h"
+                        } else {
+                            "v"
+                        },
+                        box_node.width,
+                        box_node.height,
+                        box_node.depth,
+                        box_node.shift,
+                        box_node.box_lr,
+                        box_node.glue_set,
+                        box_node.glue_sign,
+                        box_node.glue_order,
+                        recursive_node_signature(stores, box_node.children)
+                    ),
+                    LeaderPayload::Rule { .. } => format!("{leader:?}"),
+                });
+                format!("glue={:?}/leader={leader:?}", stores.glue(*spec))
+            }
+            Node::Disc {
+                pre,
+                post,
+                replace,
+                kind,
+            } => format!(
+                "disc={kind:?}/pre={}/post={}/replace={}",
+                recursive_node_signature(stores, *pre),
+                recursive_node_signature(stores, *post),
+                recursive_node_signature(stores, *replace)
+            ),
+            Node::Mark { class, tokens } => {
+                format!("mark={class}/tokens={:?}", stores.tokens(*tokens))
+            }
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => format!(
+                "ins={class}/{size:?}/{:?}/{split_max_depth:?}/{floating_penalty}/content={}",
+                stores.glue(*split_top_skip),
+                recursive_node_signature(stores, *content)
+            ),
+            Node::Adjust(adjust) => format!(
+                "adjust={}/content={}",
+                adjust.pre,
+                recursive_node_signature(stores, adjust.content)
+            ),
+            _ => format!("{node:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+#[test]
+fn copy_preserves_every_recursive_node_payload_and_source_register() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    install_unexpandable_primitives(&mut stores);
+    let graph = recursive_test_box(&mut stores);
+    stores.set_box_reg(0, graph);
+    let source = stores.box_reg(0).expect("promoted source graph");
+    let baseline = stores.snapshot();
+
+    let mut copy = InputStack::new(MemoryInput::new("\\setbox1=\\copy0"));
+    Executor::new()
+        .run(&mut copy, &mut stores)
+        .expect("recursive box copy executes");
+    assert_eq!(stores.box_reg(0), Some(source), "copy retains its source");
+
+    let copied = stores.box_reg(1).expect("copied register");
+    let expected = recursive_node_signature(&stores, copied);
+    assert_eq!(
+        recursive_node_signature(&stores, source),
+        expected,
+        "copy retains the exact recursive structure"
+    );
+    let [Node::HList(root)] = stores.nodes(copied).testing_decoded() else {
+        panic!("fixture root should be an hbox")
+    };
+    let children = stores.nodes(root.children).testing_decoded();
+    assert_eq!(children.len(), 13, "every payload remains in child order");
+    assert!(
+        matches!(children[1], Node::Glue { spec, leader: Some(_), .. } if stores.glue(spec).width.raw() == 301)
+    );
+    assert!(
+        matches!(children[3], Node::Mark { tokens, .. } if stores.tokens(tokens) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
+    );
+
+    let mut consume = InputStack::new(MemoryInput::new("\\setbox2=\\box0"));
+    Executor::new()
+        .run(&mut consume, &mut stores)
+        .expect("recursive source consumption executes");
+    assert!(stores.box_reg(0).is_none(), "box consumes its source");
+    assert_eq!(
+        stores.box_reg(1),
+        Some(copied),
+        "copy survives source release"
+    );
+    let consumed = stores.box_reg(2).expect("consumed destination");
+    assert_eq!(
+        recursive_node_signature(&stores, consumed),
+        expected,
+        "consumption preserves graph"
+    );
+
+    stores.rollback(&baseline);
+    assert_eq!(stores.box_reg(0), Some(source));
+    assert!(stores.box_reg(1).is_none());
+
+    stores.set_box_reg(1, source);
+    let format = stores.dump_format().expect("recursive graph format dumps");
+    let restored = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("recursive graph format restores");
+    let restored_graph = restored.box_reg(1).expect("restored recursive graph");
+    assert_eq!(
+        recursive_node_signature(&restored, restored_graph),
+        expected
+    );
+    assert_eq!(
+        restored.dump_format().expect("restored format redumps"),
+        format
+    );
+}
+
 #[test]
 fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
