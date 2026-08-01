@@ -14092,9 +14092,16 @@ fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep
             stores.glue_param(GlueParam::new(*index)),
             value,
         ),
+        // e-TeX 2.6 [49.1221--1237] routes indices above 255 through
+        // `sa_def`, not §§277-278's `eq_define`. An identical pointer avoids
+        // a state/save-stack rewrite in both paths, but `sa_def` still owns a
+        // committed sparse-mutation boundary; only the dense path returns
+        // before the observer boundary.
         ScannedStep::Skip {
-            redundant: true, ..
-        } => true,
+            index,
+            redundant: true,
+            ..
+        } => *index <= 255,
         ScannedStep::CodeTable {
             primitive,
             character,

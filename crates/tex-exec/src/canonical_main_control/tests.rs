@@ -4642,6 +4642,43 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
 }
 
 #[test]
+fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
+    // e-TeX 2.6 [49.1221--1237] sends the sparse shorthand through `sa_def`.
+    // Its identical-pointer branch avoids saving or rewriting the element but
+    // still completes the sparse assignment boundary, unlike §§277-278's
+    // dense `eq_define` shortcut.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\skipdef\alias=32767 \alias=1pt \alias=\glueexpr\alias\relax \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Mutation(record)
+                    if record.key.as_deref() == Some("skip:32767")
+            )
+        })
+        .count();
+    assert_eq!(mutations, 2);
+    assert_eq!(
+        stores.glue(stores.skip(32_767)).width,
+        Scaled::from_raw(Scaled::UNITY)
+    );
+}
+
+#[test]
 fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_values() {
     // e-TeX 2.6 change [49.1248] routes all four selectors through
     // TeX82 §1248's `set_shape`; e-TeX §§6336-6366 define the selector
