@@ -102,6 +102,7 @@ pub use pdf::{
     PdfRawObjectData, PdfRawObjectId, PdfRawObjectInitializeError, PdfRawObjectRecord,
     PdfThreadBeadRecord, PdfThreadRecord,
 };
+pub use stores::EngineUsageStatistics;
 pub mod world;
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};

@@ -40,6 +40,13 @@ ownership. It does not permit untracked mutation or host I/O for performance.
 Only aggregate APIs on `Universe` and its owned `Stores` facade may coordinate
 changes across these stores.
 
+The same boundary owns TeX82-shaped allocator diagnostics:
+`Universe::engine_usage_statistics` combines live usage from the interner,
+token, glue, node, font, and hyphenation stores. End-of-job code consumes this
+small value projection and never receives raw store access. The aggregate
+retains componentwise high-water values before rollback, so speculative or
+checkpointed allocation is still represented at job termination.
+
 ## 3. Identity: the interner
 
 `Symbol` is a compact runtime key scoped to one owning interner. It is never a

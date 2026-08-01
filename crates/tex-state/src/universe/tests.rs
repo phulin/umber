@@ -29,6 +29,19 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
+fn engine_usage_statistics_retain_typed_store_high_water_across_rollback() {
+    let mut universe = Universe::new();
+    let baseline = universe.snapshot();
+    let before = universe.engine_usage_statistics();
+    universe.intern("allocator-high-water-probe");
+    let peak = universe.engine_usage_statistics();
+    assert!(peak.strings > before.strings);
+    assert!(peak.string_characters > before.string_characters);
+    universe.rollback(&baseline);
+    assert_eq!(universe.engine_usage_statistics(), peak);
+}
+
+#[test]
 fn page_group_selector_consumes_live_signed_warning_control() {
     for (control, warning) in [(0, true), (23, false), (-23, false)] {
         let mut universe = Universe::new();

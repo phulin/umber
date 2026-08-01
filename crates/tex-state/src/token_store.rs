@@ -263,6 +263,10 @@ impl Clone for TokenStore {
 
 impl TokenStore {
     #[must_use]
+    pub(crate) fn token_count(&self) -> usize {
+        self.arena.len()
+    }
+    #[must_use]
     pub(crate) fn requires_legacy_frozen_key(&self) -> bool {
         matches!(self.frozen_lookup, FrozenTokenLookup::Legacy(_))
     }

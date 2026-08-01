@@ -30,10 +30,10 @@
 //!   "Transcript written on..." note.
 
 use tex_command::{CommandHostCapabilities, CommandProfile};
-use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::print::{ErrorHistory, Printer, Selector};
 use tex_state::world::PrintSink;
+use tex_state::{EngineUsageStatistics, Universe};
 
 /// pdftex.web §2's `banner`: the production reference engine's start-up string.
 ///
@@ -530,9 +530,66 @@ fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, int
 /// prints. What remains here is exactly §642's DVI report and the
 /// transcript-closing note.
 pub(crate) fn finish_job(stores: &mut Universe, job_name: &str, dvi: Option<DviJobOutput>) {
+    print_usage_statistics(stores);
     print_dvi_report(stores, dvi);
     print_transcript_note(stores, job_name);
     stores.printer().print_ln();
+}
+
+fn print_usage_statistics(stores: &mut Universe) {
+    if stores.int_param(IntParam::TRACING_STATS) <= 0 {
+        return;
+    }
+    let usage = stores.engine_usage_statistics();
+    let mut printer = stores.printer();
+    printer
+        .print_nl("Here is how much of TeX's memory you used:")
+        .print_nl(" ");
+    print_usize(&mut printer, usage.strings);
+    printer.print(" strings out of 3000").print_nl(" ");
+    print_usize(&mut printer, usage.string_characters);
+    printer
+        .print(" string characters out of 32000")
+        .print_nl(" ");
+    print_usize(&mut printer, usage.memory_words);
+    printer.print(" words of memory out of 30000").print_nl(" ");
+    print_usize(&mut printer, usage.control_sequences);
+    printer
+        .print(" multiletter control sequences out of 2100")
+        .print_nl(" ");
+    print_usize(&mut printer, usage.font_info_words);
+    printer.print(" words of font info for ");
+    print_usize(&mut printer, usage.fonts);
+    printer.print(" font");
+    if usage.fonts != 1 {
+        printer.print_char('s');
+    }
+    printer.print(", out of 20000 for 75").print_nl(" ");
+    print_usize(&mut printer, usage.hyphenation_exceptions);
+    printer.print(" hyphenation exception");
+    if usage.hyphenation_exceptions != 1 {
+        printer.print_char('s');
+    }
+    printer.print(" out of 307").print_nl(" ");
+    print_stack_usage(&mut printer, usage);
+}
+
+fn print_stack_usage(printer: &mut Printer<'_>, usage: EngineUsageStatistics) {
+    for (value, suffix) in [
+        (usage.input_stack, "i,"),
+        (usage.nest_stack, "n,"),
+        (usage.parameter_stack, "p,"),
+        (usage.buffer_stack, "b,"),
+        (usage.save_stack, "s"),
+    ] {
+        print_usize(printer, value);
+        printer.print(suffix);
+    }
+    printer.print(" stack positions out of 200i,40n,60p,500b,600s");
+}
+
+fn print_usize(printer: &mut Printer<'_>, value: usize) {
+    printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
 /// TeX82 §1328's format-file announcement and newly built `format_ident`.

@@ -100,6 +100,15 @@ pub struct ExceptionSpec {
 }
 
 impl HyphenationTable {
+    /// Number of live language-qualified hyphenation exceptions.
+    #[must_use]
+    pub(crate) fn exception_count(&self) -> usize {
+        self.languages
+            .values()
+            .map(|table| table.exceptions.len())
+            .sum()
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self {

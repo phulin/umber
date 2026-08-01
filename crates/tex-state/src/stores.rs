@@ -209,6 +209,45 @@ pub struct Stores {
     semantic_hash_cache: state_hash::SemanticHashCache,
     exact_env_identity: exact_identity::ExactEnvIdentity,
     exact_identity_cache: Arc<std::sync::Mutex<format::ExactIdentityCache>>,
+    usage_high_water: EngineUsageStatistics,
+}
+
+/// TeX82-shaped projection of allocation use over Umber's typed stores.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EngineUsageStatistics {
+    pub strings: usize,
+    pub string_characters: usize,
+    pub memory_words: usize,
+    pub control_sequences: usize,
+    pub font_info_words: usize,
+    pub fonts: usize,
+    pub hyphenation_exceptions: usize,
+    pub input_stack: usize,
+    pub nest_stack: usize,
+    pub parameter_stack: usize,
+    pub buffer_stack: usize,
+    pub save_stack: usize,
+}
+
+impl EngineUsageStatistics {
+    fn merge_max(self, other: Self) -> Self {
+        Self {
+            strings: self.strings.max(other.strings),
+            string_characters: self.string_characters.max(other.string_characters),
+            memory_words: self.memory_words.max(other.memory_words),
+            control_sequences: self.control_sequences.max(other.control_sequences),
+            font_info_words: self.font_info_words.max(other.font_info_words),
+            fonts: self.fonts.max(other.fonts),
+            hyphenation_exceptions: self
+                .hyphenation_exceptions
+                .max(other.hyphenation_exceptions),
+            input_stack: self.input_stack.max(other.input_stack),
+            nest_stack: self.nest_stack.max(other.nest_stack),
+            parameter_stack: self.parameter_stack.max(other.parameter_stack),
+            buffer_stack: self.buffer_stack.max(other.buffer_stack),
+            save_stack: self.save_stack.max(other.save_stack),
+        }
+    }
 }
 
 /// Recoverable diagnostics from TeX's `prepare_mag` operation.
@@ -265,11 +304,32 @@ impl Clone for Stores {
             semantic_hash_cache: self.semantic_hash_cache.clone(),
             exact_env_identity: self.exact_env_identity.clone(),
             exact_identity_cache: Arc::clone(&self.exact_identity_cache),
+            usage_high_water: self.usage_high_water,
         }
     }
 }
 
 impl Stores {
+    pub(crate) fn engine_usage_statistics(&mut self) -> EngineUsageStatistics {
+        let font_mark = self.fonts.watermark();
+        let fonts = font_mark.len as usize;
+        let font_info_words = (0..fonts)
+            .map(|raw| self.env.font_param_len(FontId::new(raw as u32)) as usize)
+            .sum();
+        let current = EngineUsageStatistics {
+            strings: self.interner.len(),
+            string_characters: self.interner.character_count(),
+            memory_words: self.tokens.token_count() + self.glue.len() + self.nodes.word_count(),
+            control_sequences: self.interner.len(),
+            font_info_words,
+            fonts: fonts.saturating_sub(1),
+            hyphenation_exceptions: self.hyphenation.exception_count(),
+            ..EngineUsageStatistics::default()
+        };
+        let high_water = self.usage_high_water.merge_max(current);
+        self.usage_high_water = high_water;
+        high_water
+    }
     pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
         self.fonts.iter()
     }
@@ -373,6 +433,7 @@ impl Stores {
             exact_identity_cache: Arc::new(std::sync::Mutex::new(
                 format::ExactIdentityCache::default(),
             )),
+            usage_high_water: EngineUsageStatistics::default(),
         };
         stores.set_int_param(IntParam::MAG, 1000);
         stores.set_int_param(IntParam::TOLERANCE, 10_000);
@@ -2579,6 +2640,7 @@ impl Stores {
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
         self.assert_valid_snapshot(snapshot);
+        let _ = self.engine_usage_statistics();
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
         self.release_timeline_node_pins_to(snapshot.timeline_node_pin_mark);
         self.account_rollback_box_refs(snapshot.env_snapshot);

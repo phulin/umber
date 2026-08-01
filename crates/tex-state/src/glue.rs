@@ -74,6 +74,10 @@ impl Clone for GlueStore {
 }
 
 impl GlueStore {
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.specs.len()
+    }
     pub(crate) fn retains_mark(&self, mark: GlueStoreMark) -> bool {
         self.identities.retains(mark.identities) && mark.specs as usize <= self.specs.len()
     }

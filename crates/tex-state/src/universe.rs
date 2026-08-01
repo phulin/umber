@@ -1418,6 +1418,11 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// TeX82-shaped live allocator use projected from the typed stores.
+    #[must_use]
+    pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {
+        self.stores.engine_usage_statistics()
+    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()

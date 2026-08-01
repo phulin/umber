@@ -272,6 +272,41 @@ fn finish_job_reports_no_pages_of_output_for_a_zero_page_job() {
 }
 
 #[test]
+fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
+    let mut stores = Universe::new();
+    stores.set_int_param_global(IntParam::TRACING_STATS, 0);
+    finish_job(&mut stores, "stats", None);
+    assert!(!terminal_text(&stores).contains("Here is how much"));
+    assert!(!log_text(&stores).contains("Here is how much"));
+}
+
+#[test]
+fn finish_job_prints_tex82_usage_report_before_dvi_tail_through_live_selector() {
+    for (interaction, terminal) in [
+        (InteractionMode::ErrorStop, true),
+        (InteractionMode::Batch, false),
+    ] {
+        let mut stores = Universe::new();
+        stores.set_interaction_mode(interaction);
+        stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+        finish_job(&mut stores, "stats", None);
+        let log = log_text(&stores);
+        let report = "Here is how much of TeX's memory you used:\n";
+        assert!(log.starts_with(report));
+        assert!(log.contains(" strings out of 3000\n"));
+        assert!(log.contains(" string characters out of 32000\n"));
+        assert!(log.contains(" words of memory out of 30000\n"));
+        assert!(log.contains(" multiletter control sequences out of 2100\n"));
+        assert!(log.contains(" words of font info for 0 fonts, out of 20000 for 75\n"));
+        assert!(log.contains(" hyphenation exceptions out of 307\n"));
+        assert!(log.contains(
+            "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\nNo pages of output."
+        ));
+        assert_eq!(terminal_text(&stores).starts_with(report), terminal);
+    }
+}
+
+#[test]
 fn finish_job_reports_output_written_with_the_singular_page_form() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
     assert_eq!(stores.world().artifact_commits().len(), 1);

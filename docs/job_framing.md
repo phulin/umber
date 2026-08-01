@@ -41,6 +41,7 @@ pinned oracle -- was blocked behind this document's subject.
 | §537 `start_input`    | `(` and the opened file's name                         | both                     |
 | §362                  | `)` when a file's last line is consumed                | both                     |
 | §1335 `final_cleanup` | `␣)` once per still-open file                          | both                     |
+| §1333 `tracingstats`  | TeX82 allocator and stack usage report                 | live selector            |
 | §642 `finish_dvi`     | `No pages of output.` / `Output written on …`          | both                     |
 | §1335                 | `(see the transcript file for additional information)` | terminal only            |
 | §1333                 | `Transcript written on ␣<jobname>.log.`                | terminal only            |
@@ -58,6 +59,12 @@ Three of those lines are conditional:
   recorded its absence as a known gap; this work closes it.
 - §1333's transcript line is printed only when closing the log leaves the
   selector at `term_only`, i.e. only when the job was writing both channels.
+- §1333's usage block is emitted only when `\tracingstats` is positive. It is
+  routed through the ambient selector and precedes the DVI and transcript
+  termination lines. `Universe::engine_usage_statistics` projects interned
+  strings and characters, token/glue/node words, control sequences, font
+  information, fonts, and hyphenation exceptions without exposing raw stores
+  to the execution layer.
 
 ## Where each piece lives
 
