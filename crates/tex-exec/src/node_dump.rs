@@ -16,6 +16,7 @@ use tex_state::node::{
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
+use tex_state::token_show::append_tex_print_char;
 
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
@@ -306,7 +307,9 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
         }
         Whatsit::Special { payload, .. } => {
             out.push_str("\\special{");
-            out.push_str(&String::from_utf8_lossy(payload));
+            for &byte in payload {
+                append_tex_print_char(char::from(byte), out);
+            }
             out.push_str("}\n");
         }
         Whatsit::Language {

@@ -7,10 +7,31 @@ use tex_state::glue::Order;
 use tex_state::math::{LimitType, MathChar, MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{
     AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
-    UnsetNode, UnsetNodeFields,
+    UnsetNode, UnsetNodeFields, Whatsit,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::OriginId;
+
+#[test]
+fn special_dump_prints_eight_bit_payload_as_tex_character_strings() {
+    let stores = Universe::new();
+    let special = Node::Whatsit(Whatsit::Special {
+        class: "dvi".to_owned(),
+        payload: b"A\x00\x1f\x7f\x80\xff".to_vec(),
+    });
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[special],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "\\special{A^^@^^_^^?^^80^^ff}\n",
+    );
+}
 
 #[test]
 fn ligature_dump_includes_original_character_list() {
