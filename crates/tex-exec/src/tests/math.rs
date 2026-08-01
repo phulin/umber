@@ -1319,7 +1319,7 @@ fn mismatched_right_and_missing_right_use_tex_error_text() {
 
 #[test]
 fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
-    let (mut stores, executor) = run_math_source(
+    let (mut stores, executor) = run_math_source_with_text_math_fonts(
         r"\mathsurround=3pt \binoppenalty=700 \relpenalty=500 $a\mathbin+b\mathrel=c",
     );
     let list = unfinished_math_list(&mut stores, &executor);

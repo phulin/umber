@@ -10544,6 +10544,7 @@ fn canonical_braced_singleton_accent_receives_following_scripts() {
         &mut control,
         br"\font\r=cmr10 \font\s=cmsy10 \font\e=cmex10
            \textfont0=\r \scriptfont0=\r \scriptscriptfont0=\r
+           \textfont1=\r \scriptfont1=\r \scriptscriptfont1=\r
            \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
            \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
            \setbox0=\hbox{${\mathaccent'177 A}_B^C$}",
