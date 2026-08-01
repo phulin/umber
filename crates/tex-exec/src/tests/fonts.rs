@@ -161,7 +161,6 @@ fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
 fn pdf_font_expand_materializes_scaled_line_fonts() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
     let primitive = stores.intern("pdffontexpand");
     stores.set_meaning(
         primitive,
@@ -219,6 +218,162 @@ fn pdf_font_expand_materializes_scaled_line_fonts() {
             auto_expand: true,
         })
     );
+}
+
+#[test]
+fn line_expansion_materializes_discrete_glyphs_kerns_and_reuses_fonts() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    let primitive = stores.intern("pdffontexpand");
+    stores.set_meaning(
+        primitive,
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand),
+    );
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\base=cmr10 \\pdffontexpand\\base 100 50 10 autoexpand \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font expansion configuration executes");
+    let base = font_meaning(&stores, "base");
+    for (code, efcode) in [(b'A', 1000), (b'V', 1000), (b'B', 500), (b'C', 0)] {
+        stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, base, code, efcode);
+    }
+    let kern = match stores.lig_kern_command(
+        base,
+        tex_fonts::LigKernChar::Char(b'A'),
+        tex_fonts::LigKernChar::Char(b'V'),
+    ) {
+        Some(tex_fonts::LigKernCommand::Kern(kern)) => kern,
+        command => panic!("cmr10 A/V font kern, got {command:?}"),
+    };
+    let origin = tex_state::token::OriginId::UNKNOWN;
+    let source = vec![
+        tex_state::node::Node::Char {
+            font: base,
+            ch: 'A',
+            origin,
+        },
+        tex_state::node::Node::Kern {
+            amount: kern,
+            kind: tex_state::node::KernKind::Font,
+        },
+        tex_state::node::Node::Char {
+            font: base,
+            ch: 'V',
+            origin,
+        },
+        tex_state::node::Node::Char {
+            font: base,
+            ch: 'B',
+            origin,
+        },
+        tex_state::node::Node::Lig {
+            font: base,
+            ch: 'C',
+            orig: vec!['C'],
+            origins: vec![origin],
+        },
+    ];
+    let mut first = source.clone();
+    crate::assignments::test_apply_line_expansion(
+        &mut stores,
+        &mut first,
+        Scaled::from_raw(100 * Scaled::UNITY),
+    )
+    .expect("maximum line expansion materializes");
+    let glyph_font = |node: &tex_state::node::Node| match node {
+        tex_state::node::Node::Char { font, .. } | tex_state::node::Node::Lig { font, .. } => *font,
+        node => panic!("expected glyph, got {node:?}"),
+    };
+    let expanded_100 = glyph_font(&first[0]);
+    assert_eq!(glyph_font(&first[2]), expanded_100);
+    assert!(matches!(
+        stores.font(expanded_100).construction(),
+        tex_fonts::FontConstruction::Expanded { ratio: 100, .. }
+    ));
+    assert!(matches!(
+        stores.font(glyph_font(&first[3])).construction(),
+        tex_fonts::FontConstruction::Expanded { ratio: 50, .. }
+    ));
+    assert_eq!(
+        glyph_font(&first[4]),
+        base,
+        "zero efcode retains the base ligature font"
+    );
+    let expected_kern = match stores.lig_kern_command(
+        expanded_100,
+        tex_fonts::LigKernChar::Char(b'A'),
+        tex_fonts::LigKernChar::Char(b'V'),
+    ) {
+        Some(tex_fonts::LigKernCommand::Kern(kern)) => kern,
+        command => panic!("expanded A/V font kern, got {command:?}"),
+    };
+    assert!(
+        matches!(first[1], tex_state::node::Node::Kern { amount, kind: tex_state::node::KernKind::Font } if amount == expected_kern)
+    );
+
+    let mut second = source;
+    crate::assignments::test_apply_line_expansion(
+        &mut stores,
+        &mut second,
+        Scaled::from_raw(100 * Scaled::UNITY),
+    )
+    .expect("repeated line expansion reuses generated fonts");
+    assert_eq!(glyph_font(&second[0]), expanded_100);
+    assert_eq!(glyph_font(&second[3]), glyph_font(&first[3]));
+}
+
+#[test]
+#[ignore = "known gap: paragraph packing does not yet select a nonzero final expansion ratio (umber2-e51h.113.1)"]
+fn expanded_paragraph_shipout_retains_semantic_font_resource() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\font\\base=cmr10 ",
+        "\\pdffontexpand\\base 100 50 10 autoexpand ",
+        "\\efcode\\base`A=1000 \\pdfadjustspacing=1 ",
+        "\\shipout\\vbox{\\hsize=23pt \\parfillskip=0pt \\base \\noindent AAA\\par}\\end",
+    )));
+    let stats = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("expanded paragraph ships");
+    let bytes = stores
+        .world()
+        .read_artifact(stats.shipped_artifacts[0])
+        .expect("read artifact")
+        .expect("artifact stored");
+    let artifact = tex_out::PageArtifact::from_bytes(&bytes).expect("artifact parses");
+    let expanded = artifact
+        .fonts
+        .iter()
+        .find_map(|font| match font.construction {
+            tex_out::FontResourceConstruction::Expanded { ratio, .. } => {
+                Some((font.font_id, ratio))
+            }
+            _ => None,
+        })
+        .expect("paragraph materialization registers an expanded font");
+    assert_ne!(expanded.1, 0);
+    fn contains_font(node: &tex_out::PageNode, font_id: u32) -> bool {
+        match node {
+            tex_out::PageNode::Char {
+                font_id: actual, ..
+            } => *actual == font_id,
+            tex_out::PageNode::HList(list) | tex_out::PageNode::VList(list) => list
+                .children
+                .iter()
+                .any(|child| contains_font(child, font_id)),
+            _ => false,
+        }
+    }
+    assert!(contains_font(&artifact.root, expanded.0));
+    let reparsed = tex_out::PageArtifact::from_bytes(
+        &artifact.to_bytes().expect("normalized artifact serializes"),
+    )
+    .expect("normalized artifact reparses");
+    assert_eq!(reparsed, artifact);
 }
 
 #[test]

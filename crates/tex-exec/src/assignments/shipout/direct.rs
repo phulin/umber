@@ -1088,10 +1088,10 @@ fn math_substitution(overlay: &PageOverlay, list: NodeListId, index: usize) -> O
 fn font_resource_id(stores: &Universe, font: FontId, emission: &mut EmissionState) -> u32 {
     let logical_id = register_font_resource(stores, font, emission);
     match stores.font(font).construction() {
-        tex_fonts::FontConstruction::Loaded => logical_id,
-        tex_fonts::FontConstruction::Copied { source }
-        | tex_fonts::FontConstruction::Letterspaced { source, .. }
-        | tex_fonts::FontConstruction::Expanded { source, .. } => {
+        tex_fonts::FontConstruction::Loaded
+        | tex_fonts::FontConstruction::Copied { .. }
+        | tex_fonts::FontConstruction::Expanded { .. } => logical_id,
+        tex_fonts::FontConstruction::Letterspaced { source, .. } => {
             let source = stores
                 .font_by_source_identity(*source)
                 .expect("validated generated font source is live");
