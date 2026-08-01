@@ -4899,6 +4899,75 @@ fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
 }
 
 #[test]
+fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
+    // TeX82 §§1330--1337 enter the selected profile before main control,
+    // retire live input during `final_cleanup`, close numbered streams, and
+    // only then expose termination.  A successful INITEX `\dump` additionally
+    // defers its announcement until the host confirms publication.
+    for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
+        for dump in [false, true] {
+            let mut stores = Universe::new_with_plain_catcodes();
+            let mut control = if profile == CommandProfile::ETEX26 {
+                canonical_etex_initex(&mut stores)
+            } else {
+                CanonicalMainControl::tex82_initex(&mut stores)
+            };
+            control.begin_job(&mut stores, "lifecycle.tex");
+            register_source(
+                &mut control,
+                if dump {
+                    br"\immediate\openout3=cleanup\dump"
+                } else {
+                    br"\immediate\openout3=cleanup\end"
+                },
+            );
+
+            let mut observations = ObservationRecorder::default();
+            run_to_end_observed(&mut control, &mut stores, &mut observations);
+            let ordered: Vec<_> = observations
+                .0
+                .iter()
+                .filter_map(|observation| match observation {
+                    CommandObservation::Input(input)
+                        if input.transition == InputTransition::Retire =>
+                    {
+                        Some("retire")
+                    }
+                    CommandObservation::Effect(effect) if effect.kind == "close" => Some("close"),
+                    CommandObservation::Effect(effect) if effect.kind == "terminate" => {
+                        Some("terminate")
+                    }
+                    _ => None,
+                })
+                .collect();
+            let close = ordered
+                .iter()
+                .position(|event| *event == "close")
+                .expect("cleanup closes the live numbered stream");
+            assert!(
+                ordered[..close].iter().all(|event| *event == "retire"),
+                "every live input level retires before stream cleanup: {ordered:?}"
+            );
+            assert!(!ordered[..close].is_empty());
+            assert_eq!(&ordered[close..], ["close", "terminate"]);
+
+            let terminal = terminal_text(&stores);
+            assert_eq!(
+                terminal.contains("entering extended mode"),
+                profile == CommandProfile::ETEX26
+            );
+            assert_eq!(control.dumped_format(), dump);
+            assert!(!terminal.contains("Beginning to dump on file"));
+            if dump {
+                let mut receipt = control.format_dump_receipt().expect("dump receipt").clone();
+                crate::confirm_format_dump_publication(&mut stores, &mut receipt, "lifecycle.fmt");
+                assert!(terminal_text(&stores).contains("Beginning to dump on file lifecycle.fmt"));
+            }
+        }
+    }
+}
+
+#[test]
 fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(IntParam::YEAR, 2026);

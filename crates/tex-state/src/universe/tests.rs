@@ -88,6 +88,49 @@ fn pdf_match_captures_are_checkpointed_and_hashed() {
 }
 
 #[test]
+fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
+    // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
+    // input, page-building, diagnostic, or host-effect machinery.  e-TeX's
+    // change at §1307 additionally clears `TeXXeTstate`, while retaining the
+    // neighboring extended profile parameters.
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_count(17, 68);
+    universe.set_int_param(IntParam::SAVING_V_DISCARDS, 2);
+    universe.set_int_param(IntParam::TEX_XET_STATE, 1);
+    let every_job = universe.intern_token_list(&[Token::Char {
+        ch: 'J',
+        cat: Catcode::Other,
+    }]);
+    universe.set_tok_param(TokParam::EVERY_JOB, every_job);
+
+    assert_eq!(universe.take_pending_every_job(), TokenListId::EMPTY);
+    universe.set_current_input_line(1299);
+    universe.set_pack_begin_line(1307);
+    universe.set_output_routine_active(true);
+    universe
+        .world_mut()
+        .write_text(PrintSink::Terminal, "pending-initex-output");
+
+    let bytes = universe.dump_format().expect("semantic format serializes");
+    let mut restored = Universe::from_format(World::memory(), &bytes)
+        .expect("semantic format restores into a fresh job");
+
+    assert_eq!(restored.count(17), 68);
+    assert_eq!(restored.int_param(IntParam::SAVING_V_DISCARDS), 2);
+    assert_eq!(restored.int_param(IntParam::TEX_XET_STATE), 0);
+    let restored_every_job = restored.take_pending_every_job();
+    assert_eq!(
+        restored.tokens(restored_every_job),
+        universe.tokens(every_job)
+    );
+    assert_eq!(restored.take_pending_every_job(), TokenListId::EMPTY);
+    assert_eq!(restored.current_input_line(), 0);
+    assert_eq!(restored.pack_begin_line(), 0);
+    assert!(!restored.output_routine_is_active());
+    assert!(restored.world().effect_records().is_empty());
+}
+
+#[test]
 fn pdftex_utility_mutations_replay_with_identical_hashes() {
     let world = World::memory_with_pdftex_inputs(
         crate::JobClock::DEFAULT,
