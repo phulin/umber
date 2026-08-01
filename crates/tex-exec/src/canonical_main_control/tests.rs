@@ -26,6 +26,26 @@ fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
+fn register_cmr10_as(control: &mut CanonicalMainControl, stores: &mut Universe, name: &str) {
+    const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    stores
+        .world_mut()
+        .set_memory_file(name, CMR10.to_vec())
+        .expect("font fixture installs");
+    let metrics = InputReadState::read_input_file(
+        &mut stores.input_open_context(),
+        std::path::Path::new(name),
+    )
+    .expect("font fixture reads");
+    control.capabilities_mut().register_font(
+        name,
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+}
+
 fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
     loop {
         match control.step(stores).expect("canonical program executes") {
@@ -5569,6 +5589,167 @@ fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
         output.contains("! Font \\nullfont has only 7 fontdimen parameters."),
         "{output}"
     );
+}
+
+#[test]
+fn fontdimen_identifier_and_bound_recovery_matrix_is_exact() {
+    // TeX82 §§577--579/1253: an invalid identifier is backed up and replaced
+    // by nullfont; nonpositive and unavailable parameter numbers all select
+    // the scratch cell, diagnose, consume the dimension, and do not mutate it.
+    for (source, missing_identifier, parameter_errors, trailing_count, final_len) in [
+        (
+            br"\fontdimen1\relax=1pt \count0=11\end".as_slice(),
+            1,
+            0,
+            11,
+            7,
+        ),
+        (
+            br"\fontdimen-1\nullfont=1pt \count0=12\end".as_slice(),
+            0,
+            1,
+            12,
+            7,
+        ),
+        (
+            br"\fontdimen0\nullfont=1pt \count0=13\end".as_slice(),
+            0,
+            1,
+            13,
+            7,
+        ),
+        // §578 permits growth on the newest font, including nullfont before
+        // another font is loaded; 8 is therefore the adjacent valid bound.
+        (
+            br"\fontdimen8\nullfont=1pt \count0=14\end".as_slice(),
+            0,
+            0,
+            14,
+            8,
+        ),
+    ] {
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
+        let original: Vec<_> = (1..=7)
+            .map(|number| stores.font_parameter(tex_state::font::NULL_FONT, number))
+            .collect();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(stores.count(0), trailing_count, "{source:?}");
+        assert_eq!(
+            stores.font_parameter_count(tex_state::font::NULL_FONT),
+            final_len
+        );
+        assert_eq!(
+            (1..=7)
+                .map(|number| stores.font_parameter(tex_state::font::NULL_FONT, number))
+                .collect::<Vec<_>>(),
+            original,
+            "{source:?}"
+        );
+        if final_len == 8 {
+            assert_eq!(
+                stores.font_parameter(tex_state::font::NULL_FONT, 8),
+                Scaled::from_raw(Scaled::UNITY)
+            );
+        }
+        let output = terminal_text(&stores);
+        assert_eq!(
+            output.matches("! Missing font identifier.").count(),
+            missing_identifier,
+            "{output}"
+        );
+        assert_eq!(
+            output
+                .matches("! Font \\nullfont has only 7 fontdimen parameters.")
+                .count(),
+            parameter_errors,
+            "{output}"
+        );
+    }
+}
+
+#[test]
+fn font_definition_size_boundaries_use_exact_replacements() {
+    // TeX82 §§1258--1259 accept scaled 1..32768 and at sizes whose scaled
+    // value is 1..(2048pt-1sp); each adjacent invalid value becomes 1000 or
+    // 10pt respectively before §1257 interns the font.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\slo=cmr10 scaled 1 \font\shi=cmr10 scaled 32768 \font\szero=cmr10 scaled 0 \font\sover=cmr10 scaled 32769 \font\alo=cmr10 at 0.00002pt \font\ahi=cmr10 at 2047.99998pt \font\azero=cmr10 at 0pt \font\aover=cmr10 at 2048pt \end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let size = |stores: &Universe, name: &str| match stores
+        .meaning(stores.symbol(name).expect("font identifier was scanned"))
+    {
+        Meaning::Font(font) => stores.font(font).size().raw(),
+        meaning => panic!("{name} has {meaning:?}"),
+    };
+    assert_eq!(size(&stores, "slo"), 655);
+    assert_eq!(size(&stores, "shi"), 21_474_836);
+    assert_eq!(size(&stores, "szero"), 655_360);
+    assert_eq!(size(&stores, "sover"), 655_360);
+    assert_eq!(size(&stores, "alo"), 1);
+    assert_eq!(size(&stores, "ahi"), 134_217_727);
+    assert_eq!(size(&stores, "azero"), 655_360);
+    assert_eq!(size(&stores, "aover"), 655_360);
+    let output = terminal_text(&stores);
+    assert_eq!(
+        output
+            .matches("! Illegal magnification has been changed to 1000 (")
+            .count(),
+        2,
+        "{output}"
+    );
+    assert_eq!(
+        output.matches("! Improper `at' size (").count(),
+        2,
+        "{output}"
+    );
+}
+
+#[test]
+fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
+    // TeX82 §1257 compares the case-sensitive name and size when reusing a
+    // font, then assigns font_id_text(f):=u even on the reuse path.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_cmr10_as(&mut control, &mut stores, "CMR10.tfm");
+    register_source(
+        &mut control,
+        br"\font\first=cmr10 \font\upper=CMR10 \font\newest=cmr10 \end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let font = |stores: &Universe, name: &str| match stores
+        .meaning(stores.symbol(name).expect("font identifier was scanned"))
+    {
+        Meaning::Font(font) => font,
+        meaning => panic!("{name} has {meaning:?}"),
+    };
+    let first = font(&stores, "first");
+    let upper = font(&stores, "upper");
+    let newest = font(&stores, "newest");
+    assert_eq!(
+        first, newest,
+        "same case-sensitive name and size reuses the font"
+    );
+    assert_ne!(
+        first, upper,
+        "case-distinct names are distinct font identities"
+    );
+    assert_eq!(
+        stores.font_identifier_symbol(first),
+        stores.symbol("newest"),
+        "the reused font retains the newest identifier"
+    );
+    assert_eq!(stores.font_identifier_symbol(upper), stores.symbol("upper"));
 }
 
 #[test]
