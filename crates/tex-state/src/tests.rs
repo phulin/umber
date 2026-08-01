@@ -102,6 +102,56 @@ fn hyphenation_pattern_lifecycle_rolls_back_and_formats_closed() {
 }
 
 #[test]
+fn packed_hyphenation_data_survives_two_format_loads_identically() {
+    // TeX82 §§1335--1341 persist the initialized trie and its operation
+    // table. Exercise overlapping operations, language separation, and an
+    // exception without duplicating e-TeX saved-code coverage from e51h.83.
+    let mut universe = Universe::new();
+    for (language, letters, values) in [
+        (0, "ab", vec![0, 1, 0]),
+        (0, "abc", vec![0, 0, 3, 0]),
+        (7, "ab", vec![0, 0, 5]),
+    ] {
+        universe
+            .add_hyphenation_pattern_for_language(
+                language,
+                PatternSpec {
+                    letters: letters.chars().collect(),
+                    values,
+                },
+            )
+            .expect("pattern fits the pdfTeX trie");
+    }
+    universe.add_hyphenation_exception_for_language(
+        7,
+        ExceptionSpec {
+            word: "abcd".into(),
+            positions: vec![2],
+        },
+    );
+
+    let image = universe
+        .dump_format()
+        .expect("dump packed hyphenation data");
+    let once = Universe::from_format(World::memory(), &image).expect("first format load");
+    assert_eq!(once.hyphen_positions_for_language(0, "abcd", 0, 0), [1, 2]);
+    assert_eq!(once.hyphen_positions_for_language(7, "ab", 0, 0), [2]);
+    assert_eq!(once.hyphen_positions_for_language(7, "abcd", 0, 0), [2]);
+    assert_eq!(once.hyphen_positions_for_language(8, "abcd", 0, 0), []);
+
+    let once_image = once.dump_format().expect("redump first loaded format");
+    assert_eq!(once_image, image);
+    let twice = Universe::from_format(World::memory(), &once_image).expect("second format load");
+    assert_eq!(twice.hyphen_positions_for_language(0, "abcd", 0, 0), [1, 2]);
+    assert_eq!(twice.hyphen_positions_for_language(7, "ab", 0, 0), [2]);
+    assert_eq!(twice.hyphen_positions_for_language(7, "abcd", 0, 0), [2]);
+    assert_eq!(
+        twice.dump_format().expect("redump second loaded format"),
+        image
+    );
+}
+
+#[test]
 fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
     let outer = [ParagraphShapeLine {
         indent: Scaled::from_raw(3),

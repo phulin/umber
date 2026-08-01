@@ -76,10 +76,12 @@ fn tex_etex_pdftex_fresh_and_twice_loaded_format_matrix() {
             word: "deterministic".to_owned(),
             positions: vec![2, 5],
         });
-        fresh.add_hyphenation_pattern(PatternSpec {
-            letters: "matrix".chars().collect(),
-            values: vec![0, 0, 1, 0, 0, 0, 0],
-        });
+        fresh
+            .add_hyphenation_pattern(PatternSpec {
+                letters: "matrix".chars().collect(),
+                values: vec![0, 0, 1, 0, 0, 0, 0],
+            })
+            .expect("profile format pattern fits the pdfTeX trie");
         let font_symbol = fresh.intern("matrixfont");
         let font = fresh.intern_font_with_identifier(
             tex_fonts::LoadedFont::new(
