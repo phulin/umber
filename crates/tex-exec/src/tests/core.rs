@@ -3376,6 +3376,70 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 }
 
 #[test]
+fn paragraph_start_resets_prevgraf_and_inserts_parskip_only_at_a_nonempty_boundary() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\parskip=7pt \\everypar{\\global\\count0=\\prevgraf}",
+        "\\setbox0=\\vbox{\\prevgraf=9 \\indent\\par \\prevgraf=8 \\indent\\par}"
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paragraph boundary program executes");
+
+    assert_eq!(
+        stores.count(0),
+        0,
+        "every fresh paragraph starts at line zero"
+    );
+    let root = stores.box_reg(0).expect("box0");
+    let [Node::VList(vbox)] = stores.nodes(root).testing_decoded() else {
+        panic!("box0 should contain a vbox");
+    };
+    let children = stores.nodes(vbox.children).testing_decoded();
+    let paragraph_lines: Vec<_> = children
+        .iter()
+        .filter_map(|node| match node {
+            Node::HList(line) => Some(line),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(paragraph_lines.len(), 2);
+    assert!(paragraph_lines.iter().all(|line| matches!(
+        stores.nodes(line.children).testing_decoded().first(),
+        Some(Node::HList(indent))
+            if indent.width == stores.dimen_param(DimenParam::PAR_INDENT)
+                && indent.height.raw() == 0
+                && indent.depth.raw() == 0
+                && stores.nodes(indent.children).is_empty()
+    )));
+    let parskip_positions: Vec<_> = children
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match node {
+            Node::Glue {
+                spec,
+                kind: tex_state::node::GlueKind::Normal,
+                ..
+            } if stores.glue(*spec).width.raw() == 7 * Scaled::UNITY => Some(index),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parskip_positions.len(), 1);
+    let first_line = children
+        .iter()
+        .position(|node| matches!(node, Node::HList(_)))
+        .expect("first paragraph line");
+    let second_line = children
+        .iter()
+        .rposition(|node| matches!(node, Node::HList(_)))
+        .expect("second paragraph line");
+    assert!(first_line < parskip_positions[0] && parskip_positions[0] < second_line);
+}
+
+#[test]
 fn paragraph_indent_is_a_null_box_without_a_pack_transition() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_dimen_param(
@@ -4256,6 +4320,91 @@ fn insert_node_captures_split_parameters_and_natural_size() {
     assert_eq!(insert.3.raw(), 3 * tex_state::scaled::Scaled::UNITY);
     assert_eq!(insert.4, 77);
     assert_eq!(stores.nodes(insert.5).testing_decoded().len(), 2);
+}
+
+#[test]
+fn insert_node_snapshots_body_local_split_parameters_before_scope_restoration() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\splittopskip=1pt \\splitmaxdepth=2pt \\floatingpenalty=3 ",
+        "\\insert7{\\splittopskip=9pt \\splitmaxdepth=4pt ",
+        "\\floatingpenalty=77 \\hrule height5pt}"
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("locally parameterized insertion executes");
+
+    let (split_top_skip, split_max_depth, floating_penalty) = stores
+        .current_page_nodes()
+        .iter()
+        .find_map(|node| match node {
+            Node::Ins {
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                ..
+            } => Some((*split_top_skip, *split_max_depth, *floating_penalty)),
+            _ => None,
+        })
+        .expect("insert node");
+    assert_eq!(stores.glue(split_top_skip).width.raw(), 9 * Scaled::UNITY);
+    assert_eq!(split_max_depth.raw(), 4 * Scaled::UNITY);
+    assert_eq!(floating_penalty, 77);
+    assert_eq!(
+        stores
+            .glue(stores.glue_param(GlueParam::SPLIT_TOP_SKIP))
+            .width
+            .raw(),
+        Scaled::UNITY
+    );
+    assert_eq!(
+        stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH).raw(),
+        2 * Scaled::UNITY
+    );
+    assert_eq!(stores.int_param(IntParam::FLOATING_PENALTY), 3);
+}
+
+#[test]
+fn vertical_list_preserves_structured_mark_penalty_and_material_order() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        "\\setbox0=\\vbox{\\mark{A}\\penalty11\\kern2pt",
+        "\\hrule height3pt\\insert7{\\penalty22}\\mark{B}\\penalty33}"
+    )));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("ordered vertical material executes");
+
+    let root = stores.box_reg(0).expect("box0");
+    let [Node::VList(vbox)] = stores.nodes(root).testing_decoded() else {
+        panic!("box0 should contain a vbox");
+    };
+    let children = stores.nodes(vbox.children).testing_decoded();
+    assert!(matches!(
+        children,
+        [
+            Node::Mark { class: 0, .. },
+            Node::Penalty(11),
+            Node::Kern { amount, .. },
+            Node::Rule { height: Some(height), .. },
+            Node::Ins { class: 7, .. },
+            Node::Mark { class: 0, .. },
+            Node::Penalty(33),
+        ] if amount.raw() == 2 * Scaled::UNITY && height.raw() == 3 * Scaled::UNITY
+    ));
+    let [Node::Ins { content, .. }] = &children[4..5] else {
+        unreachable!("fifth node is the insertion")
+    };
+    assert!(matches!(
+        stores.nodes(*content).testing_decoded(),
+        [Node::Penalty(22)]
+    ));
 }
 
 #[test]
