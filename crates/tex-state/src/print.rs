@@ -836,12 +836,15 @@ impl<'a> ErrorReport<'a> {
     }
 
     /// tex.web §85's `<Print the menu of available options>`. Umber offers
-    /// neither `E` nor token deletion, so those two lines never apply.
+    /// neither `E` nor token deletion yet, but the menu still describes the
+    /// canonical `I` and `1` through `9` commands. Unsupported answers take
+    /// §84's `othercases do_nothing` path and redisplay this menu.
     fn show_menu(&mut self) {
         self.printer
             .print("Type <return> to proceed, S to scroll future error messages,")
             .print_nl("R to run without stopping, Q to run quietly,")
-            .print_nl("I to insert something, ")
+            .print_nl("I to insert something,")
+            .print_nl("1 or ... or 9 to ignore the next 1 to 9 tokens of input,")
             .print_nl("H for help, X to quit.");
     }
 }

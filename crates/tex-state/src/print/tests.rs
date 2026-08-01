@@ -258,6 +258,56 @@ fn error_stop_mode_prompts_and_honors_the_scroll_answer() {
     assert_eq!(universe.interaction_mode(), InteractionMode::Scroll);
 }
 
+#[test]
+fn error_help_preserves_reverse_order_and_menu_text() {
+    const MENU: &str = "Type <return> to proceed, S to scroll future error messages,\n\
+R to run without stopping, Q to run quietly,\n\
+I to insert something,\n\
+1 or ... or 9 to ignore the next 1 to 9 tokens of input,\n\
+H for help, X to quit.";
+    assert_eq!(
+        MENU.lines().next().expect("menu has a first line").len(),
+        60
+    );
+
+    let mut universe = Universe::new();
+    for answer in ["h", "z", "h", ""] {
+        universe
+            .world_mut()
+            .push_memory_terminal_line(answer)
+            .expect("memory terminal accepts an ErrorStop answer");
+    }
+    let mut report = universe.print_err("Controlled error");
+    report.help(&["first", "second", "third"]);
+    assert_eq!(report.error(), ErrorOutcome::Continue);
+
+    assert_eq!(
+        sink_text(&universe, PrintSink::Terminal),
+        concat!(
+            "! Controlled error.\n? first\nsecond\nthird\n\n? ",
+            "Type <return> to proceed, S to scroll future error messages,\n",
+            "R to run without stopping, Q to run quietly,\n",
+            "I to insert something,\n",
+            "1 or ... or 9 to ignore the next 1 to 9 tokens of input,\n",
+            "H for help, X to quit.\n? ",
+            "Sorry, I already gave what help I could...\n",
+            "Maybe you should try asking a human?\n",
+            "An error might have occurred before I noticed any problems.\n",
+            "``If all else fails, read the instructions.''\n\n? "
+        )
+    );
+    let transcript = sink_text(&universe, PrintSink::Log);
+    assert_eq!(transcript.matches("first\nsecond\nthird\n").count(), 1);
+    assert!(transcript.contains(MENU), "{transcript:?}");
+    assert!(transcript.contains("? h\nfirst"), "{transcript:?}");
+    assert!(transcript.contains("? z\nType <return>"), "{transcript:?}");
+    assert!(
+        transcript.contains("? h\nSorry, I already gave"),
+        "{transcript:?}"
+    );
+    assert!(transcript.ends_with("? \n"), "{transcript:?}");
+}
+
 /// tex.web §84's `X`: `interaction:=scroll_mode; jump_out`. Unlike §93's
 /// `succumb` it prints nothing and leaves `history` where it was -- it is a
 /// requested exit, not a diagnosis -- but it ends the job all the same, which
