@@ -22,6 +22,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
+- `native-test-assets.py`: verifies and copies the pinned gitignored native
+  test asset allowlist from the primary checkout into a linked worktree.
+- `test-native-test-assets.py`: hermetic linked-worktree coverage for asset
+  identity, isolation, idempotence, and unsafe-input rejection.
 - `build-cache-policy.py`: report-only parallel-build capacity preflight using
   the measured per-worktree budget; its explicit `--reclaim` mode removes only
   the current checkout's validated incremental and clippy cache paths and

@@ -172,7 +172,11 @@ impl ConformanceGate {
             report.push_str(entry);
             report.push('\n');
         }
-        report.push_str("\nmaterialize them from the repository root with:\n");
+        report.push_str(
+            "\nFor a linked worktree, copy the primary checkout's pinned assets with:\n  \
+             python3 scripts/native-test-assets.py .\n\nIf the primary checkout is also \
+             missing them, materialize them there with:\n",
+        );
         for command in self.materialize {
             report.push_str("  ");
             report.push_str(command);
@@ -228,17 +232,6 @@ pub fn with_gate(name: &str, body: impl FnOnce(&GateAssets)) {
             )
         });
     let repo_root = repo_root();
-    // A linked worktree is born without the gitignored oracles and inputs, so
-    // provision them from the owning checkout before asking whether they are
-    // present. This is what lets `cargo test` be the routine gate with no
-    // setup step in front of it; it is idempotent and copies nothing once the
-    // assets are in place. A genuine absence still reaches the report below.
-    if let Err(error) = test_support::native_assets::provision(&repo_root) {
-        note(&format!(
-            "\nconformance gate `{}`: could not provision pinned assets:\n{error:#}\n",
-            gate.name
-        ));
-    }
     let missing = gate.missing_assets(&repo_root);
     if !missing.is_empty() {
         let report = gate.absence_report(&missing);
@@ -334,7 +327,7 @@ fn conformance_gate_registry_is_reachable() {
 }
 
 #[test]
-fn conformance_gate_assets_are_provisionable() {
+fn conformance_gate_assets_are_in_worktree_allowlist() {
     let provisioned: BTreeSet<&str> = NATIVE_ASSET_LOCK
         .lines()
         .map(str::trim)

@@ -846,7 +846,6 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
 #[allow(clippy::disallowed_methods)] // Verifies repository-pinned fixture bytes.
 fn plain_recipe_has_exact_pinned_ordered_closure_and_stable_identity() {
     let repo_root = test_support::repository_root();
-    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
     let first = plain_format_recipe(&repo_root).expect("complete Plain recipe");
     let second = plain_format_recipe(&repo_root).expect("repeat complete Plain recipe");
     assert_eq!(first.engine, EngineMode::Tex82);
@@ -971,7 +970,6 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
         );
     }
     let repo_root = test_support::repository_root();
-    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
     for route in [
         "e2e_conformance_story",
         "e2e_conformance_gentle",
@@ -1084,7 +1082,6 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
 #[test]
 fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
     let repo_root = test_support::repository_root();
-    test_support::native_assets::provision(&repo_root).expect("provision allowlisted Plain assets");
     let recipe = plain_format_recipe(&repo_root).expect("complete Plain recipe");
     let cache = tempfile::tempdir().expect("isolated persistent Plain cache");
     let launcher = super::umber_format_worker_launcher();

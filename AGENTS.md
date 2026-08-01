@@ -105,13 +105,13 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   if that list drifts from the workspace again, so the coverage is enforced by
   the suite rather than by remembering which command to type. `umber-wasm` is
   the sole omission and declares its tier in that test.
-- **Conformance assets provision themselves, including in a fresh worktree.**
-  The byte-exact DVI oracles, TRIP inputs, and shared font/hyphenation inputs
-  are gitignored for licensing reasons, so a new worktree starts without them.
-  `test_support::native_assets::provision` copies them from the owning checkout
-  on first use: it reads only the allowlist in
-  `tests/native-test-assets.lock`, verifies every SHA-256 on both sides, and
-  leaves the copies ignored. Do not manually link or broadly copy
+- **Provision conformance assets when creating or allocating a worktree.** The
+  byte-exact DVI oracles, TRIP inputs, and shared font/hyphenation inputs are
+  gitignored for licensing reasons. Before running tests in a linked worktree,
+  run `python3 scripts/native-test-assets.py <worktree>`. It copies only the
+  `tests/native-test-assets.lock` allowlist from the primary checkout, verifies
+  every SHA-256 on both sides, and leaves the copies ignored. Rust tests never
+  provision their own inputs. Do not manually link or broadly copy
   `third_party/`.
 
   If the **primary checkout** lacks an asset there is nothing to copy from, and
@@ -122,7 +122,8 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   scripts/setup-conformance-tests.sh
   ```
 
-  That is the only setup a new clone needs. An environment that genuinely
+  That is the only setup a new clone needs; linked worktrees still run the
+  provisioner above. An environment that genuinely
   cannot host the oracles opts out explicitly with
   `UMBER_CONFORMANCE_ORACLES=optional`, which downgrades the byte-exact gates
   to a loud notice rather than letting an absent oracle read as a pass.

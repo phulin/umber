@@ -4,7 +4,6 @@ mod compile_fail;
 mod corpus;
 pub mod dvi;
 pub mod git_fixture;
-pub mod native_assets;
 pub mod pdf;
 pub mod pdf_fixture;
 pub mod pdf_probe;

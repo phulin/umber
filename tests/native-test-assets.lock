@@ -1,4 +1,4 @@
-# SHA-256 allowlist for gitignored files required by scripts/run-native-tests.py.
+# SHA-256 allowlist copied into linked worktrees by scripts/native-test-assets.py.
 # Paths are repository-relative. Update only through audited fixture regeneration.
 85cc5b607f1d355e0c2d20158646ce976384dbf823c91a2895b4134124b7d89c tests/corpus/e2e/story.expected.dvi
 04f86e97e8264f9b8ce35dc1e9df27f2b075ca85365af71acc5fe1478399866b tests/corpus/e2e/gentle.expected.dvi

@@ -25,12 +25,13 @@ warn_missing_e2e_oracles() {
 
   printf 'check-and-test: warning: end-to-end DVI conformance oracles are absent:' >&2
   printf ' %s' "${missing[@]}" >&2
-  printf '\ncheck-and-test: warning: those gates will FAIL, not skip; run scripts/setup-conformance-tests.sh\n' >&2
+  printf '\ncheck-and-test: warning: those gates will FAIL, not skip; in a linked worktree run python3 scripts/native-test-assets.py .; if the primary is also missing them, run scripts/setup-conformance-tests.sh there\n' >&2
 }
 
 warn_missing_e2e_oracles
 
 scripts/test-publish-texlive-r2.sh
+python3 scripts/test-native-test-assets.py
 
 # `cargo test --tests` is the whole routine suite: `default-members` lists
 # every host-testable member, and `default_members_cover_every_host_testable_crate`

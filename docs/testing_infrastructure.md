@@ -999,21 +999,21 @@ gate and warns that absent ones will cause failures, not skips. Its list is read
 from `.gitignore`, the same single source the registry meta-test binds to, so
 the preflight cannot go stale when a gate is added.
 
-The contract is usable from an isolated linked worktree without a setup step.
-`test_support::native_assets::provision` resolves the primary checkout from
-Git's shared worktree metadata and materializes missing files from the explicit
-`tests/native-test-assets.lock` allowlist, on first use, from inside the suite.
-The allowlist contains only the four oracles and their declared corpus,
-hyphenation, TFM, and TRIP/e-TRIP file dependencies; it cannot select a
-directory. Every source and destination is verified against its committed
-SHA-256, and copies are used rather than links so a worktree cannot mutate the
-owning checkout's evidence.
+An isolated linked worktree must be provisioned during slot setup with
+`python3 scripts/native-test-assets.py <worktree>`. The script resolves the
+primary checkout from Git's shared worktree metadata and copies missing files
+from the explicit `tests/native-test-assets.lock` allowlist. The allowlist
+contains only the four oracles and their declared corpus, hyphenation, TFM, and
+TRIP/e-TRIP file dependencies; it cannot select a directory. Rust tests only
+consume the resulting files and never mutate the checkout to set themselves
+up.
 
-`crates/umber/tests/it/e2e_conformance/assets.rs`'s `with_gate` is the single
-call site, which is the same choke point that already makes an absent oracle
-impossible to confuse with a passing gate. When the primary checkout itself
-lacks an asset there is nothing to copy from, and the failure names the missing
-paths and points at `scripts/setup-conformance-tests.sh`.
+`crates/umber/tests/it/e2e_conformance/assets.rs`'s `with_gate` remains the
+single gate choke point, so an absent oracle cannot be confused with a passing
+gate. Its failure points linked worktrees at `native-test-assets.py`. When the
+primary checkout itself lacks an asset there is nothing to copy from, and the
+provisioner names the missing paths and points at
+`scripts/setup-conformance-tests.sh`.
 
 Every source and destination must match its committed SHA-256. Provisioning
 uses an independently verified temporary copy followed by atomic rename, not a

@@ -46,9 +46,11 @@ generated, gitignored `tests/corpus/e2e/*.expected.dvi` oracles. Those gates
 compare bytes against a real reference engine and are deliberately allowed to
 fail rather than skip when their oracle is absent, because a skipped byte-exact
 parity gate that reports success is worse than a red one. Materialize them once
-with `scripts/setup-conformance-tests.sh`; an environment that genuinely cannot
-host them opts out explicitly with `UMBER_CONFORMANCE_ORACLES=optional`. See the
-End-to-End Conformance Gate Contract in
+in the primary checkout with `scripts/setup-conformance-tests.sh`, then run
+`python3 scripts/native-test-assets.py <worktree>` while allocating each linked
+worktree. Tests consume those assets but never provision them. An environment
+that genuinely cannot host them opts out explicitly with
+`UMBER_CONFORMANCE_ORACLES=optional`. See the End-to-End Conformance Gate Contract in
 [Testing Infrastructure](testing_infrastructure.md).
 Move expensive scaling and live-reference checks into explicit performance or
 regeneration tiers instead of weakening coverage in the default tier.

@@ -1,6 +1,6 @@
 ---
 name: parallel
-description: Coordinate parallel Umber agents in persistent Git worktree slots. Use for slot allocation, cache reuse, linear integration, and rebase conflicts.
+description: Coordinate parallel Umber agents in persistent Git worktree slots. Use when explicitly instructed to use multiple subagents in parallel.
 ---
 
 # Parallel
@@ -39,18 +39,11 @@ every issue a fresh branch at an explicit base commit.
    ```bash
    git -C {REPO_ROOT} worktree add {SLOT_PATH} --detach {BASE_REF}
    git -C {SLOT_PATH} switch -c {ISSUE_BRANCH} {BASE_REF}
+   python3 {REPO_ROOT}/scripts/native-test-assets.py {SLOT_PATH}
    ```
 
 5. Record the slot, branch, and base on the Beads issue. If no slot is free,
    wait or serialize instead of growing the pool without a capacity check.
-
-Prewarm only new or reclaimed slots, sequentially, with the slot as the working
-directory:
-
-```bash
-cargo test -q --tests --no-run
-scripts/check.sh clippy
-```
 
 Append this to each dispatched agent's prompt:
 
@@ -71,10 +64,11 @@ If a gitignored asset is missing, check the primary checkout and its owning
 workflow. Do not improvise symlinks or regenerate shared evidence.
 ```
 
-Routine conformance assets provision themselves through
-`test_support::native_assets::provision`; never symlink or broadly copy
-`third_party/`. Run `scripts/setup-conformance-tests.sh` only in the primary
-checkout when its source assets are absent.
+Run `native-test-assets.py` whenever a slot is allocated. It verifies existing
+files and copies only the pinned allowlist from the primary checkout. Rust tests
+never provision their own inputs. Never symlink or broadly copy `third_party/`.
+Run `scripts/setup-conformance-tests.sh` only in the primary checkout when its
+source assets are absent.
 
 For canonical-command divergence work, follow
 `docs/canonical_divergence_workflow.md` for extra asset, tracer, stream, and
@@ -117,7 +111,3 @@ again. Do not force, merge, or use a routine cherry-pick.
   issue and dispatch a resolver into that slot with both sides' issue context.
   Require it to preserve both behaviors, complete the rebase, run focused tests
   and `scripts/check-and-test.sh`, and re-close the issue.
-- _Disk pressure:_ reclaim only the least-recently-used idle slot by running
-  `scripts/build-cache-policy.py --reclaim --jobs N` from that slot. Remove a
-  physical worktree only when deliberately shrinking the pool and only after
-  proving it clean, detached, idle, and process-free.

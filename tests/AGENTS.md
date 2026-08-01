@@ -4,8 +4,9 @@
 fast differential tests.
 
 `tests/native-test-assets.lock` is the explicit SHA-256 allowlist of
-gitignored inputs that the mandatory native suite may copy from the primary
-checkout into an isolated Git worktree. It contains files only, never
+gitignored inputs that `scripts/native-test-assets.py` may copy from the
+primary checkout into an isolated Git worktree during slot setup. Rust tests
+only consume these assets. The allowlist contains files only, never
 directories; update it when audited conformance regeneration intentionally
 changes an input or oracle.
 
