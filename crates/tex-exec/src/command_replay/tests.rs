@@ -11995,15 +11995,151 @@ fn canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix() {
 
 #[test]
 fn canonical_box_request_lifecycle_mode_and_recovery_matrix() {
+    // TeX82 §§1071--1078: exercise every `box_end` disposition through the
+    // canonical command stream. The source box is copied into an ordinary
+    // list, shifted, stored, shipped, and consumed as a leader payload.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
-        br"\global\setbox0=\hbox to10pt{}\global\setbox1=\vtop spread2pt{}\copy0\end",
+        br"\global\setbox0=\hbox to10pt{}
+           \global\setbox1=\hbox{\copy0\raise2pt\copy0}
+           \global\setbox2=\hbox{\leaders\copy0\hskip20pt}
+           \shipout\copy0\end",
     );
     run_to_end(&mut control, &mut universe);
-    assert!(universe.box_reg(0).is_some(), "copy preserves source");
-    assert!(universe.box_reg(1).is_some(), "vtop construction completes");
+    assert!(
+        universe.box_reg(0).is_some(),
+        "copy contexts preserve source"
+    );
+    let appended = box_children(&universe, 1);
+    assert!(matches!(
+        appended.as_slice(),
+        [Node::HList(_), Node::HList(_)]
+    ));
+    assert!(
+        matches!(appended[1], Node::HList(boxed) if boxed.shift == Scaled::from_raw(-2 * Scaled::UNITY))
+    );
+    assert!(matches!(
+        box_children(&universe, 2).as_slice(),
+        [Node::Glue {
+            kind: GlueKind::Leaders,
+            leader: Some(_),
+            ..
+        }]
+    ));
+    assert_eq!(
+        control.take_prepared_dvi_pages().len(),
+        1,
+        "shipout context commits exactly one completed box"
+    );
+
+    // TeX82 §§1078--1084: fresh boxes, register boxes, and rules are valid
+    // leader payload families, each retained on the resulting glue node.
+    let mut leaders = Universe::new_with_plain_catcodes();
+    let mut leader_control = CanonicalMainControl::tex82_initex(&mut leaders);
+    register_source(
+        &mut leader_control,
+        br"\setbox11=\vbox{\hrule height4pt}
+           \setbox0=\hbox{
+             \leaders\hbox{}\hskip1pt
+             \leaders\copy11\hskip1pt
+             \leaders\hrule\hskip1pt}
+           \end",
+    );
+    run_to_end(&mut leader_control, &mut leaders);
+    let children = box_children(&leaders, 0);
+    assert_eq!(
+        children
+            .iter()
+            .filter(|node| matches!(
+                node,
+                Node::Glue {
+                    leader: Some(_),
+                    ..
+                }
+            ))
+            .count(),
+        3,
+        "fresh/register/rule payloads become leaders"
+    );
+
+    // TeX82 §§1085--1087: package vtops through their real group-close path.
+    // A first rule donates its height; glue and an empty list donate zero,
+    // while total height+depth remains the natural packed extent.
+    let mut vtops = Universe::new_with_plain_catcodes();
+    let mut vtop_control = CanonicalMainControl::tex82_initex(&mut vtops);
+    register_source(
+        &mut vtop_control,
+        br"\setbox0=\vtop{\hrule height4pt depth1pt\kern2pt}
+           \setbox1=\vtop{\vskip3pt\hrule height4pt depth1pt}
+           \setbox2=\vtop{}\end",
+    );
+    run_to_end(&mut vtop_control, &mut vtops);
+    let geometry = |register| {
+        let node = vtops
+            .box_reg(register)
+            .and_then(|id| vtops.nodes(id).first().map(|node| node.to_owned()))
+            .expect("vtop register stores");
+        let Node::VList(boxed) = node else {
+            panic!("vtop register contains a vertical box")
+        };
+        (boxed.height.raw(), boxed.depth.raw())
+    };
+    assert_eq!(geometry(0), (4 * Scaled::UNITY, 3 * Scaled::UNITY));
+    assert_eq!(geometry(1), (0, 8 * Scaled::UNITY));
+    assert_eq!(geometry(2), (0, 0));
+}
+
+#[test]
+#[ignore = "umber2-e51h.66.7: canonical leader recovery loses the enclosing setbox close"]
+fn canonical_leader_invalid_payload_replays_after_recovery() {
+    // TeX82 §1084 requires `back_error`: the rejected command remains the
+    // next main-control command and the enclosing box completes normally.
+    let mut recovery = Universe::new_with_plain_catcodes();
+    let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovery);
+    register_source(
+        &mut recovery_control,
+        br"\setbox0=\hbox{\leaders\kern2pt}\end",
+    );
+    run_to_end(&mut recovery_control, &mut recovery);
+    assert!(
+        matches!(
+            box_children(&recovery, 0).as_slice(),
+            [Node::Kern { amount, .. }] if *amount == Scaled::from_raw(2 * Scaled::UNITY)
+        ),
+        "invalid payload is backed up and replayed"
+    );
+    let diagnostics = terminal_text(&recovery);
+    assert!(
+        diagnostics.contains("A <box> was supposed to be here"),
+        "missing leader payload diagnosis is preserved: {diagnostics}"
+    );
+}
+
+#[test]
+#[ignore = "umber2-e51h.66.7: canonical leader recovery loses the enclosing setbox close"]
+fn canonical_leader_invalid_glue_replays_after_recovery() {
+    // TeX82 §1078 likewise backs up a non-glue command after a valid payload.
+    let mut recovery = Universe::new_with_plain_catcodes();
+    let mut recovery_control = CanonicalMainControl::tex82_initex(&mut recovery);
+    register_source(
+        &mut recovery_control,
+        br"\setbox1=\hbox{\leaders\hbox{}\kern3pt}\end",
+    );
+    run_to_end(&mut recovery_control, &mut recovery);
+    assert!(
+        matches!(
+            box_children(&recovery, 1).as_slice(),
+            [Node::Kern { amount, .. }] if *amount == Scaled::from_raw(3 * Scaled::UNITY)
+        ),
+        "invalid leader glue is backed up and replayed"
+    );
+    let diagnostics = terminal_text(&recovery);
+    assert!(
+        diagnostics.contains("Leaders not followed by proper glue"),
+        "invalid leader glue diagnosis is preserved: {diagnostics}"
+    );
 }
 
 #[test]
