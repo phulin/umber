@@ -352,6 +352,10 @@ fn append_whatsit_effect(
         Whatsit::Special { class, payload } => {
             effects.push(PageEffect::Special { class, payload });
         }
+        Whatsit::DeferredSpecial { class, tokens } => {
+            let payload = expand_special_tokens(stores, expansion.expansion, tokens)?;
+            effects.push(PageEffect::Special { class, payload });
+        }
         Whatsit::PdfReferenceObject { object } => {
             stores
                 .reference_pdf_raw_object(object)
@@ -862,6 +866,38 @@ fn expand_write_tokens(
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
     Ok(text)
+}
+
+fn expand_special_tokens(
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    tokens: TokenListId,
+) -> Result<Vec<u8>, ExecError> {
+    let mut input = InputStack::empty();
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let mut text = String::new();
+    expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
+        while let Some(token) = get_x_or_protected_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(stores),
+            expansion,
+        )?
+        .map(tex_expand::semantic_token)
+        {
+            tex_expand::append_token_string_text(stores, token, &mut text);
+        }
+        Ok(())
+    })?;
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Ok(byte) = u8::try_from(ch as u32) {
+            bytes.push(byte);
+        } else {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    }
+    Ok(bytes)
 }
 
 /// TeX82 §62's `print_nl` test, applied to a `\write`'s own sink.

@@ -187,15 +187,29 @@ pub(in crate::assignments) fn execute_special(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
-    let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
-    let payload = tex_byte_text(&tokens_text(stores, &tokens));
+    let deferred = scan_optional_keyword_x(input, stores, execution, "shipout")?;
+    let whatsit = if deferred {
+        let scanned = scan_toks(
+            input,
+            &mut tex_state::ExpansionContext::new(stores),
+            MeaningFlags::EMPTY,
+            context,
+        )?;
+        Whatsit::DeferredSpecial {
+            class: "dvi".to_owned(),
+            tokens: scanned.meaning().replacement_text(),
+        }
+    } else {
+        let tokens = scan_balanced_expanded_text(input, stores, execution, context)?;
+        Whatsit::Special {
+            class: "dvi".to_owned(),
+            payload: tex_byte_text(&tokens_text(stores, &tokens)),
+        }
+    };
     append_node_to_current_list(
         nest,
         stores,
-        Node::Whatsit(Whatsit::Special {
-            class: "dvi".to_owned(),
-            payload,
-        }),
+        Node::Whatsit(whatsit),
         execution.command_fuel(),
     )
 }

@@ -242,6 +242,7 @@ fn whatsit_owned_payloads(whatsit: &crate::node::Whatsit) -> WhatsitOwnedPayload
         | Whatsit::PdfLinkStart { .. }
         | Whatsit::PdfLinkEnd { .. }
         | Whatsit::PdfRunningLink(_)
+        | Whatsit::DeferredSpecial { .. }
         | Whatsit::DeferredPdfLiteral { .. }
         | Whatsit::PdfSave
         | Whatsit::PdfRestore

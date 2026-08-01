@@ -4282,6 +4282,7 @@ enum ScannedStep {
         tokens: TracedTokenList,
     },
     DeferredSpecial {
+        deferred: bool,
         tokens: TracedTokenList,
     },
     /// TeX82 §1377's `@<Implement \setlanguage@>`, reached from §1348's
@@ -6638,8 +6639,10 @@ fn scan_command(
             Ok(ScannedStep::DeferredWrite { stream, tokens })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Special) => {
+            let (deferred, text) = processor.scan_special().map_err(command_error)?;
             Ok(ScannedStep::DeferredSpecial {
-                tokens: processor.scan_special().map_err(command_error)?.tokens,
+                deferred,
+                tokens: text.tokens,
             })
         }
         // TeX82 §1377's `@<Implement \setlanguage@>`, the `set_language_code`
@@ -12027,7 +12030,25 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::DeferredSpecial { tokens } => {
+        ScannedStep::DeferredSpecial {
+            deferred: true,
+            tokens,
+        } => {
+            crate::assignments::append_whatsit(
+                modes,
+                stores,
+                command.fuel,
+                Whatsit::DeferredSpecial {
+                    class: "dvi".to_owned(),
+                    tokens: tokens.token_list(),
+                },
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::DeferredSpecial {
+            deferred: false,
+            tokens,
+        } => {
             let mut text = String::new();
             for &token in stores.tokens(tokens.token_list()) {
                 tex_expand::append_token_string_text(stores, token, &mut text);

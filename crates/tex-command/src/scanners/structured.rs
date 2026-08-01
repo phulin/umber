@@ -3259,14 +3259,15 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    /// Scans TeX82 §53's `\special` general text.
+    /// Scans `\special`, including pdfTeX's optional `shipout` keyword.
     ///
-    /// Like `new_whatsit`, this expands the balanced general text while the
-    /// command processor owns the input episode.  Main control receives only
-    /// the immutable result and appends the deferred node; it never reads a
-    /// token or opens a compatibility input stack during shipout.
-    pub fn scan_special(&mut self) -> Result<ScannedBalancedText, CommandError> {
-        self.scan_balanced_text(true)
+    /// The ordinary form expands its general text immediately, as TeX82 does.
+    /// The `shipout` form retains the unexpanded balanced tokens so traversal
+    /// can expand them against the state current when their box is shipped.
+    pub fn scan_special(&mut self) -> Result<(bool, ScannedBalancedText), CommandError> {
+        let deferred = self.scan_keyword("shipout")?.value;
+        self.scan_balanced_text(!deferred)
+            .map(|text| (deferred, text))
     }
 
     /// Scans a macro parameter text and replacement text without exposing the

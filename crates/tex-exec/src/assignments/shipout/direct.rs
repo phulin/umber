@@ -1041,6 +1041,7 @@ fn anchor_for_whatsit(
         | Whatsit::CloseOut { slot: Some(_) }
         | Whatsit::DeferredWrite { .. } => !suppress_deferred_streams,
         Whatsit::Special { .. }
+        | Whatsit::DeferredSpecial { .. }
         | Whatsit::PdfAccessibility(_)
         | Whatsit::PdfAnnotation { .. }
         | Whatsit::PdfLinkStart { .. }

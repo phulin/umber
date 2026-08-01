@@ -557,6 +557,10 @@ pub enum Whatsit {
         class: String,
         payload: Vec<u8>,
     },
+    DeferredSpecial {
+        class: String,
+        tokens: TokenListId,
+    },
     PdfReferenceObject {
         object: u32,
     },

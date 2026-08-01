@@ -225,6 +225,10 @@ pub(super) enum FormatWhatsit {
         running: bool,
     },
     PdfEndThread,
+    DeferredSpecial {
+        class: String,
+        tokens: u32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -551,7 +555,9 @@ impl FormatNode {
 impl FormatWhatsit {
     fn visit_token_list_refs(&mut self, mut visit: impl FnMut(&mut u32)) {
         match self {
-            Self::DeferredWrite { tokens, .. } | Self::DeferredPdfLiteral { tokens, .. } => {
+            Self::DeferredWrite { tokens, .. }
+            | Self::DeferredSpecial { tokens, .. }
+            | Self::DeferredPdfLiteral { tokens, .. } => {
                 visit(tokens);
             }
             Self::PdfDestination {
@@ -702,6 +708,10 @@ impl FormatWhatsit {
                 tokens: tokens.raw(),
             },
             Whatsit::Special { class, payload } => Self::Special { class, payload },
+            Whatsit::DeferredSpecial { class, tokens } => Self::DeferredSpecial {
+                class,
+                tokens: tokens.raw(),
+            },
             Whatsit::PdfLiteral { mode, payload } => Self::PdfLiteral {
                 mode: mode as u8,
                 payload,
@@ -841,6 +851,10 @@ impl FormatWhatsit {
                 tokens: token_list_id(content, tokens)?,
             },
             Self::Special { class, payload } => Whatsit::Special { class, payload },
+            Self::DeferredSpecial { class, tokens } => Whatsit::DeferredSpecial {
+                class,
+                tokens: token_list_id(content, tokens)?,
+            },
             Self::PdfLiteral { mode, payload } => Whatsit::PdfLiteral {
                 mode: pdf_literal_mode(mode)?,
                 payload,

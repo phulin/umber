@@ -374,6 +374,7 @@ impl Stores {
             Node::MathList(list) => self.assert_live_child_node_list(list.content),
             Node::Whatsit(
                 crate::node::Whatsit::DeferredWrite { tokens, .. }
+                | crate::node::Whatsit::DeferredSpecial { tokens, .. }
                 | crate::node::Whatsit::DeferredPdfLiteral { tokens, .. },
             ) => {
                 self.assert_live_token_list(*tokens);

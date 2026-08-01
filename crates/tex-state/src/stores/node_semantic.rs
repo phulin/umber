@@ -349,6 +349,11 @@ impl Stores {
                 hasher.bytes(class.as_bytes());
                 hasher.bytes(payload);
             }
+            Whatsit::DeferredSpecial { class, tokens } => {
+                hasher.tag(16);
+                hasher.bytes(class.as_bytes());
+                self.hash_token_list_semantic(*tokens, hasher);
+            }
             Whatsit::PdfLiteral { mode, payload } => {
                 hasher.tag(17);
                 hasher.u8(*mode as u8);

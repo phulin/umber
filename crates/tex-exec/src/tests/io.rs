@@ -1252,6 +1252,101 @@ fn copied_special_reuses_scan_time_expansion() {
 }
 
 #[test]
+fn ordinary_and_shipout_specials_preserve_timing_order_copy_and_format() {
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut initex);
+    crate::install_unexpandable_primitives(&mut initex);
+    Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                "\\def\\value{first}\\setbox0=\\hbox{\
+                 \\special{O-\\value-1}\\special shipout{L-\\value-2}}",
+            )),
+            &mut initex,
+        )
+        .expect("special box builds");
+
+    let format = initex.dump_format().expect("special box format dumps");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("special box format restores");
+    tex_expand::register_expandable_primitives(&mut stores);
+    crate::register_unexpandable_primitives(&mut stores);
+    let stats = Executor::new()
+        .run(
+            &mut InputStack::new(MemoryInput::new(
+                "\\def\\value{second}\\shipout\\copy0\
+                 \\def\\value{third}\\shipout\\copy0\\end",
+            )),
+            &mut stores,
+        )
+        .expect("copied special boxes ship");
+
+    let payloads = stats
+        .shipped_artifacts
+        .iter()
+        .map(|&id| {
+            let bytes = stores
+                .world()
+                .read_artifact(id)
+                .expect("read artifact")
+                .expect("artifact stored");
+            PageArtifact::from_bytes(&bytes)
+                .expect("artifact parses")
+                .effects
+                .iter()
+                .map(|effect| match effect {
+                    PageEffect::Special { payload, .. } => payload.clone(),
+                    other => panic!("unexpected page effect: {other:?}"),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        payloads,
+        vec![
+            vec![b"O-first-1".to_vec(), b"L-second-2".to_vec()],
+            vec![b"O-first-1".to_vec(), b"L-third-2".to_vec()],
+        ]
+    );
+}
+
+#[test]
+fn shipout_special_expansion_error_commits_no_partial_artifact() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\def\\loop{\\loop}\\shipout\\hbox{\
+         \\special shipout{prefix-\\loop-suffix}}\\end",
+    ));
+    let mut run = ExecutionRun::new("late-special-error").with_cumulative_fuel_limit(10_000);
+    let cancellation = Cancellation::new();
+
+    let failure = loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Failed(error) => break error,
+            ExecutionStepResult::Complete(_) => panic!("recursive expansion must fail"),
+            ExecutionStepResult::Cancelled => panic!("run was not cancelled"),
+            ExecutionStepResult::AwaitingResources(request) => {
+                panic!("unexpected resource request: {request:?}")
+            }
+        }
+    };
+    assert!(
+        matches!(
+            failure,
+            ExecError::CumulativeFuelExceeded { limit: 10_000, .. }
+        ),
+        "unexpected failure: {failure:?}"
+    );
+    assert!(stores.world().artifact_commits().is_empty());
+}
+
+#[test]
 fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
