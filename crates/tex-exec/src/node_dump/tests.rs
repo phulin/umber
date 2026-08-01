@@ -5,7 +5,9 @@ use super::*;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
 use tex_state::math::{LimitType, MathChar, MathChoice, MathField, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{BoxNodeFields, KernKind, Node, Sign};
+use tex_state::node::{
+    AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign,
+};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 /// Builds the `\hbox{\kern1pt}` box register from bd `umber2-alfh.6`'s
@@ -116,6 +118,124 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     };
     let text = dump_node_list(&stores, list, config);
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
+}
+
+fn zero_sized_hbox(children: NodeListId) -> BoxNode {
+    BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children,
+    })
+}
+
+/// TeX82 §198 initializes `show_node_list` at depth -1. Thus depth zero
+/// still prints the selected box itself, depth one admits exactly its child
+/// box, and depth two admits that box's child. A negative threshold suppresses
+/// the entire traversal. The ` []` marker records a nonempty hidden child list.
+#[test]
+fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
+    let mut stores = Universe::new();
+    let kern = Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    };
+    let inner_children = stores.freeze_node_list(std::slice::from_ref(&kern));
+    let inner = Node::HList(zero_sized_hbox(inner_children));
+    let outer_children = stores.freeze_node_list(std::slice::from_ref(&inner));
+    let outer = Node::HList(zero_sized_hbox(outer_children));
+    let root = stores.freeze_node_list(std::slice::from_ref(&outer));
+
+    let before_root = stores.nodes(root).to_vec();
+    let before_outer = stores.nodes(outer_children).to_vec();
+    let before_inner = stores.nodes(inner_children).to_vec();
+    let render = |depth| dump_node_list(&stores, root, DumpConfig { breadth: 5, depth });
+
+    assert_eq!(render(-1), "");
+    assert_eq!(render(0), "\\hbox(0.0+0.0)x0.0 []\n");
+    assert_eq!(render(1), "\\hbox(0.0+0.0)x0.0\n.\\hbox(0.0+0.0)x0.0 []\n");
+    assert_eq!(
+        render(2),
+        concat!(
+            "\\hbox(0.0+0.0)x0.0\n",
+            ".\\hbox(0.0+0.0)x0.0\n",
+            "..\\kern 1.0\n",
+        )
+    );
+    assert_eq!(stores.nodes(root), before_root);
+    assert_eq!(stores.nodes(outer_children), before_outer);
+    assert_eq!(stores.nodes(inner_children), before_inner);
+}
+
+/// Subsidiary lists use the same exact depth and breadth accounting as box
+/// children. This covers the non-box edges most prone to being accidentally
+/// traversed with an independent limit: adjustments, leader payload boxes,
+/// and discretionary pre/post/replacement lists.
+#[test]
+fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
+    let mut stores = Universe::new();
+    let kern = |points| Node::Kern {
+        amount: Scaled::from_raw(points * Scaled::UNITY),
+        kind: KernKind::Explicit,
+    };
+    let two_kerns = stores.freeze_node_list(&[kern(1), kern(2)]);
+    let empty = stores.freeze_node_list(&[]);
+    let glue = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
+
+    let adjust = Node::Adjust(AdjustNode::ordinary(two_kerns));
+    let leader = Node::Glue {
+        spec: glue,
+        kind: GlueKind::Leaders,
+        leader: Some(LeaderPayload::HList(zero_sized_hbox(two_kerns))),
+    };
+    let disc = Node::Disc {
+        kind: DiscKind::Discretionary,
+        pre: two_kerns,
+        post: two_kerns,
+        replace: two_kerns,
+    };
+    let source = [adjust, leader, disc];
+    let before = stores.nodes(two_kerns).to_vec();
+    let render = |node: &Node| {
+        dump_node_slice(
+            &stores,
+            std::slice::from_ref(node),
+            DumpConfig {
+                breadth: 1,
+                depth: 10,
+            },
+        )
+    };
+
+    assert_eq!(render(&source[0]), "\\vadjust\n.\\kern 1.0\n.etc.\n");
+    assert_eq!(
+        render(&source[1]),
+        concat!(
+            "\\leaders 0.0\n",
+            ".\\hbox(0.0+0.0)x0.0\n",
+            "..\\kern 1.0\n",
+            "..etc.\n",
+        )
+    );
+    assert_eq!(
+        render(&source[2]),
+        concat!(
+            "\\discretionary replacing 2\n",
+            ".\\kern 1.0\n",
+            ".etc.\n",
+            ".|kern 1.0\n",
+            ".etc.\n",
+            "\\kern 1.0\n",
+            "etc.\n",
+        )
+    );
+    assert_eq!(stores.nodes(two_kerns), before, "dumping must be read-only");
+    assert!(stores.nodes(empty).is_empty());
 }
 
 #[test]
