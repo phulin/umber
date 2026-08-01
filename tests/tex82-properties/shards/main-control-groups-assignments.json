@@ -1345,25 +1345,20 @@
       "equivalence_cases": ["Empty/nonempty, short/wrapping, nested macro, and source/replay message text."],
       "recovery_cases": ["Runaway text follows scan_toks recovery before any partial message is emitted."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-19aw",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "message_expands_balanced_text_and_applies_terminal_line_spacing"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "messages strict xfail",
-            "linked to umber2-19aw",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.errmessage-help",
@@ -1380,25 +1375,20 @@
       "equivalence_cases": ["Errhelp present/absent, first/repeated, scroll/error-stop interaction, and replay."],
       "recovery_cases": ["Error continuation preserves input and does not retain temporary message storage."],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-djge",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "errmessage_selects_user_or_once_only_builtin_help_and_clears_flag"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "errmessage-help strict xfail",
-            "linked to umber2-djge",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.case-shift",
@@ -1447,25 +1437,20 @@
         "Invalid command operands are impossible after primitive resolution and fail loudly if constructed."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-abvi",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "show-dispatch strict xfail",
-            "linked to umber2-abvi",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.show-meaning",
@@ -1573,25 +1558,20 @@
         "Interactive continuation returns through the ordinary error routine without duplicating inspection."
       ],
       "semantic_owner": "tex-exec::main-control",
-      "test_level": "rust-unit+strict-semantic-xfail",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-74vb",
-      "planned_coverage": [
+      "test_level": "rust-unit+semantic-minifixture",
+      "coverage": [
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "show_completion_routes_transcript_and_adjusts_error_count_by_interaction"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "show-completion strict xfail",
-            "linked to umber2-74vb",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
+          "test": "declared_command_semantic_cases_match"
         }
-      ]
+      ],
+      "status": "covered",
+      "gap_bead": null,
+      "planned_coverage": []
     },
     {
       "id": "tex82.main-control.final-cleanup-end-or-dump",
