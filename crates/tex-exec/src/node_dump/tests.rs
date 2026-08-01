@@ -4,6 +4,7 @@
 use super::*;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
+use tex_state::math::{LimitType, MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{BoxNodeFields, KernKind, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
@@ -88,4 +89,139 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     };
     let text = dump_node_list(&stores, list, config);
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
+}
+
+fn math_char(family: u8, character: char) -> MathChar {
+    MathChar {
+        family,
+        character,
+        origin: Default::default(),
+    }
+}
+
+/// TeX82 §§691--697 (`tex.web:13623-13751`) assign a distinct exact
+/// display to every noad kind and to the five math-field forms. Empty fields
+/// must remain silent; the final noad exercises math-char, math-text-char,
+/// sub-box, and sub-mlist fields in their nucleus/script positions.
+#[test]
+fn showlists_renders_all_math_noad_variants_and_empty_fields() {
+    let mut stores = Universe::new();
+    let sub_box = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let sub_mlist = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(math_char(3, 'm')),
+    ))]);
+    let mut nodes = Vec::new();
+    for class in [
+        NoadClass::Ord,
+        NoadClass::Op,
+        NoadClass::Bin,
+        NoadClass::Rel,
+        NoadClass::Open,
+        NoadClass::Close,
+        NoadClass::Punct,
+        NoadClass::Inner,
+    ] {
+        nodes.push(Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(class),
+            MathField::Empty,
+        )));
+    }
+    for limits in [
+        LimitType::DisplayLimits,
+        LimitType::Limits,
+        LimitType::NoLimits,
+    ] {
+        nodes.push(Node::MathNoad(MathNoad::new(
+            NoadKind::Operator(limits),
+            MathField::Empty,
+        )));
+    }
+    for kind in [
+        NoadKind::Radical { delimiter: 0x12345 },
+        NoadKind::Accent {
+            accent: math_char(2, '^'),
+        },
+        NoadKind::LeftDelimiter { delimiter: 0x28300 },
+        NoadKind::RightDelimiter { delimiter: 0x29301 },
+        NoadKind::MiddleDelimiter { delimiter: 0x26A00 },
+        NoadKind::Underline,
+        NoadKind::Overline,
+        NoadKind::VCenter,
+    ] {
+        nodes.push(Node::MathNoad(MathNoad::new(kind, MathField::Empty)));
+    }
+    nodes.push(Node::MathNoad(MathNoad {
+        kind: NoadKind::Normal(NoadClass::Ord),
+        nucleus: MathField::MathTextChar(math_char(1, 'x')),
+        superscript: MathField::SubBox(sub_box),
+        subscript: MathField::SubMlist(sub_mlist),
+    }));
+    let list = stores.freeze_node_list(&nodes);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        concat!(
+            "\\mathord\n",
+            "\\mathop\n",
+            "\\mathbin\n",
+            "\\mathrel\n",
+            "\\mathopen\n",
+            "\\mathclose\n",
+            "\\mathpunct\n",
+            "\\mathinner\n",
+            "\\mathop\n",
+            "\\mathop\\limits\n",
+            "\\mathop\\nolimits\n",
+            "\\radical\"12345\n",
+            "\\accent\\fam2 ^\n",
+            "\\left\"28300\n",
+            "\\right\"29301\n",
+            "\\middle\"26A00\n",
+            "\\underline\n",
+            "\\overline\n",
+            "\\vcenter\n",
+            "\\mathord\n",
+            ".\\fam1 x\n",
+            "^\\kern 1.0\n",
+            "_\\mathord\n",
+            "..\\fam3 m\n",
+        ),
+    );
+}
+
+/// TeX82 §692 (`tex.web:13639-13668`) prints ` []` for each nonempty
+/// subsidiary field hidden by `\showboxdepth`, while an empty field prints no
+/// marker. This is the exact `$a_b\showlists` shape at depth zero.
+#[test]
+fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
+    let mut stores = Universe::new();
+    let mut noad = MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(math_char(1, 'a')),
+    );
+    noad.subscript = MathField::MathChar(math_char(1, 'b'));
+    let list = stores.freeze_node_list(&[Node::MathNoad(noad)]);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 0,
+            },
+        ),
+        "\\mathord [] []\n",
+    );
 }

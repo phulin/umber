@@ -266,6 +266,19 @@ fn dump_math_noad(
         NoadKind::Operator(LimitType::NoLimits) => out.push_str("\\nolimits"),
         _ => {}
     }
+    // TeX82 §692's `print_subsidiary_data` keeps nonempty math fields
+    // observable when the depth threshold prevents their contents from being
+    // shown. The marker belongs on the noad's line and empty fields contribute
+    // nothing.
+    if depth + 1 >= config.depth {
+        for field in [&noad.nucleus, &noad.superscript, &noad.subscript] {
+            if !matches!(field, MathField::Empty) {
+                out.push_str(" []");
+            }
+        }
+        out.push('\n');
+        return;
+    }
     out.push('\n');
     dump_math_field(stores, &noad.nucleus, config, depth + 1, '.', out);
     dump_math_field(stores, &noad.superscript, config, depth + 1, '^', out);
