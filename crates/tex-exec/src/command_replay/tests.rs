@@ -10,6 +10,7 @@ use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::node::Node;
+use tex_state::page::PageMark;
 use tex_state::provenance::OriginRecord;
 use tex_state::scaled::Scaled;
 use tex_state::{EffectRecord, InputOpenState, StreamSlot, Universe};
@@ -11620,6 +11621,145 @@ fn run_canonical_etex_saved_discards(source: &[u8], page: Vec<Node>, split: Vec<
     register_source(&mut control, source);
     run_to_end(&mut control, &mut universe);
     universe
+}
+
+fn canonical_box_children(universe: &Universe, index: u16) -> Vec<Node> {
+    let register = universe.box_reg(index).expect("box register is nonvoid");
+    let Node::VList(vbox) = universe
+        .nodes(register)
+        .first()
+        .expect("box register contains a node")
+        .to_owned()
+    else {
+        panic!("box register must contain a vbox");
+    };
+    universe
+        .nodes(vbox.children)
+        .iter()
+        .map(|node| node.to_owned())
+        .collect()
+}
+
+fn canonical_macro_text(universe: &mut Universe, name: &str) -> String {
+    let symbol = universe.intern(name).symbol();
+    let replacement = universe
+        .macro_meaning(symbol)
+        .unwrap_or_else(|| panic!("{name} macro is defined"))
+        .replacement_text();
+    replay_text(universe.tokens(replacement))
+}
+
+#[test]
+fn canonical_etex_saved_discard_enquiries_are_destructive_in_both_vertical_modes() {
+    let universe = run_canonical_etex_saved_discards(
+        br"\setbox0=\vbox{\pagediscards\splitdiscards}
+           \setbox1=\vbox{\pagediscards\splitdiscards}\end",
+        vec![Node::Penalty(10), Node::Penalty(11)],
+        vec![Node::Penalty(20), Node::Penalty(21)],
+    );
+
+    assert_eq!(
+        canonical_box_children(&universe, 0),
+        vec![
+            Node::Penalty(10),
+            Node::Penalty(11),
+            Node::Penalty(20),
+            Node::Penalty(21),
+        ]
+    );
+    assert!(canonical_box_children(&universe, 1).is_empty());
+    assert!(universe.page_discards().is_empty());
+    assert!(universe.split_discards().is_empty());
+}
+
+#[test]
+fn canonical_etex_vsplit_marks_cover_zero_and_sparse_class_boundaries() {
+    let mut universe = run_canonical_etex_saved_discards(
+        br"\setbox0=\vbox{
+             \marks0{zero-first}\marks255{edge-first}\marks256{sparse-first}
+             \marks0{zero-bot}\marks255{edge-bot}\marks256{sparse-bot}}
+           \setbox1=\vsplit0 to100pt
+           \edef\firstresult{\splitfirstmark/\splitfirstmarks0/\splitfirstmarks255/\splitfirstmarks256}
+           \edef\botresult{\splitbotmark/\splitbotmarks0/\splitbotmarks255/\splitbotmarks256}
+           \edef\repeatresult{\splitfirstmarks256/\splitbotmarks256}
+           \setbox2=\vsplit0 to0pt
+           \edef\emptyresult{\splitfirstmark/\splitbotmark/\splitfirstmarks255/\splitbotmarks256}\end",
+        Vec::new(),
+        vec![Node::Penalty(999)],
+    );
+
+    assert_eq!(
+        canonical_macro_text(&mut universe, "firstresult"),
+        "zero-first/zero-first/edge-first/sparse-first"
+    );
+    assert_eq!(
+        canonical_macro_text(&mut universe, "botresult"),
+        "zero-bot/zero-bot/edge-bot/sparse-bot"
+    );
+    assert_eq!(
+        canonical_macro_text(&mut universe, "repeatresult"),
+        "sparse-first/sparse-bot"
+    );
+    assert_eq!(canonical_macro_text(&mut universe, "emptyresult"), "///");
+    for class in [0, 255, 256] {
+        assert_eq!(
+            universe.page_mark_class(PageMark::SplitFirst, class),
+            TokenListId::EMPTY
+        );
+        assert_eq!(
+            universe.page_mark_class(PageMark::SplitBot, class),
+            TokenListId::EMPTY
+        );
+    }
+    assert!(
+        universe.split_discards().is_empty(),
+        "void repeated split must replace stale saved discards"
+    );
+}
+
+#[test]
+fn canonical_etex_saved_discards_outlive_groups_but_saving_parameter_does_not() {
+    let universe = run_canonical_etex_saved_discards(
+        br"\begingroup\savingvdiscards=1
+           \setbox0=\vbox{\vbox to10pt{}\vskip5pt\penalty-4321}
+           \setbox1=\vsplit0 to10pt\endgroup
+           \count0=\savingvdiscards
+           \setbox2=\vbox{\splitdiscards}
+           \setbox3=\vbox{\splitdiscards}\end",
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(universe.count(0), 0);
+    let first = canonical_box_children(&universe, 2);
+    assert!(
+        !first.is_empty(),
+        "saved discards survive the assigning group"
+    );
+    assert!(canonical_box_children(&universe, 3).is_empty());
+    assert!(universe.split_discards().is_empty());
+}
+
+#[test]
+fn saved_vertical_discards_affect_live_identity_but_not_format_identity() {
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(IntParam::SAVING_V_DISCARDS, 2);
+    let baseline_hash = universe.testing_state_hash();
+    let baseline_format = universe.dump_format().expect("baseline format dumps");
+
+    universe.push_page_discard(Node::Penalty(17));
+    universe.set_split_discards(vec![Node::Penalty(23)]);
+    assert_ne!(universe.testing_state_hash(), baseline_hash);
+    assert_eq!(
+        universe
+            .dump_format()
+            .expect("transient discard state is omitted"),
+        baseline_format
+    );
+
+    universe.clear_page_discards();
+    universe.clear_split_discards();
+    assert_eq!(universe.testing_state_hash(), baseline_hash);
 }
 
 #[test]

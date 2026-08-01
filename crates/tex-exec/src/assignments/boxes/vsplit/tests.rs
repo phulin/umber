@@ -10,6 +10,40 @@ fn sp(raw: i32) -> Scaled {
 }
 
 #[test]
+fn etex_every_vsplit_replaces_stale_saved_discards() {
+    let mut stores = crate::test_harness::universe();
+
+    for index in [0, 1] {
+        stores.set_split_discards(vec![Node::Penalty(100 + i32::from(index))]);
+        if index == 1 {
+            let children = stores.freeze_node_list(&[]);
+            let hbox = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+                width: sp(0),
+                height: sp(0),
+                depth: sp(0),
+                shift: sp(0),
+                box_lr: tex_state::node::BoxLr::Normal,
+                glue_set: GlueSetRatio::ZERO,
+                glue_sign: Sign::Normal,
+                glue_order: Order::Normal,
+                children,
+            }))]);
+            stores.set_box_reg(index, hbox);
+        }
+
+        assert!(
+            split_vbox_register(&mut stores, index, sp(0))
+                .expect("recoverable split")
+                .is_none()
+        );
+        assert!(
+            stores.split_discards().is_empty(),
+            "split of register {index} retained stale discards"
+        );
+    }
+}
+
+#[test]
 fn tex82_vsplit_marks_remainder_and_trivial_case_matrix() {
     let mut stores = crate::test_harness::universe();
     assert!(

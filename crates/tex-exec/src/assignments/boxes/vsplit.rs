@@ -22,7 +22,6 @@ pub(super) fn scan_vsplit_node(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<Option<Node>, ExecError> {
-    stores.clear_split_discards();
     let index = scan_register_index(input, stores, execution, context)?;
     if !scan_optional_keyword_x(input, stores, execution, "to")? {
         // TeX.web §1082 inserts the keyword conceptually; keyword scanning
@@ -47,6 +46,12 @@ pub(crate) fn split_vbox_register(
     index: u16,
     height: Scaled,
 ) -> Result<Option<Node>, ExecError> {
+    // e-TeX's `vsplit` change clears the previous split-discard list before
+    // inspecting the source register. Keep this in the shared operation, not
+    // the legacy input scanner: canonical replay, shifted boxes, and direct
+    // callers must all replace stale saved discards even when the source is
+    // void or has the wrong box kind.
+    stores.clear_split_discards();
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let Some(source) = stores.box_reg(index) else {
