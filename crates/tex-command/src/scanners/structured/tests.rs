@@ -1432,8 +1432,19 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
 #[test]
 fn rule_spec_defaults_and_last_keyword_are_observable() {
     let default_rule = Scaled::from_raw(26_214);
-    for (primitive, source_text, expected) in [
+    let explicit = ScannedRuleSpec {
+        width: Some(Scaled::from_raw(Scaled::UNITY)),
+        height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+        depth: Some(Scaled::from_raw(3 * Scaled::UNITY)),
+    };
+    let repeated = ScannedRuleSpec {
+        width: Some(Scaled::from_raw(4 * Scaled::UNITY)),
+        height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
+        depth: Some(Scaled::from_raw(6 * Scaled::UNITY)),
+    };
+    let mut cases = vec![
         (
+            "bare vrule",
             UnexpandablePrimitive::VRule,
             "!",
             ScannedRuleSpec {
@@ -1443,6 +1454,7 @@ fn rule_spec_defaults_and_last_keyword_are_observable() {
             },
         ),
         (
+            "bare hrule",
             UnexpandablePrimitive::HRule,
             "!",
             ScannedRuleSpec {
@@ -1452,25 +1464,33 @@ fn rule_spec_defaults_and_last_keyword_are_observable() {
             },
         ),
         (
+            "repeated keywords on vrule",
             UnexpandablePrimitive::VRule,
-            "width1pt width2pt height3pt height4pt depth5pt depth6pt!",
-            ScannedRuleSpec {
-                width: Some(Scaled::from_raw(2 * Scaled::UNITY)),
-                height: Some(Scaled::from_raw(4 * Scaled::UNITY)),
-                depth: Some(Scaled::from_raw(6 * Scaled::UNITY)),
-            },
+            "width1pt height2pt depth3pt width4pt height5pt depth6pt!",
+            repeated,
         ),
+        (
+            "repeated keywords on hrule",
+            UnexpandablePrimitive::HRule,
+            "width1pt height2pt depth3pt width4pt height5pt depth6pt!",
+            repeated,
+        ),
+    ];
+    for (name, source_text) in [
+        ("width-height-depth", "width1pt height2pt depth3pt!"),
+        ("width-depth-height", "width1pt depth3pt height2pt!"),
+        ("height-width-depth", "height2pt width1pt depth3pt!"),
+        ("height-depth-width", "height2pt depth3pt width1pt!"),
+        ("depth-width-height", "depth3pt width1pt height2pt!"),
+        ("depth-height-width", "depth3pt height2pt width1pt!"),
     ] {
+        cases.push((name, UnexpandablePrimitive::VRule, source_text, explicit));
+        cases.push((name, UnexpandablePrimitive::HRule, source_text, explicit));
+    }
+
+    for (name, primitive, source_text, expected) in cases {
         let mut command = CommandState::default();
-        let source = command
-            .register_source(SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                Arc::<[u8]>::from(source_text.as_bytes()),
-            ))
-            .expect("source registers");
-        command
-            .open_registered_source(source)
-            .expect("source opens");
+        push(&mut command, text_tokens(source_text));
         let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
@@ -1481,6 +1501,7 @@ fn rule_spec_defaults_and_last_keyword_are_observable() {
                 .scan_rule_spec(primitive)
                 .expect("rule specification scans"),
             expected,
+            "{name}",
         );
         assert!(matches!(
             processor
@@ -1490,6 +1511,13 @@ fn rule_spec_defaults_and_last_keyword_are_observable() {
                 .meaning(),
             Meaning::CharToken { ch: '!', .. }
         ));
+        assert!(
+            processor
+                .get_x_token()
+                .expect("input exhausts after the terminator")
+                .is_none(),
+            "{name} left a keyword or dimension token behind",
+        );
     }
 }
 
