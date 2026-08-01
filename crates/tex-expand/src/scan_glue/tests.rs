@@ -254,7 +254,7 @@ fn keeps_mixed_component_orders_independent() {
 /// applies its leading sign: every component changes sign, while finite and
 /// infinite orders remain unchanged.
 #[test]
-fn negative_glue_preserves_component_signs_and_orders() {
+fn leading_minus_negates_every_internal_glue_component() {
     for order in [Order::Normal, Order::Fil, Order::Fill, Order::Filll] {
         let mut stores = Universe::new();
         let glue = stores.intern_glue(GlueSpec {
@@ -293,6 +293,42 @@ fn negative_glue_preserves_component_signs_and_orders() {
             Some(char_token('x', Catcode::Letter)),
         );
     }
+}
+
+#[test]
+fn negative_glue_preserves_component_signs_and_orders() {
+    let expected = GlueSpec {
+        width: Scaled::from_raw(-Scaled::UNITY),
+        stretch: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch_order: Order::Fil,
+        shrink: Scaled::from_raw(3 * Scaled::UNITY),
+        shrink_order: Order::Fill,
+    };
+    let mut stores = Universe::new();
+    let expected_id = stores.intern_glue(expected);
+    stores.set_skip(7, expected_id);
+    let skip = stores.intern("signedskip");
+    stores.set_meaning(skip, Meaning::SkipRegister(7));
+
+    let mut literal_input = InputStack::new(MemoryInput::new("-1pt plus 2fil minus 3fill"));
+    let literal = scan_glue(
+        &mut literal_input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("literal negative-width glue scans");
+    let mut internal_input = InputStack::new(MemoryInput::new("\\signedskip"));
+    let internal = scan_glue(
+        &mut internal_input,
+        &mut tex_state::ExpansionContext::new(&mut stores),
+        context(),
+    )
+    .expect("internal negative-width glue scans");
+
+    assert_eq!(stores.glue(literal.id()), expected);
+    assert_eq!(stores.glue(internal.id()), expected);
+    assert_eq!(literal.id(), expected_id);
+    assert_eq!(internal.id(), expected_id);
 }
 
 #[test]
