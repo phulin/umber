@@ -53,6 +53,8 @@
 use crate::CommandDialect;
 use tex_state::meaning::{ExpandablePrimitive, UnexpandablePrimitive};
 
+use super::variable_identity::LOCAL_BASE;
+
 /// TeX82 `@d vmode=1` (`\prevdepth`'s `set_aux` selector).
 const VMODE: i64 = 1;
 /// TeX82 `@d hmode=vmode+max_command+1`, `max_command=100`
@@ -189,7 +191,11 @@ pub(crate) fn unexpandable_primitive_identity(
         P::Par => ("par_end".into(), Some(256)),
         P::Indent => ("start_par".into(), Some(1)),
         P::NoIndent => ("start_par".into(), Some(0)),
-        P::ParShape => ("set_shape".into(), Some(0)),
+        // TeX82 §230 makes `par_shape_loc = local_base`, and §1248
+        // installs `\parshape` with that eqtb address as `set_shape`'s
+        // selector. e-TeX [17.230] inserts its additional region-4 cells
+        // after `par_shape_loc`, so the selector is unchanged by dialect.
+        P::ParShape => ("set_shape".into(), Some(LOCAL_BASE)),
         P::PrevDepth => ("set_aux".into(), Some(VMODE)),
         P::PrevGraf => ("set_prev_graf".into(), Some(0)),
         P::HAlign => ("halign".into(), Some(0)),

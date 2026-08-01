@@ -1018,6 +1018,22 @@ mod tests {
     }
 
     #[test]
+    fn parshape_address_dispatches_by_profile() {
+        let meaning = Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape);
+        for profile in [
+            CommandProfile::TEX82,
+            CommandProfile::ETEX26,
+            CommandProfile::PDFTEX14027,
+        ] {
+            assert_eq!(
+                canonical_command_identity_for_profile(profile, meaning),
+                ("set_shape".into(), Some(25_057)),
+                "TeX82 §230's par_shape_loc remains local_base in every profile"
+            );
+        }
+    }
+
+    #[test]
     fn tex82_diagnostics_use_shared_xray_selectors() {
         let mut universe = tex_state::Universe::new();
 
