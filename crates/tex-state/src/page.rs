@@ -821,6 +821,13 @@ impl PageBuilderState {
         Arc::make_mut(&mut self.contribution).push_back(node);
     }
 
+    pub(crate) fn remove_contribution_range(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<Node> {
+        Arc::make_mut(&mut self.contribution).drain(range).collect()
+    }
+
     pub(crate) fn prepend_contribution(&mut self, node: Node) {
         Arc::make_mut(&mut self.contribution).push_front(node);
     }

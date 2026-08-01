@@ -12,6 +12,7 @@ mod canonical_main_control;
 mod checkpoint;
 mod diagnostics;
 mod dispatch;
+mod effective_tail;
 mod error;
 mod error_report;
 mod executor;

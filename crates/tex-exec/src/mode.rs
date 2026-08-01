@@ -290,6 +290,13 @@ impl ModeList {
         Arc::make_mut(&mut self.nodes).pop()
     }
 
+    pub(crate) fn remove_node_range(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<Node> {
+        Arc::make_mut(&mut self.nodes).drain(range).collect()
+    }
+
     /// Mutates the tail node without allowing its mutable reference to escape.
     pub(crate) fn with_last_node_mut<R>(
         &mut self,
@@ -416,9 +423,12 @@ impl ModeListMutation<'_> {
         self.list.pop_last_node()
     }
 
-    pub(crate) fn take_last_box(&mut self) -> Option<Node> {
+    pub(crate) fn remove_node_range(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<Node> {
         self.record_nodes();
-        self.list.take_last_box()
+        self.list.remove_node_range(range)
     }
 
     pub(crate) fn with_node_mut<R>(

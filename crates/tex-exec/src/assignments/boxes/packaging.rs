@@ -187,11 +187,46 @@ pub(crate) fn take_last_box(
             )?;
             Ok(None)
         }
-        Mode::Vertical => Ok(stores.take_page_contribution_last_box()),
+        Mode::Vertical => {
+            let Some(tail) =
+                crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
+            else {
+                return Ok(None);
+            };
+            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+                return Ok(None);
+            }
+            let range = tail.removal_range();
+            let mut removed = stores.remove_page_contribution_range(range);
+            Ok(reset_removed_box_shift(&mut removed))
+        }
         Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
-            Ok(nest.current_list_mutation().take_last_box())
+            let Some(tail) =
+                crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
+            else {
+                return Ok(None);
+            };
+            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+                return Ok(None);
+            }
+            let range = tail.removal_range();
+            let mut removed = nest.current_list_mutation().remove_node_range(range);
+            Ok(reset_removed_box_shift(&mut removed))
         }
     }
+}
+
+fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
+    let node = removed
+        .iter_mut()
+        .find(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => {
+            box_node.shift = tex_state::scaled::Scaled::from_raw(0);
+        }
+        _ => unreachable!("node was selected as a box"),
+    }
+    Some(node.clone())
 }
 
 /// TeX.web §370's `<Complain about an undefined macro>`.

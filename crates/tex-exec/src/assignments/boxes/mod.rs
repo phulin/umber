@@ -559,14 +559,19 @@ pub(crate) fn execute_delete_last(
         execute_delete_last_outer_vertical(primitive, stores)?;
         return Ok(());
     }
+    let Some(tail) = crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
+    else {
+        return Ok(());
+    };
     let matches_target = matches!(
-        (primitive, nest.current_list().nodes().last()),
-        (UnexpandablePrimitive::UnSkip, Some(Node::Glue { .. }))
-            | (UnexpandablePrimitive::UnPenalty, Some(Node::Penalty(_)))
-            | (UnexpandablePrimitive::UnKern, Some(Node::Kern { .. }))
+        (primitive, tail.node()),
+        (UnexpandablePrimitive::UnSkip, Node::Glue { .. })
+            | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
+            | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
     );
     if matches_target {
-        let _ = nest.current_list_mutation().pop_last_node();
+        let range = tail.removal_range();
+        let _ = nest.current_list_mutation().remove_node_range(range);
     }
     Ok(())
 }
@@ -575,7 +580,8 @@ fn execute_delete_last_outer_vertical(
     primitive: UnexpandablePrimitive,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
-    let Some(tail) = stores.page_contribution_tail() else {
+    let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
+    else {
         // TeX82 §1105: `(mode=vmode)and(tail=head)` -- the contribution list
         // is empty because `build_page` has already swept every prior item
         // onto the current page, whose cost accounting can no longer be
@@ -592,13 +598,14 @@ fn execute_delete_last_outer_vertical(
         return Ok(());
     };
     let matches_target = matches!(
-        (primitive, tail),
+        (primitive, tail.node()),
         (UnexpandablePrimitive::UnSkip, Node::Glue { .. })
             | (UnexpandablePrimitive::UnPenalty, Node::Penalty(_))
             | (UnexpandablePrimitive::UnKern, Node::Kern { .. })
     );
     if matches_target {
-        let _ = stores.pop_page_contribution_tail();
+        let range = tail.removal_range();
+        let _ = stores.remove_page_contribution_range(range);
     }
     Ok(())
 }

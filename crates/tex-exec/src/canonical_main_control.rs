@@ -966,8 +966,10 @@ impl CanonicalMainControl {
     /// contribution tail governs, just as it does for `\unskip`.
     fn last_node_value(&self, stores: &Universe) -> Option<tex_command::LastNodeItem> {
         if is_outer_vertical(&self.modes) {
-            return match stores.page_contribution_tail() {
-                Some(node) => Self::classify_last_node(stores, node),
+            return match crate::effective_tail::EffectiveTail::find(
+                stores.page_contributions().iter(),
+            ) {
+                Some(tail) => Self::classify_last_node(stores, tail.node()),
                 None => match stores.page_last_node_type() {
                     11 => Some(tex_command::LastNodeItem::Glue(stores.page_last_skip())),
                     12 => Some(tex_command::LastNodeItem::Kern(stores.page_last_kern())),
@@ -978,31 +980,30 @@ impl CanonicalMainControl {
                 },
             };
         }
-        self.modes
-            .current_list()
-            .nodes()
-            .last()
-            .and_then(|node| Self::classify_last_node(stores, node))
+        if self.modes.current_list().pending_hchars().is_some() {
+            return None;
+        }
+        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
+            .and_then(|tail| Self::classify_last_node(stores, tail.node()))
     }
 
     /// e-TeX 2.6 `etex.ch` [26.424]'s `find_effective_tail` result for
     /// `\lastnodetype`.
     fn last_node_type_value(&self, stores: &Universe) -> i32 {
         if is_outer_vertical(&self.modes) {
-            return stores
-                .page_contribution_tail()
-                .map_or_else(|| stores.page_last_node_type(), Node::etex_type);
+            return crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
+                .map_or_else(
+                    || stores.page_last_node_type(),
+                    |tail| tail.node().etex_type(),
+                );
         }
         // Batched horizontal characters are already semantic character nodes
         // even though Umber has not materialized their shaped run yet.
         if self.modes.current_list().pending_hchars().is_some() {
             return 0;
         }
-        self.modes
-            .current_list()
-            .nodes()
-            .last()
-            .map_or(-1, Node::etex_type)
+        crate::effective_tail::EffectiveTail::find(self.modes.current_list().nodes().iter())
+            .map_or(-1, |tail| tail.node().etex_type())
     }
 
     /// Classifies one real node as a `\lastpenalty`/`\lastkern`/`\lastskip`

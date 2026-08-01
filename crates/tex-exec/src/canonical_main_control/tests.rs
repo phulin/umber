@@ -1610,8 +1610,81 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
         ("vboxnode", "1"),
         ("mathnode", "15"),
     ] {
+        assert!(stores.symbol(name).is_some(), "missing probe macro {name}");
         assert_eq!(macro_character_text(&stores, name), expected, "{name}");
     }
+}
+
+#[test]
+fn etex_lastnodetype_covers_every_node_code() {
+    // e-TeX 2.6 `etex.ch` block 99 maps the complete 0..=15 node-type
+    // interval.  Each enquiry is made while its node is still the live tail;
+    // the alignment row is observed from `\noalign`, where it is an unset
+    // node until `fin_align` resolves it.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f
+          \hbox{x\xdef\nzero{\the\lastnodetype}}
+          \hbox{\hbox{}\xdef\none{\the\lastnodetype}}
+          \hbox{\vbox{}\xdef\ntwo{\the\lastnodetype}}
+          \hbox{\vrule\xdef\nthree{\the\lastnodetype}}
+          \vbox{\insert0{}\xdef\nfour{\the\lastnodetype}}
+          \vbox{\mark{}\xdef\nfive{\the\lastnodetype}}
+          \hbox{\vadjust{}\xdef\nsix{\the\lastnodetype}}
+          \hbox{\discretionary{}{}{}\xdef\neight{\the\lastnodetype}}
+          \hbox{\special{}\xdef\nnine{\the\lastnodetype}}
+          \hbox{\hskip1pt\xdef\neleven{\the\lastnodetype}}
+          \hbox{\kern1pt\xdef\ntwelve{\the\lastnodetype}}
+          \hbox{\penalty1\xdef\nthirteen{\the\lastnodetype}}
+          \vbox{\halign{#\cr x\cr\noalign{\xdef\nfourteen{\the\lastnodetype}}}}
+          \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    for (name, expected) in [
+        ("nzero", "0"),
+        ("none", "1"),
+        ("ntwo", "2"),
+        ("nthree", "3"),
+        ("nfour", "4"),
+        ("nfive", "5"),
+        ("nsix", "6"),
+        ("neight", "8"),
+        ("nnine", "9"),
+        ("neleven", "11"),
+        ("ntwelve", "12"),
+        ("nthirteen", "13"),
+        ("nfourteen", "14"),
+    ] {
+        assert!(stores.symbol(name).is_some(), "missing probe macro {name}");
+        assert_eq!(macro_character_text(&stores, name), expected, "{name}");
+    }
+}
+
+#[test]
+#[ignore = "umber2-e51h.76-followup: canonical unboxing does not yet expose a live ligature tail"]
+fn etex_lastnodetype_code_seven_after_unboxing_ligature() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f\hbox{\setbox0=\hbox{ff}\unhbox0\xdef\result{\the\lastnodetype}}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(macro_character_text(&stores, "result"), "7");
 }
 
 #[test]

@@ -6155,6 +6155,16 @@ impl Universe {
         node
     }
 
+    pub fn remove_page_contribution_range(
+        &mut self,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<Node> {
+        let nodes = self.page.remove_contribution_range(range);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+        nodes
+    }
+
     /// Transfers the outer vertical contribution tail when it is a box.
     ///
     /// This is the page-owned counterpart of TeX's `\lastbox` tail operation:
