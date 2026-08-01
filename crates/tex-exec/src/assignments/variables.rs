@@ -302,9 +302,9 @@ pub(super) fn execute_arithmetic(
         Variable::DimenRegister(index) | Variable::DimenParam(index) => {
             let old = read_dimen_variable(stores, target);
             let value = match primitive {
-                UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, execution, context)?)
-                    .ok_or(ExecError::ArithmeticOverflow)?,
+                UnexpandablePrimitive::Advance => {
+                    scaled_checked_add(old, scan_scaled(input, stores, execution, context)?)?
+                }
                 UnexpandablePrimitive::Multiply => {
                     scaled_checked_mul(old, scan_i32(input, stores, execution, context)?)?
                 }
@@ -318,9 +318,9 @@ pub(super) fn execute_arithmetic(
         Variable::PageDimension(dimension) => {
             let old = stores.page_dimension(dimension);
             let value = match primitive {
-                UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, execution, context)?)
-                    .ok_or(ExecError::ArithmeticOverflow)?,
+                UnexpandablePrimitive::Advance => {
+                    scaled_checked_add(old, scan_scaled(input, stores, execution, context)?)?
+                }
                 UnexpandablePrimitive::Multiply => {
                     scaled_checked_mul(old, scan_i32(input, stores, execution, context)?)?
                 }
@@ -334,9 +334,9 @@ pub(super) fn execute_arithmetic(
         Variable::FontDimen(font, number) => {
             let old = stores.font_dimen(font, number);
             let value = match primitive {
-                UnexpandablePrimitive::Advance => old
-                    .checked_add(scan_scaled(input, stores, execution, context)?)
-                    .ok_or(ExecError::ArithmeticOverflow)?,
+                UnexpandablePrimitive::Advance => {
+                    scaled_checked_add(old, scan_scaled(input, stores, execution, context)?)?
+                }
                 UnexpandablePrimitive::Multiply => {
                     scaled_checked_mul(old, scan_i32(input, stores, execution, context)?)?
                 }

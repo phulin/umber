@@ -63,10 +63,7 @@ pub(super) fn arithmetic_glue(
 
 fn add_glue(left: GlueSpec, right: GlueSpec) -> Result<GlueSpec, ExecError> {
     Ok(GlueSpec {
-        width: left
-            .width
-            .checked_add(right.width)
-            .ok_or(ExecError::ArithmeticOverflow)?,
+        width: scaled_checked_add(left.width, right.width)?,
         stretch: add_ordered_component(
             left.stretch,
             left.stretch_order,
@@ -105,11 +102,7 @@ fn add_ordered_component(
     right_order: Order,
 ) -> Result<(Scaled, Order), ExecError> {
     if left_order == right_order {
-        return Ok((
-            left.checked_add(right)
-                .ok_or(ExecError::ArithmeticOverflow)?,
-            left_order,
-        ));
+        return Ok((scaled_checked_add(left, right)?, left_order));
     }
     if left_order > right_order {
         Ok((left, left_order))
@@ -145,7 +138,7 @@ pub(super) fn scaled_checked_mul(value: Scaled, factor: i32) -> Result<Scaled, E
     value
         .raw()
         .checked_mul(factor)
-        .map(Scaled::from_raw)
+        .and_then(scaled_within_tex_bounds)
         .ok_or(ExecError::ArithmeticOverflow)
 }
 
@@ -153,6 +146,20 @@ pub(super) fn scaled_checked_div(value: Scaled, divisor: i32) -> Result<Scaled, 
     value
         .raw()
         .checked_div(divisor)
-        .map(Scaled::from_raw)
+        .and_then(scaled_within_tex_bounds)
         .ok_or(ExecError::ArithmeticOverflow)
+}
+
+pub(super) fn scaled_checked_add(left: Scaled, right: Scaled) -> Result<Scaled, ExecError> {
+    left.raw()
+        .checked_add(right.raw())
+        .and_then(scaled_within_tex_bounds)
+        .ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn scaled_within_tex_bounds(raw: i32) -> Option<Scaled> {
+    // TeX82 §1236 selects `max_dimen` as `max_answer` for dimension and glue
+    // arithmetic. The scaled representation has a wider machine range, but
+    // values outside this semantic bound must set `arith_error` instead.
+    (raw.unsigned_abs() <= Scaled::MAX_DIMEN.raw() as u32).then(|| Scaled::from_raw(raw))
 }
