@@ -1702,7 +1702,7 @@ fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId,
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic
         .print_nl("Missing character: There is no ")
-        .print_char(ch)
+        .print_ascii(ch)
         .print(" in font ")
         .print(&font_name)
         .print_char('!');

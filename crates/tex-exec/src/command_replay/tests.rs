@@ -998,6 +998,37 @@ fn canonical_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
     }
 }
 
+/// TeX.web §§581--582 route `char_warning` through the shared diagnostic
+/// selector. `print_ASCII` renders control character 127 as `^^?`, and
+/// `new_character` returns null so main control appends no character node.
+#[test]
+fn missing_control_character_has_no_node_and_exact_routing() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\tracingonline=0\tracinglostchars=1\setbox0=\hbox{\char127}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let warning = "Missing character: There is no ^^? in font nullfont!\n";
+    let terminal = terminal_only_text(&universe);
+    let transcript = transcript_text(&universe);
+    assert_eq!(terminal.matches(warning).count(), 0, "{terminal:?}");
+    assert_eq!(transcript.matches(warning).count(), 1, "{transcript:?}");
+    let outer = universe
+        .box_reg(0)
+        .expect("box 0 holds the constructed hbox");
+    let Some(Node::HList(boxed)) = universe.nodes(outer).first().map(|node| node.to_owned()) else {
+        panic!("box 0 holds an hlist");
+    };
+    assert!(
+        universe.nodes(boxed.children).is_empty(),
+        "new_character returns null for the missing control character"
+    );
+}
+
 /// TeX82 §1210 lists `set_page_dimen` and `set_page_int` among
 /// `prefixed_command`'s ordinary assignment forms; §1242 routes them to
 /// `alter_page_so_far` (§1245) and `alter_integer` (§1246). Neither had a

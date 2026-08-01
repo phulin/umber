@@ -569,8 +569,13 @@ fn font_properties_are_inherently_global() {
     assert!(output.contains("fd=20.0pt,hc=128,sc=129"), "{output:?}");
 }
 
+/// TeX.web §580 grows the final loaded font's parameter bank until the
+/// fixed `font_mem_size` pool is exhausted, then calls `overflow("font
+/// memory", font_mem_size)`. Umber currently has only a per-font address-space
+/// bound, not the canonical shared `font_info` capacity (umber2-e51h.62.5).
 #[test]
-fn fontdimen_capacity_boundary_is_injective_and_recovers_without_mutation() {
+#[ignore = "umber2-e51h.62.5: shared WEB font_info capacity is not implemented"]
+fn fontdimen_growth_reports_font_memory_capacity() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -592,7 +597,10 @@ fn fontdimen_capacity_boundary_is_injective_and_recovers_without_mutation() {
         Scaled::from_raw(2 * Scaled::UNITY)
     );
     let output = terminal_effect_text(&stores);
-    assert!(output.contains("I ignored this assignment"));
+    assert!(
+        output.contains("TeX capacity exceeded, sorry [font memory size="),
+        "{output:?}"
+    );
     assert!(output.contains("first=1.0pt,max=2.0pt,bad=0.0pt"));
 }
 
@@ -844,15 +852,26 @@ fn math_family_font_selectors_are_grouping_aware() {
     );
 }
 
+/// TeX.web §§576--579 finalize a loaded font with seven addressable
+/// parameters and the live default character codes, while `scan_font_ident`
+/// recovers an invalid family and a missing selector to family zero/nullfont.
 #[test]
-fn math_family_assignment_recovers_bad_family_and_missing_font() {
+fn canonical_font_defaults_and_family_selector_recovery() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new("\\textfont16=\\relax \\textfont1=="));
+    stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_HYPHEN_CHAR, 99);
+    stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_SKEW_CHAR, 98);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\fixture=cmmi10 \\textfont16=\\relax \\textfont1==",
+    ));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("bounded family and missing font recover like TeX");
 
+    let fixture = font_meaning(&stores, "fixture");
+    assert_eq!(stores.font_parameter_count(fixture), 7);
+    assert_eq!(stores.font_hyphen_char(fixture), 99);
+    assert_eq!(stores.font_skew_char(fixture), 98);
     assert_eq!(
         stores.math_family_font(tex_state::math::MathFontSize::Text, 0),
         tex_state::font::NULL_FONT

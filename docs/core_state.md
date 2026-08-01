@@ -47,6 +47,11 @@ small value projection and never receives raw store access. The aggregate
 retains componentwise high-water values before rollback, so speculative or
 checkpointed allocation is still represented at job termination.
 
+The state-owned diagnostic printer also preserves TeX's distinction between
+§58 `print_char` and §68 `print_ASCII`. The latter crosses the one-character
+string table, so missing control characters use canonical `^^` notation while
+remaining subject to the shared diagnostic selector.
+
 ## 3. Identity: the interner
 
 `Symbol` is a compact runtime key scoped to one owning interner. It is never a

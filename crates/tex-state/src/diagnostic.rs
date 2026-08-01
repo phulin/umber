@@ -77,6 +77,12 @@ impl<'a> Diagnostic<'a> {
         self
     }
 
+    /// tex.web §68's `print_ASCII`, via the one-character string table.
+    pub fn print_ascii(&mut self, character: char) -> &mut Self {
+        self.printer.print_character_string(character);
+        self
+    }
+
     /// tex.web §57's `print_ln`.
     pub fn print_ln(&mut self) -> &mut Self {
         self.printer.print_ln();
