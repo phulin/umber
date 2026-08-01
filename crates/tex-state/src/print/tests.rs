@@ -81,6 +81,49 @@ fn batch_mode_selects_the_transcript_and_every_other_mode_selects_both() {
 }
 
 #[test]
+fn fatal_before_transcript_open_uses_prelog_selector_and_restores_normal_routing() {
+    for (mode, prelog_terminal) in [
+        (InteractionMode::Batch, false),
+        (InteractionMode::Nonstop, true),
+        (InteractionMode::Scroll, true),
+        (InteractionMode::ErrorStop, true),
+    ] {
+        let mut universe = Universe::new();
+        universe.set_interaction_mode(mode);
+        let mut report = universe.print_err_with_transcript_state(
+            "TeX capacity exceeded, sorry [input stack size=5000]",
+            false,
+        );
+        report.help(&["If you really absolutely need more capacity,"]);
+        report.succumb();
+
+        let terminal = sink_text(&universe, PrintSink::Terminal);
+        let log = sink_text(&universe, PrintSink::Log);
+        assert_eq!(
+            terminal.contains("! TeX capacity exceeded, sorry [input stack size=5000]."),
+            prelog_terminal,
+            "pre-transcript terminal routing for {mode:?}: {terminal:?}"
+        );
+        assert!(
+            log.is_empty(),
+            "a pre-transcript fatal must not create log output for {mode:?}: {log:?}"
+        );
+
+        // The pre-log selector belongs only to the report. Once the host has
+        // opened the transcript, ordinary printing derives the normal
+        // selector (ErrorStop has canonically become Scroll in `succumb`).
+        universe.printer().print("after-open");
+        let terminal = sink_text(&universe, PrintSink::Terminal);
+        let log = sink_text(&universe, PrintSink::Log);
+        assert_eq!(
+            terminal.ends_with("after-open"),
+            mode != InteractionMode::Batch
+        );
+        assert!(log.ends_with("after-open"));
+    }
+}
+
+#[test]
 fn pdftex_integer_printers_cover_widened_and_negative_boundaries() {
     let mut universe = Universe::new();
     let before_interaction = universe.interaction_mode();

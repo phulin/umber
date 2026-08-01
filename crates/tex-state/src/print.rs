@@ -477,8 +477,12 @@ impl ErrorOutcome {
 
 impl<'a> ErrorReport<'a> {
     fn begin(universe: &'a mut Universe, text: &str) -> Self {
-        // tex.web §73: `print_nl("! "); print(#)`.
         let selector = Selector::for_interaction(universe.interaction_mode());
+        Self::begin_with_selector(universe, text, selector)
+    }
+
+    fn begin_with_selector(universe: &'a mut Universe, text: &str, selector: Selector) -> Self {
+        // tex.web §73: `print_nl("! "); print(#)`.
         let mut printer = Printer::new(universe, selector);
         printer.print_nl("! ").print(text);
         Self {
@@ -990,6 +994,23 @@ impl Universe {
     /// tex.web §73's `print_err`, opening a recoverable-error report.
     pub fn print_err(&mut self, text: &str) -> ErrorReport<'_> {
         ErrorReport::begin(self, text)
+    }
+
+    /// Opens §73's report with the selector implied by the transcript
+    /// lifecycle as well as the interaction mode.
+    ///
+    /// Canonical startup owns the short interval before §1335 opens the log.
+    /// Keeping that lifecycle explicit here lets it report a fatal startup
+    /// error without pretending the transcript already exists; the selector
+    /// remains scoped to the returned report and later ordinary printing uses
+    /// the normal live-transcript selector again.
+    pub fn print_err_with_transcript_state(
+        &mut self,
+        text: &str,
+        transcript_open: bool,
+    ) -> ErrorReport<'_> {
+        let selector = Selector::for_interaction_and_log(self.interaction_mode(), transcript_open);
+        ErrorReport::begin_with_selector(self, text, selector)
     }
 
     /// tex.web §82's `error` for a message printed *without* §73's
