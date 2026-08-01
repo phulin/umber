@@ -74,7 +74,7 @@ impl ConditionalState {
 }
 
 /// TeX's three mode families, projected by the executor-owned mode nest.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConditionalMode {
     Vertical,
     Horizontal,
