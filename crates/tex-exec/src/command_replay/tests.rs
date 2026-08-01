@@ -6247,6 +6247,11 @@ fn dead_output_cycles_force_a_shipout_from_fire_up() {
         "the dead-cycle escape must report itself: {}",
         terminal_text(&universe)
     );
+    assert!(
+        terminal_text(&universe).contains("<to be read again>"),
+        "TeX82 §§82 and 1024 must render the live backed-up terminator: {}",
+        terminal_text(&universe)
+    );
 }
 
 #[test]

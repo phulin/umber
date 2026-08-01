@@ -38,6 +38,7 @@ pub(crate) enum SelectedPageOutput {
 pub(crate) fn select_pending_page_output(
     stores: &mut Universe,
     fire_up: PageFireUp,
+    error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
     prepare_box255(stores, fire_up)?;
     let output = stores.tok_param(TokParam::OUTPUT);
@@ -50,7 +51,7 @@ pub(crate) fn select_pending_page_output(
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
-        report_output_loop(stores, dead_cycles)?;
+        report_output_loop(stores, dead_cycles, error_context)?;
         prepend_output_heldover(stores, Vec::new());
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
@@ -128,7 +129,8 @@ fn fire_up_page(
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
     if dead_cycles >= max_dead_cycles {
-        report_output_loop(stores, dead_cycles)?;
+        let context = crate::diagnostics::show_context(stores, stores.input_summary());
+        report_output_loop(stores, dead_cycles, context)?;
         prepend_output_heldover(stores, Vec::new());
         let node = take_box255_node(stores)?;
         let _artifact = shipout_node(node, input, stores, execution)?;
@@ -548,11 +550,14 @@ fn run_output_routine_inner(
 
 /// TeX.web §1024's `<Explain that too many dead cycles have occurred...>`.
 ///
-/// Page output is driven by the page builder, not by a scanner, so none of
-/// these three reports has a live `InputStack`: §82's display comes from the
-/// last input summary the job published.
-fn report_output_loop(stores: &mut Universe, dead_cycles: i32) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+/// Page output is driven by the page builder, not by a scanner, so its caller
+/// supplies §82's context. Canonical main control renders its live command
+/// stack; the retained executor renders the last input summary it published.
+fn report_output_loop(
+    stores: &mut Universe,
+    dead_cycles: i32,
+    context: String,
+) -> Result<(), ExecError> {
     let mut report = stores.print_err("Output loop---");
     report
         .print_int(dead_cycles)

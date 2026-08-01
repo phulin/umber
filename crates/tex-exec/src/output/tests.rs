@@ -353,7 +353,8 @@ fn output_selection_enters_one_user_output_group_below_deadcycle_limit() {
     let fire = push_simple_page(&mut stores);
 
     assert!(matches!(
-        select_pending_page_output(&mut stores, fire).expect("white-box operation succeeds"),
+        select_pending_page_output(&mut stores, fire, String::new())
+            .expect("white-box operation succeeds"),
         SelectedPageOutput::UserRoutine
     ));
     assert_eq!(stores.page_integer(PageInteger::DeadCycles), 1);
@@ -365,8 +366,8 @@ fn output_default_path_prepends_heldovers_ships_and_voids_box255() {
     let mut stores = Universe::new();
     let fire = push_simple_page(&mut stores);
 
-    let selected =
-        select_pending_page_output(&mut stores, fire).expect("white-box operation succeeds");
+    let selected = select_pending_page_output(&mut stores, fire, String::new())
+        .expect("white-box operation succeeds");
 
     assert!(matches!(
         selected,
@@ -386,7 +387,8 @@ fn output_deadcycle_limit_reports_and_uses_default_path() {
     let fire = push_simple_page(&mut stores);
 
     assert!(matches!(
-        select_pending_page_output(&mut stores, fire).expect("white-box operation succeeds"),
+        select_pending_page_output(&mut stores, fire, String::new())
+            .expect("white-box operation succeeds"),
         SelectedPageOutput::Default(Node::VList(_))
     ));
     assert!(stores.box_reg(255).is_none());
@@ -404,8 +406,8 @@ fn output_deadcycle_limit_has_exact_help_and_default_shipout() {
     stores.set_page_integer(PageInteger::DeadCycles, 2);
     let fire = push_simple_page(&mut stores);
 
-    let selected =
-        select_pending_page_output(&mut stores, fire).expect("dead-cycle escape succeeds");
+    let selected = select_pending_page_output(&mut stores, fire, String::new())
+        .expect("dead-cycle escape succeeds");
 
     assert!(matches!(
         selected,

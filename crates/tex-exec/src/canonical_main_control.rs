@@ -2033,7 +2033,12 @@ impl CanonicalMainControl {
             let Some(fire_up) = stores.page_fire_up() else {
                 break;
             };
-            match crate::output::select_pending_page_output(stores, fire_up)? {
+            // TeX82 §1024 reaches §82's `error` synchronously while the
+            // command-owned terminator backup is still live.  The durable
+            // Universe summary is published only at step boundaries, so the
+            // report must receive context from the live command stack.
+            let error_context = self.command.output_open_context(&stores.command_context());
+            match crate::output::select_pending_page_output(stores, fire_up, error_context)? {
                 crate::output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
                         state: &mut self.command,
