@@ -14,7 +14,7 @@ use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputRetirementAction,
     OutParameterReplay, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer,
-    TokenBehavior, TokenCursor, TokenPayload,
+    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -939,6 +939,76 @@ impl CommandProcessor<'_> {
             }),
         );
         Ok(())
+    }
+
+    /// Implements TeX82 §1026's input-side output-routine completion.
+    ///
+    /// The brace that reaches `handle_right_brace` can come from inside the
+    /// output token list (for example through a macro) while `output_text`
+    /// still has unread tokens. TeX diagnoses that case and uses raw
+    /// `get_token` delivery to discard the remainder before it calls
+    /// `end_token_list`; it must not let those tokens resume in main control.
+    /// Returns whether the diagnostic is required.
+    pub fn finish_selected_output_routine(&mut self) -> Result<bool, CommandError> {
+        let Some(output_index) = self.command.input.levels.iter().rposition(|level| {
+            matches!(
+                level,
+                InputLevel::Tokens(TokenCursor {
+                    trace: ReplayTrace::Stored(StoredReplayReason::OutputRoutine),
+                    ..
+                })
+            )
+        }) else {
+            // Ordinary expanded delivery can retire a depleted output level
+            // while returning its final brace. In that balanced case there
+            // is no remainder for §1026 to inspect or discard.
+            return Ok(false);
+        };
+
+        let output_has_remaining = match &self.command.input.levels[output_index] {
+            InputLevel::Tokens(cursor) => self.next_stored_token(cursor).is_some(),
+            InputLevel::Source(_) => unreachable!("output replay is a token level"),
+        };
+        let levels_above_are_depleted_backups = self.command.input.levels[output_index + 1..]
+            .iter()
+            .all(|level| {
+                matches!(
+                    level,
+                    InputLevel::Tokens(cursor)
+                        if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
+                            && self.next_stored_token(cursor).is_none()
+                )
+            });
+        let unbalanced = output_has_remaining || !levels_above_are_depleted_backups;
+
+        if unbalanced {
+            while self
+                .command
+                .input
+                .levels
+                .iter()
+                .find_map(|level| match level {
+                    InputLevel::Tokens(cursor)
+                        if cursor.identity
+                            == match &self.command.input.levels[output_index] {
+                                InputLevel::Tokens(output) => output.identity,
+                                InputLevel::Source(_) => unreachable!("output token level"),
+                            } =>
+                    {
+                        Some(self.next_stored_token(cursor).is_some())
+                    }
+                    InputLevel::Source(_) | InputLevel::Tokens(_) => None,
+                })
+                .unwrap_or(false)
+            {
+                self.get_token()?.ok_or(CommandError::input_invariant())?;
+            }
+        }
+
+        if unbalanced {
+            self.conserve_input_stack()?;
+        }
+        Ok(unbalanced)
     }
 
     /// Retires a depleted §325 right-brace backup before synchronous output.

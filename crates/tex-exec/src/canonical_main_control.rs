@@ -12998,6 +12998,31 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOutputRoutine => {
+            let context = command.state.output_open_context(&stores.command_context());
+            let unbalanced = {
+                let mut processor = command_processor(
+                    command.state,
+                    command.runtime,
+                    command.fuel,
+                    command.capabilities,
+                    command.observations,
+                    stores,
+                );
+                processor
+                    .finish_selected_output_routine()
+                    .map_err(command_error)?
+            };
+            if unbalanced {
+                crate::error_report::report_error(
+                    stores,
+                    "Unbalanced output routine",
+                    &[
+                        "Your sneaky output routine has problematic {'s and/or }'s.",
+                        "I can't handle that very well; good luck.",
+                    ],
+                    context,
+                )?;
+            }
             // TeX82 §1026 retires the output token list, then runs §1096's
             // `end_graf` before it unsaves the output group. A non-null
             // paragraph left open by \output must be line-broken into this

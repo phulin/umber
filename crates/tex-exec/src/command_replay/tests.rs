@@ -5917,6 +5917,34 @@ fn box_closer_output_step(
     panic!("box closer did not select page output within the bounded execution");
 }
 
+/// TeX82 §1026 diagnoses an output-group closer reached before the
+/// `output_text` list is exhausted, then drains the safety-closing brace and
+/// every other remaining raw token before returning to main control.
+#[test]
+fn premature_output_group_closer_reports_unbalanced_and_drains_remainder() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\let\rb=}\output={\global\count0=1\rb\global\count0=2}\vsize=1pt
+           \hrule height2pt\penalty-10000\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let terminal = terminal_text(&universe);
+    assert!(terminal.contains("Unbalanced output routine"), "{terminal}");
+    assert!(
+        !terminal.contains("Extra }, or forgotten"),
+        "the unread safety brace must be drained: {terminal}"
+    );
+    assert_eq!(
+        universe.count(0),
+        1,
+        "unread output tokens must not execute"
+    );
+}
+
 #[test]
 fn box_closer_retires_its_backup_only_when_user_output_is_entered() {
     // TeX82 §§1025 and 1085: closing the output group returns its forced
