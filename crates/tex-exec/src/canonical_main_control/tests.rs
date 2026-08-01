@@ -1968,6 +1968,149 @@ fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_graphics_control(stores: &mut Universe) -> CanonicalMainControl {
+    for (name, primitive) in [
+        ("pdfliteral", UnexpandablePrimitive::PdfLiteral),
+        ("pdfsetmatrix", UnexpandablePrimitive::PdfSetMatrix),
+        ("pdfsave", UnexpandablePrimitive::PdfSave),
+        ("pdfrestore", UnexpandablePrimitive::PdfRestore),
+        ("pdfcolorstack", UnexpandablePrimitive::PdfColorStack),
+        ("pdfsavepos", UnexpandablePrimitive::PdfSavePos),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdf_graphics_reject_dvi_before_operands_and_retry_in_source_order() {
+    // pdftex.web §§1524 and 1563: `check_pdfoutput` precedes operand scanning
+    // for every graphics extension except `\pdfsavepos`. Aggregate rollback
+    // therefore preserves each complete command for an exact PDF-mode retry.
+    for (source, primitive, expected) in [
+        (
+            br"\pdfliteral direct{first}\pdfsave".as_slice(),
+            "pdfliteral",
+            "literal",
+        ),
+        (
+            br"\pdfsetmatrix{1 0 0 1}\pdfsave".as_slice(),
+            "pdfsetmatrix",
+            "matrix",
+        ),
+        (
+            br"\pdfcolorstack0 push{0 g}\pdfsave".as_slice(),
+            "pdfcolorstack",
+            "color",
+        ),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_graphics_control(&mut stores);
+        register_source(&mut control, source);
+        let state_before = stores.testing_state_hash();
+
+        assert!(
+            matches!(control.step(&mut stores), Err(ExecError::PdfExtensionInDviMode(name)) if name == primitive)
+        );
+        assert_eq!(stores.testing_state_hash(), state_before);
+        assert!(control.modes.current_list().nodes().is_empty());
+
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        assert_eq!(
+            control.step(&mut stores).expect("graphics command retries"),
+            MainControlStep::Continue
+        );
+        let [node] = control.modes.current_list().nodes() else {
+            panic!("{expected}: retry must append exactly one node");
+        };
+        assert!(
+            matches!(
+                (expected, node),
+                ("literal", Node::Whatsit(Whatsit::PdfLiteral { payload, .. })) if payload == b"first"
+            ) || matches!((expected, node), ("matrix", Node::Whatsit(Whatsit::PdfSetMatrix { payload })) if payload == b"1 0 0 1")
+                || matches!((expected, node), ("color", Node::Whatsit(Whatsit::PdfColorStack { id: 0, action: tex_state::PdfColorStackAction::Push(payload) })) if payload == b"0 g")
+        );
+        assert_eq!(
+            control
+                .step(&mut stores)
+                .expect("following command remains"),
+            MainControlStep::Continue
+        );
+        assert!(matches!(
+            control.modes.current_list().nodes().last(),
+            Some(Node::Whatsit(Whatsit::PdfSave))
+        ));
+    }
+}
+
+#[test]
+fn pdfsavepos_remains_available_in_dvi_mode() {
+    // pdftex.web §1563 deliberately excludes `\pdfsavepos` from the PDF
+    // output preflight used by the neighboring graphics extensions.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_graphics_control(&mut stores);
+    register_source(&mut control, br"\pdfsavepos");
+    assert_eq!(
+        control.step(&mut stores).expect("DVI save position"),
+        MainControlStep::Continue
+    );
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfSavePos)]
+    ));
+}
+
+#[test]
+#[ignore = "umber2-ly87: canonical recovery does not yet append the stack-zero fallback action"]
+fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
+    // pdftex.web §1563: invalid stack numbers fall back to stack zero, a
+    // missing action is ignored after the four-action help, and subsequent
+    // commands retain their order.
+    for (source, diagnostic, help) in [
+        (
+            br"\pdfcolorstack-1 push{a}".as_slice(),
+            "Invalid negative color stack number",
+            "I'll use default color stack 0 here.",
+        ),
+        (
+            br"\pdfcolorstack99 set{b}".as_slice(),
+            "Unknown color stack number 99",
+            "Allocate and initialize a color stack with \\pdfcolorstackinit.",
+        ),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+        let mut control = pdftex_graphics_control(&mut stores);
+        register_source(&mut control, source);
+        let _ = control.step(&mut stores).expect("recoverable bad stack id");
+        assert!(matches!(
+            control.modes.current_list().nodes(),
+            [Node::Whatsit(Whatsit::PdfColorStack { id: 0, .. })]
+        ));
+        let terminal = terminal_text(&stores);
+        assert!(terminal.contains(diagnostic));
+        assert!(terminal.contains(help));
+        assert!(terminal.contains("Proceed, with fingers crossed."));
+    }
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_graphics_control(&mut stores);
+    register_source(&mut control, br"\pdfcolorstack0\pdfsave");
+    let _ = control
+        .step(&mut stores)
+        .expect("missing action is recoverable");
+    assert!(matches!(
+        control.modes.current_list().nodes(),
+        [Node::Whatsit(Whatsit::PdfSave)]
+    ));
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("Color stack action is missing"));
+    assert!(terminal.contains("set, push, pop, current"));
+    assert!(terminal.contains("I'll ignore the color stack command."));
+}
+
 fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
     let outline = stores.intern("pdfoutline");
     stores.set_meaning(

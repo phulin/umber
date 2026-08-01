@@ -6483,17 +6483,22 @@ fn scan_command(
             | UnexpandablePrimitive::PdfSnapY
             | UnexpandablePrimitive::PdfSnapYComp),
         ) => {
-            if matches!(
-                primitive,
-                UnexpandablePrimitive::PdfSnapRefPoint
-                    | UnexpandablePrimitive::PdfSnapY
-                    | UnexpandablePrimitive::PdfSnapYComp
-            ) && processor.int_param(IntParam::PDF_OUTPUT) <= 0
+            // pdftex.web §§1524 and 1563 run `check_pdfoutput` before each
+            // extension's operand scanner. `\pdfsavepos` is the sole member
+            // of this graphics family that remains available in DVI mode.
+            if primitive != UnexpandablePrimitive::PdfSavePos
+                && processor.int_param(IntParam::PDF_OUTPUT) <= 0
             {
                 let name = match primitive {
+                    UnexpandablePrimitive::PdfLiteral => "pdfliteral",
+                    UnexpandablePrimitive::PdfSetMatrix => "pdfsetmatrix",
+                    UnexpandablePrimitive::PdfSave => "pdfsave",
+                    UnexpandablePrimitive::PdfRestore => "pdfrestore",
+                    UnexpandablePrimitive::PdfColorStack => "pdfcolorstack",
                     UnexpandablePrimitive::PdfSnapRefPoint => "pdfsnaprefpoint",
                     UnexpandablePrimitive::PdfSnapY => "pdfsnapy",
                     UnexpandablePrimitive::PdfSnapYComp => "pdfsnapycomp",
+                    UnexpandablePrimitive::PdfSavePos => unreachable!(),
                     _ => unreachable!(),
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
