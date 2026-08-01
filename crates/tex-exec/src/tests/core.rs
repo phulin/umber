@@ -6233,6 +6233,25 @@ fn canonical_named_register_aliases_match_primitive_assignments() {
 }
 
 #[test]
+fn canonical_etex_sparse_registers_support_assignment_and_arithmetic() {
+    let stores = run_canonical_etex(
+        r"\count2000=5 \advance\count2000 by 5 \multiply\count2000 by 10
+          \divide\count2000 by 5
+          \dimen2001=2pt \advance\dimen2001 by 3pt
+          \skip2002=1pt \advance\skip2002 by 2pt
+          \muskip2003=1mu \advance\muskip2003 by 3mu \end",
+    );
+
+    // e-TeX 2.6 change [49.1237] scans explicit register selectors through
+    // `scan_register_num` for assignment and `do_register_command` alike.
+    assert_eq!(stores.count(2000), 20);
+    assert_eq!(stores.dimen(2001).raw(), 5 * 65_536);
+    assert_eq!(stores.glue(stores.skip(2002)).width.raw(), 3 * 65_536);
+    assert_eq!(stores.glue(stores.muskip(2003)).width.raw(), 4 * 65_536);
+    assert_eq!(stores.count(0), 0);
+}
+
+#[test]
 fn canonical_register_definitions_honor_nested_scope_and_globaldefs() {
     let stores = run_canonical_tex82(
         r"\countdef\local=1

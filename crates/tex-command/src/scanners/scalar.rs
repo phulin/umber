@@ -2454,6 +2454,19 @@ impl CommandProcessor<'_> {
         Ok(scanned.value as u16)
     }
 
+    /// Scans the profile's ordinary register-command selector.
+    ///
+    /// TeX82 §1237 uses `scan_eight_bit_int`. e-TeX 2.6 change [49.1237]
+    /// replaces it with `scan_register_num`, accepting sparse registers up to
+    /// 32767 in extended mode; pdfTeX inherits that behavior.
+    pub fn scan_profile_register_index(&mut self) -> Result<u16, CommandError> {
+        if self.profile().capabilities().supports_etex() {
+            self.scan_extended_register_index()
+        } else {
+            self.scan_eight_bit_register_index()
+        }
+    }
+
     /// Scans e-TeX 2.6 `etex.ch`'s `scan_register_num`.
     ///
     /// Extension primitives using this scanner are absent from TeX82.

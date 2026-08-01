@@ -6040,7 +6040,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             let index = processor
-                .scan_eight_bit_register_index()
+                .scan_profile_register_index()
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -6061,7 +6061,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             let index = processor
-                .scan_eight_bit_register_index()
+                .scan_profile_register_index()
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;
@@ -6105,7 +6105,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
             let index = processor
-                .scan_eight_bit_register_index()
+                .scan_profile_register_index()
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(false).map_err(command_error)?.value;
@@ -6136,7 +6136,7 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             let index = processor
-                .scan_eight_bit_register_index()
+                .scan_profile_register_index()
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_glue(true).map_err(command_error)?.value;
@@ -8334,21 +8334,21 @@ fn scan_arithmetic_assignment(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
             ArithmeticTarget::IntegerRegister(
                 processor
-                    .scan_eight_bit_register_index()
+                    .scan_profile_register_index()
                     .map_err(command_error)?,
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
             ArithmeticTarget::DimensionRegister(
                 processor
-                    .scan_eight_bit_register_index()
+                    .scan_profile_register_index()
                     .map_err(command_error)?,
             )
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
             ArithmeticTarget::GlueRegister {
                 index: processor
-                    .scan_eight_bit_register_index()
+                    .scan_profile_register_index()
                     .map_err(command_error)?,
                 mu: false,
             }
@@ -8356,7 +8356,7 @@ fn scan_arithmetic_assignment(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
             ArithmeticTarget::GlueRegister {
                 index: processor
-                    .scan_eight_bit_register_index()
+                    .scan_profile_register_index()
                     .map_err(command_error)?,
                 mu: true,
             }
