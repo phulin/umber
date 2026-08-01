@@ -1641,6 +1641,12 @@ fn outline_objects(
             stack.push((index, record.count().unsigned_abs() as usize));
         }
     }
+    if let Some(&(parent, remaining)) = stack.last() {
+        return Err(PdfBuildError::OutlineCountIncomplete {
+            object: records[parent].item_object(),
+            missing: remaining,
+        });
+    }
     let descendants = (0..records.len())
         .map(|index| outline_descendants(index, &children))
         .collect::<Vec<_>>();
@@ -4437,6 +4443,10 @@ pub enum PdfBuildError {
     MissingOpenLink(u32),
     OpenActionPageNotFound(u32),
     OpenActionHasNoPage,
+    OutlineCountIncomplete {
+        object: u32,
+        missing: usize,
+    },
     ReferencedRawObjectUninitialized(u32),
     ReferencedFormNotFound(u32),
     MissingFormArtifact(u32),
@@ -4561,6 +4571,10 @@ impl std::fmt::Display for PdfBuildError {
             Self::OpenActionHasNoPage => {
                 f.write_str("PDF open action destination requires at least one page")
             }
+            Self::OutlineCountIncomplete { object, missing } => write!(
+                f,
+                "PDF outline item {object} is missing {missing} declared child entries"
+            ),
             Self::ReferencedRawObjectUninitialized(id) => {
                 write!(
                     f,
@@ -8379,6 +8393,30 @@ mod tests {
             first.to_string(),
             "PDF open action references missing page 2"
         );
+        assert_eq!(second.to_string(), first.to_string());
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+    }
+
+    #[test]
+    fn incomplete_outline_count_is_exact_retry_stable_and_publishes_nothing() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1",
+            "\\pdfoutline user{/S /Named /N /NextPage} count 2 {Root}",
+            "\\pdfoutline user{/S /Named /N /NextPage} {Only child}",
+            "\\shipout\\hbox{}\\end",
+        ));
+        let commits_before = stores.world().artifact_commits().to_vec();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("incomplete outline hierarchy must fail finalization");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("incomplete hierarchy must fail identically on retry");
+        assert!(matches!(
+            first,
+            PdfBuildError::OutlineCountIncomplete { missing: 1, .. }
+        ));
         assert_eq!(second.to_string(), first.to_string());
         assert_eq!(stores.pdf_next_object_id(), next_after_first);
         assert_eq!(stores.world().artifact_commits(), commits_before);

@@ -835,6 +835,12 @@ pub enum PdfModelError {
     PageAnnotationsInvalid(PdfObjectId),
     AnnotationNotTyped(PdfObjectId),
     AnnotationOwnedByMultiplePages(PdfObjectId),
+    OutlineRootNotTyped(PdfObjectId),
+    OutlineItemNotTyped(PdfObjectId),
+    OutlineParentInvalid(PdfObjectId),
+    OutlineSiblingInvalid(PdfObjectId),
+    OutlineCycle(PdfObjectId),
+    OutlineCountInvalid(PdfObjectId),
 }
 
 impl std::fmt::Display for PdfModelError {
@@ -935,7 +941,99 @@ fn validate_document(
             limits.max_depth,
         )?;
     }
-    validate_page_graph(document)
+    validate_page_graph(document)?;
+    validate_outline_graph(document, limits.max_depth)
+}
+
+fn validate_outline_graph(
+    document: &UnvalidatedPdfDocument,
+    max_depth: usize,
+) -> Result<(), PdfModelError> {
+    let Some(catalog) = object_dictionary(document, document.catalog) else {
+        return Ok(());
+    };
+    let Some(root_id) = reference_value(catalog.get(b"Outlines")) else {
+        return Ok(());
+    };
+    let Some(PdfObject::Outline(root)) = object(document, root_id) else {
+        return Err(PdfModelError::OutlineRootNotTyped(root_id));
+    };
+    let mut seen = BTreeSet::new();
+    let (_, visible) = validate_outline_siblings(
+        document, root_id, root.first, root.last, 1, max_depth, &mut seen,
+    )?;
+    if root.visible_count != i32::try_from(visible).unwrap_or(i32::MAX) {
+        return Err(PdfModelError::OutlineCountInvalid(root_id));
+    }
+    Ok(())
+}
+
+fn validate_outline_siblings(
+    document: &UnvalidatedPdfDocument,
+    parent: PdfObjectId,
+    first: PdfObjectId,
+    last: PdfObjectId,
+    depth: usize,
+    max_depth: usize,
+    seen: &mut BTreeSet<PdfObjectId>,
+) -> Result<(usize, usize), PdfModelError> {
+    if depth > max_depth {
+        return Err(PdfModelError::NestingTooDeep {
+            actual: depth,
+            limit: max_depth,
+        });
+    }
+    let mut current = Some(first);
+    let mut previous = None;
+    let mut final_id = None;
+    let mut visible = 0_usize;
+    let mut total = 0_usize;
+    while let Some(id) = current {
+        if !seen.insert(id) {
+            return Err(PdfModelError::OutlineCycle(id));
+        }
+        let Some(PdfObject::OutlineItem(item)) = object(document, id) else {
+            return Err(PdfModelError::OutlineItemNotTyped(id));
+        };
+        if item.parent != parent {
+            return Err(PdfModelError::OutlineParentInvalid(id));
+        }
+        if item.previous != previous {
+            return Err(PdfModelError::OutlineSiblingInvalid(id));
+        }
+        let (descendants, visible_descendants) = match (item.first, item.last) {
+            (None, None) => (0, 0),
+            (Some(first), Some(last)) => {
+                validate_outline_siblings(document, id, first, last, depth + 1, max_depth, seen)?
+            }
+            _ => return Err(PdfModelError::OutlineSiblingInvalid(id)),
+        };
+        let expected = if descendants == 0 {
+            None
+        } else {
+            let count = i32::try_from(descendants).unwrap_or(i32::MAX);
+            Some(if item.count.is_some_and(|value| value < 0) {
+                -count
+            } else {
+                count
+            })
+        };
+        if item.count != expected {
+            return Err(PdfModelError::OutlineCountInvalid(id));
+        }
+        visible += 1;
+        total = total.saturating_add(1 + descendants);
+        if item.count.is_some_and(|count| count > 0) {
+            visible = visible.saturating_add(visible_descendants);
+        }
+        final_id = Some(id);
+        previous = Some(id);
+        current = item.next;
+    }
+    if final_id != Some(last) {
+        return Err(PdfModelError::OutlineSiblingInvalid(last));
+    }
+    Ok((total, visible))
 }
 
 fn validate_object_values(

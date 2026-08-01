@@ -285,6 +285,141 @@ fn duplicate_and_dangling_object_identities_are_rejected() {
     );
 }
 
+fn outlined_input() -> UnvalidatedPdfDocument {
+    let sample = sample_document(&[1, 2, 3, 4, 5]);
+    let mut objects = sample.objects().cloned().collect::<Vec<_>>();
+    let PdfObject::Value(PdfValue::Dictionary(catalog)) = &mut objects[0].object else {
+        panic!("catalog dictionary")
+    };
+    catalog
+        .insert("Outlines", PdfValue::Reference(id(6)))
+        .expect("outline root key");
+    objects.extend([
+        PdfIndirectObject {
+            id: id(6),
+            object: PdfObject::Outline(PdfOutlineObject {
+                first: id(7),
+                last: id(8),
+                visible_count: 2,
+            }),
+        },
+        PdfIndirectObject {
+            id: id(7),
+            object: PdfObject::OutlineItem(PdfOutlineItemObject {
+                title: id(5),
+                action: id(4),
+                parent: id(6),
+                previous: None,
+                next: Some(id(8)),
+                first: None,
+                last: None,
+                count: None,
+                raw_entries: Vec::new(),
+            }),
+        },
+        PdfIndirectObject {
+            id: id(8),
+            object: PdfObject::OutlineItem(PdfOutlineItemObject {
+                title: id(5),
+                action: id(4),
+                parent: id(6),
+                previous: Some(id(7)),
+                next: None,
+                first: None,
+                last: None,
+                count: None,
+                raw_entries: Vec::new(),
+            }),
+        },
+    ]);
+    UnvalidatedPdfDocument {
+        version: sample.version(),
+        catalog: sample.catalog(),
+        objects,
+        trailer: Default::default(),
+    }
+}
+
+#[test]
+fn malformed_outline_parent_sibling_cycle_and_count_are_exact_retry_stable() {
+    type MalformedOutlineCase = (PdfObjectId, fn(&mut PdfOutlineItemObject), PdfModelError);
+    let cases: [MalformedOutlineCase; 4] = [
+        (
+            id(7),
+            |item| item.parent = id(8),
+            PdfModelError::OutlineParentInvalid(id(7)),
+        ),
+        (
+            id(8),
+            |item| item.previous = None,
+            PdfModelError::OutlineSiblingInvalid(id(8)),
+        ),
+        (
+            id(8),
+            |item| item.next = Some(id(7)),
+            PdfModelError::OutlineCycle(id(7)),
+        ),
+        (
+            id(7),
+            |item| item.count = Some(1),
+            PdfModelError::OutlineCountInvalid(id(7)),
+        ),
+    ];
+    for (target, mutate, expected) in cases {
+        let mut input = outlined_input();
+        let PdfObject::OutlineItem(item) = &mut input
+            .objects
+            .iter_mut()
+            .find(|object| object.id == target)
+            .expect("target outline item")
+            .object
+        else {
+            panic!("typed outline item")
+        };
+        mutate(item);
+        let first = input.clone().validate().expect_err("malformed outline");
+        let second = input.validate().expect_err("retry rejects same outline");
+        assert_eq!(first, expected);
+        assert_eq!(second, first);
+        assert_eq!(second.to_string(), first.to_string());
+    }
+}
+
+#[test]
+fn destination_missing_page_and_outline_missing_action_fail_before_serialization() {
+    let mut destination = sample_document(&[1, 2, 3, 4, 5])
+        .objects()
+        .cloned()
+        .collect::<Vec<_>>();
+    destination.push(PdfIndirectObject {
+        id: id(6),
+        object: PdfObject::Destination(PdfExplicitDestination {
+            page: id(99),
+            view: PdfDestinationView::Fit,
+        }),
+    });
+    assert_eq!(
+        UnvalidatedPdfDocument {
+            version: PdfVersion::new(1, 4).expect("version"),
+            catalog: id(1),
+            objects: destination,
+            trailer: Default::default(),
+        }
+        .validate(),
+        Err(PdfModelError::MissingObject(id(99)))
+    );
+
+    let mut outline = outlined_input();
+    let PdfObject::OutlineItem(item) = &mut outline.objects[6].object else {
+        panic!("first outline item")
+    };
+    item.action = id(99);
+    assert_eq!(
+        outline.validate(),
+        Err(PdfModelError::MissingObject(id(99)))
+    );
+}
+
 #[test]
 fn info_reference_must_name_a_dictionary() {
     let sample = sample_document(&[1, 2, 3, 4, 5]);
