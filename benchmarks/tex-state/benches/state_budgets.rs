@@ -13,7 +13,7 @@ use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{MathChar, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::Meaning;
 use tex_state::meaning::MeaningFlags;
-use tex_state::node::{BoxNode, BoxNodeFields, KernKind, Node, Sign};
+use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, KernKind, Node, Sign};
 use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::source_map::SourceDescriptor;
@@ -272,7 +272,7 @@ fn benchmark_box(children: tex_state::ids::NodeListId, value: i32) -> BoxNode {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -627,7 +627,9 @@ fn encode_token(stores: &Universe, token: Token, mut push: impl FnMut(u64)) {
         Token::Cs(symbol) => {
             push(1);
             push(match stores.control_sequence_kind(symbol) {
-                tex_state::interner::ControlSequenceKind::Named => 0,
+                tex_state::interner::ControlSequenceKind::Null
+                | tex_state::interner::ControlSequenceKind::SingleCharacter
+                | tex_state::interner::ControlSequenceKind::Named => 0,
                 tex_state::interner::ControlSequenceKind::ActiveCharacter => 1,
             });
             let bytes = stores.resolve(symbol).as_bytes();
@@ -688,7 +690,7 @@ fn transient_box_overwrite_checkpoint(c: &mut Criterion) {
                             height: Scaled::from_raw(0),
                             depth: Scaled::from_raw(0),
                             shift: Scaled::from_raw(0),
-                            display: false,
+                            box_lr: BoxLr::Normal,
                             glue_set: GlueSetRatio::ZERO,
                             glue_sign: Sign::Normal,
                             glue_order: Order::Normal,
@@ -720,7 +722,7 @@ fn survivor_root_recycling(c: &mut Criterion) {
                             height: Scaled::from_raw(0),
                             depth: Scaled::from_raw(0),
                             shift: Scaled::from_raw(0),
-                            display: false,
+                            box_lr: BoxLr::Normal,
                             glue_set: GlueSetRatio::ZERO,
                             glue_sign: Sign::Normal,
                             glue_order: Order::Normal,

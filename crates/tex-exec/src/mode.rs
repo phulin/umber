@@ -1245,6 +1245,12 @@ impl ModeNest {
             .list()
     }
 
+    /// Appends one owned node to the current mode list through its journaled
+    /// mutation boundary.
+    pub fn push_current_node(&mut self, node: Node) {
+        self.current_list_mutation().push(node);
+    }
+
     pub(crate) fn current_list_mutation(&mut self) -> ModeListMutation<'_> {
         let index = self.levels.len() - 1;
         let (levels, journal) = (&mut self.levels, &mut self.journal);

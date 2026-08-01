@@ -223,9 +223,10 @@ fn page_workload(nodes: usize) -> Workload {
 
 fn mode_workload(nodes: usize) -> Workload {
     let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal);
+    nest.push(Mode::Horizontal)
+        .expect("benchmark mode nest should have capacity");
     for index in 0..nodes {
-        nest.current_list_mut().push(Node::Kern {
+        nest.push_current_node(Node::Kern {
             amount: Scaled::from_raw(index as i32),
             kind: KernKind::Explicit,
         });
@@ -254,7 +255,9 @@ fn hyphenation_workload(patterns: usize) -> Workload {
         let letters = unique_letters(index);
         let values = vec![0, 1, 0, 1, 0];
         logical_live_bytes += (letters.len() * size_of::<char>() + values.len()) as u64;
-        universe.add_hyphenation_pattern(PatternSpec { letters, values });
+        universe
+            .add_hyphenation_pattern(PatternSpec { letters, values })
+            .expect("benchmark hyphenation pattern should be valid");
     }
     Workload::Universe {
         universe,
