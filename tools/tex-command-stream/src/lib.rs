@@ -1176,6 +1176,24 @@ mod tests {
 
         assert_eq!(compare_streams("tex82/macro", &expected, &actual), Ok(()));
 
+        let retained_other_reference = vec![ObservedEvent::new(
+            Event::Command(CommandEvent {
+                delivery: CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: "call".into(),
+                    operand: CanonicalValue::Integer(17),
+                    control_sequence: Some("identity".into()),
+                    location: None,
+                },
+            }),
+            String::new(),
+        )];
+        assert_eq!(
+            compare_streams("tex82/macro", &expected, &retained_other_reference),
+            Ok(()),
+            "TeX's def_ref address is an allocator reference, not macro semantics"
+        );
+
         let wrong_name = vec![ObservedEvent::new(
             Event::Command(CommandEvent {
                 delivery: CommandDelivery::Raw,

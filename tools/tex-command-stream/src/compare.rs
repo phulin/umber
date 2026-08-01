@@ -380,6 +380,13 @@ pub(crate) fn events_match(expected: Option<&Event>, actual: Option<&Event>) -> 
 }
 
 fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    // TeX82 §§341/473/1221 expose a macro's `def_ref` node address as
+    // `cur_chr`. That address is useful allocator evidence in the retained
+    // full stream, but it is not macro semantics: distinct storage models may
+    // omit it or retain a different address. The command name (including
+    // long/outer flags), control-sequence spelling, delivery boundary, and
+    // location remain mandatory here; macro activation and definition-body
+    // events independently carry the semantic history.
     let (
         Event::Command(CommandEvent {
             delivery: expected_delivery,
@@ -396,7 +403,8 @@ fn macro_call_operand_is_reference(expected: &Event, actual: &Event) -> bool {
             command:
                 CanonicalCommand {
                     command: actual_command,
-                    operand: tex_oracle::CanonicalValue::None,
+                    operand:
+                        tex_oracle::CanonicalValue::Integer(_) | tex_oracle::CanonicalValue::None,
                     control_sequence: actual_control_sequence,
                     location: actual_location,
                 },
