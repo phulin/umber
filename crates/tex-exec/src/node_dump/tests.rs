@@ -657,14 +657,54 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
             "\\discretionary replacing 2\n",
             ".\\kern 1.0\n",
             ".etc.\n",
-            ".|kern 1.0\n",
+            "|\\kern 1.0\n",
             ".etc.\n",
-            "\\kern 1.0\n",
-            "etc.\n",
         )
     );
     assert_eq!(stores.nodes(two_kerns), before, "dumping must be read-only");
     assert!(stores.nodes(empty).is_empty());
+}
+
+#[test]
+fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
+    let mut stores = Universe::new();
+    let kern = |points| Node::Kern {
+        amount: Scaled::from_raw(points * Scaled::UNITY),
+        kind: KernKind::Explicit,
+    };
+    let pre = stores.freeze_node_list(&[kern(1)]);
+    let post = stores.freeze_node_list(&[kern(2)]);
+    let replace = stores.freeze_node_list(&[kern(3)]);
+    let disc = Node::Disc {
+        kind: DiscKind::Discretionary,
+        pre,
+        post,
+        replace,
+    };
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            std::slice::from_ref(&disc),
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n",
+    );
+    assert_eq!(stores.nodes(pre), &[kern(1)]);
+    assert_eq!(stores.nodes(post), &[kern(2)]);
+    assert_eq!(stores.nodes(replace), &[kern(3)]);
+    assert!(matches!(
+        disc,
+        Node::Disc {
+            pre: actual_pre,
+            post: actual_post,
+            replace: actual_replace,
+            ..
+        } if actual_pre == pre && actual_post == post && actual_replace == replace
+    ));
 }
 
 #[test]

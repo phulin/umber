@@ -610,11 +610,10 @@ fn dump_disc(
     if !stores.nodes(post).is_empty() {
         let old_len = out.len();
         dump_list(stores, post, config, depth + 1, ListContext::Neutral, out);
-        if old_len + 1 < out.len() {
-            out.replace_range(old_len + 1..old_len + 2, "|");
+        if old_len < out.len() {
+            out.replace_range(old_len..old_len + 1, "|");
         }
     }
-    dump_list(stores, replace, config, depth, ListContext::Neutral, out);
 }
 
 fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut String) {
