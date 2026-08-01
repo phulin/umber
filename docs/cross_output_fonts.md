@@ -352,6 +352,13 @@ identities, immutable decoded programs, mappings, and instances. The engine
 owns loaded-font semantic state. `tex-out` and the PDF finalizer consume only
 committed artifacts plus a read-only retained-resource view.
 
+Classic TFM loading preserves TeX82's compatibility boundaries: the explicit
+`bc=256`, `ec=255` empty interval is accepted, nonessential malformed header
+metadata is ignored, and every dimension-bearing metric word is validated.
+Malformed essential data remains a typed `tex-fonts` parse failure; the engine
+maps that failure to TeX's recoverable bad-metric diagnostic and leaves the
+requested selector at `\nullfont`.
+
 Transport bytes and decoded programs are shared by immutable identity. Sizes
 and instances do not duplicate an object. A pending attempt privately retains
 new resources; failure or cancellation releases that generation. Acceptance

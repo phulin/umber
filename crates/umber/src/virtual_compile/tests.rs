@@ -3826,8 +3826,8 @@ fn unavailable_font_and_tfm_answers_use_tex_missing_font_semantics() {
 }
 
 #[test]
-fn malformed_tfm_bytes_remain_a_fatal_engine_error() {
-    let mut session = session("\\font\\broken=broken \\end");
+fn malformed_tfm_bytes_use_recoverable_null_font_behavior() {
+    let mut session = session("\\font\\broken=broken \\message{FONT=[\\fontname\\broken]} \\end");
     let requested = requests(session.compile_attempt());
     let [tfm] = requested.as_slice() else {
         panic!("expected one TFM request");
@@ -3839,10 +3839,12 @@ fn malformed_tfm_bytes_remain_a_fatal_engine_error() {
             b"not a TFM".to_vec(),
         )
         .expect("malformed TFM bytes are provisioned before parsing");
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Error(CompileError::Diagnostic(_))
-    ));
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("malformed TFM should recover through nullfont")
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(terminal.contains("Bad metric (TFM) file"), "{terminal}");
+    assert!(terminal.contains("FONT=[nullfont]"), "{terminal}");
 }
 
 #[test]

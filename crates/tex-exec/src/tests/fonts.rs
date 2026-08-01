@@ -476,6 +476,33 @@ fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
     assert!(stores.world().input_records().is_empty());
 }
 
+/// TeX.web §564 turns a malformed TFM into the ordinary recoverable
+/// not-loadable path instead of aborting font-definition execution.
+#[test]
+fn malformed_tfm_uses_not_loadable_recovery() {
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("/fonts/broken.tfm", vec![0, 1, 2])
+        .expect("seed malformed font");
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\broken=broken \\message{continued}\\end",
+    ));
+    let mut resolvers = MemoryResolvers::new().with_font_root("/fonts");
+    let mut context = resolvers.context();
+
+    Executor::new()
+        .run_with_context(&mut input, &mut stores, &mut context)
+        .expect("malformed TFM is recoverable");
+
+    assert_eq!(font_meaning(&stores, "broken"), tex_state::font::NULL_FONT);
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Font \\broken=broken not loadable: Bad metric (TFM) file"));
+    assert!(output.contains("continued"));
+}
+
 #[test]
 fn font_properties_are_inherently_global() {
     let mut stores = stores_with_fonts();

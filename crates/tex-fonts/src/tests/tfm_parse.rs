@@ -1,5 +1,5 @@
 use crate as tex_fonts;
-use tex_arith::Scaled;
+use tex_arith::{Scaled, TfmConversionError};
 use tex_fonts::{CharacterTag, FontParameterKind, LigKernAction, ParseError, TfmFont, TfmTable};
 use tex_fonts::{LigKernChar, LigKernCommand};
 
@@ -137,8 +137,8 @@ fn kernel_metrics_api_exposes_chars_lig_kerns_boundaries_and_recipes() {
     );
 
     let boundary = parse(&tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'B',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'B'),
         char_info: vec![[1, 0, 1, 1], [1, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -315,8 +315,8 @@ fn missing_width_characters_may_carry_structurally_valid_tags() {
 
     for (name, missing_info, lig_kerns, extensibles) in cases {
         let font = parse(&tfm_with_sections(Sections {
-            bc: b'A',
-            ec: b'B',
+            bc: u16::from(b'A'),
+            ec: u16::from(b'B'),
             char_info: vec![missing_info, [1, 0, 0, 0]],
             widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
             heights: vec![[0, 0, 0, 0]],
@@ -335,8 +335,8 @@ fn missing_width_characters_may_carry_structurally_valid_tags() {
 #[test]
 fn next_larger_uses_declared_range_not_character_existence() {
     let font = parse(&tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'B',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'B'),
         char_info: vec![[1, 0, 2, b'B'], [0, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -354,8 +354,8 @@ fn next_larger_uses_declared_range_not_character_existence() {
     assert!(font.character(b'B').is_none());
 
     let cycle = tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'B',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'B'),
         char_info: vec![[1, 0, 2, b'B'], [0, 0, 2, b'A']],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -376,8 +376,8 @@ fn next_larger_uses_declared_range_not_character_existence() {
 fn lig_kern_character_operands_require_in_range_existing_characters() {
     let make = |step| {
         tfm_with_sections(Sections {
-            bc: b'A',
-            ec: b'B',
+            bc: u16::from(b'A'),
+            ec: u16::from(b'B'),
             char_info: vec![[1, 0, 1, 0], [1, 0, 0, 0]],
             widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
             heights: vec![[0, 0, 0, 0]],
@@ -400,8 +400,8 @@ fn lig_kern_character_operands_require_in_range_existing_characters() {
     }
 
     let missing = tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'B',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'B'),
         char_info: vec![[1, 0, 1, 0], [0, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -425,8 +425,8 @@ fn lig_kern_character_operands_require_in_range_existing_characters() {
 #[test]
 fn extensible_recipe_pieces_require_in_range_existing_characters() {
     let in_range_missing = tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'B',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'B'),
         char_info: vec![[1, 0, 3, 0], [0, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -450,8 +450,8 @@ fn extensible_recipe_pieces_require_in_range_existing_characters() {
 #[test]
 fn slant_parameter_is_unscaled_signed_fix_word_ratio() {
     let bytes = tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'A',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'A'),
         char_info: vec![[1, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -469,8 +469,8 @@ fn slant_parameter_is_unscaled_signed_fix_word_ratio() {
     );
 
     let negative = parse(&tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'A',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'A'),
         char_info: vec![[1, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -488,8 +488,8 @@ fn slant_parameter_is_unscaled_signed_fix_word_ratio() {
 fn short_parameter_tables_are_zero_padded_through_fontdimen_seven() {
     for np in 0..7 {
         let font = parse(&tfm_with_sections(Sections {
-            bc: b'A',
-            ec: b'A',
+            bc: u16::from(b'A'),
+            ec: u16::from(b'A'),
             char_info: vec![[1, 0, 0, 0]],
             widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
             heights: vec![[0, 0, 0, 0]],
@@ -543,6 +543,92 @@ fn empty_font_bounds_are_accepted_and_normalized() {
     assert_eq!(font.characters.iter().flatten().count(), 0);
 }
 
+/// TeX.web §540 represents an empty character interval as bc=256, ec=255.
+#[test]
+fn tfm_accepts_explicit_256_255_empty_bounds() {
+    let font = parse(&tfm_with_sections(Sections {
+        bc: 256,
+        ec: 255,
+        char_info: Vec::new(),
+        widths: vec![[0, 0, 0, 0]],
+        heights: vec![[0, 0, 0, 0]],
+        depths: vec![[0, 0, 0, 0]],
+        italics: vec![[0, 0, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: Vec::new(),
+        extensibles: Vec::new(),
+        params: Vec::new(),
+    }));
+    assert_eq!((font.bounds.bc, font.bounds.ec), (1, 0));
+    assert!(font.characters.iter().all(Option::is_none));
+}
+
+/// TeX.web §§542 and 568 read only the essential header words while loading.
+#[test]
+fn tfm_ignores_malformed_extra_header_metadata() {
+    let mut bytes = minimal_tfm();
+    let extra_header_words = 16_u16;
+    let original_words = read_u16(&bytes, 0);
+    set_u16(&mut bytes, 0, original_words + extra_header_words);
+    set_u16(&mut bytes, 2, 2 + extra_header_words);
+    let header_end = word_offset(8);
+    bytes.splice(
+        header_end..header_end,
+        vec![0xff; usize::from(extra_header_words) * 4],
+    );
+
+    let font = parse(&bytes);
+    assert_eq!(font.header.checksum, 0);
+    assert_eq!(font.header.design_size.raw(), 10 * Scaled::UNITY);
+    assert_eq!(font.header.coding_scheme, None);
+    assert_eq!(font.header.family, None);
+    assert!(font.character(b'A').is_some());
+}
+
+/// TeX.web §571 checks the zero sentinels and signed fix_word high byte in
+/// every dimension-bearing TFM table.
+#[test]
+fn tfm_rejects_nonzero_first_and_invalid_metric_fix_words() {
+    for table in [
+        TfmTable::Width,
+        TfmTable::Height,
+        TfmTable::Depth,
+        TfmTable::Italic,
+    ] {
+        let mut sections = metric_validation_sections();
+        *metric_words_mut(&mut sections, table)
+            .first_mut()
+            .expect("validation fixture has a sentinel") = [0, 0, 0, 1];
+        assert_eq!(
+            TfmFont::parse(&tfm_with_sections(sections)),
+            Err(ParseError::NonZeroFirstMetric(table)),
+            "{table:?} zero sentinel"
+        );
+    }
+
+    for table in [
+        TfmTable::Width,
+        TfmTable::Height,
+        TfmTable::Depth,
+        TfmTable::Italic,
+        TfmTable::Kern,
+        TfmTable::Param,
+    ] {
+        let mut sections = metric_validation_sections();
+        let index = usize::from(table != TfmTable::Kern);
+        metric_words_mut(&mut sections, table)[index] = [1, 0, 0, 0];
+        assert_eq!(
+            TfmFont::parse(&tfm_with_sections(sections)),
+            Err(ParseError::InvalidFixWord {
+                table,
+                index,
+                source: TfmConversionError::InvalidFixWord,
+            }),
+            "{table:?} invalid fix_word"
+        );
+    }
+}
+
 fn parse(bytes: &[u8]) -> TfmFont {
     match TfmFont::parse(bytes) {
         Ok(font) => font,
@@ -559,8 +645,8 @@ fn char_metric(font: &TfmFont, code: u8) -> &tex_fonts::tfm::Character {
 
 fn minimal_tfm() -> Vec<u8> {
     tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'A',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'A'),
         char_info: vec![[1, 0, 0, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -579,8 +665,8 @@ fn tfm_with_lig_kern(step: [u8; 4], kern_count: usize) -> Vec<u8> {
         kerns.push([0, 0, 0, 0]);
     }
     tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'A',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'A'),
         char_info: vec![[1, 0, 1, 0]],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -603,8 +689,8 @@ fn tfm_with_char_info(
     let kerns = vec![[0, 0, 0, 0]; kern_count];
     let extensibles = vec![[0, 0, 0, b'B']; ext_count];
     tfm_with_sections(Sections {
-        bc: b'A',
-        ec: b'A',
+        bc: u16::from(b'A'),
+        ec: u16::from(b'A'),
         char_info: vec![char_info],
         widths: vec![[0, 0, 0, 0], [0, 8, 0, 0]],
         heights: vec![[0, 0, 0, 0]],
@@ -618,8 +704,8 @@ fn tfm_with_char_info(
 }
 
 struct Sections {
-    bc: u8,
-    ec: u8,
+    bc: u16,
+    ec: u16,
     char_info: Vec<[u8; 4]>,
     widths: Vec<[u8; 4]>,
     heights: Vec<[u8; 4]>,
@@ -648,8 +734,8 @@ fn tfm_with_sections(sections: Sections) -> Vec<u8> {
     let mut bytes = Vec::new();
     push_u16(&mut bytes, lf as u16);
     push_u16(&mut bytes, lh as u16);
-    push_u16(&mut bytes, u16::from(sections.bc));
-    push_u16(&mut bytes, u16::from(sections.ec));
+    push_u16(&mut bytes, sections.bc);
+    push_u16(&mut bytes, sections.ec);
     push_u16(&mut bytes, sections.widths.len() as u16);
     push_u16(&mut bytes, sections.heights.len() as u16);
     push_u16(&mut bytes, sections.depths.len() as u16);
@@ -684,6 +770,40 @@ fn push_u16(bytes: &mut Vec<u8>, value: u16) {
 
 fn set_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_be_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn metric_validation_sections() -> Sections {
+    Sections {
+        bc: b'A'.into(),
+        ec: b'A'.into(),
+        char_info: vec![[1, 0x11, 4, 0]],
+        widths: vec![[0; 4], [0, 8, 0, 0]],
+        heights: vec![[0; 4], [0, 8, 0, 0]],
+        depths: vec![[0; 4], [0, 8, 0, 0]],
+        italics: vec![[0; 4], [0, 8, 0, 0]],
+        lig_kerns: Vec::new(),
+        kerns: vec![[0, 8, 0, 0]],
+        extensibles: Vec::new(),
+        params: vec![[0; 4], [0, 8, 0, 0]],
+    }
+}
+
+fn metric_words_mut(sections: &mut Sections, table: TfmTable) -> &mut Vec<[u8; 4]> {
+    match table {
+        TfmTable::Width => &mut sections.widths,
+        TfmTable::Height => &mut sections.heights,
+        TfmTable::Depth => &mut sections.depths,
+        TfmTable::Italic => &mut sections.italics,
+        TfmTable::Kern => &mut sections.kerns,
+        TfmTable::Param => &mut sections.params,
+        TfmTable::LigKern | TfmTable::Extensible => {
+            panic!("{table:?} is not a fix_word metric table")
+        }
+    }
 }
 
 fn word_offset(word: usize) -> usize {

@@ -263,18 +263,14 @@ fn parse_header(words: &[[u8; 4]], design_size: Scaled) -> Result<Header, ParseE
     let checksum = u32::from_be_bytes(words[0]);
     let header_bytes: Vec<u8> = words.iter().flatten().copied().collect();
     let coding_scheme = if words.len() >= HEADER_WORDS_FOR_CODING_SCHEME {
-        Some(parse_bcpl_string(
-            &header_bytes[8..HEADER_WORDS_FOR_CODING_SCHEME * 4],
-            "coding scheme",
-        )?)
+        parse_bcpl_string(&header_bytes[8..HEADER_WORDS_FOR_CODING_SCHEME * 4])
     } else {
         None
     };
     let family = if words.len() >= HEADER_WORDS_FOR_FAMILY {
-        Some(parse_bcpl_string(
+        parse_bcpl_string(
             &header_bytes[HEADER_WORDS_FOR_CODING_SCHEME * 4..HEADER_WORDS_FOR_FAMILY * 4],
-            "family",
-        )?)
+        )
     } else {
         None
     };
@@ -301,20 +297,18 @@ fn parse_header(words: &[[u8; 4]], design_size: Scaled) -> Result<Header, ParseE
     })
 }
 
-fn parse_bcpl_string(bytes: &[u8], field: &'static str) -> Result<String, ParseError> {
+fn parse_bcpl_string(bytes: &[u8]) -> Option<String> {
     let length = bytes[0];
     let capacity = bytes.len() - 1;
     if usize::from(length) > capacity {
-        return Err(ParseError::InvalidHeaderString {
-            field,
-            length,
-            capacity,
-        });
+        return None;
     }
-    Ok(bytes[1..=usize::from(length)]
-        .iter()
-        .map(|&byte| char::from(byte))
-        .collect())
+    Some(
+        bytes[1..=usize::from(length)]
+            .iter()
+            .map(|&byte| char::from(byte))
+            .collect(),
+    )
 }
 
 fn parse_metric_table(

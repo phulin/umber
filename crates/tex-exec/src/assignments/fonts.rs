@@ -45,7 +45,11 @@ pub(super) fn execute_font_definition(
                 &selector,
                 &font_name,
                 size_spec,
-                opentype_name.is_some(),
+                if opentype_name.is_some() {
+                    FontLoadFailure::MissingOpenType
+                } else {
+                    FontLoadFailure::MissingTfm
+                },
             )?;
             let meaning = Meaning::Font(tex_state::font::NULL_FONT);
             if apply_globaldefs(prefixes.global, stores) {
@@ -56,9 +60,35 @@ pub(super) fn execute_font_definition(
             return Ok(());
         }
     };
+    macro_rules! parse_tfm {
+        ($metrics:expr) => {
+            match tex_fonts::TfmFont::parse_with_size($metrics.bytes(), size_spec) {
+                Ok(tfm) => tfm,
+                Err(_) => {
+                    // TeX.web §564 treats every malformed metric file like
+                    // an unavailable font and leaves the selector null.
+                    let selector = stores.resolve(target).to_owned();
+                    report_font_not_loadable(
+                        stores,
+                        &selector,
+                        &font_name,
+                        size_spec,
+                        FontLoadFailure::MalformedTfm,
+                    )?;
+                    let meaning = Meaning::Font(tex_state::font::NULL_FONT);
+                    if apply_globaldefs(prefixes.global, stores) {
+                        stores.set_meaning_global(target, meaning);
+                    } else {
+                        stores.set_meaning(target, meaning);
+                    }
+                    return Ok(());
+                }
+            }
+        };
+    }
     let loaded = match source {
         crate::FontSource::Tfm { metrics, opentype } => {
-            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let tfm = parse_tfm!(metrics);
             let parameters = tfm
                 .parameters
                 .values
@@ -85,7 +115,7 @@ pub(super) fn execute_font_definition(
             opentype,
             encoding_map,
         } => {
-            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let tfm = parse_tfm!(metrics);
             let parameters = tfm
                 .parameters
                 .values
@@ -105,7 +135,7 @@ pub(super) fn execute_font_definition(
             .with_mapped_opentype(opentype, encoding_map)
         }
         crate::FontSource::ClassicTfmFallback { metrics } => {
-            let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), size_spec)?;
+            let tfm = parse_tfm!(metrics);
             let parameters = tfm
                 .parameters
                 .values
@@ -381,23 +411,33 @@ fn report_missing_font_identifier(
 /// scaled dimension and `scaled` the magnification, while a design-size
 /// request prints neither. Umber's OpenType lookup has no TeX82 counterpart,
 /// so it keeps its own reason and first help line and shares the rest.
+#[derive(Clone, Copy)]
+enum FontLoadFailure {
+    MissingTfm,
+    MissingOpenType,
+    MalformedTfm,
+}
+
 fn report_font_not_loadable(
     stores: &mut Universe,
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
-    opentype: bool,
+    failure: FontLoadFailure,
 ) -> Result<(), ExecError> {
-    let (reason, detail) = if opentype {
-        (
+    let (reason, detail) = match failure {
+        FontLoadFailure::MissingOpenType => (
             " not loadable: OpenType resource not found",
             "I wasn't able to resolve the requested OpenType font,",
-        )
-    } else {
-        (
+        ),
+        FontLoadFailure::MissingTfm => (
             " not loadable: Metric (TFM) file not found",
             "I wasn't able to read the size data for this font,",
-        )
+        ),
+        FontLoadFailure::MalformedTfm => (
+            " not loadable: Bad metric (TFM) file",
+            "I wasn't able to read the size data for this font,",
+        ),
     };
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Font ");
