@@ -143,7 +143,9 @@ fn definition_target_text(stores: &Universe, target: Symbol) -> String {
     let name = stores.resolve(target).to_owned();
     match stores.control_sequence_kind(target) {
         tex_state::interner::ControlSequenceKind::ActiveCharacter => name,
-        tex_state::interner::ControlSequenceKind::Named => format!("\\{name}"),
+        tex_state::interner::ControlSequenceKind::Null
+        | tex_state::interner::ControlSequenceKind::SingleCharacter
+        | tex_state::interner::ControlSequenceKind::Named => format!("\\{name}"),
     }
 }
 

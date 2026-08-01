@@ -8399,7 +8399,9 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
             let symbol = stores.resolve_stored_symbol(symbol);
             hasher.tag(1);
             hasher.u8(match stores.control_sequence_kind(symbol) {
-                ControlSequenceKind::Named => 0,
+                ControlSequenceKind::Null
+                | ControlSequenceKind::SingleCharacter
+                | ControlSequenceKind::Named => 0,
                 ControlSequenceKind::ActiveCharacter => 1,
             });
             hasher.str(stores.resolve(symbol));

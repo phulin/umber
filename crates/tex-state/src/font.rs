@@ -694,7 +694,9 @@ pub(crate) fn complete_font_hash_fragment(
             Some((kind, name)) => {
                 fragment.bool(true);
                 fragment.u8(match kind {
-                    ControlSequenceKind::Named => 0,
+                    ControlSequenceKind::Null
+                    | ControlSequenceKind::SingleCharacter
+                    | ControlSequenceKind::Named => 0,
                     ControlSequenceKind::ActiveCharacter => 1,
                 });
                 fragment.str(name);

@@ -361,8 +361,10 @@ impl<'a> Printer<'a> {
     pub fn sprint_cs(&mut self, kind: ControlSequenceKind, name: &str) -> &mut Self {
         match (kind, name) {
             (ControlSequenceKind::ActiveCharacter, _) => self.print(name),
-            (ControlSequenceKind::Named, "") => self.print_esc("csname").print_esc("endcsname"),
-            (ControlSequenceKind::Named, _) => self.print_esc(name),
+            (ControlSequenceKind::Null, _) => self.print_esc("csname").print_esc("endcsname"),
+            (ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named, _) => {
+                self.print_esc(name)
+            }
         }
     }
 

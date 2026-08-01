@@ -18,6 +18,10 @@ static GLOBAL_SYMBOLS: OnceLock<RwLock<GlobalSymbols>> = OnceLock::new();
 /// their printed spelling is the same (for example active `~` and `\~`).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ControlSequenceKind {
+    /// TeX82 §222's unique `null_cs` slot.
+    Null,
+    /// TeX82 §222's `single_base + c` slot for an escaped character.
+    SingleCharacter,
     /// A name scanned after an escape character or manufactured by `\csname`.
     Named,
     /// A character whose current category code is active.
@@ -214,7 +218,10 @@ impl Interner {
             if semantic_atoms[slot] != semantic_atom(kind, name) {
                 return Err("frozen interner semantic atom mismatch");
             }
-            if kind == ControlSequenceKind::ActiveCharacter {
+            if matches!(
+                kind,
+                ControlSequenceKind::ActiveCharacter | ControlSequenceKind::SingleCharacter
+            ) {
                 let mut chars = name.chars();
                 if chars.next().is_none() || chars.next().is_some() {
                     return Err("frozen active name is not one character");
@@ -243,7 +250,7 @@ impl Interner {
 
     /// Interns `name`, returning its live capability and compact stored key.
     pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        self.intern_key(ControlSequenceKind::Named, name)
+        self.intern_key(named_kind(name), name)
     }
 
     /// Interns an active-character control sequence.
@@ -307,7 +314,7 @@ impl Interner {
     /// Returns the live symbol for `name` without mutating the interner.
     #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolId> {
-        self.get_key(ControlSequenceKind::Named, name)
+        self.get_key(named_kind(name), name)
     }
 
     /// Returns the live symbol for an active character without mutating.
@@ -485,7 +492,9 @@ impl Interner {
 fn lookup_key(kind: ControlSequenceKind, name: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(name.len() + 1);
     key.push(match kind {
-        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::Null
+        | ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
     });
     key.extend_from_slice(name.as_bytes());
@@ -495,11 +504,23 @@ fn lookup_key(kind: ControlSequenceKind, name: &str) -> Vec<u8> {
 pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
     let mut hasher = StateHasher::new(0x6373_5f61_746f_6d31);
     hasher.u8(match kind {
-        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::Null
+        | ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
     });
     hasher.str(name);
     hasher.finish()
+}
+
+/// Selects TeX82 §222's fixed control-sequence namespace from its spelling.
+#[must_use]
+pub(crate) fn named_kind(name: &str) -> ControlSequenceKind {
+    match name.chars().count() {
+        0 => ControlSequenceKind::Null,
+        1 => ControlSequenceKind::SingleCharacter,
+        _ => ControlSequenceKind::Named,
+    }
 }
 
 #[derive(Debug, Default)]

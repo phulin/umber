@@ -53,7 +53,7 @@ fn active_character_and_same_spelling_named_sequence_are_distinct() {
     assert_eq!(interner.get_active('~').map(SymbolId::symbol), Some(active));
     assert_eq!(interner.resolve(named), "~");
     assert_eq!(interner.resolve(active), "~");
-    assert_eq!(interner.kind(named), ControlSequenceKind::Named);
+    assert_eq!(interner.kind(named), ControlSequenceKind::SingleCharacter);
     assert_eq!(interner.kind(active), ControlSequenceKind::ActiveCharacter);
 }
 

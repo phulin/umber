@@ -1731,7 +1731,9 @@ enum SemanticCellKey {
 
 fn hash_control_sequence_kind(kind: ControlSequenceKind, hasher: &mut StateHasher) {
     hasher.u8(match kind {
-        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::Null
+        | ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
     });
 }

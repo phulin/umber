@@ -1009,7 +1009,9 @@ impl Stores {
                     let symbol = self.resolve_stored_symbol(symbol);
                     let mut bytes = Vec::with_capacity(self.interner.resolve_id(symbol).len() + 1);
                     bytes.push(match self.interner.kind_id(symbol) {
-                        ControlSequenceKind::Named => 0,
+                        ControlSequenceKind::Null
+                        | ControlSequenceKind::SingleCharacter
+                        | ControlSequenceKind::Named => 0,
                         ControlSequenceKind::ActiveCharacter => 1,
                     });
                     bytes.extend_from_slice(self.interner.resolve_id(symbol).as_bytes());

@@ -2658,6 +2658,65 @@ fn csname_expands_characters_then_injects_a_relaxed_named_control_sequence() {
 }
 
 #[test]
+fn csname_empty_and_single_character_use_canonical_control_sequence_slots() {
+    use tex_state::interner::ControlSequenceKind;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let csname = install_expandable(&mut universe, "csname", ExpandablePrimitive::CsName);
+    let endcsname = install_expandable(&mut universe, "endcsname", ExpandablePrimitive::EndCsName);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(csname)),
+            traced(Token::Cs(endcsname)),
+            traced(Token::Cs(csname)),
+            traced(Token::Char {
+                ch: 'q',
+                cat: Catcode::Other,
+            }),
+            traced(Token::Cs(endcsname)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let (null, single) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        (
+            processor
+                .get_x_token()
+                .expect("empty csname expands")
+                .expect("null control sequence"),
+            processor
+                .get_x_token()
+                .expect("single-character csname expands")
+                .expect("single-character control sequence"),
+        )
+    };
+
+    let Token::Cs(null) = null.spelling().semantic_token() else {
+        panic!("empty csname must inject null_cs");
+    };
+    let Token::Cs(single) = single.spelling().semantic_token() else {
+        panic!("single-character csname must inject a control sequence");
+    };
+    assert_eq!(universe.resolve(null), "");
+    assert_eq!(
+        universe.control_sequence_kind(null),
+        ControlSequenceKind::Null
+    );
+    assert_eq!(universe.meaning(null), Meaning::Relax);
+    assert_eq!(universe.resolve(single), "q");
+    assert_eq!(
+        universe.control_sequence_kind(single),
+        ControlSequenceKind::SingleCharacter
+    );
+    assert_eq!(universe.meaning(single), Meaning::Relax);
+}
+
+#[test]
 fn csname_recovers_by_backing_up_a_non_character_before_constructing_the_name() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

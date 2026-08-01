@@ -644,7 +644,7 @@ impl CommandProcessor<'_> {
                     .state
                     .print_err("Illegal parameter number in definition of ");
                 if let Some((name, kind)) = rendered_target {
-                    if kind == ControlSequenceKind::Named {
+                    if kind != ControlSequenceKind::ActiveCharacter {
                         report.print_esc(&name);
                     } else {
                         report.print(&name);

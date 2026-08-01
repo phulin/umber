@@ -124,21 +124,23 @@ pub fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
             let kind = stores.control_sequence_kind(symbol);
             let capacity = match kind {
                 ControlSequenceKind::ActiveCharacter => name.chars().count(),
-                ControlSequenceKind::Named if name.is_empty() => {
+                ControlSequenceKind::Null => {
                     "csname".len() + "endcsname".len() + 2 * usize::from(escape.is_some())
                 }
-                ControlSequenceKind::Named => name.chars().count() + usize::from(escape.is_some()),
+                ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
+                    name.chars().count() + usize::from(escape.is_some())
+                }
             };
             let mut out = Vec::with_capacity(capacity);
             match kind {
                 ControlSequenceKind::ActiveCharacter => {
                     out.extend(name.chars().map(rendered_char));
                 }
-                ControlSequenceKind::Named if name.is_empty() => {
+                ControlSequenceKind::Null => {
                     append_escaped_text(escape, "csname", &mut out);
                     append_escaped_text(escape, "endcsname", &mut out);
                 }
-                ControlSequenceKind::Named => {
+                ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
                     append_escaped_text(escape, name, &mut out);
                 }
             }

@@ -1,7 +1,7 @@
 use super::{FormatGlue, FormatMacro, FormatName, FormatToken, StoreFormat, StoreFormatError};
 use crate::ContentHash;
 use crate::glue::{GlueSpec, GlueStore, Order};
-use crate::interner::{ControlSequenceKind, Interner, semantic_atom};
+use crate::interner::{ControlSequenceKind, Interner, named_kind, semantic_atom};
 use crate::macro_store::{MacroMeaning, MacroParameterPattern, MacroStore};
 use crate::scaled::Scaled;
 use crate::token::{Catcode, FrozenToken, Token};
@@ -143,7 +143,7 @@ fn encode_names(names: &[FormatName]) -> Result<Vec<u8>, StoreFormatError> {
         let kind = if name.active {
             ControlSequenceKind::ActiveCharacter
         } else {
-            ControlSequenceKind::Named
+            named_kind(&name.text)
         };
         put_u64(&mut out, record + 16, semantic_atom(kind, &name.text));
         let start = strings_offset + string_cursor;
@@ -201,7 +201,7 @@ fn decode_names(
         let kind = if active {
             ControlSequenceKind::ActiveCharacter
         } else {
-            ControlSequenceKind::Named
+            named_kind(text)
         };
         let atom = read_u64(bytes, record + 16);
         if atom != semantic_atom(kind, text) {
@@ -481,7 +481,7 @@ fn encode_token_v2(
             let kind = if name.active {
                 ControlSequenceKind::ActiveCharacter
             } else {
-                ControlSequenceKind::Named
+                named_kind(&name.text)
             };
             (
                 CS_TAG | raw,
@@ -600,7 +600,9 @@ fn decode_token(word: u64, interner: &Interner) -> Result<DecodedToken, StoreFor
 fn strong_semantic_atom(kind: ControlSequenceKind, name: &str) -> (u64, ContentHash) {
     let mut bytes = Vec::with_capacity(name.len() + 1);
     bytes.push(match kind {
-        ControlSequenceKind::Named => 0,
+        ControlSequenceKind::Null
+        | ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
     });
     bytes.extend_from_slice(name.as_bytes());

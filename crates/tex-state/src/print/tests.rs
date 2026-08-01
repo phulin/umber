@@ -522,7 +522,7 @@ fn sprint_cs_distinguishes_named_active_and_null_control_sequences() {
         .print_char('|')
         .sprint_cs(ControlSequenceKind::ActiveCharacter, "~")
         .print_char('|')
-        .sprint_cs(ControlSequenceKind::Named, "");
+        .sprint_cs(ControlSequenceKind::Null, "");
     assert_eq!(terminal_text(&universe), "\\foo|~|\\csname\\endcsname");
 }
 
