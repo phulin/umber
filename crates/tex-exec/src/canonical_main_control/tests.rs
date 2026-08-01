@@ -5258,6 +5258,139 @@ fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
 }
 
 #[test]
+fn show_meaning_prints_all_named_glue_and_register_symbols() {
+    // TeX82 §§224, 230, 296, and 1297: `print_cmd_chr` retains the control
+    // sequence spelling for named glue parameters, while `print_spec` uses
+    // `pt` for ordinary glue and `mu` for math glue. e-TeX preserves these
+    // command codes and only widens the register-number scanner.
+    const GLUE_PARAMETERS: [&str; 15] = [
+        "lineskip",
+        "baselineskip",
+        "parskip",
+        "abovedisplayskip",
+        "belowdisplayskip",
+        "abovedisplayshortskip",
+        "belowdisplayshortskip",
+        "leftskip",
+        "rightskip",
+        "topskip",
+        "splittopskip",
+        "tabskip",
+        "spaceskip",
+        "xspaceskip",
+        "parfillskip",
+    ];
+    const MU_GLUE_PARAMETERS: [&str; 3] = ["thinmuskip", "medmuskip", "thickmuskip"];
+    const SOURCE: &[u8] = br"\nonstopmode
+        \lineskip=1pt plus 2pt minus 3pt
+        \baselineskip=1pt plus 2pt minus 3pt
+        \parskip=1pt plus 2pt minus 3pt
+        \abovedisplayskip=1pt plus 2pt minus 3pt
+        \belowdisplayskip=1pt plus 2pt minus 3pt
+        \abovedisplayshortskip=1pt plus 2pt minus 3pt
+        \belowdisplayshortskip=1pt plus 2pt minus 3pt
+        \leftskip=1pt plus 2pt minus 3pt
+        \rightskip=1pt plus 2pt minus 3pt
+        \topskip=1pt plus 2pt minus 3pt
+        \splittopskip=1pt plus 2pt minus 3pt
+        \tabskip=1pt plus 2pt minus 3pt
+        \spaceskip=1pt plus 2pt minus 3pt
+        \xspaceskip=1pt plus 2pt minus 3pt
+        \parfillskip=1pt plus 2pt minus 3pt
+        \thinmuskip=4mu plus 5mu minus 6mu
+        \medmuskip=4mu plus 5mu minus 6mu
+        \thickmuskip=4mu plus 5mu minus 6mu
+        \skip0=7pt plus 8pt minus 9pt
+        \muskip0=10mu plus 11mu minus 12mu
+        \expandafter\skipdef\csname skip0\endcsname=0
+        \expandafter\muskipdef\csname muskip0\endcsname=0
+        \count255=1
+        \show\lineskip\show\baselineskip\show\parskip
+        \show\abovedisplayskip\show\belowdisplayskip
+        \show\abovedisplayshortskip\show\belowdisplayshortskip
+        \show\leftskip\show\rightskip\show\topskip\show\splittopskip
+        \show\tabskip\show\spaceskip\show\xspaceskip\show\parfillskip
+        \show\thinmuskip\show\medmuskip\show\thickmuskip
+        \expandafter\show\csname skip0\endcsname
+        \expandafter\show\csname muskip0\endcsname
+        \showthe\lineskip\showthe\baselineskip\showthe\parskip
+        \showthe\abovedisplayskip\showthe\belowdisplayskip
+        \showthe\abovedisplayshortskip\showthe\belowdisplayshortskip
+        \showthe\leftskip\showthe\rightskip\showthe\topskip\showthe\splittopskip
+        \showthe\tabskip\showthe\spaceskip\showthe\xspaceskip\showthe\parfillskip
+        \showthe\thinmuskip\showthe\medmuskip\showthe\thickmuskip
+        \showthe\skip0\showthe\muskip0\end";
+
+    for extended in [false, true] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = if extended {
+            canonical_etex_initex(&mut stores)
+        } else {
+            CanonicalMainControl::tex82_initex(&mut stores)
+        };
+        register_source(&mut control, SOURCE);
+
+        // Stop immediately before the first diagnostic, after the interaction
+        // command, assignments, and symbolic register aliases have committed.
+        while stores.count(255) == 0 {
+            assert_eq!(
+                control.step(&mut stores).expect("setup command executes"),
+                MainControlStep::Continue
+            );
+        }
+        let glue_parameters = (0..18)
+            .map(|index| stores.glue_param(GlueParam::new(index)))
+            .collect::<Vec<_>>();
+        let skip = stores.skip(0);
+        let muskip = stores.muskip(0);
+
+        run_to_end(&mut control, &mut stores);
+        let output = terminal_text(&stores);
+
+        for name in GLUE_PARAMETERS {
+            assert!(
+                output.contains(&format!("> \\{name}=\\{name}.")),
+                "profile extended={extended} omitted {name} meaning: {output}"
+            );
+            assert!(
+                output.contains("> 1.0pt plus 2.0pt minus 3.0pt."),
+                "profile extended={extended} omitted ordinary-glue units: {output}"
+            );
+        }
+        for name in MU_GLUE_PARAMETERS {
+            assert!(
+                output.contains(&format!("> \\{name}=\\{name}.")),
+                "profile extended={extended} omitted {name} meaning: {output}"
+            );
+            assert!(
+                output.contains("> 4.0mu plus 5.0mu minus 6.0mu."),
+                "profile extended={extended} omitted math-glue units: {output}"
+            );
+        }
+        assert!(output.contains("> \\skip0=\\skip0."), "{output}");
+        assert!(output.contains("> \\muskip0=\\muskip0."), "{output}");
+        assert!(
+            output.contains("> 7.0pt plus 8.0pt minus 9.0pt."),
+            "{output}"
+        );
+        assert!(
+            output.contains("> 10.0mu plus 11.0mu minus 12.0mu."),
+            "{output}"
+        );
+
+        assert_eq!(
+            (0..18)
+                .map(|index| stores.glue_param(GlueParam::new(index)))
+                .collect::<Vec<_>>(),
+            glue_parameters,
+            "profile extended={extended} changed a parameter bank"
+        );
+        assert_eq!(stores.skip(0), skip, "profile extended={extended}");
+        assert_eq!(stores.muskip(0), muskip, "profile extended={extended}");
+    }
+}
+
+#[test]
 fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
