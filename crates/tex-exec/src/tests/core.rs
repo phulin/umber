@@ -4370,6 +4370,19 @@ fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
 }
 
 #[test]
+fn showlists_preserves_page_goal_row_leading_space() {
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\vsize=100pt \\topskip=0pt \\setbox0=\\hbox{}\\ht0=2pt \\copy0\\penalty0\\showlists\\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains("total height 2.0\n goal height 100.0\nprevdepth 0.0"),
+        "{log}"
+    );
+}
+
+#[test]
 fn showlists_reports_source_entry_line_and_hyphenation_context() {
     let stores = run_canonical_tex82(
         "\\nonstopmode\\language=7\\lefthyphenmin=2\\righthyphenmin=5\nX\\showlists\\end",

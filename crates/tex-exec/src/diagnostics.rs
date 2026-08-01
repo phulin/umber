@@ -596,7 +596,9 @@ pub(crate) fn execute_showlists(
                 if stores.page_contents() != PageContents::Empty {
                     text.push_str("total height ");
                     push_page_totals(stores, &mut text);
-                    text.push_str("\ngoal height ");
+                    // TeX82 §218 uses `print_nl(" goal height ")`; the
+                    // leading space is part of the diagnostic text.
+                    text.push_str("\n goal height ");
                     text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
                         stores.page_dimension(PageDimension::Goal),
                     ));
