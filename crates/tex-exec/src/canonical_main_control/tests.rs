@@ -4365,6 +4365,43 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
 }
 
 #[test]
+fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
+    // e-TeX 2.6 [49.1236-1237] routes sparse count and dimen words through
+    // `sa_w_def`, not §§277-278's dense `eq_word_define`. The canonical
+    // oracle observes the sparse assignment boundary even when its value is
+    // the default; dense identical assignments retain their shortcut.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"{\count0=0 \dimen0=0pt \count300=0 \dimen301=0pt}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "register" => {
+                Some((record.key.as_deref(), record.value.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        mutations,
+        [(None, "count:300=0"), (Some("dimen:301"), "scaled:0"),]
+    );
+    assert_eq!(stores.count(300), 0);
+    assert_eq!(stores.dimen(301), Scaled::from_raw(0));
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical

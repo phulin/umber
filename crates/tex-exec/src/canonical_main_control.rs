@@ -13996,12 +13996,16 @@ fn etex_redundant_local_definition_step(stores: &Universe, scanned: &ScannedStep
             index,
             value,
             global: false,
-        } => etex_redundant_local_word_assignment(stores, stores.count(*index), *value),
+        } if *index <= 255 => {
+            etex_redundant_local_word_assignment(stores, stores.count(*index), *value)
+        }
         ScannedStep::Dimen {
             index,
             value,
             global: false,
-        } => etex_redundant_local_word_assignment(stores, stores.dimen(*index), *value),
+        } if *index <= 255 => {
+            etex_redundant_local_word_assignment(stores, stores.dimen(*index), *value)
+        }
         ScannedStep::IntParam {
             index,
             value,
