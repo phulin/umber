@@ -142,7 +142,10 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
         b"\\def\\pair#1#2{}\\tracingmacros=1 \\pair AB\\end",
     );
     run_to_end(&mut control, &mut stores);
-    assert_eq!(pending_sink_text(&stores, true), "");
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "(see the transcript file for additional information)"
+    );
     assert_eq!(
         pending_sink_text(&stores, false),
         "\n\\pair ->\n#1<-A\n#2<-B\n"
@@ -165,7 +168,6 @@ fn disabled_tracingmacros_emits_no_macro_diagnostic() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.8: group exit does not yet expose ordered old-value restore records"]
 fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -176,8 +178,32 @@ fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
 
     run_to_end(&mut control, &mut stores);
 
-    assert_eq!(pending_sink_text(&stores, true), "{restoring \\count0=0}");
-    assert_eq!(pending_sink_text(&stores, false), "{restoring \\count0=0}");
+    assert_eq!(pending_sink_text(&stores, true), "{restoring \\count0=0}\n");
+    assert_eq!(
+        pending_sink_text(&stores, false),
+        "{restoring \\count0=0}\n"
+    );
+}
+
+#[test]
+fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppression() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"{\\count0=7\\global\\count0=8}\\tracingrestores=1{\\count1=9\\global\\count1=10}{\\count2=11}\\tracingrestores=0{\\count3=12}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "(see the transcript file for additional information)"
+    );
+    assert_eq!(
+        pending_sink_text(&stores, false),
+        "{retaining \\count1=0}\n{restoring \\count2=0}\n"
+    );
 }
 
 #[test]

@@ -133,6 +133,9 @@ different cell (§1064). pdfTeX.web preserves these rules at §§288--303,
 change ordinary equivalent restoration. In Umber, `Env` meaning cells and
 journal records implement `eqtb` and the save stack, while alignment template
 delivery and group entry/exit remain `tex-expand`/`tex-exec` responsibilities.
+The group-exit boundary also carries the journal walk's ordered old-value
+restore/retain records so `Universe` can render TeX82 §283
+`\tracingrestores` through §245's shared diagnostic selector.
 An alignment-token accounting error must therefore be repaired before group
 exit, not by redirecting an `Env` restore to a different control sequence.
 

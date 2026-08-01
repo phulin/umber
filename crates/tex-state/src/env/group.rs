@@ -1,11 +1,52 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
-use crate::cell::BankTag;
+use crate::cell::{BankTag, CellId};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
 use ahash::AHashMap;
 use smallvec::SmallVec;
 
 pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
+
+/// One TeX82 §283 save-stack diagnostic observed while unsaving a group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RestoreRecord {
+    cell: CellId,
+    old: u64,
+    retaining: bool,
+}
+
+impl RestoreRecord {
+    const fn restoring(cell: CellId, old: u64) -> Self {
+        Self {
+            cell,
+            old,
+            retaining: false,
+        }
+    }
+
+    const fn retaining(cell: CellId, old: u64) -> Self {
+        Self {
+            cell,
+            old,
+            retaining: true,
+        }
+    }
+
+    #[must_use]
+    pub const fn cell(self) -> CellId {
+        self.cell
+    }
+
+    #[must_use]
+    pub const fn old(self) -> u64 {
+        self.old
+    }
+
+    #[must_use]
+    pub const fn is_retaining(self) -> bool {
+        self.retaining
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 struct GlobalCompactionState<T> {
@@ -410,7 +451,9 @@ impl Env {
     /// Leaves the innermost group and reports whether meaning cells were
     /// restored or compacted while crossing the boundary.
     #[must_use]
-    pub(crate) fn leave_group_observing_meanings(&mut self) -> (Vec<Token>, bool, ChangedCells) {
+    pub(crate) fn leave_group_observing_meanings(
+        &mut self,
+    ) -> (Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>) {
         self.leave_group_unchecked()
     }
 
@@ -432,7 +475,7 @@ impl Env {
     pub(crate) fn leave_group_with_kind_observing_meanings(
         &mut self,
         expected: GroupKind,
-    ) -> Result<(Vec<Token>, bool, ChangedCells), GroupMismatch> {
+    ) -> Result<(Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>), GroupMismatch> {
         let Some(actual) = self.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -442,7 +485,7 @@ impl Env {
         Ok(self.leave_group_unchecked())
     }
 
-    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, ChangedCells) {
+    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>) {
         self.record_paragraph_group_frame_mutation();
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
@@ -474,17 +517,20 @@ impl Env {
                 Entry::BoxUndo(id) => self.journal.box_undo(id).survives_group(leaving_depth),
                 Entry::Marker(_) => false,
             });
+        let mut restores = Vec::new();
         let meaning_changed = if has_globals {
             self.leave_group_with_globals(
                 marker_index,
                 group_end,
                 boundary.box_undo_len,
                 leaving_depth,
+                &mut restores,
             )
         } else {
             let mut meaning_changed = false;
             for index in (marker_index + 1..group_end).rev() {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
+                    restores.push(RestoreRecord::restoring(rec.cell(), rec.old()));
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
@@ -504,7 +550,7 @@ impl Env {
         // exit must start a fresh epoch or the enclosing undo slice can be
         // corrupted by a later write to the same restored cell.
         self.epoch.bump();
-        (payloads, meaning_changed, changed_cells)
+        (payloads, meaning_changed, changed_cells, restores)
     }
 
     fn leave_group_with_globals(
@@ -513,6 +559,7 @@ impl Env {
         group_end: usize,
         box_undo_len: u32,
         leaving_depth: u32,
+        restores: &mut Vec<RestoreRecord>,
     ) -> bool {
         let mut globals = Vec::new();
         let mut box_globals = Vec::new();
@@ -547,8 +594,11 @@ impl Env {
                         .get(&cell_key(rec.cell()))
                         .expect("journal cell was indexed before group compaction");
                     if !state.has_later_global {
+                        restores.push(RestoreRecord::restoring(rec.cell(), rec.old()));
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
+                    } else {
+                        restores.push(RestoreRecord::retaining(rec.cell(), rec.old()));
                     }
                 }
                 Entry::BoxUndo(id) => {

@@ -17,7 +17,8 @@
 //! not yet traced here; see `docs/etex_primitives.md`.
 //!
 //! `\tracingrestores`'s own `unsave`-time "restoring"/"retaining" lines are a
-//! distinct TeX82 (not e-TeX) primitive and are not implemented at all yet;
+//! distinct TeX82 (not e-TeX) primitive. They are produced at Universe's
+//! group-exit boundary, where ordered old-value records remain available;
 //! this module renders only the four `\tracingassigns` labels.
 
 use tex_state::Universe;

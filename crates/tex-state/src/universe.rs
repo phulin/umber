@@ -5573,10 +5573,11 @@ impl Universe {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         self.trace_leaving_group();
-        let (tokens, changed_cells, code_before, code_after) =
+        let (tokens, changed_cells, code_before, code_after, restores) =
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
+        self.trace_restores(&restores);
         tokens
     }
 
@@ -5585,12 +5586,47 @@ impl Universe {
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
         self.trace_leaving_group();
-        let (tokens, changed_cells, code_before, code_after) = self
+        let (tokens, changed_cells, code_before, code_after, restores) = self
             .stores
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
+        self.trace_restores(&restores);
         Ok(tokens)
+    }
+
+    fn trace_restores(&mut self, records: &[crate::env::group::RestoreRecord]) {
+        use crate::cell::BankTag;
+        use crate::env::banks::IntParam;
+
+        if self.int_param(IntParam::TRACING_RESTORES) <= 0 {
+            return;
+        }
+        for &record in records {
+            let cell = record.cell();
+            let (name, value) = match cell.bank() {
+                BankTag::Count => (
+                    format!("\\count{}", cell.index()),
+                    (record.old() as u32 as i32).to_string(),
+                ),
+                _ => continue,
+            };
+            let label = if record.is_retaining() {
+                "retaining"
+            } else {
+                "restoring"
+            };
+            let mut diagnostic = self.begin_diagnostic();
+            diagnostic
+                .print_char('{')
+                .print(label)
+                .print_char(' ')
+                .print(&name)
+                .print_char('=')
+                .print(&value)
+                .print_char('}');
+            diagnostic.end(false);
+        }
     }
 
     /// e-TeX 2.6 [19.281]'s `group_trace(true)`, fired against the still-live

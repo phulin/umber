@@ -17,6 +17,14 @@ use crate::font::{
 use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
 use crate::state_hash::StateHashFragment;
 
+type GroupExitObservation = (
+    Vec<Token>,
+    crate::env::group::ChangedCells,
+    CodeTableGenerations,
+    CodeTableGenerations,
+    Vec<crate::env::group::RestoreRecord>,
+);
+
 fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
     use crate::cell::BankTag;
     match table {
@@ -2190,16 +2198,10 @@ impl Stores {
         self.leave_group_observing_dependencies().0
     }
 
-    pub(crate) fn leave_group_observing_dependencies(
-        &mut self,
-    ) -> (
-        Vec<Token>,
-        crate::env::group::ChangedCells,
-        CodeTableGenerations,
-        CodeTableGenerations,
-    ) {
+    pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed, changed_cells) = self.env.leave_group_observing_meanings();
+        let (payloads, meaning_changed, changed_cells, restores) =
+            self.env.leave_group_observing_meanings();
         let code_before = self.code_tables.generations();
         self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
@@ -2210,21 +2212,13 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        (payloads, changed_cells, code_before, code_after)
+        (payloads, changed_cells, code_before, code_after, restores)
     }
 
     pub(crate) fn leave_group_with_kind_observing_dependencies(
         &mut self,
         expected: GroupKind,
-    ) -> Result<
-        (
-            Vec<Token>,
-            crate::env::group::ChangedCells,
-            CodeTableGenerations,
-            CodeTableGenerations,
-        ),
-        GroupMismatch,
-    > {
+    ) -> Result<GroupExitObservation, GroupMismatch> {
         let Some(actual) = self.env.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -2232,7 +2226,7 @@ impl Stores {
             return Err(GroupMismatch::new(expected, actual));
         }
         self.account_current_group_box_refs();
-        let (payloads, meaning_changed, changed_cells) = self
+        let (payloads, meaning_changed, changed_cells, restores) = self
             .env
             .leave_group_with_kind_observing_meanings(expected)?;
         let code_before = self.code_tables.generations();
@@ -2245,7 +2239,7 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        Ok((payloads, changed_cells, code_before, code_after))
+        Ok((payloads, changed_cells, code_before, code_after, restores))
     }
 
     /// Stores the token to insert after the next assignment.
