@@ -3662,6 +3662,79 @@ fn internal_page_shape_box_sources_cover_empty_active_and_register_boundaries() 
 }
 
 #[test]
+fn page_dimension_matrix_distinguishes_empty_page_from_output_active() {
+    use tex_state::page::PageDimension;
+
+    let mut universe = crate::test_harness::universe();
+    let dimensions = [
+        ("pagegoal", PageDimension::Goal, Scaled::from_raw(101)),
+        ("pagetotal", PageDimension::Total, Scaled::from_raw(202)),
+        ("pagestretch", PageDimension::Stretch, Scaled::from_raw(303)),
+        (
+            "pagefilstretch",
+            PageDimension::FilStretch,
+            Scaled::from_raw(404),
+        ),
+        (
+            "pagefillstretch",
+            PageDimension::FillStretch,
+            Scaled::from_raw(505),
+        ),
+        (
+            "pagefilllstretch",
+            PageDimension::FilllStretch,
+            Scaled::from_raw(606),
+        ),
+        ("pageshrink", PageDimension::Shrink, Scaled::from_raw(707)),
+        ("pagedepth", PageDimension::Depth, Scaled::from_raw(808)),
+    ];
+    let mut tokens = Vec::with_capacity(dimensions.len());
+    for (name, dimension, value) in dimensions {
+        universe.set_page_dimension(dimension, value);
+        let symbol = universe.intern(name).symbol();
+        universe.set_meaning(symbol, Meaning::PageDimension(dimension));
+        tokens.push((symbol, dimension, value));
+    }
+
+    for &(symbol, dimension, _) in &tokens {
+        let expected = match dimension {
+            PageDimension::Goal => Scaled::MAX_DIMEN,
+            _ => Scaled::from_raw(0),
+        };
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![Token::Cs(symbol)], |_| {}),
+            InternalValue::Dimension(expected),
+            "an empty inactive page exposes the canonical sentinel"
+        );
+        assert!(!universe.output_routine_is_active());
+    }
+
+    universe.set_output_routine_active(true);
+    for &(symbol, _, value) in &tokens {
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![Token::Cs(symbol)], |_| {}),
+            InternalValue::Dimension(value),
+            "an active output routine exposes the immutable raw page value"
+        );
+        assert!(universe.output_routine_is_active());
+    }
+    universe.set_output_routine_active(false);
+    assert!(!universe.output_routine_is_active());
+
+    for &(symbol, dimension, _) in &tokens {
+        let expected = match dimension {
+            PageDimension::Goal => Scaled::MAX_DIMEN,
+            _ => Scaled::from_raw(0),
+        };
+        assert_eq!(
+            scan_internal_with(&mut universe, vec![Token::Cs(symbol)], |_| {}),
+            InternalValue::Dimension(expected),
+            "scanning preserves both raw dimensions and the restored inactive state"
+        );
+    }
+}
+
+#[test]
 fn internal_last_item_sources_cover_each_node_kind_and_empty_list_sentinels() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 

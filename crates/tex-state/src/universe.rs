@@ -5879,7 +5879,8 @@ impl Universe {
 
     #[must_use]
     pub fn page_dimension(&self, dimension: PageDimension) -> Scaled {
-        self.page.dimension(dimension)
+        self.page
+            .dimension(dimension, self.output_routine_is_active())
     }
 
     pub fn set_page_dimension(&mut self, dimension: PageDimension, value: Scaled) {

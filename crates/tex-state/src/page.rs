@@ -582,8 +582,12 @@ impl PageBuilderState {
         state == Self::default()
     }
 
-    pub(crate) fn dimension(&self, dimension: PageDimension) -> Scaled {
-        if self.contents.is_empty() && self.fire_up.is_none() {
+    pub(crate) fn dimension(
+        &self,
+        dimension: PageDimension,
+        output_routine_active: bool,
+    ) -> Scaled {
+        if self.contents.is_empty() && !output_routine_active {
             return match dimension {
                 PageDimension::Goal => Scaled::MAX_DIMEN,
                 _ => Scaled::from_raw(0),
