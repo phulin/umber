@@ -93,7 +93,7 @@ pub(crate) fn testing_corrupt_environment_macro_reference(payload: &[u8]) -> Vec
 #[cfg(test)]
 pub(crate) fn testing_corrupt_environment_global_cell(payload: &[u8]) -> Vec<u8> {
     let mut entries = frozen_env::decode(payload).expect("test frozen environment payload");
-    entries[0].cell |= 1_u64 << 30;
+    entries[0].cell |= 1_u64 << 32;
     entries.sort_unstable_by_key(|entry| entry.cell);
     frozen_env::encode(&entries).expect("corrupted frozen environment serializes")
 }

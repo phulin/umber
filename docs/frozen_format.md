@@ -216,8 +216,8 @@ in bulk, attaches fresh runtime identities, and rebuilds loaded-font lookup
 keys and immutable/complete semantic hash fragments without calling the
 ordinary font interning or mutable identifier/expansion paths.
 
-The dense font bank is bounded to 8192 rows, including `nullfont`: each font
-owns a 17-bit `fontdimen` subdomain inside the environment cell's 30-bit index.
+The dense font bank is bounded to 32768 rows, including `nullfont`: each font
+owns a 17-bit `fontdimen` subdomain inside the environment cell's 32-bit index.
 Row zero retains TeX.web §§552--556's seven zero parameters, empty character
 set, zero checksum and sizes, hyphen character 45, and skew character -1.
 Dump/load preserves allocation order and every immutable loaded-TFM field plus

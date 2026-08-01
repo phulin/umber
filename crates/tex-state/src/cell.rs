@@ -1,8 +1,8 @@
 //! Packed environment cell identifiers.
 
-const BANK_SHIFT: u32 = 31;
-const GLOBAL_SHIFT: u32 = 30;
-const INDEX_MASK: u32 = (1 << GLOBAL_SHIFT) - 1;
+const BANK_SHIFT: u32 = 33;
+const GLOBAL_SHIFT: u32 = 32;
+const INDEX_MASK: u32 = u32::MAX;
 
 /// The bank tag encoded in a [`CellId`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -72,10 +72,10 @@ impl BankTag {
     }
 }
 
-/// A packed environment cell id: `bank:5 | global:1 | index:30`.
+/// A packed environment cell id: `bank:5 | global:1 | index:32`.
 ///
-/// The 30-bit index matches the complete compact [`crate::interner::Symbol`]
-/// domain. The key uses 36 bits of a `u64`; widening from `u32` does not grow
+/// The 32-bit index covers the complete font/parameter product and compact
+/// [`crate::interner::Symbol`] domain. The key uses 38 bits of a `u64`; widening from `u32` does not grow
 /// journal undo records because their following `u64` words already imposed
 /// eight-byte alignment.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -84,13 +84,11 @@ pub struct CellId(u64);
 impl CellId {
     #[allow(dead_code)]
     pub(crate) const fn new(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 30 bits");
         Self(((bank as u64) << BANK_SHIFT) | index as u64)
     }
 
     #[allow(dead_code)]
     pub(crate) const fn new_global(bank: BankTag, index: u32) -> Self {
-        assert!(index <= INDEX_MASK, "cell index exceeds 30 bits");
         Self(((bank as u64) << BANK_SHIFT) | (1_u64 << GLOBAL_SHIFT) | index as u64)
     }
 
