@@ -33,6 +33,11 @@ cargo test --tests
 scripts/check-and-test.sh
 ```
 
+The combined gate builds the complete native suite first, then executes the
+prebuilt tests under a 6 GiB process-group guard while the quality gate runs in
+parallel. Keeping the two cold Cargo builds sequential prevents test and
+clippy compilation from competing for CPU and memory in a fresh worktree.
+
 These commands must not require `pdftex`, `tex`, `tftopl`, or other TeX tools
 on `PATH`. Keep the default correctness tier fast enough to run routinely.
 

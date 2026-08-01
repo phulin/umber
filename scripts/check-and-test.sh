@@ -35,8 +35,14 @@ scripts/test-publish-texlive-r2.sh
 # `cargo test --tests` is the whole routine suite: `default-members` lists
 # every host-testable member, and `default_members_cover_every_host_testable_crate`
 # in `test-support` fails if that list ever drifts from the workspace again
-# (`umber2-johp.211`).
-cargo test --quiet --tests &
+# (`umber2-johp.211`). Compile that suite before starting the independent
+# clippy build: launching both cold Cargo workloads together overwhelms smaller
+# development hosts and makes a fresh worktree slower rather than faster.
+cargo test --quiet --tests --no-run
+
+python3 scripts/run-umber-guarded.py \
+  --timeout-seconds 1800 --max-rss-mib 6144 --term-grace-seconds 5 -- \
+  cargo test --quiet --tests &
 test_pid=$!
 scripts/check.sh &
 check_pid=$!

@@ -100,8 +100,12 @@ invocation by hand: a bare `cargo clippy` exits 0 on warn-level lints, and
 `cargo clippy -p <crate>` resolves a different feature union than the gate, so
 a hand-written clippy run can be green while the gate is red. Only
 `scripts/check.sh` output may be reported as a gate result.
-`scripts/check-and-test.sh` runs the native correctness suite concurrently with
-that quality gate.
+`scripts/check-and-test.sh` first builds the complete native correctness suite
+without running it. It then runs the prebuilt suite through
+`scripts/run-umber-guarded.py` with a 30-minute wall-time ceiling and 6 GiB
+aggregate-RSS limit, concurrently with the quality gate. This keeps a fresh
+worktree from launching the test and clippy dependency graphs as two competing
+cold Cargo builds.
 
 ### What The Native Test Gate Covers
 

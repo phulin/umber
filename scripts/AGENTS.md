@@ -64,6 +64,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `core.hooksPath`; `pre-commit` runs `check.sh` and `pre-push` refuses a push
   while a deferred tier has never been invoked in the checkout.
 - `run-umber-guarded.py`: canonical process-group watchdog for Umber and tests that execute Umber; enforces wall-time, aggregate-RSS, and optional progress-file ceilings, TERM-to-KILL escalation, reap, and survivor checks through sandbox-compatible native macOS and Linux process inspection.
+- `check-and-test.sh`: routine combined gate; prebuilds the complete native test
+  suite before clippy can start a second cold Cargo workload, then runs the
+  tests under the shared 6 GiB process-group guard concurrently with
+  `check.sh`.
 - `trip.sh`: guarded TRIP/e-TRIP entry point with documented wall-time, RSS,
   output-progress, fuel, and termination defaults.
 - `arxiv_corpus.py`: safe exact arXiv archive inventory, identity, verification,
