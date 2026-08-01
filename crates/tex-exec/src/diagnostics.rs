@@ -389,24 +389,7 @@ pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
 }
 
 pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
-    match kind {
-        tex_state::GroupKind::Simple => "simple group",
-        tex_state::GroupKind::HBox => "hbox group",
-        tex_state::GroupKind::AdjustedHBox => "adjusted hbox group",
-        tex_state::GroupKind::VBox => "vbox group",
-        tex_state::GroupKind::VTop => "vtop group",
-        tex_state::GroupKind::Align => "align group",
-        tex_state::GroupKind::NoAlign => "no align group",
-        tex_state::GroupKind::Output => "output group",
-        tex_state::GroupKind::Math => "math group",
-        tex_state::GroupKind::Disc => "disc group",
-        tex_state::GroupKind::Insert => "insert group",
-        tex_state::GroupKind::VCenter => "vcenter group",
-        tex_state::GroupKind::MathChoice => "math choice group",
-        tex_state::GroupKind::SemiSimple => "semi simple group",
-        tex_state::GroupKind::MathShift => "math shift group",
-        tex_state::GroupKind::MathLeft => "math left group",
-    }
+    kind.group_text()
 }
 
 fn if_type_text(if_type: u8) -> &'static str {

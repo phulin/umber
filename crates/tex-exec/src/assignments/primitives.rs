@@ -359,20 +359,27 @@ fn configure_etex_unexpandable_primitives(stores: &mut Universe, install: bool) 
         "tracingscantokens",
         Meaning::IntParam(IntParam::TRACING_SCAN_TOKENS.raw()),
     );
-    for (name, parameter) in [
-        ("TeXXeTstate", IntParam::TEX_XET_STATE),
-        ("predisplaydirection", IntParam::PRE_DISPLAY_DIRECTION),
-        ("tracingassigns", IntParam::TRACING_ASSIGNS),
-        ("tracinggroups", IntParam::TRACING_GROUPS),
-        ("tracingifs", IntParam::TRACING_IFS),
-        ("tracingnesting", IntParam::TRACING_NESTING),
-        ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
-        ("lastlinefit", IntParam::LAST_LINE_FIT),
-        ("savinghyphcodes", IntParam::SAVING_HYPH_CODES),
-    ] {
+    for &(name, parameter) in ETEX_INT_PARAMS {
         configure_primitive(stores, install, name, Meaning::IntParam(parameter.raw()));
     }
 }
+
+/// e-TeX 2.6's own integer parameters, kept separate from TeX82's
+/// [`INT_PARAMS`] because they are installed by a different primitive table
+/// (`configure_etex_unexpandable_primitives`, e-TeX-extended-mode only) but
+/// still need a name for `\tracingassigns`'s [`int_param_name`].
+const ETEX_INT_PARAMS: &[(&str, IntParam)] = &[
+    ("TeXXeTstate", IntParam::TEX_XET_STATE),
+    ("predisplaydirection", IntParam::PRE_DISPLAY_DIRECTION),
+    ("tracingassigns", IntParam::TRACING_ASSIGNS),
+    ("tracinggroups", IntParam::TRACING_GROUPS),
+    ("tracingifs", IntParam::TRACING_IFS),
+    ("tracingnesting", IntParam::TRACING_NESTING),
+    ("savingvdiscards", IntParam::SAVING_V_DISCARDS),
+    ("lastlinefit", IntParam::LAST_LINE_FIT),
+    ("savinghyphcodes", IntParam::SAVING_HYPH_CODES),
+    ("tracingscantokens", IntParam::TRACING_SCAN_TOKENS),
+];
 
 fn configure_page_meanings(stores: &mut Universe, install: bool) {
     for &(name, dimension) in PAGE_DIMENSIONS {
@@ -497,6 +504,52 @@ const TOK_PARAMS: &[(&str, u16)] = &[
     ("everycr", 7),
     ("errhelp", TokParam::ERR_HELP.raw()),
 ];
+
+/// e-TeX `\tracingassigns`'s `show_eqtb`-equivalent parameter name, used to
+/// render its `{into ...}`/`{changing ...}`/`{reassigning ...}` trace lines.
+/// The fallback for an index this table does not name should be unreachable
+/// in practice -- every declared parameter index is listed here -- but never
+/// panics, matching this table's role as a display aid rather than a gate.
+pub(crate) fn int_param_name(index: u16) -> String {
+    if let Some((name, _)) = INT_PARAMS.iter().find(|(_, i)| *i == index) {
+        return (*name).to_owned();
+    }
+    if let Some((name, _)) = ETEX_INT_PARAMS
+        .iter()
+        .find(|(_, parameter)| parameter.raw() == index)
+    {
+        return (*name).to_owned();
+    }
+    format!("IntParam{index}")
+}
+
+pub(crate) fn dimen_param_name(index: u16) -> String {
+    lookup_name(DIMEN_PARAMS, index, "DimenParam")
+}
+
+pub(crate) fn tok_param_name(index: u16) -> String {
+    lookup_name(TOK_PARAMS, index, "TokParam")
+}
+
+/// Looks up a glue parameter's name and unit ("pt" for ordinary glue
+/// parameters, "mu" for the three math-glue parameters that share the same
+/// index space per e-TeX 2.6 [20.281]'s `glue_pars` layout).
+pub(crate) fn glue_param_name(index: u16) -> (String, &'static str) {
+    if let Some((name, _)) = GLUE_PARAMS.iter().find(|(_, i)| *i == index) {
+        return ((*name).to_owned(), "pt");
+    }
+    if let Some((name, _)) = MU_GLUE_PARAMS.iter().find(|(_, i)| *i == index) {
+        return ((*name).to_owned(), "mu");
+    }
+    (format!("GlueParam{index}"), "pt")
+}
+
+fn lookup_name(table: &[(&str, u16)], index: u16, fallback: &str) -> String {
+    table.iter().find(|(_, i)| *i == index).map_or_else(
+        || format!("{fallback}{index}"),
+        |(name, _)| (*name).to_owned(),
+    )
+}
 
 const PAGE_DIMENSIONS: &[(&str, PageDimension)] = &[
     ("pagegoal", PageDimension::Goal),

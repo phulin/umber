@@ -108,19 +108,31 @@ pub(super) fn execute_def(
     }
     let global = apply_globaldefs(global, stores);
     execution.mark_paragraph_local_meaning(stores, target.symbol, global);
-    if global {
-        stores.set_macro_meaning_global_with_provenance(
-            target.symbol,
-            scanned.meaning(),
-            scanned.provenance(),
-        );
-    } else {
-        stores.set_macro_meaning_with_provenance(
-            target.symbol,
-            scanned.meaning(),
-            scanned.provenance(),
-        );
-    }
+    tracing::trace_meaning_write(
+        stores,
+        Token::Cs(target.symbol),
+        // TeX82 §1224/§1230's `\def` family always allocates a fresh
+        // definition, so real TeX never reports "reassigning" here even
+        // when the new body is byte-identical to the old one -- only
+        // `\let`/`\futurelet` can copy an already-installed equivalent.
+        true,
+        global,
+        |stores| {
+            if global {
+                stores.set_macro_meaning_global_with_provenance(
+                    target.symbol,
+                    scanned.meaning(),
+                    scanned.provenance(),
+                );
+            } else {
+                stores.set_macro_meaning_with_provenance(
+                    target.symbol,
+                    scanned.meaning(),
+                    scanned.provenance(),
+                );
+            }
+        },
+    );
     Ok(())
 }
 
@@ -147,11 +159,14 @@ pub(super) fn execute_let(
     let meaning = token_meaning_for_let(rhs, stores, execution)?;
     let global = apply_globaldefs(prefixes.global, stores);
     execution.mark_paragraph_local_meaning(stores, target, global);
-    if global {
-        stores.set_meaning_global(target, meaning);
-    } else {
-        stores.set_meaning(target, meaning);
-    }
+    let changed = stores.meaning(target) != meaning;
+    tracing::trace_meaning_write(stores, Token::Cs(target), changed, global, move |stores| {
+        if global {
+            stores.set_meaning_global(target, meaning);
+        } else {
+            stores.set_meaning(target, meaning);
+        }
+    });
     Ok(())
 }
 
@@ -177,11 +192,14 @@ pub(super) fn execute_futurelet(
     let meaning = token_meaning_for_let(second, stores, execution)?;
     let global = apply_globaldefs(prefixes.global, stores);
     execution.mark_paragraph_local_meaning(stores, target, global);
-    if global {
-        stores.set_meaning_global(target, meaning);
-    } else {
-        stores.set_meaning(target, meaning);
-    }
+    let changed = stores.meaning(target) != meaning;
+    tracing::trace_meaning_write(stores, Token::Cs(target), changed, global, move |stores| {
+        if global {
+            stores.set_meaning_global(target, meaning);
+        } else {
+            stores.set_meaning(target, meaning);
+        }
+    });
     tex_expand::back_input(
         input,
         &mut tex_state::ExpansionContext::new(stores),

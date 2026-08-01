@@ -723,6 +723,37 @@ pub(crate) fn format_scaled_for_diagnostics(value: Scaled) -> String {
     format_scaled_without_unit(value)
 }
 
+/// tex.web §177's `print_spec(p, s)`, used by `\tracingassigns`/`show_eqtb`
+/// glue-parameter display.
+///
+/// Unlike [`format_glue`] (used for node dumps, which supply one unit for an
+/// entire list from outside), this prints `unit` ("pt" for ordinary glue,
+/// "mu" for e-TeX's math-glue parameters) after every scaled component whose
+/// order is normal, and that order's own suffix ("fil"/"fill"/"filll")
+/// otherwise.
+pub(crate) fn format_glue_with_unit(spec: GlueSpec, unit: &str) -> String {
+    let mut text = format_scaled_without_unit(spec.width);
+    text.push_str(unit);
+    if spec.stretch.raw() != 0 {
+        text.push_str(" plus ");
+        text.push_str(&format_scaled_without_unit(spec.stretch));
+        text.push_str(&glue_component_unit(spec.stretch_order, unit));
+    }
+    if spec.shrink.raw() != 0 {
+        text.push_str(" minus ");
+        text.push_str(&format_scaled_without_unit(spec.shrink));
+        text.push_str(&glue_component_unit(spec.shrink_order, unit));
+    }
+    text
+}
+
+fn glue_component_unit(order: Order, unit: &str) -> String {
+    match order {
+        Order::Normal => unit.to_owned(),
+        Order::Fil | Order::Fill | Order::Filll => order_unit(order).to_owned(),
+    }
+}
+
 fn format_glue_ratio(value: GlueSetRatio) -> String {
     let numerator = i64::from(value.numerator()) * i64::from(Scaled::UNITY);
     let denominator = i64::from(value.denominator());

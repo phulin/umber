@@ -44,6 +44,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/shipout/direct/materialize.rs`: localized owned-node replay support for repeated DVI leader payloads.
 - `src/assignments/shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
+- `src/assignments/tracing.rs`: e-TeX 2.6's `\tracingassigns` rendered assignment trace, rendering the `changing`/`globally changing`/`into`/`reassigning` labels tex.web's `restore_trace` shares with `\tracingrestores`. Its production call sites are `canonical_main_control.rs`'s `apply_scanned_step` (the `ScannedStep::Count`/`Dimen`/`Skip`/`Muskip`/`IntParam`/`DimenParam`/`GlueParam`/`TokParam`/`Toks`/`CodeTable`/`Let`/`MacroDefinition` arms); `variables.rs`'s `execute_assignment_to_target` and `execute_code_table_assignment` call it too, but that path is reachable only from the retired `Executor`, never from the canonical command core.
 - `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
 - `src/assignments/variables/variable_access.rs`: typed read/write accessors for registers, parameters, and font variables.

@@ -62,28 +62,41 @@ pub(super) fn execute_assignment_to_target(
     let global = apply_globaldefs(prefixes.global, stores);
     match target {
         Variable::IntRegister(index) => {
+            let old = read_int_variable(stores, target);
             let value = scan_i32(input, stores, execution, context)?;
             set_int_register(stores, index, value, global);
+            tracing::trace_int_register(stores, index, global, old, value);
         }
         Variable::DimenRegister(index) => {
+            let old = read_dimen_variable(stores, target);
             let value = scan_scaled(input, stores, execution, context)?;
             set_dimen_register(stores, index, value, global);
+            tracing::trace_dimen_register(stores, index, global, old, value);
         }
         Variable::GlueRegister(index) => {
+            let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, false, context)?;
             set_glue_register(stores, index, value, global);
+            tracing::trace_glue_register(stores, index, global, old, value);
         }
         Variable::MuGlueRegister(index) => {
+            let old = stores.muskip(index);
             let value = scan_glue_id(input, stores, execution, true, context)?;
             set_muglue_register(stores, index, value, global);
+            tracing::trace_muglue_register(stores, index, global, old, value);
         }
         Variable::ToksRegister(index) => {
+            let old = stores.toks(index);
             let value = scan_token_list_assignment(input, stores, execution, context)?;
             set_toks_register(stores, index, value, global);
+            tracing::trace_toks_register(stores, index, global, old, value);
         }
         Variable::IntParam(index) => {
+            let old = read_int_variable(stores, target);
+            let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
             let value = scan_i32(input, stores, execution, context)?;
             set_int_param(stores, index, value, global);
+            tracing::trace_int_param(stores, index, tracing_before, global, old, value);
         }
         Variable::PageInteger(integer) => {
             reject_macro_prefixes(prefixes)?;
@@ -91,8 +104,10 @@ pub(super) fn execute_assignment_to_target(
             stores.set_page_integer(integer, value);
         }
         Variable::DimenParam(index) => {
+            let old = read_dimen_variable(stores, target);
             let value = scan_scaled(input, stores, execution, context)?;
             set_dimen_param(stores, index, value, global);
+            tracing::trace_dimen_param(stores, index, global, old, value);
         }
         Variable::PageDimension(dimension) => {
             reject_macro_prefixes(prefixes)?;
@@ -104,16 +119,22 @@ pub(super) fn execute_assignment_to_target(
             set_font_dimen_recovering(input, stores, font, number, value)?;
         }
         Variable::GlueParam(index) => {
+            let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, false, context)?;
             set_glue_param(stores, index, value, global);
+            tracing::trace_glue_param(stores, index, global, old, value);
         }
         Variable::MuGlueParam(index) => {
+            let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, true, context)?;
             set_glue_param(stores, index, value, global);
+            tracing::trace_glue_param(stores, index, global, old, value);
         }
         Variable::TokParam(index) => {
+            let old = stores.tok_param(TokParam::new(index));
             let value = scan_token_list_assignment(input, stores, execution, context)?;
             set_tok_param(stores, index, value, global);
+            tracing::trace_tok_param(stores, index, global, old, value);
         }
         Variable::FontHyphenChar(font) => {
             let value = scan_i32(input, stores, execution, context)?;
@@ -417,28 +438,34 @@ pub(super) fn execute_code_table_assignment(
     let global = apply_globaldefs(prefixes.global, stores);
     match primitive {
         UnexpandablePrimitive::CatCode => {
+            let old = stores.catcode(ch) as i32;
             let value = catcode_from_i32(value)?;
             if global {
                 stores.set_catcode_global(ch, value);
             } else {
                 stores.set_catcode(ch, value);
             }
+            tracing::trace_code(stores, "catcode", ch, global, old, value as i32);
         }
         UnexpandablePrimitive::LcCode => {
+            let old = stores.lccode(ch) as i32;
             let value = checked_char_code(value, "\\lccode")? as LcCode;
             if global {
                 stores.set_lccode_global(ch, value)
             } else {
                 stores.set_lccode(ch, value)
             }
+            tracing::trace_code(stores, "lccode", ch, global, old, value as i32);
         }
         UnexpandablePrimitive::UcCode => {
+            let old = stores.uccode(ch) as i32;
             let value = checked_char_code(value, "\\uccode")? as UcCode;
             if global {
                 stores.set_uccode_global(ch, value)
             } else {
                 stores.set_uccode(ch, value)
             }
+            tracing::trace_code(stores, "uccode", ch, global, old, value as i32);
         }
         UnexpandablePrimitive::SfCode => {
             if !(0..=32_767).contains(&value) {
@@ -447,11 +474,13 @@ pub(super) fn execute_code_table_assignment(
                     value,
                 });
             }
+            let old = i32::from(stores.sfcode(ch));
             if global {
                 stores.set_sfcode_global(ch, value as SfCode)
             } else {
                 stores.set_sfcode(ch, value as SfCode)
             }
+            tracing::trace_code(stores, "sfcode", ch, global, old, value);
         }
         UnexpandablePrimitive::MathCode => {
             if !(0..=32_768).contains(&value) {
@@ -460,11 +489,13 @@ pub(super) fn execute_code_table_assignment(
                     value,
                 });
             }
+            let old = stores.mathcode(ch) as i32;
             if global {
                 stores.set_mathcode_global(ch, value as MathCode)
             } else {
                 stores.set_mathcode(ch, value as MathCode)
             }
+            tracing::trace_code(stores, "mathcode", ch, global, old, value);
         }
         UnexpandablePrimitive::DelCode => {
             if !(-1..=0xFF_FFFF).contains(&value) {
@@ -473,11 +504,13 @@ pub(super) fn execute_code_table_assignment(
                     value,
                 });
             }
+            let old = stores.delcode(ch);
             if global {
                 stores.set_delcode_global(ch, value as DelCode)
             } else {
                 stores.set_delcode(ch, value as DelCode)
             }
+            tracing::trace_code(stores, "delcode", ch, global, old, value);
         }
         _ => unreachable!("caller restricts primitive"),
     }

@@ -10695,11 +10695,13 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let old = stores.count(index);
             if global {
                 stores.set_count_global(index, value);
-            } else if !etex_redundant_local_word_assignment(stores, stores.count(index), value) {
+            } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_count(index, value);
             }
+            crate::assignments::tracing::trace_int_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Dimen {
@@ -10707,11 +10709,13 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let old = stores.dimen(index);
             if global {
                 stores.set_dimen_global(index, value);
-            } else if !etex_redundant_local_word_assignment(stores, stores.dimen(index), value) {
+            } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_dimen(index, value);
             }
+            crate::assignments::tracing::trace_dimen_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxDimensionAssignment {
@@ -10736,12 +10740,14 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let old = stores.skip(index);
             let value = stores.intern_glue(value);
             if global {
                 stores.set_skip_global(index, value);
             } else {
                 stores.set_skip(index, value);
             }
+            crate::assignments::tracing::trace_glue_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Muskip {
@@ -10749,12 +10755,14 @@ fn apply_scanned_step(
             value,
             global,
         } => {
+            let old = stores.muskip(index);
             let value = stores.intern_glue(value);
             if global {
                 stores.set_muskip_global(index, value);
             } else {
                 stores.set_muskip(index, value);
             }
+            crate::assignments::tracing::trace_muglue_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HorizontalSkip { value } => {
@@ -11189,11 +11197,14 @@ fn apply_scanned_step(
             tokens,
             global,
         } => {
+            let old = stores.toks(index);
+            let new = tokens.token_list();
             if global {
-                stores.set_toks_global(index, tokens.token_list());
+                stores.set_toks_global(index, new);
             } else {
-                stores.set_toks(index, tokens.token_list());
+                stores.set_toks(index, new);
             }
+            crate::assignments::tracing::trace_toks_register(stores, index, global, old, new);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IntParam {
@@ -11202,15 +11213,21 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = IntParam::new(index);
+            let old = stores.int_param(parameter);
+            let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
             if global {
                 stores.set_int_param_global(parameter, value);
-            } else if !etex_redundant_local_word_assignment(
-                stores,
-                stores.int_param(parameter),
-                value,
-            ) {
+            } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_int_param(parameter, value);
             }
+            crate::assignments::tracing::trace_int_param(
+                stores,
+                index,
+                tracing_before,
+                global,
+                old,
+                value,
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DimenParam {
@@ -11219,15 +11236,13 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = DimenParam::new(index);
+            let old = stores.dimen_param(parameter);
             if global {
                 stores.set_dimen_param_global(parameter, value);
-            } else if !etex_redundant_local_word_assignment(
-                stores,
-                stores.dimen_param(parameter),
-                value,
-            ) {
+            } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_dimen_param(parameter, value);
             }
+            crate::assignments::tracing::trace_dimen_param(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TokParam {
@@ -11236,11 +11251,14 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = TokParam::new(index);
+            let old = stores.tok_param(parameter);
+            let new = tokens.token_list();
             if global {
-                stores.set_tok_param_global(parameter, tokens.token_list());
+                stores.set_tok_param_global(parameter, new);
             } else {
-                stores.set_tok_param(parameter, tokens.token_list());
+                stores.set_tok_param(parameter, new);
             }
+            crate::assignments::tracing::trace_tok_param(stores, index, global, old, new);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::GlueParam {
@@ -11249,17 +11267,19 @@ fn apply_scanned_step(
             global,
         } => {
             let parameter = GlueParam::new(index);
-            if global {
-                let value = stores.intern_glue(value);
-                stores.set_glue_param_global(parameter, value);
-            } else if !etex_redundant_local_zero_glue_assignment(
-                stores,
-                stores.glue_param(parameter),
-                &value,
-            ) {
-                let value = stores.intern_glue(value);
-                stores.set_glue_param(parameter, value);
-            }
+            let old = stores.glue_param(parameter);
+            let new = if global {
+                let new = stores.intern_glue(value);
+                stores.set_glue_param_global(parameter, new);
+                new
+            } else if !etex_redundant_local_zero_glue_assignment(stores, old, &value) {
+                let new = stores.intern_glue(value);
+                stores.set_glue_param(parameter, new);
+                new
+            } else {
+                old
+            };
+            crate::assignments::tracing::trace_glue_param(stores, index, global, old, new);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CodeTable {
@@ -11294,42 +11314,57 @@ fn apply_scanned_step(
                             });
                         }
                     };
+                    let old = stores.catcode(character);
                     if global {
                         stores.set_catcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.catcode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_catcode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores,
+                        "catcode",
+                        character,
+                        global,
+                        old as i32,
+                        value as i32,
+                    );
                 }
                 UnexpandablePrimitive::LcCode => {
                     let value = u32::try_from(value).map_err(|_| ExecError::InvalidCode {
                         context: "\\lccode",
                         value,
                     })? as LcCode;
+                    let old = stores.lccode(character);
                     if global {
                         stores.set_lccode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.lccode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_lccode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores,
+                        "lccode",
+                        character,
+                        global,
+                        old as i32,
+                        value as i32,
+                    );
                 }
                 UnexpandablePrimitive::UcCode => {
                     let value = checked_character_code(value, "\\uccode")? as UcCode;
+                    let old = stores.uccode(character);
                     if global {
                         stores.set_uccode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.uccode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_uccode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores,
+                        "uccode",
+                        character,
+                        global,
+                        old as i32,
+                        value as i32,
+                    );
                 }
                 UnexpandablePrimitive::SfCode => {
                     let value = u16::try_from(value)
@@ -11339,15 +11374,20 @@ fn apply_scanned_step(
                             context: "\\sfcode",
                             value,
                         })? as SfCode;
+                    let old = stores.sfcode(character);
                     if global {
                         stores.set_sfcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.sfcode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_sfcode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores,
+                        "sfcode",
+                        character,
+                        global,
+                        i32::from(old),
+                        i32::from(value),
+                    );
                 }
                 UnexpandablePrimitive::MathCode => {
                     let value = u32::try_from(value)
@@ -11357,15 +11397,20 @@ fn apply_scanned_step(
                             context: "\\mathcode",
                             value,
                         })? as MathCode;
+                    let old = stores.mathcode(character);
                     if global {
                         stores.set_mathcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.mathcode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_mathcode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores,
+                        "mathcode",
+                        character,
+                        global,
+                        old as i32,
+                        value as i32,
+                    );
                 }
                 UnexpandablePrimitive::DelCode => {
                     let value = (-1..=0xFF_FFFF)
@@ -11375,15 +11420,15 @@ fn apply_scanned_step(
                             context: "\\delcode",
                             value,
                         })?;
+                    let old = stores.delcode(character);
                     if global {
                         stores.set_delcode_global(character, value);
-                    } else if !etex_redundant_local_word_assignment(
-                        stores,
-                        stores.delcode(character),
-                        value,
-                    ) {
+                    } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_delcode(character, value);
                     }
+                    crate::assignments::tracing::trace_code(
+                        stores, "delcode", character, global, old, value,
+                    );
                 }
                 _ => unreachable!("only code-table primitives are scanned"),
             }
@@ -11859,11 +11904,24 @@ fn apply_scanned_step(
             // assignment; `global` here already folds in `\gdef`/`\xdef`'s
             // own forced-global chr_code (see the scan arm above), and
             // `global` already is the final effective bit.
-            if global {
-                stores.set_macro_meaning_global_with_provenance(target, meaning, provenance);
-            } else {
-                stores.set_macro_meaning_with_provenance(target, meaning, provenance);
-            }
+            crate::assignments::tracing::trace_meaning_write(
+                stores,
+                Token::Cs(target),
+                // TeX82's `\def` family always allocates a fresh definition,
+                // so real TeX never reports "reassigning" here even for a
+                // byte-identical redefinition -- see
+                // `crate::assignments::tracing::trace_meaning_write`'s docs.
+                true,
+                global,
+                |stores| {
+                    if global {
+                        stores
+                            .set_macro_meaning_global_with_provenance(target, meaning, provenance);
+                    } else {
+                        stores.set_macro_meaning_with_provenance(target, meaning, provenance);
+                    }
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CharacterDefinition {
@@ -11961,11 +12019,21 @@ fn apply_scanned_step(
             // `\def`/`\edef`/`\gdef`/`\xdef`) canonical apply arm that used
             // the raw `\global` prefix bit directly and silently ignored a
             // nonzero `\globaldefs`.
-            if global {
-                stores.set_meaning_global(target, meaning);
-            } else {
-                stores.set_meaning(target, meaning);
-            }
+            let changed =
+                !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
+            crate::assignments::tracing::trace_meaning_write(
+                stores,
+                Token::Cs(target),
+                changed,
+                global,
+                |stores| {
+                    if global {
+                        stores.set_meaning_global(target, meaning);
+                    } else {
+                        stores.set_meaning(target, meaning);
+                    }
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterGroup(token) => {
