@@ -12,7 +12,7 @@ use tex_state::math::{
     MathNoad, MathStyle, NoadClass, NoadKind,
 };
 use tex_state::node::{
-    BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode,
+    BoxNode, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind, UnsetNode, Whatsit,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
@@ -231,8 +231,63 @@ fn dump_node(
         Node::MathChoice(choice) => dump_math_choice(stores, choice, config, depth, out),
         Node::MathList(list) => dump_math_list(stores, list, config, depth, out),
         Node::Nonscript => out.push_str("\\glue(\\nonscript)\n"),
-        Node::Ins { .. } | Node::Whatsit(_) => out.push_str("[]\n"),
+        Node::Whatsit(whatsit) => dump_whatsit(stores, whatsit, out),
+        Node::Ins { .. } => out.push_str("[]\n"),
     }
+}
+
+/// TeX82 §1356's `Display the whatsit node` cases. The PDF variants are
+/// extension-owned and retain the generic marker until their own diagnostic
+/// vocabulary is specified.
+fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
+    match whatsit {
+        Whatsit::OpenOut { slot, path } => {
+            let _ = writeln!(out, "\\openout{}={path}", slot.raw());
+        }
+        Whatsit::CloseOut { slot } => match slot {
+            Some(slot) => {
+                let _ = writeln!(out, "\\closeout{}", slot.raw());
+            }
+            None => out.push_str("\\closeout*\n"),
+        },
+        Whatsit::DeferredWrite { sink, tokens } => {
+            out.push_str("\\write");
+            match sink {
+                tex_state::PrintSink::Stream(slot) => {
+                    let _ = write!(out, "{}", slot.raw());
+                }
+                tex_state::PrintSink::TerminalAndLog | tex_state::PrintSink::Terminal => {
+                    out.push('*');
+                }
+                tex_state::PrintSink::Log => out.push('-'),
+            }
+            dump_token_list(stores, *tokens, out);
+        }
+        Whatsit::Special { payload, .. } => {
+            out.push_str("\\special{");
+            out.push_str(&String::from_utf8_lossy(payload));
+            out.push_str("}\n");
+        }
+        Whatsit::Language {
+            language,
+            left_hyphen_min,
+            right_hyphen_min,
+        } => {
+            let _ = writeln!(
+                out,
+                "\\setlanguage{language} (hyphenmin {left_hyphen_min},{right_hyphen_min})"
+            );
+        }
+        _ => out.push_str("[]\n"),
+    }
+}
+
+fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {
+    out.push('{');
+    for &token in stores.tokens(tokens) {
+        out.push_str(&token_text(stores, token));
+    }
+    out.push_str("}\n");
 }
 
 fn dump_math_noad(

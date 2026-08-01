@@ -1410,10 +1410,14 @@
         {
           "path": "crates/tex-command/src/command/tests.rs",
           "test": "unknown_extension_selector_fails_loudly_at_dispatch"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "extension_commands_dispatch_in_each_mode_with_canonical_stream_fallbacks"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-r9nt"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",
@@ -1470,10 +1474,14 @@
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/whatsits/tests.rs",
+          "test": "whatsit_copy_free_display_and_default_output_name_are_subtype_complete"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.132"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.whatsits.list-visitation",

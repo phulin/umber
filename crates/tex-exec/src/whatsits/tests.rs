@@ -33,6 +33,34 @@ fn run_to_end(control: &mut CommandReplayControl, stores: &mut Universe) {
 }
 
 #[test]
+fn extension_commands_dispatch_in_each_mode_with_canonical_stream_fallbacks() {
+    // TeX82 §§1342, 1344, and 1347: all six primitives reach `do_extension`
+    // in every mode. Only §1377's setlanguage limb rejects non-hmode, and
+    // §1350 normalizes write/close streams to the permanent 16/17 fallbacks.
+    for mode in [
+        Mode::Vertical,
+        Mode::InternalVertical,
+        Mode::Horizontal,
+        Mode::RestrictedHorizontal,
+        Mode::Math,
+        Mode::DisplayMath,
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CommandReplayControl::tex82_initex(&mut stores);
+        if mode != Mode::Vertical {
+            control.modes.push(mode).expect("test mode push");
+        }
+        let source: &[u8] = if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
+            br"\openout99=x\write-1{n}\write16{p}\closeout-1\special{s}\immediate\closeout16\setlanguage7"
+        } else {
+            br"\openout99=x\write-1{n}\write16{p}\closeout-1\special{s}\immediate\closeout16\setlanguage"
+        };
+        register_source(&mut control, source);
+        run_to_end(&mut control, &mut stores);
+    }
+}
+
+#[test]
 fn base_whatsit_scanners_construct_each_canonical_subtype() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut stores);
@@ -100,6 +128,48 @@ fn base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82() {
         Scaled::from_raw(0)
     );
     assert_eq!(stores.current_page_len(), 3);
+}
+
+#[test]
+fn whatsit_copy_free_display_and_default_output_name_are_subtype_complete() {
+    // TeX82 §§1349–1358: openout keeps an absent extension absent, write owns
+    // unexpanded text, special owns expanded text, and all five base subtypes
+    // remain independently printable after a node-list copy is dropped.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut stores);
+    control
+        .modes
+        .push(Mode::RestrictedHorizontal)
+        .expect("test mode push");
+    register_source(
+        &mut control,
+        br"\def\value{first}\openout2=plain \openout3=archive.log \write2{\value}\special{\value}\def\value{second}\closeout-1",
+    );
+    run_to_end(&mut control, &mut stores);
+    control
+        .modes
+        .current_list_mutation()
+        .push(Node::Whatsit(Whatsit::Language {
+            language: 7,
+            left_hyphen_min: 2,
+            right_hyphen_min: 3,
+        }));
+
+    let originals = control.modes.current_list().nodes().to_vec();
+    let copied = originals.clone();
+    drop(copied);
+    let dump = crate::node_dump::dump_node_slice(
+        &stores,
+        &originals,
+        crate::node_dump::DumpConfig {
+            breadth: 100,
+            depth: 100,
+        },
+    );
+    assert_eq!(
+        dump,
+        "\\openout2=plain\n\\openout3=archive.log\n\\write2{\\value}\n\\special{first}\n\\closeout*\n\\setlanguage7 (hyphenmin 2,3)\n"
+    );
 }
 
 #[test]
