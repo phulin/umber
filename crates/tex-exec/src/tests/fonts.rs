@@ -448,17 +448,40 @@ fn line_expansion_materializes_discrete_glyphs_kerns_and_reuses_fonts() {
 }
 
 #[test]
-#[ignore = "known gap: paragraph packing does not yet select a nonzero final expansion ratio (umber2-e51h.113.1)"]
 fn expanded_paragraph_shipout_retains_semantic_font_resource() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        "\\font\\base=cmr10 ",
-        "\\pdffontexpand\\base 100 50 10 autoexpand ",
-        "\\efcode\\base`A=1000 \\pdfadjustspacing=1 ",
-        "\\shipout\\vbox{\\hsize=23pt \\parfillskip=0pt \\base \\noindent AAA\\par}\\end",
-    )));
+    let mut input = InputStack::new(MemoryInput::new("\\font\\base=cmr10 \\end"));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("base font loads");
+    let base = font_meaning(&stores, "base");
+    // This crate harness installs execution primitives, not the driver's
+    // pdfTeX parameter/code aliases. Seed their live state directly so the
+    // source below isolates paragraph materialization and shipout.
+    stores
+        .configure_font_expansion(
+            base,
+            tex_state::font::FontExpansion {
+                stretch: 100,
+                shrink: 50,
+                step: 10,
+                auto_expand: true,
+            },
+        )
+        .expect("font expansion configuration is valid");
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, base, b'A', 1000);
+    stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_ADJUST_SPACING, 1);
+    stores.set_dimen_param_global(
+        tex_state::env::banks::DimenParam::H_SIZE,
+        Scaled::from_raw(23 * Scaled::UNITY),
+    );
+    let zero_glue = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
+    stores.set_glue_param_global(tex_state::env::banks::GlueParam::PAR_FILL_SKIP, zero_glue);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\shipout\\vbox{\\base \\noindent AAA\\par}\\end",
+    ));
     let stats = Executor::new()
         .run(&mut input, &mut stores)
         .expect("expanded paragraph ships");
