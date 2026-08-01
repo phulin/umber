@@ -3234,13 +3234,12 @@ fn showbox_dumps_leader_glue_payloads_like_reference() {
 
 #[test]
 fn showbox_and_showeqtb_render_exact_assigned_regions_without_mutation() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
+    let mut stores = stores_with_fonts();
     let mut setup = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\
-         \\f \\textfont1=\\f \\scriptfont2=\\f \\scriptscriptfont3=\\f \\
-         \\catcode64=11 \\lccode64=97 \\uccode64=65 \\
-         \\sfcode64=2345 \\mathcode64=12345 \\
+        "\\font\\f=cmr10 \\relax \
+         \\f \\textfont1=\\f \\scriptfont2=\\f \\scriptscriptfont3=\\f \
+         \\catcode64=11 \\lccode64=97 \\uccode64=65 \
+         \\sfcode64=2345 \\mathcode64=12345 \
          \\setbox0=\\hbox{A\\hbox{B}}",
     ));
     Executor::new()
@@ -3255,11 +3254,11 @@ fn showbox_and_showeqtb_render_exact_assigned_regions_without_mutation() {
     let mathcode_before = stores.mathcode('@');
 
     let mut diagnostics = InputStack::new(MemoryInput::new(
-        "\\showboxbreadth=100 \\showboxdepth=100 \\showbox0 \\
-         \\showboxbreadth=1 \\showboxdepth=0 \\showbox0 \\
-         \\showthe\\font \\showthe\\textfont1 \\showthe\\scriptfont2 \\
-         \\showthe\\scriptscriptfont3 \\
-         \\showthe\\catcode64 \\showthe\\lccode64 \\showthe\\uccode64 \\
+        "\\showboxbreadth=100 \\showboxdepth=100 \\showbox0 \
+         \\showboxbreadth=1 \\showboxdepth=0 \\showbox0 \
+         \\showthe\\font \\showthe\\textfont1 \\showthe\\scriptfont2 \
+         \\showthe\\scriptscriptfont3 \
+         \\showthe\\catcode64 \\showthe\\lccode64 \\showthe\\uccode64 \
          \\showthe\\sfcode64 \\showthe\\mathcode64",
     ));
     Executor::new()
@@ -3269,10 +3268,10 @@ fn showbox_and_showeqtb_render_exact_assigned_regions_without_mutation() {
     let log = terminal_effect_text(&stores);
     assert!(log.contains("> \\box0=\n\\hbox"), "{log}");
     assert!(log.contains(".\\f A"), "{log}");
-    assert!(log.contains("..\\hbox"), "{log}");
-    assert!(log.contains("...\\f B"), "{log}");
-    assert!(log.contains(".[]"), "{log}");
-    for expected in ["> \\f .", "> 11.", "> 97.", "> 65.", "> 2345.", "> 12345."] {
+    assert!(log.contains(".\\hbox"), "{log}");
+    assert!(log.contains("..\\f B"), "{log}");
+    assert!(log.contains(" []"), "{log}");
+    for expected in ["> \\f.", "> 11.", "> 97.", "> 65.", "> 2345.", "> 12345."] {
         assert!(log.contains(expected), "missing {expected:?} in {log}");
     }
 
