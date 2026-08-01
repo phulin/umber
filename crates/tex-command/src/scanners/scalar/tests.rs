@@ -3113,7 +3113,7 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
             Token::Cs(if_branch),
         ],
     );
-    for expected in [1, 2, 1, -15, 1] {
+    for expected in [1, 2, 1, -15, -1] {
         let token = processor
             .get_x_token()
             .expect("state token delivers")

@@ -303,7 +303,7 @@ impl ConditionStack {
             IfLimit::Fi => -1,
         };
         if frame.inverted {
-            (level, -ty, -branch)
+            (level, -ty, branch)
         } else {
             (level, ty, branch)
         }

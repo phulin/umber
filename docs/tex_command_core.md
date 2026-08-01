@@ -2427,8 +2427,10 @@ named non-internal meaning lies outside §413's range. Host-unavailable
 values without entering missing-number recovery. Read-only internal integers
 likewise remain internal: `\inputlineno` reads the live enclosing file line,
 and e-TeX's current-group/current-if enquiries read the group and condition
-stacks (including `\unless`'s negated type and branch). Adding a `Meaning`
-variant therefore requires an explicit scanner classification.
+stacks. e-TeX 2.6 `etex.ch` [17.4750--4790] negates `\currentiftype` for an
+active `\unless`, while `\currentifbranch` remains a function of `if_limit`
+alone. Adding a `Meaning` variant therefore requires an explicit scanner
+classification.
 
 `scan_dimen` delegates its integral prefix to that same integer scanner. Its
 backed-up decimal point is then consumed raw, while a backed-up unit remains

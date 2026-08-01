@@ -42,6 +42,29 @@ fn etex_current_if_type_is_one_based_and_preserves_unless_sign() {
         }
     }
 }
+
+#[test]
+fn etex_current_if_branch_ignores_unless_inversion() {
+    // e-TeX 2.6 `etex.ch` [17.4750--4790] derives `\currentifbranch` only
+    // from `if_limit`; unlike `\currentiftype`, it does not inspect the
+    // `unless_code` carried by `cur_if`.
+    for (limit, expected) in [
+        (IfLimit::Evaluating, 0),
+        (IfLimit::Or, 1),
+        (IfLimit::Else, 1),
+        (IfLimit::Fi, -1),
+    ] {
+        for inverted in [false, true] {
+            let mut stack = ConditionStack::default();
+            let condition = stack.push_with_inversion(ConditionalKind::IfTrue, 0, inverted);
+            assert!(stack.change_if_limit(condition, limit));
+            assert_eq!(
+                stack.current_etex_values(),
+                (1, if inverted { -15 } else { 15 }, expected)
+            );
+        }
+    }
+}
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
