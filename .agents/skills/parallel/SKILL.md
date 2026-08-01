@@ -1,224 +1,257 @@
 ---
 name: parallel
-description: Manage multiple umber implementation agents at once using separate git worktrees, then rebase-integrate, tear down, and resolve conflicts through a dedicated conflict-resolution subagent. Use when coordinating parallel subagents, worktree branches, branch integration, or merge conflicts.
+description: Coordinate multiple disjoint Umber issues in bounded persistent Git worktree slots with checkout-local Cargo caches, explicit slot ownership, linear in-slot rebases, fast-forward integration, and delegated conflict resolution. Use when dispatching parallel subagents, allocating or recycling worktree slots, preserving build caches across issues, integrating parallel branches, or resolving rebase conflicts.
 ---
 
 # Parallel
 
-Use this skill only when coordinating multiple umber subagents at once.
-Parallel work is allowed only when the issues touch disjoint subsystems. If the
-work overlaps, serialize it with the `coordinate` skill instead.
+Use this skill only when coordinating multiple Umber subagents at once. Parallel
+work is allowed only when the issues touch disjoint subsystems. Serialize
+overlapping work with the `coordinate` skill.
 
-Parallel dispatch requires a separate worktree per subagent. Never let two
-subagents edit the same checkout. The coordinator dispatches worktree
-instructions with those parallel jobs and handles merge/teardown after each
-job's writeback passes.
+Give every active agent its own worktree. Use a bounded pool of persistent
+worker slots by default: keep each slot at a stable filesystem path with its own
+`target/` and `target/clippy`, but give every issue a fresh branch at an explicit
+base commit. Never share one `CARGO_TARGET_DIR` across concurrent agents.
 
-## Worktree Setup Block
+The coordinator owns slot allocation, integration, and release. An
+implementation agent never creates, removes, reassigns, cleans, or switches its
+slot.
 
-When running parallel subagents, add this block to each subagent prompt, filling
-in `{ISSUE_SLUG}`, `{BASE_REF}`, and optional WIP-import notes:
+## Non-Negotiable Rules
+
+- Pin every wave to an explicit base commit, not a moving branch name.
+- Give one slot to exactly one issue until writeback and integration finish.
+- Write every coordinator Git command with an explicit `git -C <path>`.
+- Keep all edits, tests, commits, and rebase conflict resolution in the assigned
+  slot. Do not let a parallel agent modify the integration checkout.
+- Namespace shared scratch files by issue id. Use `johp-208-after.txt`, not
+  `after.txt`.
+- Keep history linear: rebase the issue branch in its slot, then fast-forward
+  the integration branch. Never create a merge commit.
+- Do not regenerate, purge, or mutate shared corpus, distribution, oracle, or
+  cache state while another agent may be reading it.
+
+## Before A Wave
+
+1. Confirm the issues are unblocked, claimed in Beads, and touch disjoint
+   subsystems.
+2. Choose at most the available concurrency and run:
+
+   ```bash
+   scripts/build-cache-policy.py --jobs N
+   ```
+
+   The current preflight deliberately reserves 12 GiB per concurrent job plus
+   4 GiB. Reduce the wave or reclaim an idle slot if it refuses.
+3. Resolve the integration branch to one explicit `{BASE_REF}` commit shared by
+   the wave.
+4. Allocate one idle persistent slot per issue. If the bounded pool has no idle
+   slot, wait or serialize; do not grow it without another capacity check.
+
+## Persistent Slot Allocation
+
+Use stable paths such as `{REPO_ROOT}/.worktrees/slot-1`. Slot paths must not
+contain issue ids because their path identity is what preserves Cargo's local
+crate and dep-info cache across issues.
+
+The coordinator allocates each slot before dispatch:
+
+1. Ensure `{REPO_ROOT}/.worktrees` and
+   `{REPO_ROOT}/.worktrees/.locks` exist.
+2. Acquire the slot by atomically creating
+   `{REPO_ROOT}/.worktrees/.locks/{SLOT_NAME}`. If it already exists, treat the
+   slot as owned until Beads, the worktree registry, live agents, and
+   Cargo-family processes prove the lock stale. Never clear it merely because
+   no agent is visible in the current thread.
+3. Create a missing slot once, detached at the pinned base:
+
+   ```bash
+   git -C {REPO_ROOT} worktree add {SLOT_PATH} --detach {BASE_REF}
+   ```
+
+4. For an existing slot, require a clean worktree, no active owner or build
+   process, and a detached idle HEAD. Resolve any abandoned issue through its
+   Beads record before reuse.
+5. Create the issue branch inside the slot:
+
+   ```bash
+   git -C {SLOT_PATH} switch -c umber-{ISSUE_SLUG} {BASE_REF}
+   ```
+
+   To resume an existing issue, attach only its recorded branch after proving
+   no other worktree has it checked out.
+6. Append the slot path, issue branch, and pinned base to the issue's Beads
+   notes. Beads plus the lock directory are the durable ownership record.
+
+Prewarm a newly created or explicitly reclaimed slot before starting the
+parallel wave. Warm new slots sequentially so their cold builds do not contend:
+
+```bash
+cargo test -q --tests --no-run
+scripts/check.sh clippy
+```
+
+Run those commands with the slot as the command working directory. Normal slot
+reuse needs no prewarm and no clean.
+
+## Dispatch Prompt Block
+
+Add this block to each parallel implementation prompt after the standard
+`coordinate` prompt, filling every placeholder:
 
 ```markdown
-## Worktree setup (required first step; do before reading docs or editing)
+## Assigned persistent worktree
 
-1. Main repo: {REPO_ROOT} (the coordinator's primary working directory; do not
-   hardcode a path here when dispatching -- substitute the real one)
-2. Ensure the worktree parent exists:
-   `mkdir -p {REPO_ROOT}/.worktrees`
-3. Create a dedicated worktree and branch:
-   `git -C {REPO_ROOT} worktree add {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} -b umber-{ISSUE_SLUG} {BASE_REF}`
-   If the branch already exists without a worktree, attach with:
-   `git -C {REPO_ROOT} worktree add {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} umber-{ISSUE_SLUG}`
-4. Link the shared gitignored artifacts (see below); a fresh worktree has none
-   of them, and their absence is silent.
-5. {OPTIONAL: import partial WIP from a prior wave; list files/stashes}
-6. `cd` into the worktree; all edits, tests, and commits happen there only.
-   Do not modify the main checkout. If you have an `apply_patch` skill, it
-   needs the full path to the in-worktree file every time you call it.
+- Main repository: {REPO_ROOT}
+- Assigned slot: {SLOT_PATH}
+- Issue branch: umber-{ISSUE_SLUG}
+- Pinned base: {BASE_REF}
+
+The coordinator has already allocated this slot and checked out the issue
+branch. Before reading docs or editing, `cd` to {SLOT_PATH} and verify the
+branch and base. Do not create or remove a worktree, switch branches, change
+`CARGO_TARGET_DIR`, clean build caches, or modify the main checkout. Keep every
+edit, test, and commit in this slot. Use full in-slot paths for patch tools.
+
+Namespace every shared scratch artifact with {ISSUE_ID}. If a required
+gitignored asset is missing, check the primary checkout and the owning workflow
+before calling it a repository failure; do not improvise symlinks or regenerate
+shared evidence.
 ```
 
-### Shared gitignored artifacts
+## Gitignored Assets And Specialized Workflows
 
-The oracle, the generated document traces, the pinned corpora, and the
-byte-exact DVI oracles are all gitignored, so a fresh worktree has none of
-them. Rebuilding them costs roughly 40 minutes and needs network workarounds.
-Link the main checkout's instead, read-only, and never regenerate in place
-while other agents are running:
+Routine native conformance assets provision themselves on first use through
+`test_support::native_assets::provision`. It copies only the SHA-256 allowlist
+in `tests/native-test-assets.lock` from the primary checkout. Do not symlink or
+broadly copy `third_party/`, DVI oracles, or TRIP inputs into a slot. If the
+primary checkout lacks an allowlisted asset, run
+`scripts/setup-conformance-tests.sh` there once, never in each slot.
 
-```bash
-ln -s {REPO_ROOT}/third_party third_party
-mkdir -p target && ln -s {REPO_ROOT}/target/tex82-oracle target/tex82-oracle
-ln -s {REPO_ROOT}/tests/corpus/command/tex82-documents tests/corpus/command/tex82-documents
-for d in story gentle trip etrip; do
-  ln -s "{REPO_ROOT}/tests/corpus/e2e/$d.expected.dvi" "tests/corpus/e2e/$d.expected.dvi"
-done
-```
+Some opt-in workflows use additional gitignored material that the native asset
+provisioner does not own. Follow the affected subsystem's current documentation
+and provision only the exact paths it names. Treat a missing worktree asset as
+an incomplete slot setup until the primary checkout has been checked.
 
-`target/tex82-oracle` does **not** contain the document traces; they live under
-`tests/corpus/command/tex82-documents`, and omitting that link makes the tracer
-skip every document stream while still printing a headline divergence count.
-`.gitignore` lists that path with a trailing slash, which does not match a
-symlink of the same name, so the link shows up as untracked. Exclude it through
-`.git/info/exclude` rather than editing the shared `.gitignore`.
+For canonical-command semantic or DVI divergence work, read
+`docs/canonical_divergence_workflow.md` and use its oracle, tracer, expected
+total, stream, and front requirements. Do not run the command-stream tracer or
+inject divergence-specific setup into unrelated parallel tasks.
 
-### Confirm the worktree is not blind
+## While Slots Are Active
 
-Every dispatch prompt must state the expected divergence total, the agent's own
-stream, and that stream's expected front, and must require the agent to confirm
-all three **before** doing any work:
+- Keep the slot lock until the branch has been integrated or its exact
+  unfinished disposition has been recorded.
+- Never switch, detach, reclaim, or inspect an active slot in a way that can
+  alter it. Send questions to its owner instead.
+- Let each slot use its checkout-local `target/`; `scripts/check.sh` already
+  isolates clippy in that slot's `target/clippy`.
+- Do not copy, hard-link, reflink, or share Cargo internals between slots.
+- If an agent stops unexpectedly, preserve the branch, slot, lock, and Beads
+  state until recovery is complete.
 
-```bash
-cargo run-dev -q -p tex-command-stream -- --repository . --max-divergences 100000
-```
+The shell working directory can persist across tool calls. Never rely on it.
+Use `git -C {REPO_ROOT} ...` for the integration checkout and
+`git -C {SLOT_PATH} ...` for the issue branch. Do not use a pipeline such as
+`git ... | head && echo CLEAN` as a cleanliness proof; a pipeline can hide the
+Git command's failure status.
 
-A worklist containing only `tex82/command-transitions-v1` means the document
-traces are not linked. An agent that skips this check can spend an entire run
-against a worklist its own stream was never part of; that has happened.
+## Integration After Writeback
 
-### The scratchpad is shared, not per-agent
+Integrate only after the `coordinate` writeback checks pass. Process completed
+slots one at a time because each later branch must rebase onto the integration
+tip produced by the prior one.
 
-The scratchpad directory is shared across every concurrent agent on the same
-repository. Generic filenames collide silently: one agent overwrote another's
-`after.txt` mid-run with its own tracer output, and the second agent nearly
-reported the first agent's numbers as its own result.
+1. Record the tested issue tip as `{PRE_REBASE_REF}` and resolve the current
+   integration tip as `{INTEGRATION_TIP}`.
+2. Rebase inside the issue slot, where its branch is already checked out:
 
-Require every dispatch prompt to namespace scratch files by issue id
-(`johp-208-after.txt`, not `after.txt`). A collision here produces a
-_plausible_ wrong measurement rather than an error, which is the hardest kind
-to notice — the file exists, it parses, and its numbers look like the ones you
-expected.
+   ```bash
+   git -C {SLOT_PATH} rebase {INTEGRATION_TIP}
+   ```
 
-### Every coordinator git call needs an explicit `-C`
+3. If `git diff {PRE_REBASE_REF} HEAD` is not empty, the tested tree changed.
+   Run the relevant focused tests and `scripts/check-and-test.sh` again in the
+   slot. Reuse prior green evidence only when that tree diff is empty.
+4. Fast-forward the integration branch from the primary checkout:
 
-The shell's working directory persists between tool calls. After setting up a
-worktree the coordinator is _inside_ that worktree, and a later `git rebase` or
-`git checkout` meant for the main checkout runs there instead — checking another
-issue's branch out over a running agent's files.
+   ```bash
+   git -C {REPO_ROOT} checkout {INTEGRATION_BRANCH}
+   git -C {REPO_ROOT} merge --ff-only umber-{ISSUE_SLUG}
+   ```
 
-That happened: `git rebase <tip> umber-johp-230`, intended for the main
-checkout, ran inside `.worktrees/umber-johp-231` while its agent was working and
-switched that worktree to `umber-johp-230`.
+   If this fails because the integration tip advanced, do not force it or call
+   it a conflict. Resolve the new tip and repeat the in-slot rebase and
+   verification.
+5. Record the resulting commit range on the issue or owning epic.
 
-Write every coordinator git call as `git -C {REPO_ROOT} ...`, or
-`git -C {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG} ...` when the worktree is the
-intended target. Never rely on the ambient directory.
+Do not cherry-pick a normal completed slot merely because its branch is checked
+out there. Rebasing in the slot preserves the intended branch and makes the
+fast-forward path routine.
 
-Two properties make this hard to notice, and both are worth internalizing:
+## Release Or Retire A Slot
 
-- A rebase refuses to run on a dirty tree, so it _succeeds_ precisely when the
-  agent has no uncommitted work — no error, no conflict, nothing to see.
-- `git -C <path> status --short | head -2 && echo CLEAN` prints `CLEAN` even
-  when the `git` call fails, because a pipeline exits with its **last**
-  command's status. A cleanliness check built this way confirms nothing.
+After fast-forward integration, recycle the slot instead of deleting it:
 
-If it happens anyway: restore the worktree to its own branch, then tell the
-agent explicitly what was disturbed, which of its measurements are now void,
-and to stop rather than redo if committed work is missing. Its `git reflog`
-still holds anything lost.
+1. Resolve the new integration tip and detach the clean slot there:
 
-### A missing artifact is never a repository gap
+   ```bash
+   git -C {SLOT_PATH} switch --detach {INTEGRATION_TIP}
+   git -C {REPO_ROOT} branch -d umber-{ISSUE_SLUG}
+   ```
 
-Require every dispatch prompt to say this outright: a test that fails on a
-missing shared artifact means **this worktree's symlinks are incomplete**, not
-that the asset is absent from the repository. Before reporting any failure as
-pre-existing, environmental, or out of scope, check the main checkout for the
-file and say what was found there.
+2. Verify clean status, no live agent, and no Cargo-family process belonging to
+   the slot.
+3. Append the release and integrated commit range to Beads, then remove the
+   slot's lock directory. The detached worktree and both Cargo caches remain
+   available for the next issue.
 
-An agent reported `e2e_conformance_trip` failing on a missing
-`tests/corpus/e2e/trip.expected.dvi` and concluded the asset was "absent from
-the main checkout too". It was present, and all seven conformance gates passed
-on the integration tip. A false pre-existing-failure claim is worse than the
-missing link: it invites the coordinator to integrate a branch whose test
-result was never actually established.
+Reclamation is explicit and applies only to an idle locked slot. Run
+`scripts/build-cache-policy.py --reclaim --jobs N` with that slot as the
+working directory after checking for live owners and processes. Reclamation
+makes later work colder, so choose the least-recently-used idle slot.
 
-`{BASE_REF}` is the current tip of the branch the work integrates onto. Pin it
-to an explicit commit hash rather than a branch name so concurrent jobs share a
-known base. Use `main` only when that is genuinely the integration branch;
-long-running epics integrate onto their own feature branch instead.
+Retire a physical slot only to shrink the bounded pool or recover more space
+than cache reclamation provides. Require it to be idle, clean, detached, and
+process-free, then use `git -C {REPO_ROOT} worktree remove {SLOT_PATH}`. Never
+remove an active or unresolved slot.
 
-### Disk cost
+## Rebase Conflicts
 
-Each worktree carries its own `target/`; Cargo does not share it with the
-primary checkout unless `CARGO_TARGET_DIR` is explicitly set. Measurements on
-2026-07-28 found 6.8 GiB after a representative built worktree, a historical
-9.6 GiB peak, and 12 GiB of incremental state in a long-lived primary
-checkout. Before dispatching a wave, run:
+The coordinator does not resolve conflicts. If the in-slot rebase conflicts:
 
-```bash
-scripts/build-cache-policy.py --jobs N
-```
+1. Leave the rebase in progress in `{SLOT_PATH}`. Do not run `rebase --abort`
+   unless abandoning the integration attempt.
+2. Reopen the issue and dispatch a conflict-resolution subagent into the same
+   locked slot. No implementation agent may use that slot concurrently.
+3. Give the resolver context about the issue branch and the changes already on
+   the integration branch.
+4. Require the resolver to preserve both issues' intent, complete the rebase,
+   run focused tests and `scripts/check-and-test.sh`, update Beads, and re-close
+   the issue.
+5. Resume the normal fast-forward and slot-release sequence.
 
-The preflight budgets 12 GiB for each new job plus a 4 GiB filesystem reserve,
-so one job requires 16 GiB free and two require 28 GiB. Do not dispatch when it
-refuses. Keep incremental compilation enabled for human development. Cache
-reclamation is explicit and checkout-local; never remove caches belonging to a
-running job. Tear worktrees down promptly after merge.
-
-## After Writeback Verification
-
-For parallel worktree jobs only, integrate after the subagent's writeback
-passes. **Keep history linear -- rebase, never `git merge`.** From the main
-checkout on the integration branch:
-
-```bash
-git -C {REPO_ROOT} rebase {INTEGRATION_BRANCH} umber-{ISSUE_SLUG}
-git -C {REPO_ROOT} checkout {INTEGRATION_BRANCH}
-git -C {REPO_ROOT} merge --ff-only umber-{ISSUE_SLUG}
-git -C {REPO_ROOT} worktree remove {REPO_ROOT}/.worktrees/umber-{ISSUE_SLUG}
-git -C {REPO_ROOT} branch -d umber-{ISSUE_SLUG}
-```
-
-If the branch is checked out in its worktree and so cannot be rebased in place,
-cherry-pick its commits onto the integration branch instead, then remove the
-worktree and force-delete the branch.
-
-Record the resulting commit range on the relevant bd issue or epic. When a
-rebase changes commits that a prior green test run covered, confirm the tree is
-unchanged (`git diff {PRE_REBASE_REF} HEAD` empty) before reusing that result.
-
-## Merge Conflicts
-
-Do not resolve conflicts yourself. If the rebase or fast-forward fails:
-
-1. Leave the rebase in progress. Run `git rebase --abort` only if abandoning it
-   entirely.
-2. Dispatch a conflict-resolution subagent with context about both sides:
-   the issue whose branch is being integrated (`{ISSUE_ID}`, title, subsystems,
-   acceptance criteria) and what is already on the integration branch from
-   recently landed issues, listing issue ids, branch names, and subsystems
-   touched.
-3. The conflict-resolution subagent works in the main checkout, not a worktree.
-   It resolves conflicts preserving intent of both sides, runs
-   `cargo test --tests`, completes the rebase, and reports back.
-4. Once the branch fast-forwards cleanly, remove the worktree and delete the
-   branch as described above.
-
-## Conflict-Resolution Subagent Prompt
-
-Dispatch this prompt when `git merge` of a completed parallel worktree branch
-fails. The subagent works in the main repo checkout on `main` with the merge in
-progress.
+Use this prompt:
 
 ```markdown
-You are resolving a git rebase conflict for umber. Do not change scope
-beyond what is required to complete the rebase correctly.
+You are resolving a Git rebase conflict for Umber. Work only in the assigned
+persistent slot and do not broaden scope.
 
-**Branch being integrated:** {BRANCH} from worktree {WORKTREE_PATH}
-**Integration branch:** {INTEGRATION_BRANCH}
+**Slot:** {SLOT_PATH}
+**Branch:** umber-{ISSUE_SLUG}
+**Integration tip:** {INTEGRATION_TIP}
 **Issue:** {ISSUE_ID} -- {ISSUE_TITLE}
-{ISSUE_DESCRIPTION; subsystems and acceptance criteria}
+{ISSUE_DESCRIPTION_AND_ACCEPTANCE_CRITERIA}
 
-**Already on the integration branch (conflicting side):** {LIST landed
-issue ids, branch names, subsystems, and one-line intent for each}
+**Already integrated:** {RECENT_ISSUES_BRANCHES_SUBSYSTEMS_AND_INTENT}
 
-1. Inspect `git status` and conflict markers; understand both sides.
-2. Resolve conflicts preserving the intent of both issues. Prefer
-   integrating both behaviors over discarding either side.
-3. `cargo test -q --tests` must pass; clippy and rustfmt clean.
-4. Complete the rebase; keep history linear and introduce no merge commit.
-5. Comment on {ISSUE_ID} in bd noting conflict resolution approach.
+1. Inspect the in-progress rebase and conflict markers in the slot.
+2. Resolve conflicts while preserving both sides' intent.
+3. Run the relevant focused tests and `scripts/check-and-test.sh`.
+4. Complete the rebase without a merge commit.
+5. Comment on {ISSUE_ID} with the resolution and validation, then re-close it.
 
-Report in <=15 lines: conflicts resolved (file paths), tests, resulting
-commit range. No diffs.
+Report in at most 15 lines: files resolved, tests, resulting commit range, and
+Beads writeback. Do not include diffs or logs.
 ```
