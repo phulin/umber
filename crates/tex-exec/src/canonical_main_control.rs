@@ -3859,6 +3859,13 @@ fn report_unpaired_display_end(
 }
 
 fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
+    // e-TeX etex.ch [48.1192] admits `\middle` through the same
+    // `math_left_group` case as `\right`.  Seeing a leading left noad is not
+    // sufficient: a simple group nested inside that left/right group is an
+    // invalid context and must take the `Extra \middle` recovery arm.
+    if stores.innermost_group_kind() != Some(GroupKind::MathLeft) {
+        return false;
+    }
     let starts_left_node = |node: Option<&Node>| {
         matches!(
             node,

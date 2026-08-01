@@ -1132,6 +1132,10 @@ fn left_right_delimiters_size_to_enclosed_list() {
 
 #[test]
 fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
+    // e-TeX etex.ch [36.727, 36.760, 36.762] makes a middle noad reset the
+    // current style just like a right noad, then sends every delimiter in the
+    // left/middle/right run through the shared `make_left_right` extent.  The
+    // rule applies in all four style sizes, including nested script formulas.
     let mut universe = setup_universe();
     let tall_box = universe.freeze_node_list(&[Node::Rule {
         width: Some(sc(4)),
@@ -1163,19 +1167,29 @@ fn middle_delimiter_uses_common_extent_and_boundary_spacing() {
     ]);
     let params = MathParams::read(&universe);
 
-    let hlist = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
-    let nodes = root_nodes(&hlist);
+    for style in [
+        Style::DISPLAY,
+        Style::TEXT,
+        Style::SCRIPT,
+        Style::SCRIPT_SCRIPT,
+    ] {
+        let hlist = mlist_to_hlist(&universe, input, style, false, &params);
+        let nodes = root_nodes(&hlist);
 
-    assert_eq!(
-        nodes.len(),
-        5,
-        "middle boundaries must not add relation glue"
-    );
-    for index in [0, 2, 4] {
-        let MathNode::VList(delimiter) = nodes[index] else {
-            panic!("expected extensible delimiter at index {index}");
-        };
-        assert!(list_nodes(&hlist, delimiter.list).len() > 3);
+        assert_eq!(
+            nodes.len(),
+            5,
+            "middle boundaries must not add relation glue in {style:?}"
+        );
+        let mut common_extent = None;
+        for index in [0, 2, 4] {
+            let MathNode::VList(delimiter) = nodes[index] else {
+                panic!("expected extensible delimiter at index {index} in {style:?}");
+            };
+            assert!(list_nodes(&hlist, delimiter.list).len() > 3);
+            let extent = (delimiter.height, delimiter.depth);
+            assert_eq!(*common_extent.get_or_insert(extent), extent);
+        }
     }
 }
 

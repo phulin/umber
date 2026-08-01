@@ -5355,7 +5355,7 @@ fn canonical_valign_noalign_preserves_the_alignment_mode() {
     assert_eq!(stores.count(0), 7);
 }
 
-fn run_canonical_etex(source: &str) -> Universe {
+pub(super) fn run_canonical_etex(source: &str) -> Universe {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
@@ -5401,7 +5401,7 @@ fn canonical_etex_glue_component_enquiries_recover_standalone_in_every_mode() {
     }
 }
 
-fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<Node>) {
+pub(super) fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<Node>) {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);

@@ -1274,6 +1274,75 @@ fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
     }));
 }
 
+/// e-TeX etex.ch [48.1192] handles `middle_noad` only in the
+/// `math_left_group` branch.  Its othercases arm consumes the delimiter,
+/// reports the middle-specific error/help pair, and otherwise leaves the
+/// current mlist unchanged.  In particular, a simple group nested inside a
+/// left/right group is not itself a valid `\middle` context.
+#[test]
+fn canonical_etex_middle_invalid_context_matrix_recovers_exactly() {
+    for source in [
+        r"\nonstopmode$\middle|a$\end",
+        r"\nonstopmode${\middle|a}$\end",
+        r"\nonstopmode$\left(a{\middle|b}\right)$\end",
+    ] {
+        let stores = super::core::run_canonical_etex(source);
+        let output = canonical_log_text(&stores);
+        assert!(output.starts_with("\n! Extra \\middle.\n"));
+        assert!(
+            output.contains("\nI'm ignoring a \\middle that had no matching \\left.\n"),
+            "wrong recovery help for {source:?}: {output:?}"
+        );
+        assert_eq!(
+            output.matches("! Extra \\middle.").count(),
+            1,
+            "the consumed delimiter must not be replayed: {output:?}"
+        );
+    }
+}
+
+/// e-TeX etex.ch [48.1192] gives every middle noad the `right_noad` command
+/// class.  Thus §687's `scripts_allowed` bound excludes it just as it excludes
+/// `\right`: a following script starts a fresh empty Ord noad.  Multiple
+/// middle noads remain legal in one left/right group.
+#[test]
+fn canonical_etex_repeated_middle_and_following_script_preserve_noad_boundaries() {
+    let (_, nodes) = super::core::run_canonical_etex_current_list(r"$\left.a\middle.^2b\middle.c");
+
+    assert_eq!(nodes.len(), 7);
+    assert!(matches!(
+        math_noad(&nodes[0]).kind,
+        NoadKind::LeftDelimiter { .. }
+    ));
+    assert_math_char(&math_noad(&nodes[1]).nucleus, 1, 'a');
+    assert!(matches!(
+        math_noad(&nodes[2]).kind,
+        NoadKind::MiddleDelimiter { .. }
+    ));
+    let scripted = math_noad(&nodes[3]);
+    assert!(matches!(scripted.kind, NoadKind::Normal(NoadClass::Ord)));
+    assert!(matches!(scripted.nucleus, MathField::Empty));
+    assert_math_char(&scripted.superscript, 0, '2');
+    assert_math_char(&math_noad(&nodes[4]).nucleus, 1, 'b');
+    assert!(matches!(
+        math_noad(&nodes[5]).kind,
+        NoadKind::MiddleDelimiter { .. }
+    ));
+    assert_math_char(&math_noad(&nodes[6]).nucleus, 1, 'c');
+
+    let stores = super::core::run_canonical_etex(r"\nonstopmode$\left.a\middle.b\middle.c$\end");
+    let output = canonical_log_text(&stores);
+    assert!(output.starts_with("\n! Missing \\right. inserted.\n"));
+    assert!(output.contains(
+        "\nI've inserted something that you may have forgotten.\n\
+         (See the <inserted text> above.)\n\
+         With luck, this will get me unwedged. But if you\n\
+         really didn't forget anything, try typing `2' now; then\n\
+         my insertion and my current dilemma will both disappear.\n"
+    ));
+    assert!(!output.contains("Extra \\middle"));
+}
+
 #[test]
 fn etex_display_records_and_resumes_the_interrupted_text_direction() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
