@@ -640,6 +640,17 @@ impl Stores {
         self.resolve_stored_meaning(self.env.get_meaning_slot(symbol.raw()))
     }
 
+    pub(crate) fn symbol_at_slot(&self, slot: u32) -> Option<Symbol> {
+        self.interner.symbol_at_slot(slot)
+    }
+
+    pub(crate) fn first_symbol_with_meaning(&self, meaning: Meaning) -> Option<Symbol> {
+        (0..self.interner.len()).find_map(|slot| {
+            let symbol = self.interner.symbol_at_slot(slot as u32)?;
+            (self.meaning(symbol) == meaning).then_some(symbol)
+        })
+    }
+
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn testing_meaning_level(&self, symbol: impl SymbolReference) -> u32 {
         let symbol = self.resolve_symbol_reference(symbol);

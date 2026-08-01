@@ -453,6 +453,30 @@ impl DimenParam {
 }
 
 impl GlueParam {
+    /// TeX82's §236 parameter spelling used by §283's `show_eqtb`-based
+    /// restoration trace.
+    #[must_use]
+    pub fn tex82_name(self) -> Option<&'static str> {
+        const NAMES: [&str; 15] = [
+            "lineskip",
+            "baselineskip",
+            "parskip",
+            "abovedisplayskip",
+            "belowdisplayskip",
+            "abovedisplayshortskip",
+            "belowdisplayshortskip",
+            "leftskip",
+            "rightskip",
+            "topskip",
+            "splittopskip",
+            "tabskip",
+            "spaceskip",
+            "xspaceskip",
+            "parfillskip",
+        ];
+        NAMES.get(usize::from(self.0)).copied()
+    }
+
     /// TeX's `\lineskip` glue parameter.
     pub const LINE_SKIP: Self = Self::new(0);
 

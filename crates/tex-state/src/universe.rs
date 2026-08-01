@@ -21,7 +21,7 @@ use crate::font::{
     CharMetrics, ExtensibleRecipe, FontMetrics, LigKernChar, LigKernCommand, LigKernIter,
     LoadedFont, MissingCharacter,
 };
-use crate::glue::GlueSpec;
+use crate::glue::{GlueSpec, Order};
 use crate::hyphenation::{ExceptionSpec, PatternSpec};
 use crate::ids::{FontId, GlueId, MacroDefinitionId, NodeListId, OriginListId, TokenListId};
 use crate::input::{
@@ -1216,6 +1216,33 @@ pub struct Universe {
     /// internal quantity -- so, like [`Self::error_context_widths`], they
     /// stay out of formats, snapshots, and semantic hashes.
     diagnostic_position: DiagnosticPosition,
+}
+
+/// TeX82 §177's `print_spec(p,"pt")`, used by §252 `show_eqtb` when §283
+/// traces restoration of a named glue parameter.
+fn format_restore_glue(spec: GlueSpec) -> String {
+    fn component_unit(order: Order) -> &'static str {
+        match order {
+            Order::Normal => "pt",
+            Order::Fil => "fil",
+            Order::Fill => "fill",
+            Order::Filll => "filll",
+        }
+    }
+
+    let mut text = crate::scaled::print_scaled(spec.width);
+    text.push_str("pt");
+    if spec.stretch.raw() != 0 {
+        text.push_str(" plus ");
+        text.push_str(&crate::scaled::print_scaled(spec.stretch));
+        text.push_str(component_unit(spec.stretch_order));
+    }
+    if spec.shrink.raw() != 0 {
+        text.push_str(" minus ");
+        text.push_str(&crate::scaled::print_scaled(spec.shrink));
+        text.push_str(component_unit(spec.shrink_order));
+    }
+    text
 }
 
 /// tex.web's `line`, `pack_begin_line`, and the `mode_line` stack §804 reads
@@ -5624,7 +5651,7 @@ impl Universe {
 
     fn trace_restores(&mut self, records: &[crate::env::group::RestoreRecord]) {
         use crate::cell::BankTag;
-        use crate::env::banks::IntParam;
+        use crate::env::banks::{GlueParam, IntParam};
 
         for &record in records {
             if record.tracing_restores() <= 0 {
@@ -5656,6 +5683,28 @@ impl Universe {
                 continue;
             }
             let (name, value) = match cell.bank() {
+                BankTag::Meaning => {
+                    let Some(symbol) = self.stores.symbol_at_slot(cell.index()) else {
+                        continue;
+                    };
+                    let meaning = self.stores.meaning(symbol);
+                    let value = match meaning {
+                        Meaning::Relax
+                        | Meaning::ExpandablePrimitive(_)
+                        | Meaning::UnexpandablePrimitive(_) => {
+                            let Some(canonical) = self.stores.first_symbol_with_meaning(meaning)
+                            else {
+                                continue;
+                            };
+                            escaped_restore_name(
+                                record.escape_char(),
+                                self.stores.resolve(canonical),
+                            )
+                        }
+                        _ => continue,
+                    };
+                    (self.stores.resolve(symbol).to_owned(), value)
+                }
                 BankTag::Count => (
                     format!("count{}", cell.index()),
                     (record.old() as u32 as i32).to_string(),
@@ -5674,6 +5723,13 @@ impl Universe {
                         continue;
                     };
                     (name.to_owned(), (record.old() as u32 as i32).to_string())
+                }
+                BankTag::GlueParam if cell.index() < 128 => {
+                    let Some(name) = GlueParam::new(cell.index() as u16).tex82_name() else {
+                        continue;
+                    };
+                    let id = GlueId::new(record.old() as u32);
+                    (name.to_owned(), format_restore_glue(self.glue(id)))
                 }
                 _ => continue,
             };
@@ -6995,6 +7051,15 @@ fn format_restore_scaled(value: crate::scaled::Scaled) -> String {
         digits.pop();
     }
     format!("{sign}{whole}.{digits}")
+}
+
+fn escaped_restore_name(escape_char: i32, name: &str) -> String {
+    let mut escaped = String::new();
+    if let Ok(byte) = u8::try_from(escape_char) {
+        escaped.push(char::from(byte));
+    }
+    escaped.push_str(name);
+    escaped
 }
 
 /// A mutable dimension field of a box register's top-level box.

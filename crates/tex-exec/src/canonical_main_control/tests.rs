@@ -340,6 +340,50 @@ fn tracingrestores_reports_retained_integer_parameter_with_live_escapechar() {
 }
 
 #[test]
+fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
+    // TeX82 §§177/252/283: glue parameters use their §236 control-sequence
+    // names and `print_spec` value, for both restored and globally retained
+    // save-stack entries. The retained infinite-order component is the
+    // negative control against formatting every component as ordinary `pt`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingrestores=1\tracingonline=1{\lineskip=1pt plus 2fil minus 3pt}{\baselineskip=1pt\global\baselineskip=4pt plus 5fill}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = "{restoring \\lineskip=0.0pt}\n{retaining \\baselineskip=4.0pt plus 5.0fill}\n";
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+}
+
+#[test]
+fn tracingrestores_reports_primitive_meaning_through_an_alias() {
+    // TeX82 §§252/283 render the restored meaning, not the target control
+    // sequence twice. An alias is the negative control: `\foo` must be named
+    // on the left while primitive `\box` is selected on the right.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\let\foo=\box\tracingrestores=1\tracingonline=1{\let\foo=\relax}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\foo=\\box}\n"
+    );
+    assert_eq!(
+        pending_sink_text(&stores, false),
+        "{restoring \\foo=\\box}\n"
+    );
+}
+
+#[test]
 fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
