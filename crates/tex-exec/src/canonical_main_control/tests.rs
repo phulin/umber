@@ -1670,7 +1670,6 @@ fn etex_lastnodetype_covers_every_node_code() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.76-followup: canonical unboxing does not yet expose a live ligature tail"]
 fn etex_lastnodetype_code_seven_after_unboxing_ligature() {
     let mut stores = Universe::new_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
