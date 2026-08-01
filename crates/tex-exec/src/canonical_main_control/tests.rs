@@ -10,6 +10,8 @@ use tex_state::token::{Catcode, Token};
 
 use super::*;
 
+mod etex_diagnostic_tracing;
+
 fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
     let source = control
         .command_mut()
