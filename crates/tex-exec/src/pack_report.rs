@@ -183,6 +183,13 @@ fn short_display(stores: &Universe, list: NodeListId) -> String {
     out
 }
 
+pub(crate) fn short_display_nodes(stores: &Universe, nodes: &[Node]) -> String {
+    let mut out = String::new();
+    let mut font = None;
+    append_short_display_nodes(stores, nodes, &mut font, &mut out);
+    out
+}
+
 fn append_short_display(
     stores: &Universe,
     list: NodeListId,
@@ -190,6 +197,15 @@ fn append_short_display(
     out: &mut String,
 ) {
     let nodes = stores.nodes(list).to_vec();
+    append_short_display_nodes(stores, &nodes, font_in_short_display, out);
+}
+
+fn append_short_display_nodes(
+    stores: &Universe,
+    nodes: &[Node],
+    font_in_short_display: &mut Option<tex_state::ids::FontId>,
+    out: &mut String,
+) {
     let mut index = 0;
     while index < nodes.len() {
         match &nodes[index] {

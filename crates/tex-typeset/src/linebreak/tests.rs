@@ -33,6 +33,28 @@ fn params(width: i32) -> LineBreakParams {
 }
 
 #[test]
+fn tracing_records_second_and_emergency_pass_boundaries_without_effects() {
+    let universe = Universe::new();
+    let nodes = vec![rule(100), Node::Penalty(EJECT_PENALTY)];
+    let mut parameters = params(10);
+    parameters.pretolerance = -1;
+    parameters.tolerance = -1;
+    parameters.emergency_stretch = sp(100);
+
+    let (plan, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
+    assert!(!plan.breaks.is_empty());
+    assert!(matches!(
+        trace.first(),
+        Some(LineBreakTrace::Pass(LineBreakPass::Second))
+    ));
+    assert!(
+        trace
+            .iter()
+            .any(|event| matches!(event, LineBreakTrace::Pass(LineBreakPass::Emergency)))
+    );
+}
+
+#[test]
 fn pdf_image_reference_contributes_width_to_line_measurement() {
     let mut universe = Universe::new();
     let image = Node::Whatsit(Whatsit::PdfRefXImage {

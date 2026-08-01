@@ -95,6 +95,12 @@ impl<'a> Diagnostic<'a> {
         self
     }
 
+    /// tex.web §63's `print_esc`.
+    pub fn print_esc(&mut self, name: &str) -> &mut Self {
+        self.printer.print_esc(name);
+        self
+    }
+
     /// tex.web §103's `print_scaled`. The unit, if any, is the caller's.
     pub fn print_scaled(&mut self, value: Scaled) -> &mut Self {
         self.printer.print_scaled(value);

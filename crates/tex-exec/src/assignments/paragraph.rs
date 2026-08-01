@@ -8,9 +8,10 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{ContentHash, ParagraphShapeLine, PenaltyArrayKind, PureMemoKey, Universe};
 use tex_typeset::PackSpec;
 use tex_typeset::linebreak::{
-    LineBreakParams, LineBreakResult, LineDimensions, LineMaterializer, LineShape, LineShapeEntry,
-    ParagraphShape as TypesetParagraphShape, PostLineBreakParams, line_break_hyphenated,
-    try_line_break_without_hyphenation,
+    LineBreakParams, LineBreakPass, LineBreakResult, LineBreakTrace, LineDimensions,
+    LineMaterializer, LineShape, LineShapeEntry, ParagraphShape as TypesetParagraphShape,
+    PostLineBreakParams, TraceBreakpoint, line_break_hyphenated, line_break_hyphenated_traced,
+    try_line_break_without_hyphenation, try_line_break_without_hyphenation_traced,
 };
 
 use super::boxes::hpack_owned_with_overfull_rule;
@@ -579,7 +580,11 @@ fn break_current_paragraph(
         line_params.expansion_steps =
             tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
     }
-    let mut decisions = break_hlist_with_fuel(stores, hlist, line_params, fuel)?;
+    let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
+    let (mut decisions, trace) = break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
+    if tracing {
+        report_line_break_trace(stores, &decisions.nodes, &trace);
+    }
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
         if let Some(Node::Glue { spec: par_fill, .. }) =
@@ -827,12 +832,23 @@ pub(crate) fn break_hlist(
         .expect("default paragraph reconstruction fuel")
 }
 
+#[cfg(test)]
 pub(crate) fn break_hlist_with_fuel(
     stores: &mut Universe,
     hlist: Vec<Node>,
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<LineBreakResult, ExecError> {
+    break_hlist_with_trace(stores, hlist, line_params, fuel, false).map(|(result, _)| result)
+}
+
+fn break_hlist_with_trace(
+    stores: &mut Universe,
+    hlist: Vec<Node>,
+    line_params: LineBreakParams,
+    fuel: &mut tex_command::CommandFuel,
+    tracing: bool,
+) -> Result<(LineBreakResult, Vec<LineBreakTrace>), ExecError> {
     // TeX82 §815 skips the pretolerance pass when `pretolerance<0` and
     // enters the hyphenating second pass directly. §919 initializes the trie
     // at that boundary, even if Umber's pure non-hyphenating planner can
@@ -840,17 +856,122 @@ pub(crate) fn break_hlist_with_fuel(
     if line_params.pretolerance < 0 {
         stores.close_hyphenation_patterns();
     }
-    let first = cached_pretolerance_plan(stores, &hlist, &line_params);
+    let (first, trace) = if tracing {
+        try_line_break_without_hyphenation_traced(stores, &hlist, &line_params)
+    } else {
+        (
+            cached_pretolerance_plan(stores, &hlist, &line_params),
+            Vec::new(),
+        )
+    };
     if let Some(first) = first {
-        Ok(tex_typeset::linebreak::plan_with_nodes(first, hlist))
+        Ok((tex_typeset::linebreak::plan_with_nodes(first, hlist), trace))
     } else {
         let mut hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(stores, hlist, fuel)?;
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
-        Ok(tex_typeset::linebreak::plan_with_nodes(
-            line_break_hyphenated(stores, &hyphenated, &line_params),
-            hyphenated,
+        let (plan, trace) = if tracing {
+            line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)
+        } else {
+            (
+                line_break_hyphenated(stores, &hyphenated, &line_params),
+                trace,
+            )
+        };
+        Ok((
+            tex_typeset::linebreak::plan_with_nodes(plan, hyphenated),
+            trace,
         ))
     }
+}
+
+fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineBreakTrace]) {
+    let mut diagnostic = stores.begin_diagnostic();
+    for event in trace {
+        match event {
+            LineBreakTrace::Pass(pass) => {
+                diagnostic.print_nl(match pass {
+                    LineBreakPass::First => "@firstpass",
+                    LineBreakPass::Second => "@secondpass",
+                    LineBreakPass::Emergency => "@emergencypass",
+                });
+            }
+            LineBreakTrace::Feasible {
+                display,
+                breakpoint,
+                via,
+                badness,
+                penalty,
+                demerits,
+            } => {
+                if !display.is_empty() {
+                    let rendered = crate::pack_report::short_display_nodes(
+                        diagnostic.state(),
+                        &nodes[display.clone()],
+                    );
+                    diagnostic.print_nl("").print_rendered(&rendered);
+                }
+                diagnostic.print_nl("@");
+                match breakpoint {
+                    TraceBreakpoint::Glue => {}
+                    TraceBreakpoint::Penalty => {
+                        diagnostic.print_esc("penalty");
+                    }
+                    TraceBreakpoint::Discretionary => {
+                        diagnostic.print_esc("discretionary");
+                    }
+                    TraceBreakpoint::Kern => {
+                        diagnostic.print_esc("kern");
+                    }
+                    TraceBreakpoint::Math => {
+                        diagnostic.print_esc("math");
+                    }
+                    TraceBreakpoint::Paragraph => {
+                        diagnostic.print_esc("par");
+                    }
+                }
+                diagnostic
+                    .print(" via @@")
+                    .print_int(*via as i32)
+                    .print(" b=");
+                if let Some(value) = badness {
+                    diagnostic.print_int(*value);
+                } else {
+                    diagnostic.print_char('*');
+                }
+                diagnostic.print(" p=").print_int(*penalty).print(" d=");
+                if let Some(value) = demerits {
+                    diagnostic.print_int(*value);
+                } else {
+                    diagnostic.print_char('*');
+                }
+            }
+            LineBreakTrace::Active {
+                serial,
+                line,
+                fitness,
+                hyphenated,
+                total_demerits,
+                previous,
+            } => {
+                diagnostic
+                    .print_nl("@@")
+                    .print_int(*serial as i32)
+                    .print(": line ")
+                    .print_int(*line as i32)
+                    .print_char('.')
+                    .print_int(*fitness);
+                if *hyphenated {
+                    diagnostic.print_char('-');
+                }
+                diagnostic
+                    .print(" t=")
+                    .print_int(*total_demerits)
+                    .print(" -> @@")
+                    .print_int(*previous as i32);
+            }
+        }
+    }
+    diagnostic.end(true);
 }
 
 /// Looks up or computes the pure pretolerance line-breaking plan.

@@ -159,6 +159,45 @@ pub struct LineBreakResult {
     pub last_line_fill: Option<GlueSpec>,
 }
 
+/// Detached TeX82 `\tracingparagraphs` evidence produced by the pure breaker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LineBreakTrace {
+    Pass(LineBreakPass),
+    Feasible {
+        display: core::ops::Range<usize>,
+        breakpoint: TraceBreakpoint,
+        via: usize,
+        badness: Option<i32>,
+        penalty: i32,
+        demerits: Option<i32>,
+    },
+    Active {
+        serial: usize,
+        line: usize,
+        fitness: i32,
+        hyphenated: bool,
+        total_demerits: i32,
+        previous: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LineBreakPass {
+    First,
+    Second,
+    Emergency,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraceBreakpoint {
+    Glue,
+    Penalty,
+    Discretionary,
+    Kern,
+    Math,
+    Paragraph,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrokenLine {
     pub nodes: Vec<Node>,
@@ -220,8 +259,41 @@ pub fn try_line_break_without_hyphenation<S: TypesetState>(
     params: &LineBreakParams,
 ) -> Option<BreakPlan> {
     (params.pretolerance >= 0)
-        .then(|| run_pass(state, nodes, params, params.pretolerance, false, false))
+        .then(|| {
+            run_pass(
+                state,
+                nodes,
+                params,
+                params.pretolerance,
+                false,
+                false,
+                None,
+            )
+        })
         .flatten()
+}
+
+pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    params: &LineBreakParams,
+) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
+    let mut trace = Vec::new();
+    let plan = (params.pretolerance >= 0)
+        .then(|| {
+            trace.push(LineBreakTrace::Pass(LineBreakPass::First));
+            run_pass(
+                state,
+                nodes,
+                params,
+                params.pretolerance,
+                false,
+                false,
+                Some(&mut trace),
+            )
+        })
+        .flatten();
+    (plan, trace)
 }
 
 /// Runs TeX82's tolerance and emergency passes on an already-hyphenated list.
@@ -237,13 +309,47 @@ pub fn line_break_hyphenated<S: TypesetState>(
         params.tolerance,
         false,
         params.emergency_stretch.raw() <= 0,
+        None,
     );
     if let Some(result) = second {
         return result;
     }
 
-    run_pass(state, nodes, params, params.tolerance, true, true)
+    run_pass(state, nodes, params, params.tolerance, true, true, None)
         .expect("final line-breaking pass always permits an artificial demerits path")
+}
+
+pub fn line_break_hyphenated_traced<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    params: &LineBreakParams,
+    mut trace: Vec<LineBreakTrace>,
+) -> (BreakPlan, Vec<LineBreakTrace>) {
+    trace.push(LineBreakTrace::Pass(LineBreakPass::Second));
+    let second = run_pass(
+        state,
+        nodes,
+        params,
+        params.tolerance,
+        false,
+        params.emergency_stretch.raw() <= 0,
+        Some(&mut trace),
+    );
+    if let Some(result) = second {
+        return (result, trace);
+    }
+    trace.push(LineBreakTrace::Pass(LineBreakPass::Emergency));
+    let result = run_pass(
+        state,
+        nodes,
+        params,
+        params.tolerance,
+        true,
+        true,
+        Some(&mut trace),
+    )
+    .expect("final line-breaking pass always permits an artificial demerits path");
+    (result, trace)
 }
 
 mod post;
@@ -353,6 +459,7 @@ struct Candidate {
 struct PassiveRoute {
     decision: BreakDecision,
     previous: Option<usize>,
+    serial: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -374,6 +481,7 @@ fn run_pass<S: TypesetState>(
     tolerance: i32,
     emergency: bool,
     final_pass: bool,
+    mut trace: Option<&mut Vec<LineBreakTrace>>,
 ) -> Option<BreakPlan> {
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
@@ -393,13 +501,14 @@ fn run_pass<S: TypesetState>(
         line_glue: Scaled::from_raw(0),
     }];
     let mut next_active = Vec::new();
-    let mut passive = Vec::new();
+    let mut passive: Vec<PassiveRoute> = Vec::new();
     let mut next_serial = 1;
     let last_line_fit = LastLineFit::new(params, background);
     let easy_line = tex_easy_line(params);
     let expansion_steps = (params.pdf_adjust_spacing > 1)
         .then_some(params.expansion_steps)
         .flatten();
+    let mut displayed_through = 0;
 
     for bp in LegalBreakpoints::new(state, nodes, params) {
         // Background and discretionary material depend only on this
@@ -505,6 +614,27 @@ fn run_pass<S: TypesetState>(
                         |(_, _, adjustment)| adjustment,
                     ),
                 };
+                if let Some(events) = trace.as_deref_mut() {
+                    events.push(LineBreakTrace::Feasible {
+                        display: displayed_through..bp.width_position,
+                        breakpoint: trace_breakpoint(nodes, bp),
+                        via: active_candidate.passive.map_or(0, |id| passive[id].serial),
+                        badness: (b <= INF_BAD).then_some(b),
+                        penalty: bp.penalty,
+                        demerits: (!artificial).then(|| {
+                            compute_route_demerits(
+                                params,
+                                &active_candidate,
+                                badness,
+                                bp.penalty,
+                                fitness,
+                                bp,
+                                terminal,
+                            )
+                        }),
+                    });
+                    displayed_through = bp.position;
+                }
                 next_serial += 1;
                 record_best_route(&mut active, prior_active_len, candidate);
             }
@@ -523,8 +653,21 @@ fn run_pass<S: TypesetState>(
                     hyphenated: candidate.hyphenated,
                 },
                 previous: candidate.previous,
+                serial: candidate.serial,
             });
             candidate.passive = Some(passive_id);
+            if let Some(events) = trace.as_deref_mut() {
+                events.push(LineBreakTrace::Active {
+                    serial: candidate.serial,
+                    line: candidate.line,
+                    fitness: trace_fitness(candidate.fitness),
+                    hyphenated: candidate.hyphenated
+                        || (candidate.penalty <= EJECT_PENALTY
+                            && candidate.position >= nodes.len()),
+                    total_demerits: candidate.path_demerits,
+                    previous: candidate.previous.map_or(0, |id| passive[id].serial),
+                });
+            }
         }
         merge_active_candidates(
             &mut active,
@@ -546,6 +689,29 @@ fn run_pass<S: TypesetState>(
         return None;
     }
     Some(reconstruct(active[chosen], &passive, last_line_fit))
+}
+
+fn trace_breakpoint(nodes: &[Node], bp: Breakpoint) -> TraceBreakpoint {
+    if bp.penalty <= EJECT_PENALTY && bp.position >= nodes.len() {
+        return TraceBreakpoint::Paragraph;
+    }
+    match &nodes[bp.position - 1] {
+        Node::Glue { .. } => TraceBreakpoint::Glue,
+        Node::Penalty(_) => TraceBreakpoint::Penalty,
+        Node::Disc { .. } => TraceBreakpoint::Discretionary,
+        Node::Kern { .. } => TraceBreakpoint::Kern,
+        Node::MathOn(_) | Node::MathOff(_) => TraceBreakpoint::Math,
+        _ => TraceBreakpoint::Glue,
+    }
+}
+
+fn trace_fitness(fitness: Fitness) -> i32 {
+    match fitness {
+        Fitness::VeryLoose => 0,
+        Fitness::Loose => 1,
+        Fitness::Decent => 2,
+        Fitness::Tight => 3,
+    }
 }
 
 fn record_best_route(active: &mut Vec<Candidate>, winner_start: usize, candidate: Candidate) {
@@ -844,6 +1010,22 @@ fn compute_demerits(
     bp: Breakpoint,
     terminal: bool,
 ) -> i32 {
+    let route = compute_route_demerits(params, active, bad, penalty, fitness, bp, terminal);
+    let dem = i64::from(route) + i64::from(active.path_demerits);
+    // TeX.web's line breaker caps accumulated demerits at `awful_bad`.
+    i32::try_from(dem.clamp(i64::from(i32::MIN), i64::from(AWFUL_BAD)))
+        .expect("clamped demerits fit i32")
+}
+
+fn compute_route_demerits(
+    params: &LineBreakParams,
+    active: &Candidate,
+    bad: i32,
+    penalty: i32,
+    fitness: Fitness,
+    bp: Breakpoint,
+    terminal: bool,
+) -> i32 {
     let line_bad = i64::from(params.line_penalty) + i64::from(bad);
     let mut dem = if line_bad.abs() >= i64::from(INF_BAD) {
         100_000_000_i64
@@ -865,10 +1047,7 @@ fn compute_demerits(
     if incompatible(active.fitness, fitness) {
         dem += i64::from(params.adj_demerits);
     }
-    dem += i64::from(active.path_demerits);
-    // TeX.web's line breaker caps accumulated demerits at `awful_bad`.
-    i32::try_from(dem.clamp(i64::from(i32::MIN), i64::from(AWFUL_BAD)))
-        .expect("clamped demerits fit i32")
+    i32::try_from(dem).expect("one line's demerits fit i32")
 }
 
 fn discretionary_penalty(pre_is_empty: bool, params: &LineBreakParams) -> i32 {

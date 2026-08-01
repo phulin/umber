@@ -432,6 +432,12 @@ the source stack has retired.
 fonts, glue, and nodes through narrow immutable traits. Kernels return owned
 results or drive a narrow execution-owned sink.
 
+TeX82 line breaking also returns detached `\tracingparagraphs` pass,
+feasible-break, and active-node records. The pure kernel records only node
+ranges and scalar breakpoint evidence; `tex-exec` owns §245 diagnostic
+routing and §174 short-list rendering, so tracing adds no output effect to the
+typesetting boundary.
+
 Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
 math conversion builds one span-backed `MathLayout`; `FrozenHList` values are
 handles into that arena, not recursive owned vectors. Execution lowers the
