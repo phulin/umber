@@ -8259,23 +8259,81 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "pdfxform traversal currently selects DVI policy for an RTL-normalized form containing a deferred node; tracked by umber2-ei1n"]
     fn texxet_form_write_leader_artifact_oracle_matrix() {
-        for content in [
-            "\\vrule width1pt height1pt\\write16{form-write}\\vrule width2pt height1pt",
-            "\\vrule width1pt height1pt\\leaders\\hrule height1pt\\hskip20pt\\vrule width2pt height1pt",
-        ] {
+        use sha2::{Digest, Sha256};
+        use tex_out::positioned::PositionedEvent;
+
+        struct Case {
+            name: &'static str,
+            content: &'static str,
+            artifact_hash: &'static str,
+            pdf_hash: &'static str,
+            rule_widths: &'static [i32],
+        }
+
+        let cases = [
+            Case {
+                name: "form-write",
+                content: "\\vrule width1pt height1pt\\write16{form-write}\\vrule width2pt height1pt",
+                artifact_hash: "7e42fee1e130b979f6033644a83491456ea99476b74dce1be4dffa4bca9f8ebe",
+                pdf_hash: "45e48d944bc25b7b8b3d139fb3cf1005b0c7c08bd77dc5e4648b82c9a4f3ab45",
+                rule_widths: &[262_144, 131_072, 65_536, 196_608],
+            },
+            Case {
+                name: "form-leader",
+                content: "\\vrule width1pt height1pt\\leaders\\hrule height1pt\\hskip20pt\\vrule width2pt height1pt",
+                artifact_hash: "e6263b1c5fb336529a345437e7dbacac842541a1340b3b9f67628c1f74e48b73",
+                pdf_hash: "d57157031d64c4bccb1486df0d5e5b3ea2c6f9099b56ed0678390bdc84030d57",
+                rule_widths: &[262_144, 131_072, 1_310_720, 65_536, 196_608],
+            },
+        ];
+
+        for case in cases {
             let source = format!(
-                "\\pdfoutput=1\\TeXXeTstate=1\\setbox0=\\hbox{{\\vrule width4pt height1pt\\beginR{content}\\endR\\vrule width3pt height1pt}}\\pdfxform0\\shipout\\hbox{{\\pdfrefxform1}}\\end"
+                "\\pdfoutput=1\\TeXXeTstate=1\\setbox0=\\hbox{{\\vrule width4pt height1pt\\beginR{}\\endR\\vrule width3pt height1pt}}\\pdfxform0\\shipout\\hbox{{\\pdfrefxform1}}\\end",
+                case.content,
             );
             let (mut stores, run) = run(&source);
             let form = stores
                 .pdf_form_artifact(1)
                 .expect("referenced form artifact");
             let artifact = tex_out::PageArtifact::from_bytes(form.bytes()).expect("form parses");
-            tex_out::positioned::lower_page(&artifact, 0).expect("form positions");
-            pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            let positioned = tex_out::positioned::lower_page(&artifact, 0).expect("form positions");
+            let widths = positioned
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    PositionedEvent::Rule(rule) => Some(rule.width.raw()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(widths, case.rule_widths, "{} RTL geometry", case.name);
+            assert!(
+                !format!("{artifact:?}").contains("Direction"),
+                "{} leaked direction metadata",
+                case.name
+            );
+            assert_eq!(
+                artifact.content_hash().expect("artifact hash").hex(),
+                case.artifact_hash,
+                "{} artifact",
+                case.name
+            );
+            let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
                 .expect("RTL form finalizes in PDF mode");
+            assert_eq!(
+                format!("{:x}", Sha256::digest(pdf)),
+                case.pdf_hash,
+                "{} raw PDF",
+                case.name
+            );
+
+            let mut dvi_stores = pdftex_recovery_stores();
+            prepare_pdftex_run_stores(&mut dvi_stores);
+            assert!(matches!(
+                try_run_in_dvi(&mut dvi_stores, &source),
+                Err(tex_exec::ExecError::PdfDeferredNodeInDviMode("pdfrefxform"))
+            ));
         }
     }
 
