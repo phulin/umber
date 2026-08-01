@@ -4445,6 +4445,22 @@ fn showlists_marks_only_the_active_output_routine_context() {
 }
 
 #[test]
+fn showlists_marks_a_page_held_during_an_output_routine() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.push_current_page_node(Node::Penalty(0));
+    stores.set_output_routine_active(true);
+
+    crate::diagnostics::execute_showlists(&mut stores, &ModeNest::new(), String::new())
+        .expect("showlists");
+
+    let log = terminal_effect_text(&stores);
+    assert!(
+        log.contains("### current page: (held over for next output)\n\\penalty 0"),
+        "{log}"
+    );
+}
+
+#[test]
 fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);

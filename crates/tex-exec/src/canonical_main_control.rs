@@ -2158,6 +2158,7 @@ impl CanonicalMainControl {
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
                     )?;
+                    stores.set_output_routine_active(true);
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
                 }
@@ -13185,6 +13186,7 @@ fn apply_scanned_step(
                 .map_err(|_| ExecError::MissingToken {
                     context: "output routine group",
                 })?;
+            stores.set_output_routine_active(false);
             boxes.output_routine_active = false;
             crate::output::resume_page_builder_after_output(
                 stores,

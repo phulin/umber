@@ -502,6 +502,7 @@ fn run_output_routine_inner(
     output: tex_state::ids::TokenListId,
     replay: &mut Option<tex_lex::TokenListReplayMarker>,
 ) -> Result<(), ExecError> {
+    stores.set_output_routine_active(true);
     stores.enter_group_with_kind(GroupKind::Output);
     nest.push(Mode::InternalVertical)?;
     nest.current_list_mutation()
@@ -540,6 +541,7 @@ fn run_output_routine_inner(
     let output_level =
         crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     leave_group(input, stores, GroupKind::Output)?;
+    stores.set_output_routine_active(false);
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
         report_box255_not_emptied(stores)?;

@@ -587,7 +587,13 @@ pub(crate) fn execute_showlists(
         if index == 0 && level.mode() == Mode::Vertical {
             if stores.current_page_len() != 0 {
                 let current_page = stores.current_page_nodes();
-                text.push_str("### current page:\n");
+                text.push_str("### current page:");
+                // TeX82 §218 distinguishes the page retained while §1025's
+                // output routine is active from the ordinary current page.
+                if stores.output_routine_is_active() {
+                    text.push_str(" (held over for next output)");
+                }
+                text.push('\n');
                 text.push_str(&dump_node_slice(
                     stores,
                     &current_page,
