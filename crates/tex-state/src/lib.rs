@@ -39,6 +39,8 @@
 /// parameter cell from a present cell whose value is the empty token list.
 /// Version 27 adopts node semantic-identity v4, which includes merged e-TeX
 /// WEB §53a's three-state `box_lr` identity.
+/// Version 28 includes the left- and right-boundary-hit vocabulary carried by
+/// ligature nodes.
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
