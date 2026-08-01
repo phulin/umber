@@ -70,48 +70,100 @@ fn scan_text(text: &str) -> ScannedFileName {
 
 #[test]
 fn filename_components_split_area_name_and_extension_canonically() {
-    for (input, expected, termination) in [
-        ("paper ", "paper", FileNameTermination::Space),
+    for (input, area, name, extension, packed, termination) in [
+        (
+            "paper ",
+            "",
+            "paper",
+            "",
+            "paper",
+            FileNameTermination::Space,
+        ),
         (
             "area/final.ext ",
+            "area/",
+            "final",
+            ".ext",
             "area/final.ext",
             FileNameTermination::Space,
         ),
         (
             "area.with.dot/final.part.ext ",
+            "area.with.dot/",
+            "final",
+            ".part.ext",
             "area.with.dot/final.part.ext",
             FileNameTermination::Space,
         ),
         (
+            "a:b.c.d ",
+            "a:",
+            "b",
+            ".c.d",
+            "a:b.c.d",
+            FileNameTermination::Space,
+        ),
+        (
+            "a>b.c.d ",
+            "",
+            "a>b",
+            ".c.d",
+            "a>b.c.d",
+            FileNameTermination::Space,
+        ),
+        (
+            "b.c.d ",
+            "",
+            "b",
+            ".c.d",
+            "b.c.d",
+            FileNameTermination::Space,
+        ),
+        (
+            "before.dot/after.ext.more ",
+            "before.dot/",
+            "after",
+            ".ext.more",
+            "before.dot/after.ext.more",
+            FileNameTermination::Space,
+        ),
+        (
             "{area/final.name.ext}",
+            "area/",
+            "final",
+            ".name.ext",
             "area/final.name.ext",
             FileNameTermination::Group,
         ),
         (
             "\"area with spaces/final.ext\" ",
+            "area with spaces/",
+            "final",
+            ".ext",
             "area with spaces/final.ext",
             FileNameTermination::Space,
         ),
     ] {
         let scanned = scan_text(input);
-        assert_eq!(scanned.packed(), expected);
+        assert_eq!(scanned.components.area, area, "area for {input:?}");
+        assert_eq!(scanned.components.name, name, "name for {input:?}");
+        assert_eq!(
+            scanned.components.extension, extension,
+            "extension for {input:?}"
+        );
+        assert_eq!(scanned.packed(), packed);
         assert_eq!(scanned.termination, termination);
     }
 
-    let scanned = scan_text("area.with.dot/final.part.ext ");
-    assert_eq!(scanned.components.area, "area.with.dot/");
-    assert_eq!(scanned.components.name, "final.part");
-    assert_eq!(scanned.components.extension, ".ext");
-
     let scanned = scan_text("area..with...dots/final..part...ext ");
     assert_eq!(scanned.components.area, "area..with...dots/");
-    assert_eq!(scanned.components.name, "final..part..");
-    assert_eq!(scanned.components.extension, ".ext");
+    assert_eq!(scanned.components.name, "final");
+    assert_eq!(scanned.components.extension, "..part...ext");
 
     let scanned = scan_text("first.name.ext/second.part.ext ");
     assert_eq!(scanned.components.area, "first.name.ext/");
-    assert_eq!(scanned.components.name, "second.part");
-    assert_eq!(scanned.components.extension, ".ext");
+    assert_eq!(scanned.components.name, "second");
+    assert_eq!(scanned.components.extension, ".part.ext");
 
     let mut defaulted = scan_text("area/paper ");
     defaulted.components.apply_default_extension(".tex");

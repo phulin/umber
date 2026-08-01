@@ -3424,11 +3424,10 @@ impl CommandProcessor<'_> {
                             components.name.clear();
                             components.extension.clear();
                         }
-                        '.' => {
-                            components.name.push_str(&components.extension);
-                            components.extension.clear();
-                            components.extension.push(ch);
-                        }
+                        // TeX82 §§516--519: the first dot after the final
+                        // area delimiter starts `cur_ext`; later dots stay in
+                        // that same component.
+                        '.' => components.extension.push(ch),
                         _ if components.extension.is_empty() => components.name.push(ch),
                         _ => components.extension.push(ch),
                     }
