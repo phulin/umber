@@ -588,12 +588,6 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
             control.step(&mut stores).expect("prefix executes"),
             MainControlStep::Continue
         );
-        if expected == GroupKind::HBox {
-            assert_eq!(
-                control.step(&mut stores).expect("setbox target scans"),
-                MainControlStep::Continue
-            );
-        }
         assert_eq!(stores.innermost_group_kind(), Some(expected));
         assert_eq!(
             stores

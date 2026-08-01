@@ -347,14 +347,15 @@ pub struct PdfThreadRequest {
     pub running: bool,
 }
 
-/// The command-owned operand prefix of TeX82's `\setbox` assignment.
+/// The complete command-owned operand of TeX82's `\setbox` assignment.
 ///
-/// The following box command deliberately remains a normal main-control
-/// delivery.  This preserves TeX82's `scan_int`/optional-equals recovery
-/// before executor-owned box construction takes over.
+/// TeX82 §1241 calls §1084's `scan_box` from inside `prefixed_command`, so
+/// the required `make_box` command never returns to §1030's `big_switch` and
+/// must not receive a second main-control command trace.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedSetBoxAssignment {
     pub index: u16,
+    pub payload: ScannedBoxShiftPayload,
 }
 
 /// The completed command-owned prefix of a TeX82 box construction.
@@ -414,9 +415,10 @@ pub struct ScannedInsertConstruction {
     pub reserved_class_context: Option<String>,
 }
 
-/// The completed command-owned operand of a TeX82 §1073 box-shift prefix
-/// (`\raise`, `\lower`, `\moveleft`, `\moveright`): `scan_box`'s own
-/// `make_box` dispatch (§1084), scanned after the shift's dimension.
+/// The completed command-owned operand of TeX82 §1084's `scan_box`.
+///
+/// Box shifts and `\setbox` share this exact `make_box` vocabulary and
+/// recovery; the historical type name is retained as part of the public API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScannedBoxShiftPayload {
     /// `scan_box`'s "A <box> was supposed to be here" recovery: the rejected
@@ -2404,15 +2406,16 @@ impl CommandProcessor<'_> {
         level
     }
 
-    /// Scans the register number and optional equals sign of `\setbox`.
+    /// Scans TeX82 §1241's complete `\setbox` assignment operand.
     ///
     /// TeX.web's `prefixed_command` dispatches `set_box` to §433's
-    /// `scan_eight_bit_int` then `scan_optional_equals`; the latter must
-    /// retain its ordinary backup transition when the equals sign is present.
+    /// `scan_eight_bit_int` then `scan_optional_equals`, followed immediately
+    /// by §1084's `scan_box`; none of that operand returns to main control.
     pub fn scan_setbox_assignment(&mut self) -> Result<ScannedSetBoxAssignment, CommandError> {
         let index = self.scan_eight_bit_register_index()?;
         let _ = self.scan_optional_equals()?;
-        Ok(ScannedSetBoxAssignment { index })
+        let payload = self.scan_box_payload()?;
+        Ok(ScannedSetBoxAssignment { index, payload })
     }
 
     /// Scans the register operand of TeX82 §1079's `make_box(box_code)`.
@@ -2750,7 +2753,7 @@ impl CommandProcessor<'_> {
             UnexpandablePrimitive::Raise | UnexpandablePrimitive::MoveLeft => -amount,
             _ => return Err(CommandError::input_invariant()),
         };
-        let payload = self.scan_box_shift_payload()?;
+        let payload = self.scan_box_payload()?;
         Ok(ScannedBoxShift { delta, payload })
     }
 
@@ -2765,7 +2768,7 @@ impl CommandProcessor<'_> {
     /// supposed to be here" recovery: the rejected command is backed up
     /// (`back_error`) for ordinary replay, and replay alone reports the
     /// diagnostic since it needs a `Universe` sink.
-    fn scan_box_shift_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
+    fn scan_box_payload(&mut self) -> Result<ScannedBoxShiftPayload, CommandError> {
         loop {
             let Some(command) = self.get_x_token()? else {
                 return Ok(ScannedBoxShiftPayload::Missing);

@@ -3775,12 +3775,8 @@ fn production_driver_hands_box_math_and_alignment_to_typed_control() {
         control.step(&mut universe).expect("setbox scan"),
         MainControlStep::Continue
     );
-    assert_eq!(
-        control.step(&mut universe).expect("vbox opening"),
-        MainControlStep::Continue
-    );
-    // §645's `scan_spec` already consumed `{`; the next step is the `}` that
-    // packages the (empty) body.
+    // §1241's setbox scan includes §1084's box operand, and §645 has already
+    // consumed `{`; the next step is the `}` that packages the empty body.
     assert_eq!(
         control.step(&mut universe).expect("vbox completion"),
         MainControlStep::Continue
@@ -5354,13 +5350,7 @@ fn canonical_initex_replay_scans_setbox_then_hands_vbox_to_executor() {
     assert_eq!(
         control
             .step_with_observer(&mut universe, &mut observations)
-            .expect("setbox prefix"),
-        ReplayStep::Continue
-    );
-    assert_eq!(
-        control
-            .step_with_observer(&mut universe, &mut observations)
-            .expect("vbox handoff"),
+            .expect("setbox and vbox handoff"),
         ReplayStep::Continue
     );
     assert!(matches!(
@@ -5432,8 +5422,8 @@ fn canonical_initex_replay_scans_box_register_before_stomach_consumes_it() {
     let mut control = CommandReplayControl::tex82_initex(&mut universe);
     register_source(&mut control, br"\setbox10=\vbox{}\box10\end");
 
-    // `\setbox10=`, `\vbox{` (§645 consumes the brace), `}`.
-    for _ in 0..3 {
+    // `\setbox10=\vbox{` (§1241/§1084/§645 consume the whole prefix), `}`.
+    for _ in 0..2 {
         assert_eq!(
             control.step(&mut universe).expect("setbox construction"),
             ReplayStep::Continue
@@ -5611,6 +5601,33 @@ fn deferred_write_traces_expansion_in_no_mode_before_scanner_recovery() {
         .unwrap_or_else(|| panic!("§444 recovery: {output:?}"));
     assert!(trace < recovery, "{output:?}");
     assert!(output.contains("{vertical mode: \\end}"), "{output:?}");
+}
+
+#[test]
+fn setbox_scans_make_box_without_a_second_main_control_trace() {
+    // TeX82 §§1030/1084/1241: `\setbox` reaches `scan_box` inside
+    // `prefixed_command`. Its `\vbox` operand is therefore not fetched at
+    // `big_switch` and is not traced, while an ordinary following `\vbox`
+    // still is.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\tracingcommands=1\tracingonline=1\setbox0=\vbox{}\vbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_only_text(&universe);
+    assert!(output.contains("{\\setbox}"), "{output:?}");
+    assert_eq!(output.matches("\\vbox}").count(), 1, "{output:?}");
+    let setbox = output.find("{\\setbox}").expect("setbox trace");
+    let box_end = output[setbox..]
+        .find("{internal vertical mode: end-group character }")
+        .map(|offset| setbox + offset)
+        .expect("setbox body closing trace");
+    let standalone = output.find("\\vbox}").expect("standalone vbox trace");
+    assert!(setbox < box_end && box_end < standalone, "{output:?}");
 }
 
 #[test]

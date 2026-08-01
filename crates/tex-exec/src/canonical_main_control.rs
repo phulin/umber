@@ -4720,7 +4720,10 @@ enum ScannedStep {
     NoAlignEndGroup {
         alignment: AlignmentIdentity,
     },
-    SetBox(SetBoxTarget),
+    SetBox {
+        target: SetBoxTarget,
+        payload: ScannedBoxShiftPayload,
+    },
     BeginBox(ScannedBoxConstruction),
     BeginLeaderBox {
         construction: ScannedBoxConstruction,
@@ -4842,7 +4845,7 @@ impl ScannedStep {
                 | Self::PenaltyArray { .. }
                 | Self::FontSelect { .. }
                 | Self::MathFamily { .. }
-                | Self::SetBox(..)
+                | Self::SetBox { .. }
                 | Self::PrevDepth { .. }
                 | Self::SpaceFactor { .. }
                 | Self::PrevGraf { .. }
@@ -7154,10 +7157,13 @@ fn scan_command(
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
             let assignment = processor.scan_setbox_assignment().map_err(command_error)?;
-            Ok(ScannedStep::SetBox(SetBoxTarget {
-                index: assignment.index,
-                global,
-            }))
+            Ok(ScannedStep::SetBox {
+                target: SetBoxTarget {
+                    index: assignment.index,
+                    global,
+                },
+                payload: assignment.payload,
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ScannedStep::VSplit(
             processor.scan_vsplit().map_err(command_error)?,
@@ -9547,7 +9553,7 @@ fn applied_mutation_observation(
         // `umber_trace_eq_mutation` classifies each of these as family -1 and
         // returns without an event, so Umber must stay silent for exactly
         // these four.
-        ScannedStep::SetBox(..)
+        ScannedStep::SetBox { .. }
         | ScannedStep::FontSelect { .. }
         | ScannedStep::MathFamily { .. }
         | ScannedStep::ParagraphShape { .. }
@@ -12794,13 +12800,55 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::SetBox(target) => {
+        ScannedStep::SetBox { target, payload } => {
             // §1214's `<Adjust for the setting of \globaldefs>` runs inside
             // `prefixed_command`, before §1241 scans the box, so `global` in
             // §1241's `if global then n:=256+cur_val` is the *effective*
             // scope. Resolving it at `box_end` instead would read
             // `\globaldefs` as the box body left it.
             boxes.pending_setbox = Some(target);
+            match payload {
+                ScannedBoxShiftPayload::Missing => {
+                    let _ = boxes.take_box_context(false);
+                    report_missing_box(command.state, stores)?;
+                }
+                ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+                    let id = if copy {
+                        stores.box_reg(index)
+                    } else {
+                        stores.take_box_reg_same_level(index)
+                    };
+                    if copy && let Some(id) = id {
+                        stores.pin_survivor(id);
+                    }
+                    let node = crate::assignments::first_box_node(stores, id);
+                    let context = boxes.take_box_context(false);
+                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                }
+                ScannedBoxShiftPayload::LastBox => {
+                    let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
+                    let context = boxes.take_box_context(false);
+                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                }
+                ScannedBoxShiftPayload::VSplit(split) => {
+                    if split.missing_to {
+                        report_missing_vsplit_to(command.state, stores)?;
+                    }
+                    let node =
+                        crate::assignments::split_vbox_register(stores, split.index, split.height)?;
+                    let context = boxes.take_box_context(false);
+                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                }
+                ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
+                    construction,
+                    boxes.pending_setbox.take(),
+                    false,
+                    modes,
+                    stores,
+                    boxes,
+                    command,
+                )?,
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::VSplit(split) => {
@@ -12939,52 +12987,15 @@ fn apply_scanned_step(
         ScannedStep::BeginBox(construction) => {
             let target = boxes.pending_setbox.take();
             let ships_out = std::mem::take(&mut boxes.pending_shipout);
-            let kind = ReplayBoxKind::from_scanned(construction.kind);
-            let packing = match construction.packing {
-                ScannedPackingSpec::Natural => PackSpec::Natural,
-                ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
-                ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
-            };
-            // TeX82 §1083 uses `adjusted_hbox_group` only when the hbox will
-            // be appended (`box_context<box_flag`) in either vertical mode
-            // (`abs(mode)=vmode`). A register or shipout construction, and
-            // an ordinary hbox in a nonvertical mode, use `hbox_group`.
-            let group_kind = if kind == ReplayBoxKind::HBox
-                && target.is_none()
-                && !ships_out
-                && matches!(
-                    modes.current_mode(),
-                    Mode::Vertical | Mode::InternalVertical
-                ) {
-                GroupKind::AdjustedHBox
-            } else {
-                kind.group_kind()
-            };
-            enter_canonical_group(stores, command.state, group_kind);
-            modes.push_at_line(
-                if kind.horizontal() {
-                    Mode::RestrictedHorizontal
-                } else {
-                    Mode::InternalVertical
-                },
-                stores.current_input_line(),
-            )?;
-            // TeX82 §§1051--1052 and §1167 run `normal_paragraph` after
-            // opening every internal-vertical box body. In particular, a
-            // `\vbox`/`\vtop` must not inherit the enclosing `\parshape`.
-            if !kind.horizontal() {
-                crate::assignments::normal_paragraph(modes, stores);
-            }
-            boxes.active_boxes.push(ActiveReplayBox {
+            begin_replay_box(
+                construction,
                 target,
                 ships_out,
-                kind,
-                group_kind,
-                packing,
-                leader_kind: None,
-                shift: None,
-            });
-            schedule_everybox(command.state, stores, kind.horizontal());
+                modes,
+                stores,
+                boxes,
+                command,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginInsert(construction) => {
@@ -14441,6 +14452,61 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
 /// and replays §1047's `insert_dollar_sign` instead. `\vrule` in math mode
 /// (§1056's `mmode+vrule`) is an ordinary direct contribution and falls
 /// through the `else` branch below like any other mode.
+fn begin_replay_box(
+    construction: ScannedBoxConstruction,
+    target: Option<SetBoxTarget>,
+    ships_out: bool,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    boxes: &mut ReplayBoxes,
+    command: &mut CommandMachine<'_>,
+) -> Result<(), ExecError> {
+    let kind = ReplayBoxKind::from_scanned(construction.kind);
+    let packing = match construction.packing {
+        ScannedPackingSpec::Natural => PackSpec::Natural,
+        ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
+        ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
+    };
+    // TeX82 §1083 uses `adjusted_hbox_group` only when the hbox will be
+    // appended (`box_context<box_flag`) in either vertical mode
+    // (`abs(mode)=vmode`). A register, shipout, or shifted construction uses
+    // `hbox_group`.
+    let group_kind = if kind == ReplayBoxKind::HBox
+        && target.is_none()
+        && !ships_out
+        && matches!(
+            modes.current_mode(),
+            Mode::Vertical | Mode::InternalVertical
+        ) {
+        GroupKind::AdjustedHBox
+    } else {
+        kind.group_kind()
+    };
+    enter_canonical_group(stores, command.state, group_kind);
+    modes.push_at_line(
+        if kind.horizontal() {
+            Mode::RestrictedHorizontal
+        } else {
+            Mode::InternalVertical
+        },
+        stores.current_input_line(),
+    )?;
+    if !kind.horizontal() {
+        crate::assignments::normal_paragraph(modes, stores);
+    }
+    boxes.active_boxes.push(ActiveReplayBox {
+        target,
+        ships_out,
+        kind,
+        group_kind,
+        packing,
+        leader_kind: None,
+        shift: None,
+    });
+    schedule_everybox(command.state, stores, kind.horizontal());
+    Ok(())
+}
+
 /// Applies a scanned TeX82 §1073 box-shift prefix (`\raise`, `\lower`,
 /// `\moveleft`, `\moveright`). `ScannedBoxShiftPayload::Construction` opens
 /// the same `BoxEndGroup` body-closing episode as an
@@ -14461,7 +14527,7 @@ fn apply_box_shift(
         ScannedBoxShiftPayload::Missing => {
             // `scan_box`'s own "A <box> was supposed to be here" recovery
             // (tex.web §1084); the rejected command has already been backed
-            // up by `scan_box_shift_payload` for ordinary replay.
+            // up by `scan_box_payload` for ordinary replay.
             report_missing_box(command, stores)?;
             Ok(ReplayStep::Continue)
         }
