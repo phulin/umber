@@ -74,6 +74,7 @@ fn stage_form_inner(
                 open_out_occurrences: Vec::new(),
             },
             String::new(),
+            true,
         ),
         stores,
         expansion,
@@ -156,6 +157,7 @@ pub(super) fn stage_shipout(
     let super::ShipoutOrigin {
         output_open_context,
         pending_end,
+        announce_openout,
     } = origin;
     let pending_effects = pending_page_effects(stores.world(), pending_end);
     let counts = page_counts(stores);
@@ -219,7 +221,7 @@ pub(super) fn stage_shipout(
         normalize_page(
             children,
             (vertical, root_box_lr),
-            (pending_effects, output_open_context),
+            (pending_effects, output_open_context, announce_openout),
             stores,
             expansion,
             write_expander,

@@ -94,6 +94,7 @@ pub(crate) fn shipout_node(
         ShipoutOrigin {
             output_open_context: None,
             pending_end,
+            announce_openout: true,
         },
         stores,
         execution,
@@ -115,6 +116,8 @@ pub(crate) struct ShipoutOrigin {
     /// output carried forward from before this page, effects at or after it
     /// belong to this `\shipout` -- §638's own `[<counts>` marker above all.
     pub(crate) pending_end: usize,
+    /// Whether the active engine includes Web2C's `[53.1374]` openout notice.
+    pub(crate) announce_openout: bool,
 }
 
 /// Ships a completed box using an already-owned publication summary.
@@ -306,6 +309,7 @@ pub(crate) fn test_stage_shipout_artifact(
         ShipoutOrigin {
             output_open_context: None,
             pending_end,
+            announce_openout: true,
         },
         stores,
         &mut execution,

@@ -99,6 +99,7 @@ pub struct CommandProcessor<'a> {
     pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
     pub(crate) scanned_glue_skip_index: Option<u16>,
     command_trace_mode_prefix: Option<String>,
+    command_trace_printed: bool,
 }
 
 impl CommandProcessor<'_> {
@@ -165,12 +166,25 @@ impl<'a> CommandProcessor<'a> {
     pub fn print_command_trace(&mut self, command: PrintCommand) {
         let command = print_cmd_chr_text(&self.state, command);
         let mode_prefix = self.command_trace_mode_prefix.take();
-        let mut output = self.state.begin_diagnostic();
-        output.print_nl("{");
+        let mut text = String::from("{");
         if let Some(mode_prefix) = mode_prefix.as_deref() {
-            output.print(mode_prefix).print(": ");
+            text.push_str(mode_prefix);
+            text.push_str(": ");
         }
-        output.print(&command).print_char('}');
+        text.push_str(&command);
+        text.push('}');
+        self.command_trace_printed = true;
+        if self.command.expanding_deferred_write() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+            return;
+        }
+        let mut output = self.state.begin_diagnostic();
+        output.print_nl(&text);
         output.end(false);
     }
 
@@ -179,6 +193,12 @@ impl<'a> CommandProcessor<'a> {
     /// the resulting unexpandable command.
     pub fn set_command_trace_mode_prefix(&mut self, mode_prefix: Option<String>) {
         self.command_trace_mode_prefix = mode_prefix;
+    }
+
+    /// Whether this processor episode crossed a command-trace boundary.
+    #[must_use]
+    pub const fn command_trace_printed(&self) -> bool {
+        self.command_trace_printed
     }
 
     /// Borrows every ownership domain needed by one command operation.
@@ -209,6 +229,7 @@ impl<'a> CommandProcessor<'a> {
             scanned_glue_identity: None,
             scanned_glue_skip_index: None,
             command_trace_mode_prefix: None,
+            command_trace_printed: false,
         }
     }
 

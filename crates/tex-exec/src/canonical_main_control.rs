@@ -474,6 +474,7 @@ struct CommandMachine<'a> {
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
+    shown_mode: &'a mut Option<Mode>,
     /// tex.web's `init`/`tini` compile-time split, which Umber carries as a
     /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
     /// commands whose whole behavior it selects.
@@ -1122,6 +1123,7 @@ impl CanonicalMainControl {
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
+            shown_mode: &mut self.shown_mode,
             initex: self.initex,
         }
     }
@@ -1403,6 +1405,7 @@ impl CanonicalMainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                shown_mode: &mut self.shown_mode,
                 initex: self.initex,
             },
             &mut self.boxes,
@@ -1919,6 +1922,7 @@ impl CanonicalMainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                shown_mode: &mut self.shown_mode,
                 initex: self.initex,
             },
             &mut self.boxes,
@@ -2114,6 +2118,7 @@ impl CanonicalMainControl {
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
+                        shown_mode: &mut self.shown_mode,
                         initex: self.initex,
                     };
                     if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
@@ -3291,6 +3296,7 @@ impl CanonicalMainControl {
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
+                shown_mode: &mut self.shown_mode,
                 initex: self.initex,
             },
             &mut self.boxes,
@@ -10065,7 +10071,8 @@ fn shipout_replay_box(
     let effect_start = stores.world().effect_records().len();
     let mut effect_cursor = effect_start;
     let mut write_diagnostics = Vec::new();
-    let emit_dvi = !command.state.profile().capabilities().supports_pdftex();
+    let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
+    let emit_dvi = !supports_pdftex;
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
@@ -10089,14 +10096,25 @@ fn shipout_replay_box(
                 .collect::<Vec<_>>();
             let traced = stores.finish_traced_token_list(&traced);
             let expanded = {
+                // TeX82 §1370 temporarily sets `mode:=0` while deferred
+                // write text expands. §299 names that value "no mode", and
+                // §367 updates `shown_mode` if it traces an expandable
+                // command during the scan.
+                let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
                 let mut processor = command.processor(stores);
+                processor.set_command_trace_mode_prefix(mode_prefix);
                 let expanded = processor.expand_write_text(traced).map_err(command_error)?;
+                let command_trace_printed = processor.command_trace_printed();
                 write_diagnostics.extend(
                     processor
                         .take_semantic_diagnostics()
                         .into_iter()
                         .map(PendingDiagnostic::Command),
                 );
+                drop(processor);
+                if command_trace_printed {
+                    *command.shown_mode = None;
+                }
                 expanded
             };
             if let Some(observations) = command.observations.as_mut() {
@@ -10144,6 +10162,9 @@ fn shipout_replay_box(
         crate::assignments::ShipoutOrigin {
             output_open_context: Some(output_open_context),
             pending_end,
+            // The TeX82 profile follows tex.web §1374 exactly. The notice is
+            // a later Web2C change retained by the pdfTeX profile.
+            announce_openout: supports_pdftex,
         },
         stores,
         &mut expansion,
@@ -10160,8 +10181,9 @@ fn shipout_replay_box(
     // expansion itself runs inside Umber's artifact transaction, so render
     // the command-owned reports only after that transaction has committed:
     // otherwise its transcript effects are consumed as staging scratch.
-    // `write_diagnostics` contains scanner recoveries, never §1030 command
-    // traces; writes execute outside main control's `shown_mode` owner.
+    // `write_diagnostics` also contains §367 command traces: direct output
+    // inside the artifact transaction is staging scratch, so the command
+    // core queues them in detection order with scanner recoveries.
     report_pending_diagnostics(stores, write_diagnostics)?;
     print_ship_out_marker_close(stores, tracing_output);
     // The closing bracket prints after `shipout_node_with_input_summary`'s
@@ -10198,12 +10220,14 @@ pub(crate) fn test_shipout_replay_box(
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
     let mut fuel = tex_command::CommandFuelLedger::default();
+    let mut shown_mode = None;
     let mut command = CommandMachine {
         state: &mut CommandState::default(),
         runtime: &mut CommandRuntime::default(),
         fuel: fuel.fuel_mut(),
         capabilities: &mut CommandHostCapabilities::default(),
         observations: &mut None,
+        shown_mode: &mut shown_mode,
         initex: true,
     };
     shipout_replay_box(node, stores, &mut command)
@@ -12740,7 +12764,9 @@ fn apply_scanned_step(
                     stores
                         .world_mut()
                         .open_out(StreamSlot::new(stream), target.clone());
-                    crate::diagnostics::report_openout(stores, stream, &target);
+                    if command.state.profile().capabilities().supports_pdftex() {
+                        crate::diagnostics::report_openout(stores, stream, &target);
+                    }
                 }
                 ImmediateExtension::Write { stream, tokens } => {
                     let sink = replay_write_sink(stream);

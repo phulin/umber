@@ -4100,12 +4100,12 @@ fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
     }
     assert_eq!(universe.catcode('A'), tex_state::token::Catcode::Other);
     assert_eq!(control.step(&mut universe).expect("end"), ReplayStep::End);
+    // TeX82 §1374 opens silently; Web2C's `[53.1374]` announcement belongs
+    // only to profiles derived from that change file.
     assert!(matches!(
         universe.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot, target },
-            // web2c's `[53.1374]` `\openout` log notice.
-            EffectRecord::StreamWrite { sink: tex_state::PrintSink::Log, .. },
             EffectRecord::StreamWrite { sink: tex_state::PrintSink::Stream(write_slot), text },
             EffectRecord::StreamClose { slot: close_slot },
         ] if *slot == StreamSlot::new(2)
@@ -4135,11 +4135,7 @@ fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
         }
         assert!(matches!(
             universe.world().effect_records(),
-            [
-                EffectRecord::StreamOpen { slot, .. },
-                // web2c's `[53.1374]` `\openout` log notice.
-                EffectRecord::StreamWrite { sink: tex_state::PrintSink::Log, .. },
-            ] if *slot == StreamSlot::new(0)
+            [EffectRecord::StreamOpen { slot, .. }] if *slot == StreamSlot::new(0)
         ));
     }
 
@@ -5589,6 +5585,32 @@ fn tracingoutput_breaks_before_the_root_box_on_terminal_and_log() {
     let transcript = transcript_text(&universe);
     assert!(terminal.contains(expected), "{terminal:?}");
     assert!(transcript.contains(expected), "{transcript:?}");
+}
+
+#[test]
+fn deferred_write_traces_expansion_in_no_mode_before_scanner_recovery() {
+    // TeX82 §§299/367/1370: `write_out` sets `mode:=0` while expanding the
+    // stored text. The expandable command trace is therefore "no mode", it
+    // precedes §444's missing-number report, and restoring vertical mode
+    // makes the next main-control trace print that mode again.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingcommands=2\tracingonline=1\shipout\vbox{\write-1{\number{\count0}}}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_only_text(&universe);
+    let trace = output
+        .find("{no mode: \\number}")
+        .unwrap_or_else(|| panic!("§367 deferred-write trace: {output:?}"));
+    let recovery = output
+        .find("! Missing number, treated as zero.")
+        .unwrap_or_else(|| panic!("§444 recovery: {output:?}"));
+    assert!(trace < recovery, "{output:?}");
+    assert!(output.contains("{vertical mode: \\end}"), "{output:?}");
 }
 
 #[test]
@@ -7834,6 +7856,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             fuel: control.fuel.fuel_mut(),
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
+            shown_mode: &mut control.shown_mode,
             initex: control.initex,
         },
         &mut control.boxes,
@@ -7866,6 +7889,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             fuel: control.fuel.fuel_mut(),
             capabilities: &mut control.capabilities,
             observations: &mut control.operation_observations,
+            shown_mode: &mut control.shown_mode,
             initex: control.initex,
         },
         &mut control.boxes,
@@ -7894,6 +7918,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
                 fuel: control.fuel.fuel_mut(),
                 capabilities: &mut control.capabilities,
                 observations: &mut control.operation_observations,
+                shown_mode: &mut control.shown_mode,
                 initex: control.initex,
             },
             &mut control.boxes,
@@ -7919,6 +7944,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
                 fuel: control.fuel.fuel_mut(),
                 capabilities: &mut control.capabilities,
                 observations: &mut control.operation_observations,
+                shown_mode: &mut control.shown_mode,
                 initex: control.initex,
             },
             &mut control.boxes,

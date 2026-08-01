@@ -13,6 +13,7 @@ pub(super) struct PageOverlay {
     color_target: tex_state::PdfColorStackTarget,
     running_thread_depth: Option<usize>,
     output_open_context: String,
+    announce_openout: bool,
 }
 
 pub(super) struct MathSubstitution {
@@ -34,14 +35,14 @@ struct NormalizeExpansion<'a, 'b> {
 pub(super) fn normalize_page(
     root: NodeListId,
     root_box: (bool, tex_state::node::BoxLr),
-    effects_and_context: (PendingPageEffects, String),
+    effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,
     write_expander: &mut super::WriteExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
     let (root_vertical, root_box_lr) = root_box;
-    let (pending, output_open_context) = effects_and_context;
+    let (pending, output_open_context, announce_openout) = effects_and_context;
     let PendingPageEffects {
         effects,
         open_out_occurrences,
@@ -87,6 +88,7 @@ pub(super) fn normalize_page(
         color_target,
         running_thread_depth: None,
         output_open_context,
+        announce_openout,
     };
     let mut expansion = NormalizeExpansion {
         expansion,
@@ -342,6 +344,7 @@ fn append_whatsit_effect(
 ) -> Result<(), ExecError> {
     let NormalizeLocation { in_hlist, depth } = location;
     let color_target = overlay.color_target;
+    let announce_openout = overlay.announce_openout;
     let output_open_context = overlay.output_open_context.clone();
     let effects = &mut overlay.effects;
     let open_out_occurrences = &mut overlay.open_out_occurrences;
@@ -361,7 +364,9 @@ fn append_whatsit_effect(
             // web2c's `[53.1374]` log notice, which follows `write_open[j]:=
             // true`. It has to come after the context attach above, which
             // requires the `StreamOpen` record to still be the last effect.
-            crate::diagnostics::report_openout(stores, slot.raw(), &path);
+            if announce_openout {
+                crate::diagnostics::report_openout(stores, slot.raw(), &path);
+            }
             effects.push(PageEffect::OpenOut {
                 stream: slot.raw(),
                 path,

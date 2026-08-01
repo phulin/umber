@@ -2422,15 +2422,10 @@ mod tests {
             page.effects.as_slice(),
             [
                 tex_out::PageEffect::OpenOut { stream: 2, path },
-                // web2c's `[53.1374]` `\openout` log notice, carried onto the
-                // page with every other effect that preceded the `\shipout`
-                // so a republished page reproduces the original run's bytes.
-                tex_out::PageEffect::Write { text: notice, .. },
                 tex_out::PageEffect::Write { text: before, .. },
                 tex_out::PageEffect::Write { text: during, .. },
                 tex_out::PageEffect::Special { payload, .. },
             ] if path == "ordered.aux"
-                && notice == "\\openout2 = `ordered.aux'.\n\n"
                 && before == "before\n"
                 && during == "during\n"
                 && payload == b"after-write"

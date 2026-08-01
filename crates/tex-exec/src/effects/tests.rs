@@ -436,13 +436,9 @@ fn output_stream_final_cleanup_closes_only_live_numbered_files() {
         stores.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot: last, target: last_target },
-            // web2c's `[53.1374]` `\openout` log notice, once per open.
-            EffectRecord::StreamWrite { sink: PrintSink::Log, .. },
             EffectRecord::StreamOpen { slot: closed, target: closed_target },
-            EffectRecord::StreamWrite { sink: PrintSink::Log, .. },
             EffectRecord::StreamClose { slot: explicitly_closed },
             EffectRecord::StreamOpen { slot: first, target: first_target },
-            EffectRecord::StreamWrite { sink: PrintSink::Log, .. },
             EffectRecord::StreamWrite { sink: PrintSink::Log, text: log },
             EffectRecord::StreamWrite {
                 sink: PrintSink::TerminalAndLog,
@@ -725,8 +721,6 @@ fn immediate_recognized_default_extension_and_unrecognized_backup_paths_match_te
         stores.world().effect_records(),
         [
             EffectRecord::StreamOpen { slot, target },
-            // web2c's `[53.1374]` `\openout` log notice.
-            EffectRecord::StreamWrite { sink: PrintSink::Log, .. },
             EffectRecord::StreamWrite { sink: PrintSink::Stream(write_slot), text },
             EffectRecord::StreamClose { slot: close_slot },
         ] if *slot == StreamSlot::new(2)
