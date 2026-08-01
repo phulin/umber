@@ -95,3 +95,57 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
     );
     assert!(terminal.ends_with("\n\n"), "{terminal:?}");
 }
+
+/// tex.web §§661--663: every `pack_begin_line` origin spelling is exact,
+/// output-routine context takes precedence, and §§54/§245 selectors keep the
+/// headline on the live selector while the box dump is transcript-only.
+#[test]
+fn pack_diagnostic_origin_contexts() {
+    let origins = [
+        (0, false, ") detected at line 29"),
+        (11, false, ") in paragraph at lines 11--29"),
+        (-17, false, ") in alignment at lines 17--29"),
+        (11, true, ") has occurred while \\output is active"),
+    ];
+    let modes = [
+        (tex_state::InteractionMode::Batch, false),
+        (tex_state::InteractionMode::Nonstop, true),
+        (tex_state::InteractionMode::Scroll, true),
+        (tex_state::InteractionMode::ErrorStop, true),
+    ];
+
+    for (pack_begin_line, output_active, origin) in origins {
+        for (mode, headline_on_terminal) in modes {
+            let mut stores = Universe::new();
+            stores.set_interaction_mode(mode);
+            stores.set_current_input_line(29);
+            stores.set_pack_begin_line(pack_begin_line);
+            stores.set_output_routine_active(output_active);
+            let packed = empty_hbox(&mut stores);
+
+            report_pack_diagnostics(
+                &mut stores,
+                PackedDirection::Horizontal,
+                &[PackDiagnostic::Underfull {
+                    badness: 10_000,
+                    excess: Scaled::from_raw(Scaled::UNITY),
+                }],
+                &packed,
+            );
+
+            let expected_headline = format!("\nUnderfull \\hbox (badness 10000{origin}\n\n");
+            assert_eq!(
+                sink_text(&stores, false),
+                format!("{expected_headline}\n\\hbox(0.0+0.0)x0.0\n\n")
+            );
+            assert_eq!(
+                sink_text(&stores, true),
+                if headline_on_terminal {
+                    expected_headline
+                } else {
+                    String::new()
+                }
+            );
+        }
+    }
+}

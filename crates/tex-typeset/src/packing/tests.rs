@@ -260,6 +260,60 @@ fn hpack_sets_finite_stretch_order_and_ratio() {
     assert_eq!(packed.node.glue_set, GlueSetRatio::from_raw(2_000_000));
 }
 
+/// tex.web §§645--646: `additional` makes the target `x+natural`, and
+/// the first nonzero glue total found while descending `filll..normal` wins.
+#[test]
+fn spread_target_and_highest_glue_order() {
+    let mut universe = Universe::new();
+    let glues = [
+        (Order::Normal, 2),
+        (Order::Fil, 3),
+        (Order::Fill, 4),
+        (Order::Filll, 5),
+    ]
+    .map(|(order, amount)| {
+        universe.intern_glue(GlueSpec {
+            width: sp(1),
+            stretch: sp(amount),
+            stretch_order: order,
+            shrink: sp(amount),
+            shrink_order: order,
+        })
+    });
+    let nodes: Vec<_> = glues
+        .into_iter()
+        .map(|spec| Node::Glue {
+            spec,
+            kind: GlueKind::Normal,
+            leader: None,
+        })
+        .collect();
+    let list = universe.freeze_node_list(&nodes);
+    let params = HpackParams {
+        hbadness: INF_BAD,
+        hfuzz: sp(0),
+        overfull_rule: sp(0),
+    };
+
+    let stretched = hpack(&universe, list, PackSpec::Spread(sp(10)), params);
+    assert_eq!(stretched.node.width, sp(14));
+    assert_eq!(stretched.node.glue_sign, Sign::Stretching);
+    assert_eq!(stretched.node.glue_order, Order::Filll);
+    assert_eq!(
+        stretched.node.glue_set,
+        GlueSetRatio::from_scaled_ratio(sp(10), sp(5))
+    );
+
+    let shrunk = hpack(&universe, list, PackSpec::Spread(sp(-10)), params);
+    assert_eq!(shrunk.node.width, sp(-6));
+    assert_eq!(shrunk.node.glue_sign, Sign::Shrinking);
+    assert_eq!(shrunk.node.glue_order, Order::Filll);
+    assert_eq!(
+        shrunk.node.glue_set,
+        GlueSetRatio::from_scaled_ratio(sp(10), sp(5))
+    );
+}
+
 #[test]
 fn hpack_infinite_shrink_has_zero_badness_and_no_diagnostic() {
     let mut universe = Universe::new();
