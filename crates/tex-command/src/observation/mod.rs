@@ -245,6 +245,21 @@ pub(crate) fn canonical_command_identity_for_profile(
         // from a named parameter of the same class at every delivery
         // boundary, which is exactly what lets §1226's `prefixed_command`
         // assign through it.
+        Meaning::CountRegister(index) if profile.capabilities().supports_etex() && index > 255 => {
+            ("register".into(), None)
+        }
+        Meaning::DimenRegister(index) if profile.capabilities().supports_etex() && index > 255 => {
+            ("register".into(), None)
+        }
+        Meaning::SkipRegister(index) if profile.capabilities().supports_etex() && index > 255 => {
+            ("register".into(), None)
+        }
+        Meaning::MuskipRegister(index) if profile.capabilities().supports_etex() && index > 255 => {
+            ("register".into(), None)
+        }
+        Meaning::ToksRegister(index) if profile.capabilities().supports_etex() && index > 255 => {
+            ("toks_register".into(), None)
+        }
         Meaning::CountRegister(index) => (
             "assign_int".into(),
             Some(variable_identity::count_base(dialect) + i64::from(index)),
@@ -1135,6 +1150,38 @@ mod tests {
         assert_eq!(
             canonical_command_identity(Meaning::ToksRegister(10)),
             ("assign_toks".into(), Some(25_077))
+        );
+    }
+
+    #[test]
+    fn etex_sparse_shorthands_use_sparse_array_commands() {
+        // e-TeX 2.6 change [49.1224] defines register shorthands above 255
+        // with `register`/`toks_register`; their `cur_chr` is the
+        // allocator-owned sparse-array node and has no portable value.
+        for meaning in [
+            Meaning::CountRegister(2_000),
+            Meaning::DimenRegister(2_001),
+            Meaning::SkipRegister(32_767),
+            Meaning::MuskipRegister(32_766),
+        ] {
+            assert_eq!(
+                canonical_command_identity_for_profile(CommandProfile::ETEX26, meaning),
+                ("register".into(), None)
+            );
+        }
+        assert_eq!(
+            canonical_command_identity_for_profile(
+                CommandProfile::ETEX26,
+                Meaning::ToksRegister(2_002)
+            ),
+            ("toks_register".into(), None)
+        );
+        assert_eq!(
+            canonical_command_identity_for_profile(
+                CommandProfile::PDFTEX14027,
+                Meaning::SkipRegister(2_003)
+            ),
+            ("register".into(), None)
         );
     }
 

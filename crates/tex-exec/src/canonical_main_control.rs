@@ -9410,16 +9410,31 @@ fn applied_mutation_observation(
         ScannedStep::RegisterDefinition {
             primitive,
             target,
+            index,
             global,
             ..
         } => {
-            let value = match primitive {
-                UnexpandablePrimitive::CountDef => "assign_int",
-                UnexpandablePrimitive::DimenDef => "assign_dimen",
-                UnexpandablePrimitive::SkipDef => "assign_glue",
-                UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
-                UnexpandablePrimitive::ToksDef => "assign_toks",
-                _ => unreachable!("register-definition step carries only §1224 primitives"),
+            // e-TeX 2.6 change [49.1224] represents shorthands above 255 by
+            // sparse-array nodes and installs `register`/`toks_register`,
+            // rather than TeX82's eqtb-addressed assignment commands.
+            let value = if profile.capabilities().supports_etex() && *index > 255 {
+                match primitive {
+                    UnexpandablePrimitive::ToksDef => "toks_register",
+                    UnexpandablePrimitive::CountDef
+                    | UnexpandablePrimitive::DimenDef
+                    | UnexpandablePrimitive::SkipDef
+                    | UnexpandablePrimitive::MuskipDef => "register",
+                    _ => unreachable!("register-definition step carries only §1224 primitives"),
+                }
+            } else {
+                match primitive {
+                    UnexpandablePrimitive::CountDef => "assign_int",
+                    UnexpandablePrimitive::DimenDef => "assign_dimen",
+                    UnexpandablePrimitive::SkipDef => "assign_glue",
+                    UnexpandablePrimitive::MuskipDef => "assign_mu_glue",
+                    UnexpandablePrimitive::ToksDef => "assign_toks",
+                    _ => unreachable!("register-definition step carries only §1224 primitives"),
+                }
             };
             MutationRecord {
                 target: "meaning",

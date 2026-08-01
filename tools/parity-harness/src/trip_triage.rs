@@ -418,6 +418,9 @@ impl TripProjection {
                 ) || frozen_endwrite_operand_is_reference(
                     &expected.semantic,
                     &actual.semantic,
+                ) || sparse_register_operand_is_reference(
+                    &expected.semantic,
+                    &actual.semantic,
                 )));
         if channel == "command_events" {
             self.observe_meaning_mutations(&expected.semantic, &actual.semantic);
@@ -447,6 +450,46 @@ impl TripProjection {
             self.matched_macros.insert(expected_name.to_owned());
         }
     }
+}
+
+/// e-TeX 2.6 change [49.1224] stores a sparse-array node in `cur_chr` for a
+/// register shorthand above 255. Umber preserves the semantic register index
+/// instead of the mutable WEB node address, so the operand is non-portable.
+fn sparse_register_operand_is_reference(expected: &Event, actual: &Event) -> bool {
+    let (
+        Event::Command(CommandEvent {
+            delivery: expected_delivery,
+            command:
+                CanonicalCommand {
+                    command: expected_command,
+                    operand: CanonicalValue::Integer(_),
+                    control_sequence: expected_control_sequence,
+                    location: expected_location,
+                },
+        }),
+        Event::Command(CommandEvent {
+            delivery: actual_delivery,
+            command:
+                CanonicalCommand {
+                    command: actual_command,
+                    operand: actual_operand,
+                    control_sequence: actual_control_sequence,
+                    location: actual_location,
+                },
+        }),
+    ) = (expected, actual)
+    else {
+        return false;
+    };
+
+    matches!(
+        actual_operand,
+        CanonicalValue::Integer(_) | CanonicalValue::None
+    ) && matches!(expected_command.as_str(), "register" | "toks_register")
+        && expected_delivery == actual_delivery
+        && expected_command == actual_command
+        && expected_control_sequence == actual_control_sequence
+        && expected_location == actual_location
 }
 
 fn meaning_mutation(event: &Event) -> Option<(&str, &MutationEvent)> {
@@ -1319,6 +1362,37 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn sparse_register_node_is_not_a_semantic_trip_divergence() {
+        let event = |operand| {
+            Event::Command(CommandEvent {
+                delivery: tex_oracle::CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: "register".into(),
+                    operand,
+                    control_sequence: Some("alias".into()),
+                    location: None,
+                },
+            })
+        };
+        assert!(sparse_register_operand_is_reference(
+            &event(CanonicalValue::Integer(1_926)),
+            &event(CanonicalValue::None)
+        ));
+        assert!(!sparse_register_operand_is_reference(
+            &event(CanonicalValue::Integer(1_926)),
+            &Event::Command(CommandEvent {
+                delivery: tex_oracle::CommandDelivery::Raw,
+                command: CanonicalCommand {
+                    command: "assign_glue".into(),
+                    operand: CanonicalValue::None,
+                    control_sequence: Some("alias".into()),
+                    location: None,
+                },
+            })
+        ));
     }
 
     #[test]
