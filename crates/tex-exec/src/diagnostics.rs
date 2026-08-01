@@ -8,7 +8,7 @@ use tex_expand::{
 };
 use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;
-use tex_state::page::{PageContents, PageDimension};
+use tex_state::page::{PageContents, PageDimension, PageInsertionStatus};
 use tex_state::print::Selector;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
 use tex_state::{PrintSink, Universe};
@@ -603,6 +603,7 @@ pub(crate) fn execute_showlists(
                         stores.page_dimension(PageDimension::Goal),
                     ));
                     text.push('\n');
+                    push_page_insertions(stores, &current_page, &mut text)?;
                 }
             }
             if !stores.page_contributions().is_empty() {
@@ -673,6 +674,39 @@ pub(crate) fn execute_showlists(
     diagnostic.print_rendered(&text);
     diagnostic.end(true);
     complete_show(stores, true, Some(context))?;
+    Ok(())
+}
+
+/// TeX82 §218's insertion-record tail of `show_activities`.
+fn push_page_insertions(
+    stores: &Universe,
+    current_page: &[tex_state::node::Node],
+    text: &mut String,
+) -> Result<(), ExecError> {
+    for insertion in stores.page_insertions() {
+        let _ = write!(text, "\\insert{} adds ", insertion.class());
+        let scaled_height = crate::page_builder::scaled_insertion_size(
+            insertion.height(),
+            stores.count(insertion.class()),
+        )?;
+        text.push_str(&crate::node_dump::format_scaled_for_diagnostics(
+            scaled_height,
+        ));
+        if let PageInsertionStatus::SplitUp {
+            broken_ins_index, ..
+        } = insertion.status()
+        {
+            let split_count = current_page
+                .iter()
+                .take(broken_ins_index.saturating_add(1))
+                .filter(|node| {
+                    matches!(node, tex_state::node::Node::Ins { class, .. } if *class == insertion.class())
+                })
+                .count();
+            let _ = write!(text, ", #{split_count} might split");
+        }
+        text.push('\n');
+    }
     Ok(())
 }
 

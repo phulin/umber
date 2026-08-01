@@ -421,7 +421,7 @@ fn add_insert_penalty(stores: &mut Universe, penalty: i32) {
     stores.set_page_integer(tex_state::page::PageInteger::InsertPenalties, value);
 }
 
-fn scaled_insertion_size(size: Scaled, count: i32) -> Result<Scaled, ExecError> {
+pub(crate) fn scaled_insertion_size(size: Scaled, count: i32) -> Result<Scaled, ExecError> {
     if count == 1000 {
         return Ok(size);
     }

@@ -4383,6 +4383,19 @@ fn showlists_preserves_page_goal_row_leading_space() {
 }
 
 #[test]
+fn showlists_reports_count_scaled_split_page_insertions() {
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\vsize=5pt \\count7=500 \\dimen7=100pt \\skip7=0pt \\insert7{\\hrule height20pt}\\showlists\\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains("\\insert7 adds 9.9945, #1 might split\n"),
+        "{log}"
+    );
+}
+
+#[test]
 fn showlists_reports_source_entry_line_and_hyphenation_context() {
     let stores = run_canonical_tex82(
         "\\nonstopmode\\language=7\\lefthyphenmin=2\\righthyphenmin=5\nX\\showlists\\end",
