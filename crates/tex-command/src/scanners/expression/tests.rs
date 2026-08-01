@@ -447,13 +447,7 @@ fn expression_observations_and_checkpoint_retry_are_deterministic() {
         }
         assert_eq!(
             scanner_kinds(&recorder),
-            vec![
-                "integer",
-                "integer",
-                "expression_integer",
-                "internal",
-                "integer"
-            ]
+            vec!["integer", "integer", "expression_integer", "integer"]
         );
         attempts.push(recorder.0);
         command
@@ -462,6 +456,66 @@ fn expression_observations_and_checkpoint_retry_are_deterministic() {
     }
 
     assert_eq!(attempts[0], attempts[1]);
+}
+
+#[test]
+fn expression_primitives_return_before_the_generic_internal_observation() {
+    for (primitive_kind, source, expected_expression, expected_outer) in [
+        (P::NumExpr, "2", "expression_integer", "integer"),
+        (P::DimExpr, "3pt", "expression_dimension", "dimension"),
+        (P::GlueExpr, "4pt plus 3fil", "expression_glue", "glue"),
+        (P::MuExpr, "5mu minus 1mu", "expression_muglue", "glue"),
+    ] {
+        let mut universe = crate::test_harness::universe();
+        let expression = primitive(&mut universe, "expression", primitive_kind);
+        let mut command = CommandState::new(CommandProfile::ETEX26);
+        let mut tokens = vec![expression];
+        tokens.extend(chars(source));
+        push(&mut command, tokens);
+        let mut runtime = CommandRuntime::default();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+
+        match primitive_kind {
+            P::NumExpr => {
+                processor.scan_integer().expect("integer expression scans");
+            }
+            P::DimExpr => {
+                processor
+                    .scan_dimension()
+                    .expect("dimension expression scans");
+            }
+            P::GlueExpr => {
+                processor.scan_glue(false).expect("glue expression scans");
+            }
+            P::MuExpr => {
+                processor.scan_glue(true).expect("mu expression scans");
+            }
+            _ => unreachable!("case table contains only expression primitives"),
+        }
+
+        let kinds = scanner_kinds(&recorder);
+        assert!(
+            kinds.contains(&expected_expression),
+            "primitive: {primitive_kind:?}"
+        );
+        assert_eq!(
+            kinds.last(),
+            Some(&expected_outer),
+            "primitive: {primitive_kind:?}"
+        );
+        assert!(
+            !kinds.contains(&"internal"),
+            "primitive: {primitive_kind:?}"
+        );
+    }
 }
 
 #[test]

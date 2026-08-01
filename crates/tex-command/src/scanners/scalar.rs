@@ -1876,7 +1876,23 @@ impl CommandProcessor<'_> {
         } else {
             value
         };
-        self.observe_internal_value(value);
+        // e-TeX 2.6 [53a.4965--4998] handles expression primitives in
+        // `Process an expression and return`: unlike the ordinary TeX82
+        // cases, that branch returns before `scan_something_internal`'s
+        // generic result boundary. `scan_expr` has already published its
+        // typed result, and the requesting `scan_int`/`scan_dimen`/
+        // `scan_glue` publishes the outer typed result.
+        if !matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::NumExpr
+                    | UnexpandablePrimitive::DimExpr
+                    | UnexpandablePrimitive::GlueExpr
+                    | UnexpandablePrimitive::MuExpr
+            )
+        ) {
+            self.observe_internal_value(value);
+        }
         Ok(InternalScan::Value(value))
     }
 
