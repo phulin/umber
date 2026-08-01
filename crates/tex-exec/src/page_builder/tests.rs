@@ -10,7 +10,7 @@ use tex_state::math::{
 };
 use tex_state::node::{
     BoxNode, BoxNodeFields, Direction, DiscKind, KernKind, Sign, UnsetKind, UnsetNode,
-    UnsetNodeFields,
+    UnsetNodeFields, Whatsit,
 };
 use tex_state::page::{PageBreak, PageInteger};
 use tex_state::scaled::GlueSetRatio;
@@ -99,6 +99,42 @@ fn ins_class(stores: &mut Universe, class: u16, count: i32, max: i32, skip: i32,
 
 fn effects(stores: &Universe) -> String {
     format!("{:?}", stores.world().effect_records())
+}
+
+#[test]
+fn pdftex_page_top_discards_snapy_but_preserves_other_whatsits() {
+    // pdftex.web §§1378-1379 extends the page builder's discardable top
+    // material with `pdf_snapy_node` only. `\pdfsnaprefpoint` is the subtype
+    // negative control, and saving_vdiscards must retain the discarded node.
+    let mut stores = Universe::new();
+    params(&mut stores, 1_000, 0, 0);
+    stores.set_int_param(IntParam::SAVING_V_DISCARDS, 1);
+    let snap_glue = stores.intern_glue(GlueSpec {
+        width: s(7),
+        ..GlueSpec::ZERO
+    });
+    let snap = Node::Whatsit(Whatsit::PdfSnapY { glue: snap_glue });
+    let reference = Node::Whatsit(Whatsit::PdfSnapRefPoint);
+    let first_box = boxed(&mut stores, 4, 0, false);
+    stores.append_page_contribution(snap.clone());
+    stores.append_page_contribution(reference.clone());
+    stores.append_page_contribution(first_box.clone());
+
+    build_page(&mut stores).expect("page-top snapping classification");
+
+    assert_eq!(stores.page_discards(), [snap]);
+    assert_eq!(
+        stores.current_page_nodes(),
+        [
+            reference,
+            Node::Glue {
+                spec: stores.glue_param(GlueParam::TOP_SKIP),
+                kind: GlueKind::TopSkip,
+                leader: None,
+            },
+            first_box,
+        ]
+    );
 }
 
 #[test]

@@ -234,6 +234,12 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
                 let node = prepare_insertion(stores, &node)?.unwrap_or(node);
                 contribute_front_as(stores, node)?;
             }
+            Node::Whatsit(_)
+                if !stores.page_contents().has_box()
+                    && crate::splitting::is_page_top_discardable(&node) =>
+            {
+                discard_front(stores);
+            }
             Node::Whatsit(_) | Node::Mark { .. } => {
                 contribute_front(stores)?;
             }

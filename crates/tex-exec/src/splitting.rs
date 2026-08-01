@@ -3,7 +3,7 @@
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{GlueId, NodeListId};
-use tex_state::node::{BoxNode, GlueKind, Node};
+use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -49,13 +49,24 @@ pub(crate) fn prune_page_top_with_discards(
                 out.push(node);
                 inserted_top_skip = true;
             }
-            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty(_) if !inserted_top_skip => {
+            _ if !inserted_top_skip && is_page_top_discardable(&node) => {
                 discarded.push(node);
             }
             _ => out.push(node),
         }
     }
     (out, discarded)
+}
+
+/// TeX82 §969's discardable page-top material plus pdfTeX §1378's snap node.
+pub(crate) fn is_page_top_discardable(node: &Node) -> bool {
+    matches!(
+        node,
+        Node::Glue { .. }
+            | Node::Kern { .. }
+            | Node::Penalty(_)
+            | Node::Whatsit(Whatsit::PdfSnapY { .. })
+    )
 }
 
 pub(crate) fn natural_vlist_size(
