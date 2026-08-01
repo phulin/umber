@@ -1298,6 +1298,198 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
     ));
 }
 
+/// tex.web §§879--885: a taken discretionary contributes its `pre_break`
+/// list to the line being closed and its `post_break` list to the next line.
+#[test]
+fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let pre = universe.freeze_node_list(&[rule(11), kern(12)]);
+    let post = universe.freeze_node_list(&[rule(21), kern(22)]);
+    let replacement = universe.freeze_node_list(&[rule(99)]);
+    let nodes = vec![
+        rule(1),
+        Node::Disc {
+            kind: DiscKind::ExplicitHyphen,
+            pre,
+            post,
+            replace: replacement,
+        },
+        rule(2),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let breaks = vec![
+        BreakDecision {
+            position: 2,
+            penalty: 0,
+            hyphenated: true,
+        },
+        BreakDecision {
+            position: nodes.len(),
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        },
+    ];
+
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    assert!(matches!(
+        lines[0].nodes.as_slice(),
+        [
+            Node::Rule { width: Some(original), .. },
+            Node::Rule { width: Some(pre_rule), .. },
+            Node::Kern { amount: pre_kern, kind: KernKind::Explicit },
+            Node::Glue { kind: GlueKind::RightSkip, .. },
+        ] if original.raw() == 1 && pre_rule.raw() == 11 && pre_kern.raw() == 12
+    ));
+    assert!(matches!(
+        lines[1].nodes.as_slice(),
+        [
+            Node::Rule { width: Some(post_rule), .. },
+            Node::Kern { amount: post_kern, kind: KernKind::Explicit },
+            Node::Rule { width: Some(next), .. },
+            Node::Penalty(EJECT_PENALTY),
+            Node::Glue { kind: GlueKind::RightSkip, .. },
+        ] if post_rule.raw() == 21 && post_kern.raw() == 22 && next.raw() == 2
+    ));
+}
+
+/// tex.web §§886--887: glue, explicit and mu kerns, penalties, and math nodes
+/// disappear before the next line, but a font kern terminates that discard.
+#[test]
+fn next_line_discards_all_discardables_but_retains_font_kern() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let empty = universe.freeze_node_list(&[]);
+    let nodes = vec![
+        rule(1),
+        Node::Penalty(0),
+        Node::Glue {
+            spec: zero,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Kern {
+            amount: sp(2),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: sp(3),
+            kind: KernKind::Mu,
+        },
+        Node::Penalty(4),
+        Node::MathOn(sp(5)),
+        Node::MathOff(sp(6)),
+        Node::Kern {
+            amount: sp(7),
+            kind: KernKind::Font,
+        },
+        rule(8),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let breaks = vec![
+        BreakDecision {
+            position: 2,
+            penalty: 0,
+            hyphenated: false,
+        },
+        BreakDecision {
+            position: nodes.len(),
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        },
+    ];
+
+    let lines = post_line_break(
+        &universe,
+        &nodes,
+        &breaks,
+        PostLineBreakParams {
+            empty_list: empty,
+            left_skip: zero,
+            right_skip: zero,
+            interline_penalty: 0,
+            club_penalty: 0,
+            widow_penalty: 0,
+            broken_penalty: 0,
+            prev_graf: 0,
+            interline_penalties: Vec::new(),
+            club_penalties: Vec::new(),
+            widow_penalties: Vec::new(),
+            shape: LineShape::natural(sp(100)),
+        },
+    );
+
+    assert!(matches!(
+        lines[1].nodes.as_slice(),
+        [
+            Node::Kern { amount, kind: KernKind::Font },
+            Node::Rule { width: Some(width), .. },
+            Node::Penalty(EJECT_PENALTY),
+            Node::Glue { kind: GlueKind::RightSkip, .. },
+        ] if amount.raw() == 7 && width.raw() == 8
+    ));
+}
+
+/// tex.web §890: on the only nonfinal boundary in a two-line paragraph, all
+/// four scalar penalty contributions apply, including `broken_penalty`.
+#[test]
+fn two_line_penalty_after_combines_club_widow_and_broken_penalties() {
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let breaks = vec![
+        BreakDecision {
+            position: 1,
+            penalty: 0,
+            hyphenated: true,
+        },
+        BreakDecision {
+            position: 2,
+            penalty: EJECT_PENALTY,
+            hyphenated: false,
+        },
+    ];
+    let params = PostLineBreakParams {
+        empty_list: empty,
+        left_skip: tex_state::ids::GlueId::ZERO,
+        right_skip: tex_state::ids::GlueId::ZERO,
+        interline_penalty: 11,
+        club_penalty: 101,
+        widow_penalty: 1_001,
+        broken_penalty: 10_001,
+        prev_graf: 0,
+        interline_penalties: Vec::new(),
+        club_penalties: Vec::new(),
+        widow_penalties: Vec::new(),
+        shape: LineShape::natural(sp(100)),
+    };
+
+    assert_eq!(
+        post::line_penalty_after(0, &breaks, true, &params),
+        Some(11_114)
+    );
+    assert_eq!(post::line_penalty_after(1, &breaks, false, &params), None);
+}
+
 #[test]
 fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
     use tex_state::node::Direction;

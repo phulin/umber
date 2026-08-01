@@ -442,6 +442,11 @@ Packing and line breaking preserve TeX.web arithmetic exactly. Appendix G
 math conversion builds one span-backed `MathLayout`; `FrozenHList` values are
 handles into that arena, not recursive owned vectors. Execution lowers the
 completed layout through `MathLayoutSink` into state-owned node lists.
+Post-line-break materialization follows TeX.web §§879--890: a chosen
+discretionary moves its pre-break and post-break lists onto the adjacent
+lines, leading discardables are removed except for font kerns, and each
+nonfinal line receives the exact interline, club, widow, and broken penalty
+sum.
 The layout also carries typed `MathConversionEvent` values for missing glyphs
 and undefined selected families. Execution renders those detached events as
 TeX diagnostics; an undefined-family event marks formula recovery, so the sink
