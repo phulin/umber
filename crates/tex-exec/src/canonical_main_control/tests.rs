@@ -4402,6 +4402,35 @@ fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
 }
 
 #[test]
+fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
+    // e-TeX 2.6 [26.427] scans an internal word-register selector with
+    // `scan_register_num`. Keep the real sparse value and the independently
+    // chosen register-zero sentinel distinct so an eight-bit recovery cannot
+    // masquerade as a state-restoration failure.
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\begingroup\tracingrestores=1\count20=5\count2000=5\endgroup
+           \begingroup{\tracingassigns=1\count2000=0}\count2001=5
+           \ifnum\count2000=0 \global\count0=17\fi\endgroup\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.int_param(IntParam::ETEX_EXTENDED_MODE),
+        1,
+        "extended register domain must survive grouping"
+    );
+    assert_eq!(stores.count(2000), 0, "sparse state must restore to zero");
+    assert_eq!(stores.count(0), 17);
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical

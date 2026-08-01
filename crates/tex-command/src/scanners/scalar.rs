@@ -1942,33 +1942,35 @@ impl CommandProcessor<'_> {
     ) -> Result<Option<InternalValue>, CommandError> {
         let value = match command.meaning() {
             // TeX82 `scan_something_internal` owns a register primitive's
-            // restricted (`scan_eight_bit_int`) index scan. Keeping every
-            // register family here means its index deliveries, nested integer
-            // result, and internal-value observer precede the outer scalar
-            // scanner's result (TeX.web `scan_something_internal`/`scan_int`).
+            // restricted (`scan_eight_bit_int`) index scan. e-TeX 2.6
+            // [26.415], [26.420], and [26.427] replace it with
+            // `scan_register_num` for token, box, and word/glue registers.
+            // Keeping every register family here means its index deliveries,
+            // nested integer result, and internal-value observer precede the
+            // outer scalar scanner's result.
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Count) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 InternalValue::Integer(self.state.count(index))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Dimen) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 InternalValue::Dimension(self.state.dimen(index))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Skip) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 let identity = self.state.skip(index);
                 self.scanned_glue_identity = Some(identity);
                 self.scanned_glue_skip_index = Some(index);
                 InternalValue::Glue(self.state.glue(identity))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Muskip) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 let identity = self.state.muskip(index);
                 self.scanned_glue_identity = Some(identity);
                 InternalValue::MuGlue(self.state.glue(identity))
             }
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 InternalValue::Tokens {
                     tokens: self.state.toks(index),
                 }
@@ -1982,7 +1984,7 @@ impl CommandProcessor<'_> {
                 | UnexpandablePrimitive::Ht
                 | UnexpandablePrimitive::Dp),
             ) => {
-                let index = self.scan_eight_bit_register_index()?;
+                let index = self.scan_profile_register_index()?;
                 let dimension = match primitive {
                     UnexpandablePrimitive::Wd => BoxDimension::Width,
                     UnexpandablePrimitive::Ht => BoxDimension::Height,
@@ -2444,11 +2446,13 @@ impl CommandProcessor<'_> {
 
     /// Scans TeX82 §433's `scan_eight_bit_int` register index.
     ///
-    /// `scan_something_internal` uses this bounded scan for `\count`,
-    /// `\dimen`, `\skip`, and `\muskip`, §505's box predicates use it for
+    /// TeX82 `scan_something_internal` uses this bounded scan for register
+    /// primitives, §505's box predicates use it for
     /// `\ifvoid`/`\ifhbox`/`\ifvbox`, and §1079/§1110/§1241 use it for the
     /// box-valued commands; an out-of-range value recovers as register zero
-    /// rather than truncating or addressing an extended bank.
+    /// rather than truncating or addressing an extended bank. e-TeX replaces
+    /// those register scans with `scan_register_num` at [26.415], [26.420],
+    /// and [26.427].
     pub fn scan_eight_bit_register_index(&mut self) -> Result<u16, CommandError> {
         let scanned = self.scan_restricted_integer(RestrictedIntegerClass::EightBit)?;
         Ok(scanned.value as u16)
