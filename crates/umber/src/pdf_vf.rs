@@ -128,6 +128,18 @@ struct Lowerer<'a> {
 
 impl Lowerer<'_> {
     fn lower_page(&mut self, page: &mut PositionedPage) -> Result<(), PdfBuildError> {
+        // Packet execution is fallible after it has emitted operations and
+        // appended leaf-font resources.  Keep the committed positioned page
+        // unchanged unless the complete virtual page lowers successfully.
+        let checkpoint = page.clone();
+        if let Err(error) = self.lower_page_candidate(page) {
+            *page = checkpoint;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn lower_page_candidate(&mut self, page: &mut PositionedPage) -> Result<(), PdfBuildError> {
         let original = std::mem::take(&mut page.events);
         self.page_font_ids.clear();
         for font in &page.fonts {

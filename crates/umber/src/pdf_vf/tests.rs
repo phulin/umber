@@ -342,3 +342,87 @@ fn multiple_virtual_roots_rebind_positioned_spaces_to_real_leaves() {
         }));
     }
 }
+
+#[test]
+fn scaling_rounds_packet_movements_at_half_boundaries() {
+    let mut commands = vec![146];
+    commands.extend_from_slice(&(FIX_ONE / 2).to_be_bytes());
+    commands.push(b'A');
+    let root_vf = vf(b"cmsy10", &commands);
+    let resources = resources(root_vf, "cmsy10", CMSY10);
+    let mut stores = Universe::new();
+    let root = stores.intern_font(loaded("cmr10", CMR10));
+    let root_size = stores.font(root).size();
+    let mut pages = vec![page(&mut stores, root)];
+
+    lower_pages(&mut stores, &mut pages, &resources, PdfVfLimits::default())
+        .expect("scaled packet lowers");
+
+    let expected = checked_add(
+        Scaled::from_raw(100),
+        scale_fix(FIX_ONE / 2, root_size).expect("half-em scales"),
+    )
+    .expect("position fits");
+    assert!(pages[0].events.iter().any(|event| matches!(
+        event,
+        PositionedEvent::TextRun(run) if run.positions == [expected]
+    )));
+}
+
+#[test]
+fn missing_packet_has_exact_identity_and_does_not_partially_commit_page() {
+    let root_vf = vf(b"cmsy10", b"A");
+    let resources = resources(root_vf, "cmsy10", CMSY10);
+    let mut stores = Universe::new();
+    let root = stores.intern_font(loaded("cmr10", CMR10));
+    let mut positioned = page(&mut stores, root);
+    let run = match &mut positioned.events[0] {
+        PositionedEvent::TextRun(run) => run,
+        other => panic!("expected text run, got {other:?}"),
+    };
+    run.units.push(TextUnit::Code(u32::from(b'B')));
+    run.positions.push(Scaled::from_raw(200));
+    run.physical_codes.push(Some(b'B'));
+    run.sources.push(None);
+    let before = positioned.clone();
+    let mut pages = vec![positioned];
+
+    let error = lower_pages(&mut stores, &mut pages, &resources, PdfVfLimits::default())
+        .expect_err("second character has no packet");
+
+    assert!(matches!(
+        error,
+        PdfBuildError::MissingVirtualFontPacket { ref font, code }
+            if font == "cmr10" && code == u32::from(b'B')
+    ));
+    assert_eq!(
+        error.to_string(),
+        "virtual font cmr10 has no packet for character 66"
+    );
+    assert_eq!(pages[0], before);
+}
+
+#[test]
+fn missing_local_tfm_has_exact_identity_and_preserves_page() {
+    let root_vf = vf(b"absent", b"A");
+    let mut resources = resources(root_vf, "cmsy10", CMSY10);
+    resources.local_tfms.remove("cmsy10");
+    let mut stores = Universe::new();
+    let root = stores.intern_font(loaded("cmr10", CMR10));
+    let positioned = page(&mut stores, root);
+    let before = positioned.clone();
+    let mut pages = vec![positioned];
+
+    let error = lower_pages(&mut stores, &mut pages, &resources, PdfVfLimits::default())
+        .expect_err("local TFM is absent");
+
+    assert!(matches!(
+        error,
+        PdfBuildError::MissingVirtualLocalTfm(ref font) if font == "absent"
+    ));
+    assert_eq!(
+        error.to_string(),
+        "virtual font requires unavailable local TFM absent"
+    );
+    assert_eq!(pages[0], before);
+}

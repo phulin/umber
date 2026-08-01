@@ -310,3 +310,53 @@ fn rejects_invalid_scaled_size_and_character_without_a_default_font() {
         Err(VfParseError::NoCurrentFont)
     );
 }
+
+#[test]
+fn accepts_pdftex_local_font_size_boundaries_and_preserves_exact_values() {
+    for scaled_size in [1_i32, (1 << 24) - 1] {
+        let mut bytes = preamble();
+        bytes.push(FNT_DEF1);
+        bytes.push(1);
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        bytes.extend_from_slice(&scaled_size.to_be_bytes());
+        bytes.extend_from_slice(&i32::MAX.to_be_bytes());
+        bytes.extend_from_slice(&[0, 1, b'f']);
+        let program = VfProgram::parse(&finish(bytes)).expect("boundary size is valid");
+        assert_eq!(program.local_fonts()[0].scaled_size, scaled_size);
+        assert_eq!(program.local_fonts()[0].design_size, i32::MAX);
+    }
+
+    for scaled_size in [0_i32, 1 << 24, -1] {
+        let mut bytes = preamble();
+        bytes.push(FNT_DEF1);
+        bytes.push(1);
+        bytes.extend_from_slice(&0u32.to_be_bytes());
+        bytes.extend_from_slice(&scaled_size.to_be_bytes());
+        bytes.extend_from_slice(&FIX_ONE.to_be_bytes());
+        bytes.extend_from_slice(&[0, 0]);
+        assert_eq!(
+            VfProgram::parse(&finish(bytes)),
+            Err(VfParseError::InvalidLocalFontSize),
+            "scaled size {scaled_size}"
+        );
+    }
+}
+
+#[test]
+fn reports_exact_malformed_packet_error_identity() {
+    let cases = [
+        (vec![235, 8], VfParseError::UndefinedLocalFont(8)),
+        (vec![142], VfParseError::StackUnderflow),
+        (vec![141], VfParseError::UnbalancedStack),
+        (vec![139], VfParseError::InvalidPacketCommand(139)),
+        (vec![239, 2, b'x'], VfParseError::Truncated),
+    ];
+    for (commands, expected) in cases {
+        let error = VfProgram::parse(&one_font_program(&commands)).expect_err("malformed packet");
+        assert_eq!(error, expected);
+        assert_eq!(
+            error.to_string(),
+            format!("invalid TeX virtual font: {expected:?}")
+        );
+    }
+}
