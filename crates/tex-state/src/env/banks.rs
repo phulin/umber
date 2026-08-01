@@ -132,11 +132,21 @@ impl IntParam {
     /// TeX's `\tracingonline` diagnostic-destination gate (tex.web §245).
     pub const TRACING_ONLINE: Self = Self::new(29);
 
+    /// TeX's macro invocation and argument diagnostic level (tex.web
+    /// §§389, 400).
+    pub const TRACING_MACROS: Self = Self::new(30);
+
+    /// TeX's end-of-job memory-usage diagnostic level (tex.web §1333).
+    pub const TRACING_STATS: Self = Self::new(31);
+
     /// TeX's `\globaldefs` integer parameter.
     pub const GLOBAL_DEFS: Self = Self::new(32);
 
     /// TeX's `\tracingpages` page-cost diagnostic level (tex.web §§987, 1005).
     pub const TRACING_PAGES: Self = Self::new(34);
+
+    /// TeX's line-breaking diagnostic level (tex.web §§826, 845, 855, 863).
+    pub const TRACING_PARAGRAPHS: Self = Self::new(33);
 
     /// TeX's `\tracingoutput` shipped-page diagnostic level (tex.web §638).
     pub const TRACING_OUTPUT: Self = Self::new(35);
@@ -146,6 +156,9 @@ impl IntParam {
 
     /// TeX's main-control command diagnostic level (tex.web §1030).
     pub const TRACING_COMMANDS: Self = Self::new(37);
+
+    /// TeX's save-stack restoration diagnostic level (tex.web §283).
+    pub const TRACING_RESTORES: Self = Self::new(38);
 
     /// TeX's `\uchyph` uppercase-start hyphenation gate.
     pub const UC_HYPH: Self = Self::new(39);

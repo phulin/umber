@@ -2,6 +2,7 @@
 #![allow(dead_code)] // expansion dispatch is the next ordered integration slice
 use std::sync::Arc;
 
+use tex_state::env::banks::IntParam;
 use tex_state::ids::MacroDefinitionId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
@@ -208,6 +209,7 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         let meaning = self.state.macro_definition(definition);
         let pattern = self.state.macro_definition_parameter_pattern(definition);
+        self.trace_macro_invocation(macro_name, meaning.replacement_text());
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
@@ -333,6 +335,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
+            self.trace_macro_argument(parameter + 1, &argument);
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
@@ -367,6 +370,52 @@ impl CommandProcessor<'_> {
                 .map_err(|_| CommandError::input_invariant())?;
         }
         Ok(arguments.finish())
+    }
+
+    /// TeX82 §389's invocation trace, including `print_ln` before the macro
+    /// name and §262's control-word separator before `->`.
+    fn trace_macro_invocation(
+        &mut self,
+        macro_name: tex_state::interner::Symbol,
+        replacement: tex_state::ids::TokenListId,
+    ) {
+        if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
+            return;
+        }
+        let mut text = crate::processor::expand::print_cs_text(&mut self.state, macro_name);
+        text.push_str("->");
+        for token in self.state.tokens(replacement).to_vec() {
+            text.push_str(&crate::processor::expand::token_list_token_text(
+                &self.state,
+                token,
+            ));
+        }
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Trace {
+                text,
+                force_newline: true,
+            });
+    }
+
+    /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
+    fn trace_macro_argument(&mut self, parameter: usize, argument: &[TracedTokenWord]) {
+        if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
+            return;
+        }
+        let mut text = format!("#{parameter}<-");
+        for word in argument {
+            text.push_str(&crate::processor::expand::token_list_token_text(
+                &self.state,
+                word.semantic_token(),
+            ));
+        }
+        self.command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Trace {
+                text,
+                force_newline: false,
+            });
     }
 
     /// TeX82 §389's `warning_index`, spelled as §395/§396 print it.

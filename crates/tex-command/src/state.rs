@@ -101,6 +101,10 @@ pub struct CommandState {
 /// A recoverable command-owned semantic diagnostic awaiting executor output.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CommandSemanticDiagnostic {
+    /// TeX82's non-error diagnostic text produced while expansion owns the
+    /// live macro invocation and argument buffers. Rendering is deferred to
+    /// `tex-exec` so §245's selector and `\tracingonline` remain authoritative.
+    Trace { text: String, force_newline: bool },
     /// TeX82 §370's undefined-control-sequence expansion error.
     ///
     /// §370 reports through §82, which renders `show_context` against the

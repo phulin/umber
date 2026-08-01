@@ -2796,6 +2796,12 @@ comparison. Umber does not claim binary compatibility with their `.fmt` files.
 
 Semantic recovery and diagnostic presentation are separate:
 
+TeX82 macro tracing follows that same split. The command processor formats
+§389's invocation and §400's completed arguments while it owns their live token
+buffers, then queues non-error diagnostic values. `tex-exec` drains those
+values in order through §245's diagnostic scope, so `\tracingonline` routing is
+selected at the committed call rather than by the expansion layer.
+
 - the command core chooses canonical recovery tokens and state transitions;
 - typed diagnostics capture primary origin, related origins, macro invocation
   head, scanner status, command identity, and canonical diagnostic kind;

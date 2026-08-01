@@ -117,6 +117,88 @@ fn disabled_tracingcommands_emits_no_command_diagnostic() {
 }
 
 #[test]
+fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
+    // TeX82 §§389/400 and §245: the invocation line precedes completed
+    // arguments and the live selector controls both routed copies.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\def\\pair#1#2{}\\tracingmacros=1\\tracingonline=1\\pair CD\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    let expected = "\n\\pair ->\n#1<-C\n#2<-D";
+    assert_eq!(terminal, expected);
+    assert_eq!(log, expected);
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\def\\pair#1#2{}\\tracingmacros=1\\pair AB\\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(pending_sink_text(&stores, true), "");
+    assert_eq!(
+        pending_sink_text(&stores, false),
+        "\n\\pair ->\n#1<-A\n#2<-B"
+    );
+}
+
+#[test]
+fn disabled_tracingmacros_emits_no_macro_diagnostic() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\def\\pair#1#2{}\\tracingonline=1\\pair AB\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(pending_sink_text(&stores, true), "");
+    assert_eq!(pending_sink_text(&stores, false), "");
+}
+
+#[test]
+#[ignore = "umber2-e51h.8: group exit does not yet expose ordered old-value restore records"]
+fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\count0=7}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(pending_sink_text(&stores, true), "{restoring \\count0=0}");
+    assert_eq!(pending_sink_text(&stores, false), "{restoring \\count0=0}");
+}
+
+#[test]
+#[ignore = "umber2-e51h.9: line breaking does not yet return TeX82 active/passive trace records"]
+fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingparagraphs=1\\tracingonline=1\\indent\\par\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected =
+        "@firstpass\n[] \n@\\par via @@0 b=0 p=-10000 d=100\n@@1: line 1.2- t=100 -> @@0\n";
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+}
+
+#[test]
 fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
     // TeX82 §1090 keys this transition by the `valign` command code, and
     // e-TeX 2.6 [53a.3826--3883] assigns that code to all four directions.

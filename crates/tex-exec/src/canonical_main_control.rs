@@ -14458,6 +14458,18 @@ fn report_pending_diagnostics(
 ) -> Result<(), ExecError> {
     for diagnostic in diagnostics {
         match diagnostic {
+            PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Trace {
+                text,
+                force_newline,
+            }) => {
+                let mut output = stores.begin_diagnostic();
+                if force_newline {
+                    output.print_ln().print(&text);
+                } else {
+                    output.print_nl(&text);
+                }
+                output.end(false);
+            }
             PendingDiagnostic::CommandTrace(mode, command) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut output = stores.begin_diagnostic();
