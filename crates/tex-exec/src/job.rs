@@ -406,7 +406,11 @@ pub(crate) fn report_unclosed_groups(stores: &mut Universe) {
     }
     stores
         .printer()
-        .print_nl(&format!("(\\end occurred inside a group at level {depth})"));
+        .print_nl("(")
+        .print_esc("end occurred ")
+        .print("inside a group at level ")
+        .print_int(depth as i32)
+        .print_char(')');
 }
 
 /// Records and prints the retained session's already-opened root source.

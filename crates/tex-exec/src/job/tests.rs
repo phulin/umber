@@ -16,6 +16,36 @@ fn print_two_uses_absolute_last_two_digits() {
     }
 }
 
+#[test]
+fn unclosed_group_report_uses_live_escapechar_and_interaction_selector() {
+    // TeX82 §§63/1335: final_cleanup constructs this report with print_esc,
+    // so an out-of-range escape character contributes no prefix. The active
+    // interaction selector still decides whether the report reaches the
+    // terminal as well as the transcript.
+    for (interaction, terminal_visible) in [
+        (InteractionMode::Nonstop, true),
+        (InteractionMode::Batch, false),
+    ] {
+        for (escape, expected) in [
+            (i32::from(b'@'), "(@end occurred inside a group at level 1)"),
+            (256, "(end occurred inside a group at level 1)"),
+        ] {
+            let mut stores = Universe::new();
+            stores.set_interaction_mode(interaction);
+            stores.set_int_param(IntParam::ESCAPE_CHAR, escape);
+            stores.enter_group();
+
+            report_unclosed_groups(&mut stores);
+
+            assert_eq!(log_text(&stores), expected);
+            assert_eq!(
+                terminal_text(&stores),
+                if terminal_visible { expected } else { "" }
+            );
+        }
+    }
+}
+
 use crate::{CanonicalMainControl, MainControlStep};
 
 fn channel_text(stores: &Universe, matches_sink: impl Fn(PrintSink) -> bool) -> String {
