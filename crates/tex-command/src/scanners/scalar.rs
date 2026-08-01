@@ -690,6 +690,16 @@ impl CommandProcessor<'_> {
         if !attach_sign {
             self.scan_optional_space()?;
         }
+        // TeX82 §448-§460: every path converges at `attach_sign`, including
+        // §449's internal-dimension shortcut.  The range check therefore
+        // applies even when the stored internal value could only have arisen
+        // through arithmetic (for example, an overflowing glue width).
+        let value = if value.raw().unsigned_abs() >= 1 << 30 {
+            self.dimension_too_large_error()?;
+            Scaled::MAX_DIMEN
+        } else {
+            value
+        };
         let scanned = ScannedScalar {
             value: if negative {
                 Scaled::from_raw(-value.raw())

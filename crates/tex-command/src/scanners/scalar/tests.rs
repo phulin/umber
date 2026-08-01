@@ -939,6 +939,35 @@ fn a_whole_internal_dimension_operand_is_never_backed_up_and_redelivered() {
 }
 
 #[test]
+fn out_of_range_internal_dimensions_rejoin_attach_sign_recovery() {
+    // TeX82 §449's internal-dimension shortcut is a `goto attach_sign`, not
+    // a bypass around §460's absolute `max_dimen` check.  Values produced by
+    // earlier arithmetic therefore recover at either sign just like constants.
+    let mut universe = crate::test_harness::universe();
+    let oversized = universe.intern("oversized").symbol();
+    universe.set_meaning(oversized, Meaning::DimenRegister(0));
+    universe.set_dimen(0, Scaled::from_raw(1 << 30));
+
+    let values = scan_with(
+        &mut universe,
+        vec![Token::Cs(oversized), char_token('-'), Token::Cs(oversized)],
+        |processor| {
+            [
+                processor
+                    .scan_dimension()
+                    .expect("positive internal dimension recovers")
+                    .value,
+                processor
+                    .scan_dimension()
+                    .expect("negative internal dimension recovers")
+                    .value,
+            ]
+        },
+    );
+    assert_eq!(values, [Scaled::MAX_DIMEN, -Scaled::MAX_DIMEN]);
+}
+
+#[test]
 fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
