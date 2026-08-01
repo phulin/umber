@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord,
     InputReason as CommandInputReason, InputRecord, InputTransition as CommandInputTransition,
+    SourceNameClass,
 };
 use tex_oracle::{
     CanonicalValue, EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason,
@@ -54,6 +55,18 @@ impl CommandObserver for TripProfileObserver {
                 transition: CommandInputTransition::Stop,
                 reason: CommandInputReason::Source,
                 ..
+            })
+            | CommandObservation::Input(InputRecord {
+                transition: CommandInputTransition::Retire,
+                reason: CommandInputReason::Source,
+                source_name:
+                    Some(SourceNameClass::Terminal | SourceNameClass::ReadStream(_)),
+                ..
+                // TeX82 §360 returns a raw zero command when §483's one-line
+                // read source ends. The reduced TRIP oracle records that
+                // profile event as a terminal stop; the full command profile
+                // retains the underlying retirement and observes no §331
+                // terminal-stack stop.
             }) => self.events.push(Event::Input(InputEvent {
                 transition: InputTransition::Stop,
                 reason: InputReason::Source,
@@ -278,5 +291,29 @@ mod tests {
             .expect("profile encodes");
         assert_eq!(actual, expected);
         assert_eq!(observer.event_count(), 3);
+    }
+
+    #[test]
+    fn trip_profile_projects_read_line_retirement_as_legacy_terminal_stop() {
+        let mut observer = TripProfileObserver::default();
+        for source_name in [
+            SourceNameClass::ReadStream(3),
+            SourceNameClass::Terminal,
+            SourceNameClass::File,
+        ] {
+            observer.committed(CommandObservation::Input(InputRecord {
+                transition: CommandInputTransition::Retire,
+                reason: CommandInputReason::Source,
+                source_name: Some(source_name),
+                level: 1,
+                position: 0,
+            }));
+        }
+
+        assert_eq!(
+            observer.event_count(),
+            2,
+            "the TeX82 TRIP profile projects only §360 read-line returns; ordinary file retirement stays invisible"
+        );
     }
 }

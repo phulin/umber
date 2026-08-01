@@ -60,6 +60,22 @@ enum PhaseCapture {
 }
 
 impl PhaseCapture {
+    fn command(&self, fixture_name: &str, phase: &str, oracle: &[u8]) -> Vec<u8> {
+        if fixture_name == "trip"
+            && phase == "format-loaded"
+            && let Self::Live(capture) = self
+        {
+            let mut observer = parity_harness::TripProfileObserver::default();
+            for observation in capture.observations.iter().cloned() {
+                observer.committed(observation);
+            }
+            return observer
+                .canonical_json_lines(oracle)
+                .expect("TRIP profile observations translate");
+        }
+        command_stream_for_fixture_phase(fixture_name, phase, self.streams(oracle))
+    }
+
     fn streams(&self, oracle: &[u8]) -> tex_command_stream::LiveSessionStreams {
         match self {
             Self::Live(capture) => capture.streams(oracle),
@@ -1445,11 +1461,7 @@ fn compare_trip_phase(
     let actual_initialization = (phase == "format-loaded").then(|| {
         fs::read(artifact_root.join("initex-command.jsonl")).expect("INITEX command artifact")
     });
-    let actual_command = command_stream_for_fixture_phase(
-        fixture_name,
-        phase,
-        run.capture.streams(&expected_command),
-    );
+    let actual_command = run.capture.command(fixture_name, phase, &expected_command);
     let actual_geometry = run.capture.geometry(&expected_geometry);
     fs::write(
         artifact_root.join(format!("{phase}-command.jsonl")),
