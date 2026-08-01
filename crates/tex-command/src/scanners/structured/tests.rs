@@ -3125,6 +3125,40 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     assert_eq!((delimiter.code, delimiter.recovered), (0, true));
 }
 
+#[test]
+fn register_definition_uses_the_profile_register_bound() {
+    fn scan(profile: crate::CommandProfile, index: &str) -> (u16, String) {
+        let mut command = CommandState::new(profile);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let target = universe.intern("alias").symbol();
+        push(
+            &mut command,
+            [vec![Token::Cs(target)], text_tokens(&format!("={index}"))].concat(),
+        );
+        let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .scan_register_definition(false)
+            .expect("register definition scans");
+        (definition.index, diagnostic_text(&universe))
+    }
+
+    // TeX82 §1224 retains its eight-bit bound, but e-TeX 2.6 etex.ch
+    // [49.1224] replaces that operand scan with `scan_register_num`.
+    let (tex82, tex82_diagnostic) = scan(crate::CommandProfile::TEX82, "2002");
+    assert_eq!(tex82, 0);
+    assert!(tex82_diagnostic.contains("Bad register code (2002)"));
+
+    for profile in [
+        crate::CommandProfile::ETEX26,
+        crate::CommandProfile::PDFTEX14027,
+    ] {
+        let (extended, diagnostic) = scan(profile, "2002");
+        assert_eq!(extended, 2002);
+        assert!(diagnostic.is_empty(), "{diagnostic}");
+    }
+}
+
 /// TeX82 §435's `scan_four_bit_int` is §§1272--1275's `in_stream` selector
 /// scan, and only that: `\\openin`/`\\closein` see `cur_val=0` after an
 /// invalid selector, while `int_error` retains the original value and the

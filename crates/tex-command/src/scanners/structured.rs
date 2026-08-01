@@ -1050,10 +1050,16 @@ impl CommandProcessor<'_> {
             }),
         );
         let _ = self.scan_optional_equals()?;
-        Ok(ScannedRegisterDefinition {
-            target,
-            index: self.scan_eight_bit_register_index()?,
-        })
+        // TeX82 §1224 uses `scan_eight_bit_int`, while e-TeX 2.6
+        // etex.ch [49.1224] replaces that scan with `scan_register_num` so
+        // sparse register shorthands may address 0..=32767. pdfTeX inherits
+        // the same e-TeX register extension.
+        let index = if self.command.profile().capabilities().supports_etex() {
+            self.scan_extended_register_index()?
+        } else {
+            self.scan_eight_bit_register_index()?
+        };
+        Ok(ScannedRegisterDefinition { target, index })
     }
 
     /// Scans the unexpandable pdfTeX graphics whatsit family.
