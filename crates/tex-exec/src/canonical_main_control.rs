@@ -12088,7 +12088,7 @@ fn apply_scanned_step(
             // the live scan, where §82 could still show the character that
             // caused them; installing is all that is left here.
             if patterns {
-                crate::assignments::apply_scanned_patterns(stores, pattern_specs);
+                crate::assignments::apply_scanned_patterns(stores, pattern_specs)?;
             } else {
                 crate::assignments::apply_scanned_hyphenation_exceptions(stores, words);
             }

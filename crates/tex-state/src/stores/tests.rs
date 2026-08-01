@@ -556,10 +556,12 @@ fn semantic_hash_only_walks_hyphenation_after_root_changes() {
         "the first framed projection computes its discardable fingerprint"
     );
 
-    stores.add_hyphenation_pattern(PatternSpec {
-        letters: "alpha".chars().collect(),
-        values: vec![0, 1, 0, 0, 0, 0],
-    });
+    stores
+        .add_hyphenation_pattern(PatternSpec {
+            letters: "alpha".chars().collect(),
+            values: vec![0, 1, 0, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
     let mut with_pattern = stores.checkpoint();
     let _ = stores.state_hash_slice(&initial_cursor, &mut with_pattern);
     assert_eq!(

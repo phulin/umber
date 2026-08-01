@@ -204,10 +204,12 @@ fn hyphenation_state_rolls_back_with_snapshots() {
         word: "after".to_owned(),
         positions: vec![3],
     });
-    universe.add_hyphenation_pattern(PatternSpec {
-        letters: "after".chars().collect(),
-        values: vec![0, 0, 1, 0, 0, 0],
-    });
+    universe
+        .add_hyphenation_pattern(PatternSpec {
+            letters: "after".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
 
     assert_eq!(universe.hyphen_positions("after", 1, 1), vec![3]);
     universe.rollback(&snapshot);

@@ -43,6 +43,34 @@ fn patterns_and_exceptions_drive_word_hyphenation() {
 }
 
 #[test]
+fn patterns_report_deterministic_pattern_memory_exhaustion() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.set_hyphenation_trie_capacity(3);
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\patterns{a1b a1c}\\end"));
+
+    let error = Executor::new()
+        .run(&mut input, &mut stores)
+        .expect_err("the second pattern exceeds the injected trie capacity");
+
+    assert_eq!(
+        error.as_fatal(),
+        Some(tex_command::FatalError::overflow("pattern memory", 3))
+    );
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "ab"),
+        "a-b",
+        "the pattern which exactly filled capacity remains installed"
+    );
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "ac"),
+        "ac",
+        "the overflowing insertion does not partially mutate the trie"
+    );
+}
+
+#[test]
 fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);

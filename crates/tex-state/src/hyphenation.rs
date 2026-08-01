@@ -7,6 +7,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+/// pdfTeX's default maximum number of nodes in the hyphenation pattern trie.
+pub const PDFTEX_TRIE_SIZE: usize = 1_100_000;
+
+const fn default_trie_capacity() -> usize {
+    PDFTEX_TRIE_SIZE
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HyphenationCapacityError {
+    pub capacity: usize,
+}
+
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 pub struct HyphenationTable {
     languages: BTreeMap<u8, LanguageHyphenation>,
@@ -21,6 +33,9 @@ pub struct HyphenationTable {
     patterns_open: bool,
     #[serde(skip)]
     dependency_fingerprints: OnceLock<BTreeMap<(u8, u8), u64>>,
+    /// Runtime `trie_size`. This is configuration, not format-image state.
+    #[serde(skip, default = "default_trie_capacity")]
+    trie_capacity: usize,
 }
 
 impl PartialEq for HyphenationTable {
@@ -28,6 +43,7 @@ impl PartialEq for HyphenationTable {
         self.languages == other.languages
             && self.hyphen_codes == other.hyphen_codes
             && self.patterns_open == other.patterns_open
+            && self.trie_capacity == other.trie_capacity
     }
 }
 
@@ -52,6 +68,23 @@ impl Default for LanguageHyphenation {
 struct TrieNode {
     edges: Vec<(char, usize)>,
     values: Vec<u8>,
+}
+
+impl LanguageHyphenation {
+    fn missing_nodes(&self, letters: &[char]) -> usize {
+        let mut node = 0;
+        for (index, &ch) in letters.iter().enumerate() {
+            let Some(next) = self.nodes[node]
+                .edges
+                .iter()
+                .find_map(|&(edge, next)| (edge == ch).then_some(next))
+            else {
+                return letters.len() - index;
+            };
+            node = next;
+        }
+        0
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,7 +149,16 @@ impl HyphenationTable {
             hyphen_codes: BTreeMap::new(),
             patterns_open: true,
             dependency_fingerprints: OnceLock::new(),
+            trie_capacity: default_trie_capacity(),
         }
+    }
+
+    /// Overrides pdfTeX's runtime `trie_size` configuration.
+    ///
+    /// Keeping this explicit permits deterministic capacity-boundary tests and
+    /// avoids making exhaustion depend on the host allocator.
+    pub fn set_trie_capacity(&mut self, capacity: usize) {
+        self.trie_capacity = capacity;
     }
 
     #[must_use]
@@ -162,15 +204,33 @@ impl HyphenationTable {
         Ok(())
     }
 
-    pub fn add_pattern(&mut self, pattern: PatternSpec) {
-        let _ = self.add_pattern_for_language(0, pattern);
+    pub fn add_pattern(&mut self, pattern: PatternSpec) -> Result<(), HyphenationCapacityError> {
+        self.add_pattern_for_language(0, pattern).map(|_| ())
     }
 
     /// Inserts or replaces a pattern and reports whether the same letter path
     /// already carried pattern values (TeX82 §963's duplicate test).
-    pub fn add_pattern_for_language(&mut self, language: u8, mut pattern: PatternSpec) -> bool {
+    pub fn add_pattern_for_language(
+        &mut self,
+        language: u8,
+        mut pattern: PatternSpec,
+    ) -> Result<bool, HyphenationCapacityError> {
         if pattern.letters.is_empty() {
-            return false;
+            return Ok(false);
+        }
+        let existing_nodes = self
+            .languages
+            .values()
+            .map(|table| table.nodes.len())
+            .sum::<usize>();
+        let missing_nodes = match self.languages.get(&language) {
+            Some(table) => table.missing_nodes(&pattern.letters),
+            None => pattern.letters.len() + 1,
+        };
+        if existing_nodes.saturating_add(missing_nodes) > self.trie_capacity {
+            return Err(HyphenationCapacityError {
+                capacity: self.trie_capacity,
+            });
         }
         self.dependency_fingerprints = OnceLock::new();
         let table = self.languages.entry(language).or_default();
@@ -181,7 +241,7 @@ impl HyphenationTable {
         }
         let duplicate = !table.nodes[node].values.is_empty();
         table.nodes[node].values = pattern.values;
-        duplicate
+        Ok(duplicate)
     }
 
     /// Reports whether a language already has values on this pattern path.

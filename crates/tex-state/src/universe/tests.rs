@@ -679,10 +679,12 @@ fn semantic_format_round_trips_sparse_unicode_code_tables() {
 fn frozen_non_node_sections_are_deterministic_and_keep_mutable_overlays() {
     let mut universe = Universe::new();
     universe.set_catcode('\u{1f642}', Catcode::Active);
-    universe.add_hyphenation_pattern(PatternSpec {
-        letters: "alpha".chars().collect(),
-        values: vec![0, 0, 1, 0, 0, 0],
-    });
+    universe
+        .add_hyphenation_pattern(PatternSpec {
+            letters: "alpha".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
     universe.add_hyphenation_exception(ExceptionSpec {
         word: "hyphen".to_owned(),
         positions: vec![2],
@@ -3354,10 +3356,12 @@ fn exact_snapshots_reuse_immutable_store_projection_across_forks() {
 fn retained_snapshot_restores_exact_component_projections_into_forks() {
     let mut universe = Universe::new();
     universe.set_input_summary(condition_input_summary(0));
-    universe.add_hyphenation_pattern(PatternSpec {
-        letters: "retained".chars().collect(),
-        values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
-    });
+    universe
+        .add_hyphenation_pattern(PatternSpec {
+            letters: "retained".chars().collect(),
+            values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
     let checkpoint = universe.snapshot();
     let substrate = universe.freeze_generation();
     let mut fork = substrate.fork_at(&checkpoint).expect("retained fork");
@@ -3576,10 +3580,12 @@ fn exact_checkpoint_identity_composes_every_future_state_root() {
     assert_change(|universe| universe.set_count(0, 1));
     assert_change(|universe| universe.set_catcode('x', Catcode::Active));
     assert_change(|universe| {
-        universe.add_hyphenation_pattern(PatternSpec {
-            letters: "identity".chars().collect(),
-            values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
-        });
+        universe
+            .add_hyphenation_pattern(PatternSpec {
+                letters: "identity".chars().collect(),
+                values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0],
+            })
+            .expect("pattern fits the default trie capacity");
     });
     assert_change(|universe| universe.set_input_summary(condition_input_summary(1)));
     assert_change(|universe| {
@@ -3806,10 +3812,12 @@ fn nonjournal_state_is_complete_in_hash_cursors() {
 
     let mut first = Universe::new();
     let mut second = Universe::new();
-    first.add_hyphenation_pattern(PatternSpec {
-        letters: "alpha".chars().collect(),
-        values: vec![0, 1, 0, 0, 0, 0],
-    });
+    first
+        .add_hyphenation_pattern(PatternSpec {
+            letters: "alpha".chars().collect(),
+            values: vec![0, 1, 0, 0, 0, 0],
+        })
+        .expect("pattern fits the default trie capacity");
     second.add_hyphenation_exception(ExceptionSpec {
         word: "alpha".to_owned(),
         positions: vec![2],
@@ -3835,10 +3843,12 @@ fn nonjournal_state_is_complete_in_hash_cursors() {
 fn projection_cache_clearing_preserves_named_boundary_hashes() {
     fn prepare(universe: &mut Universe) {
         universe.set_catcode('~', Catcode::Active);
-        universe.add_hyphenation_pattern(PatternSpec {
-            letters: "cache".chars().collect(),
-            values: vec![0, 0, 1, 0, 0, 0],
-        });
+        universe
+            .add_hyphenation_pattern(PatternSpec {
+                letters: "cache".chars().collect(),
+                values: vec![0, 0, 1, 0, 0, 0],
+            })
+            .expect("pattern fits the default trie capacity");
         universe
             .world_mut()
             .open_out(StreamSlot::new(3), "cache.aux");
@@ -3936,10 +3946,12 @@ fn every_component_change_is_cache_clear_differential() {
     assert_change(|universe| universe.set_count(0, 1));
     assert_change(|universe| universe.set_catcode('x', Catcode::Active));
     assert_change(|universe| {
-        universe.add_hyphenation_pattern(PatternSpec {
-            letters: "component".chars().collect(),
-            values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
-        });
+        universe
+            .add_hyphenation_pattern(PatternSpec {
+                letters: "component".chars().collect(),
+                values: vec![0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            })
+            .expect("pattern fits the default trie capacity");
     });
     assert_change(|universe| {
         universe

@@ -543,16 +543,24 @@ impl Stores {
         self.code_tables.set_delcode_global(ch, value);
     }
 
-    pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
-        let _ = self.add_hyphenation_pattern_for_language(0, pattern);
+    pub fn add_hyphenation_pattern(
+        &mut self,
+        pattern: PatternSpec,
+    ) -> Result<(), crate::hyphenation::HyphenationCapacityError> {
+        self.add_hyphenation_pattern_for_language(0, pattern)
+            .map(|_| ())
     }
 
     pub fn add_hyphenation_pattern_for_language(
         &mut self,
         language: u8,
         pattern: PatternSpec,
-    ) -> bool {
+    ) -> Result<bool, crate::hyphenation::HyphenationCapacityError> {
         Arc::make_mut(&mut self.hyphenation).add_pattern_for_language(language, pattern)
+    }
+
+    pub fn set_hyphenation_trie_capacity(&mut self, capacity: usize) {
+        Arc::make_mut(&mut self.hyphenation).set_trie_capacity(capacity);
     }
 
     #[must_use]

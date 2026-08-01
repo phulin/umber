@@ -19,7 +19,7 @@ pub(super) fn execute_patterns(
         .iter()
         .map(|word| parse_pattern_word(stores, word).0)
         .collect();
-    let diagnostics = apply_patterns(stores, patterns);
+    let diagnostics = apply_patterns(stores, patterns).map_err(pattern_capacity_error)?;
     report_apply_diagnostics(stores, diagnostics)?;
     Ok(())
 }
@@ -73,26 +73,30 @@ pub(crate) fn report_apply_diagnostics(
 pub(crate) fn apply_patterns(
     stores: &mut Universe,
     patterns: Vec<PatternSpec>,
-) -> Vec<HyphenationApplyDiagnostic> {
+) -> Result<Vec<HyphenationApplyDiagnostic>, tex_state::hyphenation::HyphenationCapacityError> {
     install_patterns(stores, patterns, true)
 }
 
 /// Installs patterns whose §963 duplicate diagnostics were already reported
 /// by the canonical live scanner.
-pub(crate) fn apply_scanned_patterns(stores: &mut Universe, patterns: Vec<PatternSpec>) {
-    let diagnostics = install_patterns(stores, patterns, false);
+pub(crate) fn apply_scanned_patterns(
+    stores: &mut Universe,
+    patterns: Vec<PatternSpec>,
+) -> Result<(), ExecError> {
+    let diagnostics = install_patterns(stores, patterns, false).map_err(pattern_capacity_error)?;
     debug_assert!(diagnostics.is_empty());
+    Ok(())
 }
 
 fn install_patterns(
     stores: &mut Universe,
     patterns: Vec<PatternSpec>,
     collect_duplicate_diagnostics: bool,
-) -> Vec<HyphenationApplyDiagnostic> {
+) -> Result<Vec<HyphenationApplyDiagnostic>, tex_state::hyphenation::HyphenationCapacityError> {
     let language = current_language(stores);
     let mut diagnostics = Vec::new();
     for pattern in patterns {
-        if stores.add_hyphenation_pattern_for_language(language, pattern)
+        if stores.add_hyphenation_pattern_for_language(language, pattern)?
             && collect_duplicate_diagnostics
         {
             diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
@@ -107,7 +111,14 @@ fn install_patterns(
         });
         stores.save_hyphenation_codes(language, codes.collect::<Vec<_>>());
     }
-    diagnostics
+    Ok(diagnostics)
+}
+
+fn pattern_capacity_error(error: tex_state::hyphenation::HyphenationCapacityError) -> ExecError {
+    ExecError::Fatal(tex_command::FatalError::overflow(
+        "pattern memory",
+        i32::try_from(error.capacity).unwrap_or(i32::MAX),
+    ))
 }
 
 /// TeX82's analogous `new_hyph_exceptions` word application for

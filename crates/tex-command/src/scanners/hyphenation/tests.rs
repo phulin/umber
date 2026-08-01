@@ -53,6 +53,34 @@ fn words(scanned: &ScannedHyphenationData) -> Vec<String> {
         .collect()
 }
 
+#[test]
+fn patterns_keep_exactly_pdftexs_first_63_characters() {
+    for supplied in [63, 64] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe();
+        let mut capabilities = CommandHostCapabilities::default();
+        push(&mut command, &format!("{{{}1}}", "a".repeat(supplied)));
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+
+        let scanned = processor
+            .scan_hyphenation_data(HyphenationDataKind::Patterns)
+            .expect("pattern group scans");
+        let pattern = scanned.patterns.first().expect("one pattern");
+        assert_eq!(pattern.letters, vec!['a'; 63], "supplied={supplied}");
+        assert_eq!(pattern.values.len(), 64, "supplied={supplied}");
+        assert_eq!(
+            pattern.values[63], 0,
+            "once k reaches 63, subsequent digits are discarded too"
+        );
+    }
+}
+
 /// TeX82 §473's `scan_toks` is the only routine that sets
 /// `scanner_status:=absorbing`, and neither §934's `new_hyph_exceptions` nor
 /// §960's `new_patterns` calls it: both run a plain `get_x_token` loop after

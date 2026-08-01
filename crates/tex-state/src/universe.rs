@@ -4274,23 +4274,32 @@ impl Universe {
         self.mark_code_changed(DependencyCodeTable::Delcode, ch);
     }
 
-    pub fn add_hyphenation_pattern(&mut self, pattern: PatternSpec) {
-        self.stores.add_hyphenation_pattern(pattern);
+    pub fn add_hyphenation_pattern(
+        &mut self,
+        pattern: PatternSpec,
+    ) -> Result<(), crate::hyphenation::HyphenationCapacityError> {
+        self.stores.add_hyphenation_pattern(pattern)?;
         self.dependencies
             .mark_changed(DependencyKey::HyphenationPatterns(0));
+        Ok(())
     }
 
     pub fn add_hyphenation_pattern_for_language(
         &mut self,
         language: u8,
         pattern: PatternSpec,
-    ) -> bool {
+    ) -> Result<bool, crate::hyphenation::HyphenationCapacityError> {
         let duplicate = self
             .stores
-            .add_hyphenation_pattern_for_language(language, pattern);
+            .add_hyphenation_pattern_for_language(language, pattern)?;
         self.dependencies
             .mark_changed(DependencyKey::HyphenationPatterns(language));
-        duplicate
+        Ok(duplicate)
+    }
+
+    /// Overrides pdfTeX's runtime `trie_size` before loading patterns.
+    pub fn set_hyphenation_trie_capacity(&mut self, capacity: usize) {
+        self.stores.set_hyphenation_trie_capacity(capacity);
     }
 
     #[must_use]

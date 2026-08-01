@@ -5890,13 +5890,17 @@ fn pattern_duplicate_paths_are_partitioned_by_language() {
 #[test]
 fn committed_and_pending_pattern_paths_share_replacement_order() {
     let mut stores = Universe::new_with_plain_catcodes();
-    assert!(!stores.add_hyphenation_pattern_for_language(
-        0,
-        PatternSpec {
-            letters: vec!['b', 'b'],
-            values: vec![0, 1, 0],
-        },
-    ));
+    assert!(
+        !stores
+            .add_hyphenation_pattern_for_language(
+                0,
+                PatternSpec {
+                    letters: vec!['b', 'b'],
+                    values: vec![0, 1, 0],
+                },
+            )
+            .expect("pattern fits the default trie capacity")
+    );
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
