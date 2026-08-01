@@ -2232,7 +2232,22 @@ fn thread_objects(
     decimal_digits: i32,
     next_object: &mut u32,
 ) -> Result<ThreadOutput, PdfBuildError> {
+    let mut thread_beads = BTreeMap::<u32, BTreeSet<(u32, u32)>>::new();
+    for thread in thread_records {
+        if thread_beads.contains_key(&thread.object()) {
+            return Err(PdfBuildError::DuplicateThreadObject(thread.object()));
+        }
+        thread_beads.insert(
+            thread.object(),
+            thread
+                .beads()
+                .iter()
+                .map(|bead| (bead.bead_object(), bead.rectangle_object()))
+                .collect(),
+        );
+    }
     let mut beads = Vec::<ShippedBead>::new();
+    let mut shipped_beads = BTreeSet::new();
     let mut page_beads = vec![Vec::new(); pages.len()];
     for (page_index, (page, record)) in pages.iter().zip(page_records).enumerate() {
         let mut boxes = BTreeMap::<u32, PositionedBox>::new();
@@ -2281,6 +2296,25 @@ fn thread_objects(
                 }
                 PositionedEvent::PdfThread(positioned) => {
                     let marker = &positioned.marker;
+                    let thread = object_id(marker.thread_object)?;
+                    let bead = object_id(marker.bead_object)?;
+                    let rectangle = object_id(marker.rectangle_object)?;
+                    let Some(owned_beads) = thread_beads.get(&marker.thread_object) else {
+                        return Err(PdfBuildError::MissingThreadRecord(marker.thread_object));
+                    };
+                    if !owned_beads.contains(&(marker.bead_object, marker.rectangle_object)) {
+                        return Err(PdfBuildError::ThreadBeadOwnership {
+                            thread: marker.thread_object,
+                            bead: marker.bead_object,
+                            rectangle: marker.rectangle_object,
+                        });
+                    }
+                    if !shipped_beads.insert(marker.bead_object) {
+                        return Err(PdfBuildError::DuplicateThreadBead(marker.bead_object));
+                    }
+                    let positioned_box = boxes.get(&positioned.containing_box).copied().ok_or(
+                        PdfBuildError::MissingThreadContainingBox(positioned.containing_box),
+                    )?;
                     let dimensions = PdfAnnotationDimensions {
                         width: marker.width,
                         height: marker.height,
@@ -2289,7 +2323,7 @@ fn thread_objects(
                     let rect = marker_rect(
                         positioned.x,
                         positioned.y,
-                        boxes[&positioned.containing_box],
+                        positioned_box,
                         dimensions,
                         marker.margin,
                     )?;
@@ -2299,12 +2333,11 @@ fn thread_objects(
                             number.to_string().into_bytes()
                         }
                     };
-                    let bead = object_id(marker.bead_object)?;
                     page_beads[page_index].push(bead);
                     beads.push(ShippedBead {
-                        thread: object_id(marker.thread_object)?,
+                        thread,
                         bead,
-                        rectangle: object_id(marker.rectangle_object)?,
+                        rectangle,
                         page: object_id(record.page_object())?,
                         rect,
                         attributes: marker.attributes.clone(),
@@ -2312,20 +2345,25 @@ fn thread_objects(
                         margin: marker.margin,
                     });
                     running_bead = positioned.running.then_some(beads.len() - 1);
-                    running_parent_depth = positioned
-                        .running
-                        .then(|| boxes[&positioned.containing_box].depth);
+                    running_parent_depth = positioned.running.then_some(positioned_box.depth);
                 }
                 PositionedEvent::PdfEndThread { y, .. } => {
-                    if let Some(index) = running_bead.take() {
-                        beads[index].rect.bottom = y
-                            .checked_add(beads[index].margin)
-                            .ok_or(PdfBuildError::PageGeometryOverflow)?;
-                    }
+                    let index = running_bead
+                        .take()
+                        .ok_or(PdfBuildError::UnmatchedThreadEnd { page: page_index })?;
+                    beads[index].rect.bottom = y
+                        .checked_add(beads[index].margin)
+                        .ok_or(PdfBuildError::PageGeometryOverflow)?;
                     running_parent_depth = None;
                 }
                 _ => {}
             }
+        }
+        if let Some(index) = running_bead {
+            return Err(PdfBuildError::UnfinishedThread {
+                page: page_index,
+                thread: beads[index].thread.get(),
+            });
         }
     }
     if let Some((page, page_record)) = pages.first().zip(page_records.first()) {
@@ -4450,6 +4488,22 @@ pub enum PdfBuildError {
         object: u32,
         missing: usize,
     },
+    DuplicateThreadObject(u32),
+    MissingThreadRecord(u32),
+    ThreadBeadOwnership {
+        thread: u32,
+        bead: u32,
+        rectangle: u32,
+    },
+    DuplicateThreadBead(u32),
+    MissingThreadContainingBox(u32),
+    UnmatchedThreadEnd {
+        page: usize,
+    },
+    UnfinishedThread {
+        page: usize,
+        thread: u32,
+    },
     ReferencedRawObjectUninitialized(u32),
     ReferencedFormNotFound(u32),
     MissingFormArtifact(u32),
@@ -4577,6 +4631,41 @@ impl std::fmt::Display for PdfBuildError {
             Self::OutlineCountIncomplete { object, missing } => write!(
                 f,
                 "PDF outline item {object} is missing {missing} declared child entries"
+            ),
+            Self::DuplicateThreadObject(object) => {
+                write!(f, "PDF thread object {object} has duplicate ledger entries")
+            }
+            Self::MissingThreadRecord(object) => {
+                write!(
+                    f,
+                    "shipped article thread references missing object {object}"
+                )
+            }
+            Self::ThreadBeadOwnership {
+                thread,
+                bead,
+                rectangle,
+            } => write!(
+                f,
+                "shipped article bead {bead} with rectangle {rectangle} is not owned by thread {thread}"
+            ),
+            Self::DuplicateThreadBead(bead) => {
+                write!(f, "article bead object {bead} was shipped more than once")
+            }
+            Self::MissingThreadContainingBox(box_id) => {
+                write!(f, "shipped article bead references missing box {box_id}")
+            }
+            Self::UnmatchedThreadEnd { page } => {
+                write!(
+                    f,
+                    "page {} has \\pdfendthread without a running thread",
+                    page + 1
+                )
+            }
+            Self::UnfinishedThread { page, thread } => write!(
+                f,
+                "page {} ends with PDF thread object {thread} still running",
+                page + 1
             ),
             Self::ReferencedRawObjectUninitialized(id) => {
                 write!(
@@ -9022,6 +9111,110 @@ mod tests {
         assert_eq!(stores.pdf_threads().len(), 2);
         assert!(stores.pdf_threads()[0].beads().is_empty());
         assert_eq!(stores.pdf_threads()[1].beads().len(), 1);
+    }
+
+    fn assert_thread_finalization_failure(source: &str, expected: &str) {
+        let (mut stores, run) = run(source);
+        let commits_before = stores.world().artifact_commits().to_vec();
+        let artifact_before = run.committed_artifacts[0].bytes().to_vec();
+
+        let first = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("malformed thread lifecycle must be fatal");
+        let next_after_first = stores.pdf_next_object_id();
+        let second = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect_err("malformed thread lifecycle retry must remain fatal");
+
+        assert_eq!(first.to_string(), expected);
+        assert_eq!(second.to_string(), expected);
+        assert_eq!(stores.pdf_next_object_id(), next_after_first);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+        assert_eq!(run.committed_artifacts[0].bytes(), artifact_before);
+    }
+
+    #[test]
+    fn unmatched_and_unfinished_thread_lifecycles_are_exact_retry_stable() {
+        assert_thread_finalization_failure(
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfendthread}\\end",
+            "page 1 has \\pdfendthread without a running thread",
+        );
+        assert_thread_finalization_failure(
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{open}}\\end",
+            "page 1 ends with PDF thread object 1 still running",
+        );
+    }
+
+    #[test]
+    fn repeated_thread_identifier_keeps_distinct_beads_in_raw_and_normalized_pdf() {
+        let (mut stores, run) = run(concat!(
+            "\\pdfoutput=1\\pdfcompresslevel=0\\pdfobjcompresslevel=0",
+            "\\shipout\\vbox{\\pdfthread name{same}",
+            "\\vskip1pt\\pdfthread name{same}}\\end",
+        ));
+        assert_eq!(stores.pdf_threads().len(), 1);
+        assert_eq!(stores.pdf_threads()[0].beads().len(), 2);
+
+        let pdf = pdf_from_committed_artifacts(&mut stores, &run.committed_artifacts)
+            .expect("duplicate identifier shares one valid thread");
+        let normalized =
+            test_support::pdf::normalize_structure(&pdf).expect("thread PDF normalizes");
+        assert!(normalized.contains("threads "), "{normalized}");
+        assert!(normalized.contains("beads ["), "{normalized}");
+        assert!(normalized.contains("/Title <73616d65>"), "{normalized}");
+        assert!(
+            pdf.windows(b"/Threads".len())
+                .any(|window| window == b"/Threads")
+        );
+        assert!(pdf.windows(b"/B[".len()).any(|window| window == b"/B["));
+    }
+
+    #[test]
+    fn malformed_bead_identifiers_fail_exactly_without_mutating_the_ledger() {
+        let (stores, run) =
+            run("\\pdfoutput=1\\shipout\\vbox{\\pdfthread width1pt name{owned}}\\end");
+        let pages = positioned_pages(&stores, &run.committed_artifacts, stores.pdf_pages())
+            .expect("position valid bead fixture");
+        let next_before = stores.pdf_next_object_id();
+        let commits_before = stores.world().artifact_commits().to_vec();
+
+        for (replacement, expected) in [
+            (0, "invalid PDF object id 0".to_owned()),
+            (
+                next_before,
+                format!(
+                    "shipped article bead {} with rectangle {next_before} is not owned by thread {}",
+                    stores.pdf_threads()[0].beads()[0].bead_object(),
+                    stores.pdf_threads()[0].object()
+                ),
+            ),
+        ] {
+            let mut malformed = pages.clone();
+            let marker = malformed[0]
+                .events
+                .iter_mut()
+                .find_map(|event| match event {
+                    PositionedEvent::PdfThread(positioned) => Some(&mut positioned.marker),
+                    _ => None,
+                })
+                .expect("thread marker");
+            marker.rectangle_object = replacement;
+
+            for _ in 0..2 {
+                let mut next = next_before;
+                let error = thread_objects(
+                    stores.pdf_threads(),
+                    &malformed,
+                    stores.pdf_pages(),
+                    3,
+                    &mut next,
+                )
+                .err()
+                .expect("malformed bead rectangle must fail");
+                assert_eq!(error.to_string(), expected);
+                assert_eq!(next, next_before);
+            }
+        }
+        assert_eq!(stores.pdf_next_object_id(), next_before);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
     }
 
     #[test]

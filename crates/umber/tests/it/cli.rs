@@ -1107,6 +1107,47 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn unfinished_pdf_thread_does_not_replace_the_requested_output() {
+    let temp_dir = tempfile::tempdir().expect("create thread-finalization output temp dir");
+    let source = temp_dir.path().join("thread-finalization.tex");
+    let pdf = temp_dir.path().join("thread-finalization.pdf");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{open}}\\end\n",
+    )
+    .expect("write thread-finalization fixture");
+    fs::write(&pdf, b"existing output\n").expect("seed existing PDF path");
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .arg("run")
+            .arg("--pdftex")
+            .arg("--pdf")
+            .arg(&pdf)
+            .arg(&source)
+            .output()
+            .expect("run thread-finalization fixture")
+    };
+    let first = run();
+    let second = run();
+
+    assert!(!first.status.success());
+    assert!(!second.status.success());
+    assert_eq!(first.stderr, second.stderr, "fatal diagnostics are stable");
+    assert_eq!(
+        String::from_utf8(first.stderr).expect("stderr is utf-8"),
+        "umber: page 1 ends with PDF thread object 1 still running\n"
+    );
+    assert_eq!(
+        fs::read(&pdf).expect("read preserved output"),
+        b"existing output\n",
+        "fatal thread finalization must not replace the requested PDF"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn unavailable_delayed_pdf_image_does_not_replace_the_requested_output() {
     let temp_dir = tempfile::tempdir().expect("create missing-image output temp dir");
     let source = temp_dir.path().join("missing-image.tex");

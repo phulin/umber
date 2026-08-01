@@ -1034,6 +1034,25 @@ mod tests {
     }
 
     #[test]
+    fn thread_identifier_is_required_before_any_ledger_or_artifact_publication() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let error = crate::run_memory_with_stores(
+            "\\pdfoutput=1\\shipout\\hbox{\\pdfthread width1pt}\\end",
+            &mut stores,
+        )
+        .expect_err("missing thread identifier is fatal");
+
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext4): thread identifier type missing"
+        );
+        assert!(stores.pdf_threads().is_empty());
+        assert!(stores.pdf_pages().is_empty());
+        assert!(stores.world().artifact_commits().is_empty());
+    }
+
+    #[test]
     fn pdf_destination_duplicate_scanned_after_ship_uses_current_suppression() {
         const WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (num7) has been already used, duplicate ignored\n";
         for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
