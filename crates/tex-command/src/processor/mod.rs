@@ -98,6 +98,7 @@ pub struct CommandProcessor<'a> {
     /// e-TeX expression result remains pointer-identical to its source.
     pub(crate) scanned_glue_identity: Option<tex_state::ids::GlueId>,
     pub(crate) scanned_glue_skip_index: Option<u16>,
+    command_trace_mode_prefix: Option<String>,
 }
 
 impl CommandProcessor<'_> {
@@ -161,15 +162,23 @@ impl<'a> CommandProcessor<'a> {
     ///
     /// This must run before operand scanning because restricted scanners can
     /// report recoverable errors of their own before the command completes.
-    pub fn print_command_trace(&mut self, mode_prefix: Option<&str>, command: PrintCommand) {
+    pub fn print_command_trace(&mut self, command: PrintCommand) {
         let command = print_cmd_chr_text(&self.state, command);
+        let mode_prefix = self.command_trace_mode_prefix.take();
         let mut output = self.state.begin_diagnostic();
         output.print_nl("{");
-        if let Some(mode_prefix) = mode_prefix {
+        if let Some(mode_prefix) = mode_prefix.as_deref() {
             output.print(mode_prefix).print(": ");
         }
         output.print(&command).print_char('}');
         output.end(false);
+    }
+
+    /// Supplies §299's mode prefix for the next command trace in this
+    /// processor episode. Expansion may consume it before main control sees
+    /// the resulting unexpandable command.
+    pub fn set_command_trace_mode_prefix(&mut self, mode_prefix: Option<String>) {
+        self.command_trace_mode_prefix = mode_prefix;
     }
 
     /// Borrows every ownership domain needed by one command operation.
@@ -199,6 +208,7 @@ impl<'a> CommandProcessor<'a> {
             expression_depth: 0,
             scanned_glue_identity: None,
             scanned_glue_skip_index: None,
+            command_trace_mode_prefix: None,
         }
     }
 

@@ -5080,6 +5080,7 @@ fn scan_noalign_body(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
+    prepare_command_trace(processor, mode, *shown_mode);
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
@@ -5124,6 +5125,7 @@ fn scan_alignment_delivery_step(
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<ScannedStep, ExecError> {
+    prepare_command_trace(processor, mode, *shown_mode);
     match processor
         .get_x_alignment_delivery(main_loop_active)
         .map_err(command_error)?
@@ -5238,6 +5240,7 @@ fn scan_step(
     // `get_x_token`; §1034's inner character loop instead re-enters at
     // §1038's `main_loop_lookahead`, whose bare `get_next` is what keeps a
     // run of adjacent characters from being delivered through expansion.
+    prepare_command_trace(processor, mode, *shown_mode);
     let delivery = if main_loop_active {
         processor.main_loop_lookahead()
     } else {
@@ -5472,13 +5475,18 @@ fn report_command_trace(
     shown_mode: &mut Option<Mode>,
 ) {
     if processor.int_param(IntParam::TRACING_COMMANDS) > 0 {
-        let mode_prefix = (*shown_mode != Some(mode)).then(|| mode_text_for_command_trace(mode));
         *shown_mode = Some(mode);
-        processor.print_command_trace(
-            mode_prefix,
-            tex_command::PrintCommand::from_current(command),
-        );
+        processor.print_command_trace(tex_command::PrintCommand::from_current(command));
     }
+}
+
+fn prepare_command_trace(
+    processor: &mut CommandProcessor<'_>,
+    mode: Mode,
+    shown_mode: Option<Mode>,
+) {
+    let mode_prefix = (shown_mode != Some(mode)).then(|| mode_text_for_command_trace(mode).into());
+    processor.set_command_trace_mode_prefix(mode_prefix);
 }
 
 fn leader_kind(primitive: UnexpandablePrimitive) -> GlueKind {

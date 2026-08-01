@@ -559,6 +559,22 @@ impl CommandProcessor<'_> {
             .expansion
             .cumulative_expansions
             .saturating_add(1);
+        // TeX82 §367 traces non-macro expandable commands inside `expand`,
+        // before the primitive consumes operands or changes the input stack.
+        // Macros and `end_template` take §366's other two branches and do not
+        // cross this diagnostic boundary.
+        if self
+            .state
+            .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
+            > 1
+            && matches!(
+                command.meaning(),
+                Meaning::ExpandablePrimitive(primitive)
+                    if primitive != ExpandablePrimitive::EndTemplate
+            )
+        {
+            self.print_command_trace(crate::PrintCommand::from_current(&command));
+        }
         match command.meaning() {
             Meaning::ExpandablePrimitive(primitive)
                 if crate::conditionals::ConditionalKind::from_primitive(primitive).is_some() =>

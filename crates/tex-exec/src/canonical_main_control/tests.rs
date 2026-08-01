@@ -82,6 +82,29 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
 }
 
 #[test]
+fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
+    // TeX82 §§299/366--367/1030: non-macro expansion traces inside `expand`,
+    // then the settled unexpandable command traces at `reswitch`. The first
+    // trace consumes the mode prefix; the second must not repeat it.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=2\\tracingonline=1\\romannumeral0\\relax\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    assert!(
+        log.contains("{vertical mode: \\tracingonline}\n{\\romannumeral}\n{\\relax}\n{\\end}"),
+        "terminal={terminal:?} log={log:?}"
+    );
+    assert!(!terminal.contains("romannumeral"), "{terminal:?}");
+}
+
+#[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
