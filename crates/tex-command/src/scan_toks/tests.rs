@@ -2416,39 +2416,108 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
 
 #[test]
 fn read_toks_covers_stream_boundaries_and_empty_first_line() {
-    // TeX82 §§480, 482, and 485: all sixteen slots 0..15 are read streams,
-    // and §485 accepts an empty first physical line without treating it as
-    // EOF. Its endline token becomes §351's `\par`; the next `\read` then
-    // consumes the second line while the boundary stream remains open.
-    for stream in [0_u8, 15] {
+    // TeX82 §§480, 482-485: 0 and 15 are the inclusive open-stream
+    // boundaries, while 16 and every negative number clamp to the permanently
+    // closed terminal slot. An empty physical line is input, not EOF: its
+    // endline becomes §351's `\par`, and the next read consumes only `a`.
+    for stream in [0_i32, 15, 16, -1] {
         let mut command = CommandState::default();
+        let outer = ScannerStatus::Absorbing(AbsorbingContext {
+            owner: None,
+            builder: TokenBuilderId(59),
+            warning: ScannerWarning(41),
+        });
+        command.begin_scanner_status(outer.clone());
+        command.alignment.align_state = 73;
         let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
-        let slot = read_stream_at(&mut universe, stream, b"\nedge\n");
+        universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        let slot = u8::try_from(stream)
+            .ok()
+            .filter(|stream| *stream < tex_state::world::STREAM_SLOT_COUNT as u8)
+            .map(|stream| read_stream_at(&mut universe, stream, b"\na\n"));
+        if slot.is_none() {
+            for line in ["", "a"] {
+                universe
+                    .world_mut()
+                    .push_memory_terminal_line(line)
+                    .expect("terminal input registers");
+            }
+        }
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
-        let target = processor.state.intern_control_sequence("line");
-        let par = processor.state.intern_control_sequence("par");
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let target = processor.state.intern_control_sequence("line");
+            let par = processor.state.intern_control_sequence("par");
 
-        let empty = processor
-            .read_toks(i32::from(stream), target, false)
-            .expect("empty first line is a successful read");
-        assert_eq!(processor.state.tokens(empty.token_list()), [Token::Cs(par)]);
-        assert!(!processor.state.read_stream_at_eof(slot));
+            let empty = processor
+                .read_toks(stream, target, false)
+                .expect("empty first line is a successful read");
+            assert_eq!(processor.state.tokens(empty.token_list()), [Token::Cs(par)]);
+            assert_eq!(
+                processor.command.scanner.status(),
+                &outer,
+                "stream {stream}"
+            );
+            assert_eq!(
+                processor.command.scanner.warning(),
+                Some(ScannerWarning(41))
+            );
+            assert_eq!(
+                processor.command.alignment.align_state, 73,
+                "stream {stream}"
+            );
 
-        let edge = processor
-            .read_toks(i32::from(stream), target, false)
-            .expect("second line is independently readable");
-        assert_eq!(read_text(&processor, &edge), "edge ");
-        assert!(!processor.state.read_stream_at_eof(slot));
+            let a = processor
+                .read_toks(stream, target, false)
+                .expect("second line is independently readable");
+            assert_eq!(read_text(&processor, &a), "a ", "stream {stream}");
+            assert_eq!(
+                processor.command.scanner.status(),
+                &outer,
+                "stream {stream}"
+            );
+            assert_eq!(
+                processor.command.scanner.warning(),
+                Some(ScannerWarning(41))
+            );
+            assert_eq!(
+                processor.command.alignment.align_state, 73,
+                "stream {stream}"
+            );
+
+            if let Some(slot) = slot {
+                assert!(!processor.state.read_stream_at_eof(slot));
+            }
+        }
+
+        if slot.is_none() {
+            for slot in 0..tex_state::world::STREAM_SLOT_COUNT as u8 {
+                assert!(
+                    universe
+                        .world()
+                        .stream_bufs()
+                        .read_stream_target(tex_state::world::StreamSlot::new(slot))
+                        .is_none(),
+                    "clamped stream {stream} must not initialize slot {slot}"
+                );
+            }
+        }
+
+        let expected_terminal = match stream {
+            // The prompt precedes the line echoed by the memory terminal.
+            16 => "\n\\line=\n\n\\line=a\n",
+            // §484's negative-stream policy uses an empty prompt, but the
+            // two accepted terminal lines are still echoed exactly once.
+            -1 => "\na\n",
+            _ => "",
+        };
         assert_eq!(
-            processor.command.alignment.align_state,
-            crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+            diagnostic_text(&universe),
+            expected_terminal,
+            "stream {stream}"
         );
-        assert!(matches!(
-            processor.command.scanner.status(),
-            crate::processor::status::ScannerStatus::Normal
-        ));
     }
 }
 
