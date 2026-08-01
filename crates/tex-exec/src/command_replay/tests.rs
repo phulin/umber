@@ -11895,23 +11895,56 @@ fn box_children(universe: &Universe, register: u16) -> Vec<Node> {
 
 #[test]
 fn canonical_text_material_space_factor_and_ligature_matrix() {
+    // TeX82 §1033 starts each character pass with no pending ligature or
+    // boundary suppression. Section 1034 then leaves a zero sfcode alone,
+    // accepts low and ordinary values directly, clamps a high sfcode to 1000
+    // after a low factor, and otherwise accepts the high value. The following
+    // space must use that result before the next text run is appended.
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
-    register_source(&mut control, br"\font\f=cmr10\f\setbox0=\hbox{A a. A}\end");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \sfcode41=0 \sfcode108=500 \sfcode33=3000
+           \setbox0=\hbox{\f A fi B}
+           \setbox1=\hbox{\f\spacefactor=1200) X}
+           \setbox2=\hbox{\f\spacefactor=1200l X}
+           \setbox3=\hbox{\f\spacefactor=500! X}
+           \setbox4=\hbox{\f\spacefactor=1000! X}\end",
+    );
     run_to_end(&mut control, &mut universe);
-    let nodes = box_children(&universe, 0);
+
+    let ordered = box_children(&universe, 0);
     assert!(
-        nodes
-            .iter()
-            .filter(|node| matches!(node, Node::Char { .. } | Node::Lig { .. }))
-            .count()
-            >= 4
+        matches!(
+            ordered.as_slice(),
+            [
+                Node::Char { ch: 'A', .. },
+                Node::Glue { .. },
+                Node::Lig { ch: '\u{c}', orig, .. },
+                Node::Glue { .. },
+                Node::Char { ch: 'B', .. },
+            ] if orig.as_slice() == ['f', 'i']
+        ),
+        "text, space glue, and ligature nodes retain canonical order: {ordered:?}"
     );
-    assert!(
-        nodes.iter().any(|node| matches!(node, Node::Glue { .. })),
-        "spaces append glue"
-    );
+
+    let space = |register| {
+        let nodes = box_children(&universe, register);
+        let [_, Node::Glue { spec, .. }, _] = nodes.as_slice() else {
+            panic!("box {register} must contain character, glue, character: {nodes:?}");
+        };
+        universe.glue(*spec)
+    };
+    let components = |register| {
+        let spec = space(register);
+        (spec.width.raw(), spec.stretch.raw(), spec.shrink.raw())
+    };
+
+    assert_eq!(components(1), (218_453, 131_071, 60_681));
+    assert_eq!(components(2), (218_453, 54_613, 145_636));
+    assert_eq!(components(3), (218_453, 109_226, 72_818));
+    assert_eq!(components(4), (291_271, 327_678, 24_272));
 }
 
 #[test]
