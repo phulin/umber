@@ -73,46 +73,82 @@ fn tex82_compatibility_rejects_sparse_register_numbers() {
 }
 
 #[test]
-fn etex_sparse_register_families_restore_through_32767() {
-    // e-TeX manual section 3.4 extends all five ordinary register families
-    // from 0..255 to 0..32767; their grouping rules remain TeX's rules.
+fn etex_extended_register_boundary_matrix_covers_aliases_and_grouping() {
+    // e-TeX manual section 3.4 extends all six register families from 0..255
+    // to 0..32767. Pin the dense/sparse boundary and the final sparse slot,
+    // including definition aliases and both local restoration and global
+    // assignment through a group.
     let mut stores = Universe::new_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(concat!(
-        "\\count256=1 ",
-        "\\dimen32767=2pt ",
-        "\\skip300=3pt plus4pt ",
-        "\\muskip301=5mu plus6mu ",
-        "\\toks302={hi} ",
-        "{\\count256=9 \\dimen32767=9pt \\skip300=9pt ",
-        "\\muskip301=9mu \\toks302={no}}\\end",
+        "\\nonstopmode ",
+        "\\count255=1 \\count256=2 \\count32767=3 ",
+        "\\dimen255=1pt \\dimen256=2pt \\dimen32767=3pt ",
+        "\\skip255=1pt \\skip256=2pt \\skip32767=3pt ",
+        "\\muskip255=1mu \\muskip256=2mu \\muskip32767=3mu ",
+        "\\toks255={a} \\toks256={b} \\toks32767={c} ",
+        "\\setbox255=\\hbox{a} \\setbox256=\\hbox{b} ",
+        "\\setbox32767=\\hbox{c} ",
+        "\\countdef\\C=32767 \\dimendef\\D=32767 ",
+        "\\skipdef\\S=32767 \\muskipdef\\M=32767 \\toksdef\\T=32767 ",
+        "\\mathchardef\\B=32767 ",
+        "\\C=30 \\D=30pt \\S=30pt \\M=30mu \\T={z} ",
+        "\\advance\\C by1 \\advance\\D by1pt ",
+        "\\advance\\S by1pt \\advance\\M by1mu ",
+        "\\setbox\\B=\\hbox{z} ",
+        "{\\count256=20 \\dimen256=20pt \\skip256=20pt ",
+        "\\muskip256=20mu \\toks256={x} \\setbox256=\\hbox{x}} ",
+        "{\\global\\count32767=31 \\global\\dimen32767=31pt ",
+        "\\global\\skip32767=31pt \\global\\muskip32767=31mu ",
+        "\\global\\toks32767={y} \\global\\setbox32767=\\hbox{y}} ",
+        "\\setbox254=\\hbox{\\leaders\\copy\\B\\hskip1pt} ",
+        "\\output=\\T \\showbox\\B \\count0=44 \\end",
     )));
 
     Executor::new()
         .run(&mut input, &mut stores)
         .expect("sparse e-TeX register assignments execute");
 
-    assert_eq!(stores.count(256), 1);
-    assert_eq!(stores.dimen(32_767).raw(), 2 * Scaled::UNITY);
-    let skip = stores.glue(stores.skip(300));
-    assert_eq!(skip.width.raw(), 3 * Scaled::UNITY);
-    assert_eq!(skip.stretch.raw(), 4 * Scaled::UNITY);
-    let muskip = stores.glue(stores.muskip(301));
-    assert_eq!(muskip.width.raw(), 5 * Scaled::UNITY);
-    assert_eq!(muskip.stretch.raw(), 6 * Scaled::UNITY);
+    for (index, expected) in [(255, 1), (256, 2), (32_767, 31)] {
+        assert_eq!(stores.count(index), expected);
+        assert_eq!(stores.dimen(index).raw(), expected * Scaled::UNITY);
+        assert_eq!(
+            stores.glue(stores.skip(index)).width.raw(),
+            expected * Scaled::UNITY
+        );
+        assert_eq!(
+            stores.glue(stores.muskip(index)).width.raw(),
+            expected * Scaled::UNITY
+        );
+        assert!(
+            stores.box_reg(index).is_some(),
+            "box {index} must remain populated"
+        );
+    }
     assert_eq!(
-        stores.tokens(stores.toks(302)),
-        &[
-            Token::Char {
-                ch: 'h',
-                cat: Catcode::Letter,
-            },
-            Token::Char {
-                ch: 'i',
-                cat: Catcode::Letter,
-            },
-        ]
+        stores.count(0),
+        44,
+        "showbox must consume only its sparse operand"
+    );
+    assert!(
+        stores.box_reg(254).is_some(),
+        "leaders must accept a sparse box operand"
+    );
+    assert_eq!(
+        stores.tokens(stores.tok_param(TokParam::OUTPUT)),
+        &[Token::Char {
+            ch: 'y',
+            cat: Catcode::Letter,
+        }],
+        "output toks assignment must consume the sparse alias value",
+    );
+    assert_eq!(
+        [255, 256, 32_767].map(|index| stores.tokens(stores.toks(index))[0]),
+        ['a', 'b', 'y'].map(|ch| Token::Char {
+            ch,
+            cat: Catcode::Letter
+        })
     );
 }
 

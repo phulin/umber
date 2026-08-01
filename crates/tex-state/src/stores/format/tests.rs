@@ -3,11 +3,13 @@ use super::{
 };
 use crate::cell::{BankTag, CellId};
 use crate::env::banks::IntParam;
+use crate::glue::GlueSpec;
 use crate::glue::Order;
 use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
+use crate::token::{Catcode, Token};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 fn assert_invalid_without_unwind(format: StoreFormat) {
@@ -120,6 +122,56 @@ fn format_dump_resets_only_the_optional_etex_state_cell() {
 
     assert_eq!(restored.int_param(IntParam::TEX_XET_STATE), 0);
     assert_eq!(restored.int_param(IntParam::SAVING_V_DISCARDS), 2);
+}
+
+#[test]
+fn format_round_trip_preserves_every_extended_register_family_at_boundaries() {
+    let mut stores = Stores::new();
+    for (index, value) in [(255, 1), (256, 2), (32_767, 3)] {
+        stores.set_count(index, value);
+        stores.set_dimen(index, Scaled::from_raw(value));
+        let glue = stores.intern_glue(GlueSpec {
+            width: Scaled::from_raw(value),
+            ..GlueSpec::ZERO
+        });
+        stores.set_skip(index, glue);
+        stores.set_muskip(index, glue);
+        let token_list = stores.intern_token_list(&[Token::Char {
+            ch: char::from_digit(value as u32, 10).expect("single digit"),
+            cat: Catcode::Other,
+        }]);
+        stores.set_toks(index, token_list);
+        let list = stores.freeze_node_list(&[Node::Penalty(value)]);
+        stores.set_box_reg(index, list);
+    }
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture sparse register format")
+        .restore()
+        .expect("restore sparse register format");
+    for (index, value) in [(255, 1), (256, 2), (32_767, 3)] {
+        assert_eq!(restored.count(index), value);
+        assert_eq!(restored.dimen(index), Scaled::from_raw(value));
+        assert_eq!(
+            restored.glue(restored.skip(index)).width,
+            Scaled::from_raw(value)
+        );
+        assert_eq!(
+            restored.glue(restored.muskip(index)).width,
+            Scaled::from_raw(value)
+        );
+        assert_eq!(
+            restored.tokens(restored.toks(index)),
+            &[Token::Char {
+                ch: char::from_digit(value as u32, 10).expect("single digit"),
+                cat: Catcode::Other,
+            }]
+        );
+        let list = restored.box_reg(index).expect("restored sparse box");
+        assert!(
+            matches!(restored.nodes(list).first(), Some(NodeRef::Penalty(found)) if found == value)
+        );
+    }
 }
 
 #[test]
