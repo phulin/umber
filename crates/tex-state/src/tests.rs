@@ -359,6 +359,44 @@ fn page_mark_slots_roll_back_with_snapshots() {
     assert_eq!(universe.page_mark_class(PageMark::Bot, 27), before);
 }
 
+/// e-TeX `etex.web` merged change blocks 21, 49, and 77 retain TeX82 class
+/// zero in the dense `cur_mark` slots and store nonzero classes separately.
+/// Exercise the byte boundary explicitly so 255 and 256 cannot alias each
+/// other or class zero through a truncated sparse key.
+#[test]
+fn page_mark_dense_and_sparse_boundary_classes_have_exact_identity() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_token_list(&[Token::Char {
+        ch: '0',
+        cat: Catcode::Other,
+    }]);
+    let class_255 = universe.intern_token_list(&[Token::Char {
+        ch: 'a',
+        cat: Catcode::Letter,
+    }]);
+    let class_256 = universe.intern_token_list(&[Token::Char {
+        ch: 'b',
+        cat: Catcode::Letter,
+    }]);
+
+    for mark in [
+        PageMark::Top,
+        PageMark::First,
+        PageMark::Bot,
+        PageMark::SplitFirst,
+        PageMark::SplitBot,
+    ] {
+        universe.set_page_mark_class(mark, 0, zero);
+        universe.set_page_mark_class(mark, 255, class_255);
+        universe.set_page_mark_class(mark, 256, class_256);
+        assert_eq!(universe.page_mark(mark), zero);
+        assert_eq!(universe.page_mark_class(mark, 0), zero);
+        assert_eq!(universe.page_mark_class(mark, 255), class_255);
+        assert_eq!(universe.page_mark_class(mark, 256), class_256);
+    }
+    assert_eq!(universe.page_mark_classes().collect::<Vec<_>>(), [255, 256]);
+}
+
 #[test]
 fn frozen_alignment_token_kinds_have_distinct_semantic_hashes() {
     let mut universe = Universe::new();

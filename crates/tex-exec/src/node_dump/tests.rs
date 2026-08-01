@@ -172,6 +172,36 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
     );
 }
 
+/// e-TeX `etex.web` change blocks 21 and 49 extend TeX82's mark node with a
+/// class, while merged block 77 prints class zero in the legacy `\mark` form
+/// and every sparse class as `\marks<n>`. The 255/256 boundary must therefore
+/// preserve the integer itself, not an arena slot or a generic placeholder.
+#[test]
+fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let tokens = stores.intern_token_list(&[tex_state::token::Token::Char {
+        ch: 'x',
+        cat: tex_state::token::Catcode::Letter,
+    }]);
+    let list = stores.freeze_node_list(&[
+        Node::Mark { class: 0, tokens },
+        Node::Mark { class: 255, tokens },
+        Node::Mark { class: 256, tokens },
+    ]);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+            },
+        ),
+        "\\mark{x}\n\\marks255{x}\n\\marks256{x}\n"
+    );
+}
+
 fn math_char(family: u8, character: char) -> MathChar {
     MathChar {
         family,

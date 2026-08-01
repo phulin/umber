@@ -4619,6 +4619,66 @@ fn etex_mark_class_primitives_scan_class_and_expand_its_marks() {
     );
 }
 
+/// e-TeX `etex.web` merged change blocks 21, 49, and 77 assign distinct
+/// primitive meanings to the five numbered page/split enquiries. Their names
+/// are diagnostics too: aliases must render the canonical plural spellings.
+#[test]
+fn etex_numbered_mark_meanings_use_exact_page_and_split_spellings() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    crate::install_etex_expandable_primitives(&mut stores);
+
+    for (name, primitive) in [
+        ("topmarks", ExpandablePrimitive::TopMarks),
+        ("firstmarks", ExpandablePrimitive::FirstMarks),
+        ("botmarks", ExpandablePrimitive::BotMarks),
+        ("splitfirstmarks", ExpandablePrimitive::SplitFirstMarks),
+        ("splitbotmarks", ExpandablePrimitive::SplitBotMarks),
+    ] {
+        let alias = stores.intern(&format!("{name}alias"));
+        stores.set_meaning(alias, Meaning::ExpandablePrimitive(primitive));
+        assert_eq!(
+            crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+            format!("\\{name}")
+        );
+    }
+}
+
+/// The same merged `etex.web` blocks index all five enquiry families by the
+/// scanned mark class. Exact 0/255/256 results prove that the dense TeX82 slot
+/// and adjacent sparse classes retain independent page and split identities.
+#[test]
+fn etex_numbered_page_and_split_enquiries_preserve_boundary_class_identity() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    crate::install_etex_expandable_primitives(&mut stores);
+    let marks = [
+        PageMark::Top,
+        PageMark::First,
+        PageMark::Bot,
+        PageMark::SplitFirst,
+        PageMark::SplitBot,
+    ];
+    for (class_index, class) in [0_u16, 255, 256].into_iter().enumerate() {
+        for (mark_index, mark) in marks.into_iter().enumerate() {
+            let ch = char::from(b'A' + (class_index * marks.len() + mark_index) as u8);
+            let tokens = stores.intern_token_list(&[char_token(ch)]);
+            stores.set_page_mark_class(mark, class, tokens);
+        }
+    }
+    let mut input = InputStack::new(MemoryInput::new(concat!(
+        r"\topmarks0\firstmarks0\botmarks0\splitfirstmarks0\splitbotmarks0",
+        r"\topmarks255\firstmarks255\botmarks255\splitfirstmarks255\splitbotmarks255",
+        r"\topmarks256\firstmarks256\botmarks256\splitfirstmarks256\splitbotmarks256",
+    )));
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "ABCDEFGHIJKLMNO"
+    );
+}
+
 #[test]
 fn iftrue_and_iffalse_select_expected_two_limb_branches() {
     let mut stores = Universe::new_with_plain_catcodes();
