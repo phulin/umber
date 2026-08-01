@@ -212,182 +212,265 @@ fn configure_primitive(universe: &mut Universe, install: bool, name: &str, meani
 
 #[cfg(test)]
 mod tests {
-    use tex_state::token::{OriginId, Token, TracedTokenWord};
-
     use super::*;
-    use crate::command::{CurrentCommand, DeliveryStamp};
-    use crate::processor::{PrintCommand, print_cmd_chr_text};
+    use tex_state::meaning::InternalInteger;
 
-    fn tex82_input_mark_and_conditional_primitives() -> [(&'static str, ExpandablePrimitive); 24] {
-        [
-            ("input", ExpandablePrimitive::Input),
-            ("endinput", ExpandablePrimitive::EndInput),
-            ("topmark", ExpandablePrimitive::TopMark),
-            ("firstmark", ExpandablePrimitive::FirstMark),
-            ("botmark", ExpandablePrimitive::BotMark),
-            ("splitfirstmark", ExpandablePrimitive::SplitFirstMark),
-            ("splitbotmark", ExpandablePrimitive::SplitBotMark),
-            ("if", ExpandablePrimitive::If),
-            ("ifcat", ExpandablePrimitive::IfCat),
-            ("ifx", ExpandablePrimitive::IfX),
-            ("ifnum", ExpandablePrimitive::IfNum),
-            ("ifdim", ExpandablePrimitive::IfDim),
-            ("ifodd", ExpandablePrimitive::IfOdd),
-            ("ifcase", ExpandablePrimitive::IfCase),
-            ("ifvmode", ExpandablePrimitive::IfVMode),
-            ("ifhmode", ExpandablePrimitive::IfHMode),
-            ("ifmmode", ExpandablePrimitive::IfMMode),
-            ("ifinner", ExpandablePrimitive::IfInner),
-            ("ifvoid", ExpandablePrimitive::IfVoid),
-            ("ifhbox", ExpandablePrimitive::IfHBox),
-            ("ifvbox", ExpandablePrimitive::IfVBox),
-            ("ifeof", ExpandablePrimitive::IfEof),
-            ("iftrue", ExpandablePrimitive::IfTrue),
-            ("iffalse", ExpandablePrimitive::IfFalse),
-        ]
+    type PrimitiveCase = (&'static str, Meaning);
+
+    macro_rules! expandable_cases {
+        ($(($name:literal, $variant:ident)),+ $(,)?) => {
+            &[$(($name, Meaning::ExpandablePrimitive(ExpandablePrimitive::$variant))),+]
+        };
     }
 
-    fn print_token(universe: &mut Universe, token: Token) -> String {
-        let command = {
-            let mut state = universe.command_context();
-            CurrentCommand::resolve(
-                TracedTokenWord::pack(token, OriginId::UNKNOWN),
-                DeliveryStamp::new(0, 0, 0),
-                None,
-                false,
-                &mut state,
-            )
-        };
-        print_cmd_chr_text(
-            &universe.command_context(),
-            PrintCommand::from_current(&command),
-        )
+    const TEX82: &[PrimitiveCase] = expandable_cases![
+        ("expandafter", ExpandAfter),
+        ("noexpand", NoExpand),
+        ("csname", CsName),
+        ("endcsname", EndCsName),
+        ("string", String),
+        ("number", Number),
+        ("romannumeral", RomanNumeral),
+        ("meaning", Meaning),
+        ("the", The),
+        ("input", Input),
+        ("endinput", EndInput),
+        ("jobname", JobName),
+        ("fontname", FontName),
+        ("topmark", TopMark),
+        ("firstmark", FirstMark),
+        ("botmark", BotMark),
+        ("splitfirstmark", SplitFirstMark),
+        ("splitbotmark", SplitBotMark),
+        ("iftrue", IfTrue),
+        ("iffalse", IfFalse),
+        ("if", If),
+        ("ifcat", IfCat),
+        ("ifx", IfX),
+        ("ifnum", IfNum),
+        ("ifdim", IfDim),
+        ("ifodd", IfOdd),
+        ("ifcase", IfCase),
+        ("ifvmode", IfVMode),
+        ("ifhmode", IfHMode),
+        ("ifmmode", IfMMode),
+        ("ifinner", IfInner),
+        ("ifvoid", IfVoid),
+        ("ifhbox", IfHBox),
+        ("ifvbox", IfVBox),
+        ("ifeof", IfEof),
+        ("else", Else),
+        ("or", Or),
+        ("fi", Fi),
+    ];
+
+    const ETEX_EXPANDABLE: &[PrimitiveCase] = expandable_cases![
+        ("unexpanded", Unexpanded),
+        ("detokenize", Detokenize),
+        ("unless", Unless),
+        ("scantokens", Scantokens),
+        ("eTeXrevision", ETeXRevision),
+        ("ifdefined", IfDefined),
+        ("ifcsname", IfCsName),
+        ("iffontchar", IfFontChar),
+        ("topmarks", TopMarks),
+        ("firstmarks", FirstMarks),
+        ("botmarks", BotMarks),
+        ("splitfirstmarks", SplitFirstMarks),
+        ("splitbotmarks", SplitBotMarks),
+    ];
+
+    const ETEX_INTEGERS: &[PrimitiveCase] = &[
+        (
+            "eTeXversion",
+            Meaning::InternalInteger(InternalInteger::ETeXVersion),
+        ),
+        (
+            "currentgrouplevel",
+            Meaning::InternalInteger(InternalInteger::CurrentGroupLevel),
+        ),
+        (
+            "currentgrouptype",
+            Meaning::InternalInteger(InternalInteger::CurrentGroupType),
+        ),
+        (
+            "currentiflevel",
+            Meaning::InternalInteger(InternalInteger::CurrentIfLevel),
+        ),
+        (
+            "currentiftype",
+            Meaning::InternalInteger(InternalInteger::CurrentIfType),
+        ),
+        (
+            "currentifbranch",
+            Meaning::InternalInteger(InternalInteger::CurrentIfBranch),
+        ),
+        (
+            "lastnodetype",
+            Meaning::InternalInteger(InternalInteger::LastNodeType),
+        ),
+    ];
+
+    const PDFTEX_EXPANDABLE: &[PrimitiveCase] = expandable_cases![
+        ("expanded", Expanded),
+        ("ifincsname", IfInCsName),
+        ("pdftexrevision", PdfTeXRevision),
+        ("pdftexbanner", PdfTeXBanner),
+        ("pdffontsize", PdfFontSize),
+        ("pdffontname", PdfFontName),
+        ("pdffontobjnum", PdfFontObjectNumber),
+        ("leftmarginkern", LeftMarginKern),
+        ("rightmarginkern", RightMarginKern),
+        ("pdfprimitive", PdfPrimitive),
+        ("ifpdfprimitive", IfPdfPrimitive),
+        ("ifpdfabsnum", IfPdfAbsNum),
+        ("ifpdfabsdim", IfPdfAbsDim),
+        ("pdfescapestring", PdfEscapeString),
+        ("pdfescapename", PdfEscapeName),
+        ("pdfescapehex", PdfEscapeHex),
+        ("pdfunescapehex", PdfUnescapeHex),
+        ("pdfstrcmp", StringCompare),
+        ("pdfcreationdate", CreationDate),
+        ("pdffilemoddate", PdfFileModificationDate),
+        ("pdffilesize", FileSize),
+        ("pdfmdfivesum", PdfMdFiveSum),
+        ("pdffiledump", PdfFileDump),
+        ("pdfmatch", PdfMatch),
+        ("pdflastmatch", PdfLastMatch),
+        ("pdfuniformdeviate", PdfUniformDeviate),
+        ("pdfnormaldeviate", PdfNormalDeviate),
+        ("pdfinsertht", PdfInsertHeight),
+        ("pdfximagebbox", PdfXImageBBox),
+        ("pdfcolorstackinit", PdfColorStackInit),
+        ("pdfxformname", PdfXFormName),
+        ("pdfpageref", PdfPageRef),
+    ];
+
+    const PDFTEX_INTEGERS: &[PrimitiveCase] = &[
+        (
+            "pdftexversion",
+            Meaning::InternalInteger(InternalInteger::PdfTeXVersion),
+        ),
+        (
+            "pdflastobj",
+            Meaning::InternalInteger(InternalInteger::PdfLastObject),
+        ),
+        (
+            "pdflastxform",
+            Meaning::InternalInteger(InternalInteger::PdfLastXForm),
+        ),
+    ];
+
+    fn etex_cases() -> impl Iterator<Item = PrimitiveCase> {
+        ETEX_EXPANDABLE.iter().chain(ETEX_INTEGERS).copied()
+    }
+
+    fn pdftex_cases() -> impl Iterator<Item = PrimitiveCase> {
+        PDFTEX_EXPANDABLE.iter().chain(PDFTEX_INTEGERS).copied()
+    }
+
+    fn assert_installed(universe: &Universe, cases: impl IntoIterator<Item = PrimitiveCase>) {
+        let cases: Vec<_> = cases.into_iter().collect();
+        for &(name, meaning) in &cases {
+            let symbol = universe.symbol(name).expect("installed control sequence");
+            assert_eq!(
+                universe.meaning(symbol),
+                meaning,
+                "live meaning for \\{name}"
+            );
+            assert_eq!(
+                universe.primitive_meaning(name),
+                Some(meaning),
+                "registry meaning for \\{name}"
+            );
+            assert_eq!(
+                universe.primitive_name(meaning),
+                Some(name),
+                "inverse spelling for \\{name}"
+            );
+            let frozen = universe
+                .primitive_token(name)
+                .expect("frozen primitive token");
+            assert_eq!(universe.frozen_primitive_name(frozen), Some(name));
+            assert_eq!(universe.frozen_primitive_meaning(frozen), Some(meaning));
+        }
+        assert_eq!(universe.testing_primitive_count(), cases.len());
     }
 
     #[test]
-    fn all_tex82_mark_and_conditional_primitives_survive_fresh_and_loaded_registration() {
-        let cases = tex82_input_mark_and_conditional_primitives();
+    fn every_profile_primitive_has_a_stable_inverse_meaning() {
+        let mut tex82 = Universe::new_with_plain_catcodes();
+        let unrelated = tex82.intern("userprimitive");
+        tex82.set_meaning(unrelated, Meaning::Relax);
+        install_tex82_expandable_primitives(&mut tex82);
+        assert_installed(&tex82, TEX82.iter().copied());
+        assert!(etex_cases().all(|(name, _)| tex82.primitive_meaning(name).is_none()));
+        assert!(pdftex_cases().all(|(name, _)| tex82.primitive_meaning(name).is_none()));
+        assert_eq!(tex82.meaning(unrelated), Meaning::Relax);
 
-        let mut fresh = Universe::new_with_plain_catcodes();
-        install_tex82_expandable_primitives(&mut fresh);
-        for (name, primitive) in cases {
-            let meaning = Meaning::ExpandablePrimitive(primitive);
-            let symbol = fresh.symbol(name).expect("installed control sequence");
-            assert_eq!(fresh.meaning(symbol), meaning, "live meaning for \\{name}");
-            assert_eq!(
-                fresh.primitive_meaning(name),
-                Some(meaning),
-                "immutable meaning for \\{name}"
-            );
-            assert_eq!(
-                print_token(&mut fresh, Token::Cs(symbol.symbol())),
-                format!("\\{name}"),
-                "print_cmd_chr spelling for installed \\{name}"
-            );
-        }
+        let mut etex = Universe::new_with_plain_catcodes();
+        install_tex82_expandable_primitives(&mut etex);
+        install_etex_expandable_primitives(&mut etex);
+        assert_installed(&etex, TEX82.iter().copied().chain(etex_cases()));
+        assert!(pdftex_cases().all(|(name, _)| etex.primitive_meaning(name).is_none()));
 
-        let replacement = Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
+        let mut pdftex = Universe::new_with_plain_catcodes();
+        install_tex82_expandable_primitives(&mut pdftex);
+        install_etex_expandable_primitives(&mut pdftex);
+        install_pdftex_expandable_primitives(&mut pdftex);
+        assert_installed(
+            &pdftex,
+            TEX82
+                .iter()
+                .copied()
+                .chain(etex_cases())
+                .chain(pdftex_cases()),
+        );
+    }
+
+    #[test]
+    fn format_registration_preserves_every_shadowed_and_unrelated_meaning() {
+        let all = TEX82
+            .iter()
+            .copied()
+            .chain(etex_cases())
+            .chain(pdftex_cases());
         let mut loaded = Universe::new_with_plain_catcodes();
-        for (name, _) in cases {
+        for (name, _) in all {
             let symbol = loaded.intern(name);
-            loaded.set_meaning(symbol, replacement);
+            loaded.set_meaning(symbol, Meaning::Relax);
         }
-        register_tex82_expandable_primitives(&mut loaded);
+        let unrelated = loaded.intern("userprimitive");
+        loaded.set_meaning(unrelated, Meaning::CharGiven('U'));
 
-        for (name, primitive) in cases {
-            let meaning = Meaning::ExpandablePrimitive(primitive);
-            let symbol = loaded.symbol(name).expect("prepopulated control sequence");
+        register_tex82_expandable_primitives(&mut loaded);
+        register_etex_expandable_primitives(&mut loaded);
+        register_pdftex_expandable_primitives(&mut loaded);
+
+        let all = TEX82
+            .iter()
+            .copied()
+            .chain(etex_cases())
+            .chain(pdftex_cases());
+        for (name, meaning) in all {
+            let symbol = loaded.symbol(name).expect("shadowed control sequence");
             assert_eq!(
                 loaded.meaning(symbol),
-                replacement,
-                "format meaning for \\{name} must survive registry reconstruction"
+                Meaning::Relax,
+                "format shadow for \\{name}"
             );
             assert_eq!(
                 loaded.primitive_meaning(name),
                 Some(meaning),
-                "reconstructed immutable meaning for \\{name}"
+                "registry meaning for \\{name}"
             );
-            let frozen = loaded
-                .primitive_token(name)
-                .expect("frozen primitive token");
             assert_eq!(
-                print_token(&mut loaded, frozen),
-                format!("\\{name}"),
-                "print_cmd_chr spelling for reconstructed \\{name}"
+                loaded.primitive_name(meaning),
+                Some(name),
+                "inverse spelling for \\{name}"
             );
         }
-    }
-
-    #[test]
-    fn install_and_register_preserve_format_meanings() {
-        let mut installed = Universe::new_with_plain_catcodes();
-        install_tex82_expandable_primitives(&mut installed);
-        let iftrue = installed.intern("iftrue");
-        assert_eq!(
-            installed.meaning(iftrue),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue)
-        );
-
-        let mut registered = Universe::new_with_plain_catcodes();
-        let replacement = Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
-        let iftrue = registered.intern("iftrue");
-        registered.set_meaning(iftrue, replacement);
-        register_tex82_expandable_primitives(&mut registered);
-        assert_eq!(registered.meaning(iftrue), replacement);
-        assert_eq!(
-            registered.primitive_meaning("iftrue"),
-            Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::IfTrue))
-        );
-    }
-
-    #[test]
-    fn extension_registries_are_profile_gated_and_preserve_format_meanings() {
-        let mut tex82 = Universe::new_with_plain_catcodes();
-        install_tex82_expandable_primitives(&mut tex82);
-        assert_eq!(tex82.primitive_meaning("ifdefined"), None);
-        assert_eq!(tex82.primitive_meaning("pdfprimitive"), None);
-
-        install_etex_expandable_primitives(&mut tex82);
-        let ifdefined = tex82.intern("ifdefined");
-        assert_eq!(
-            tex82.meaning(ifdefined),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined)
-        );
-        assert_eq!(tex82.primitive_meaning("pdfprimitive"), None);
-
-        install_pdftex_expandable_primitives(&mut tex82);
-        let pdfprimitive = tex82.intern("pdfprimitive");
-        assert_eq!(
-            tex82.meaning(pdfprimitive),
-            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive)
-        );
-
-        let replacement = Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand);
-        let symbol = tex82.intern("ifdefined");
-        tex82.set_meaning(symbol, replacement);
-        register_etex_expandable_primitives(&mut tex82);
-        assert_eq!(tex82.meaning(symbol), replacement);
-        assert_eq!(
-            tex82.primitive_meaning("ifdefined"),
-            Some(Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined))
-        );
-        assert_eq!(
-            tex82.primitive_meaning("detokenize"),
-            Some(Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::Detokenize
-            )),
-            "format loading must rebuild the immutable primitive lookup"
-        );
-
-        let symbol = tex82.intern("pdfprimitive");
-        tex82.set_meaning(symbol, replacement);
-        register_pdftex_expandable_primitives(&mut tex82);
-        assert_eq!(tex82.meaning(symbol), replacement);
-        assert_eq!(
-            tex82.primitive_meaning("pdfprimitive"),
-            Some(Meaning::ExpandablePrimitive(
-                ExpandablePrimitive::PdfPrimitive
-            ))
-        );
+        assert_eq!(loaded.meaning(unrelated), Meaning::CharGiven('U'));
+        assert_eq!(loaded.primitive_meaning("userprimitive"), None);
     }
 }

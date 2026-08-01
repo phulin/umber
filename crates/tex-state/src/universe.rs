@@ -1621,6 +1621,14 @@ impl Universe {
         self.primitive_meanings.get(name).copied()
     }
 
+    /// Returns the exact immutable primitive-registry cardinality for
+    /// profile-installation conformance tests.
+    #[cfg(any(test, feature = "testing"))]
+    #[must_use]
+    pub fn testing_primitive_count(&self) -> usize {
+        self.primitive_meanings_by_index.len()
+    }
+
     /// Returns TeX's assignment level for a live meaning cell.
     ///
     /// This deliberately narrow white-box projection derives ownership from
