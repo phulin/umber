@@ -579,6 +579,45 @@ fn math_field_groups_remove_braces_around_single_unscripted_ord_box() {
 }
 
 #[test]
+fn bare_math_brace_nucleus_owns_both_following_scripts() {
+    let (stores, nodes) = super::core::run_canonical_tex82_current_list(r"${ab}^c_d");
+
+    let [Node::MathNoad(noad)] = nodes.as_slice() else {
+        panic!("a bare braced formula and its scripts should make one Ord noad")
+    };
+    assert!(matches!(noad.kind, NoadKind::Normal(NoadClass::Ord)));
+    let MathField::SubMlist(nucleus) = noad.nucleus else {
+        panic!("the bare brace should remain the scripted noad's nucleus")
+    };
+    let nucleus = stores.nodes(nucleus).testing_decoded();
+    assert_eq!(nucleus.len(), 2);
+    assert_math_char(&math_noad(&nucleus[0]).nucleus, 1, 'a');
+    assert_math_char(&math_noad(&nucleus[1]).nucleus, 1, 'b');
+    assert_math_char(&noad.superscript, 1, 'c');
+    assert_math_char(&noad.subscript, 1, 'd');
+}
+
+#[test]
+fn canonical_display_entry_publishes_paragraph_geometry() {
+    let stores =
+        super::core::run_canonical_tex82(r"\hsize=100pt \hangindent=20pt \hangafter=1 x$$ $$\end");
+
+    assert_eq!(
+        stores.dimen_param(DimenParam::DISPLAY_WIDTH).raw(),
+        80 * Scaled::UNITY
+    );
+    assert_eq!(
+        stores.dimen_param(DimenParam::DISPLAY_INDENT).raw(),
+        20 * Scaled::UNITY
+    );
+    assert_ne!(
+        stores.dimen_param(DimenParam::PRE_DISPLAY_SIZE),
+        Scaled::from_raw(-Scaled::MAX_DIMEN.raw()),
+        "a nonempty interrupted paragraph publishes its last visible position"
+    );
+}
+
+#[test]
 fn math_atom_group_around_accent_replaces_the_ord_wrapper() {
     let (stores, executor) = run_math_source(r#"${\mathaccent"7013 y}"#);
     let nodes = math_nodes(&stores, &executor);

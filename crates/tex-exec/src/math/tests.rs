@@ -188,6 +188,128 @@ fn pending_terminal_text(stores: &Universe) -> String {
 }
 
 #[test]
+fn display_line_geometry_uses_the_second_paragraph_line_shape() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_dimen_param(DimenParam::H_SIZE, sp(100));
+    let mut nest = ModeNest::new();
+
+    assert_eq!(
+        crate::assignments::display_line_dimensions(&nest, &stores),
+        tex_typeset::linebreak::LineDimensions {
+            indent: Scaled::from_raw(0),
+            width: sp(100),
+        }
+    );
+
+    stores.set_dimen_param(DimenParam::HANG_INDENT, sp(20));
+    stores.set_int_param(IntParam::HANG_AFTER, 1);
+    assert_eq!(
+        crate::assignments::display_line_dimensions(&nest, &stores),
+        tex_typeset::linebreak::LineDimensions {
+            indent: sp(20),
+            width: sp(80),
+        },
+        "positive hangindent narrows and indents the second line"
+    );
+
+    stores.set_dimen_param(DimenParam::HANG_INDENT, sp(-20));
+    stores.set_int_param(IntParam::HANG_AFTER, -2);
+    assert_eq!(
+        crate::assignments::display_line_dimensions(&nest, &stores),
+        tex_typeset::linebreak::LineDimensions {
+            indent: Scaled::from_raw(0),
+            width: sp(80),
+        },
+        "negative hangafter applies the hanging shape through line two"
+    );
+
+    nest.set_enclosing_vertical_prev_graf(7);
+    stores.set_paragraph_shape(
+        &[
+            tex_state::ParagraphShapeLine {
+                indent: sp(3),
+                width: sp(70),
+            },
+            tex_state::ParagraphShapeLine {
+                indent: sp(9),
+                width: sp(60),
+            },
+        ],
+        false,
+    );
+    assert_eq!(
+        crate::assignments::display_line_dimensions(&nest, &stores),
+        tex_typeset::linebreak::LineDimensions {
+            indent: sp(9),
+            width: sp(60),
+        },
+        "the final parshape entry repeats independently of prevgraf"
+    );
+}
+
+#[test]
+fn pre_display_size_uses_natural_glue_width_until_the_set_ratio_matters() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let glue = stores.intern_glue(GlueSpec {
+        width: sp(7),
+        stretch: sp(11),
+        stretch_order: Order::Fil,
+        shrink: sp(5),
+        shrink_order: Order::Fill,
+    });
+    let children = stores.freeze_node_list(&[
+        Node::Kern {
+            amount: sp(2),
+            kind: tex_state::node::KernKind::Explicit,
+        },
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Rule {
+            width: Some(sp(13)),
+            height: None,
+            depth: None,
+        },
+    ]);
+    let line = |glue_sign, glue_order| {
+        BoxNode::new(BoxNodeFields {
+            width: sp(200),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: sp(3),
+            display: false,
+            glue_set: GlueSetRatio::from_ratio_parts(37, 10),
+            glue_sign,
+            glue_order,
+            children,
+        })
+    };
+
+    let natural = pre_display_size(&stores, &line(Sign::Normal, Order::Normal));
+    assert_eq!(natural, sp(25));
+    assert_eq!(
+        pre_display_size(&stores, &line(Sign::Stretching, Order::Normal)),
+        natural,
+        "a nonparticipating glue order keeps its natural width regardless of glue_set"
+    );
+    assert_eq!(
+        pre_display_size(&stores, &line(Sign::Shrinking, Order::Normal)),
+        natural,
+        "the shrink branch also ignores a nonparticipating glue order"
+    );
+    assert_eq!(
+        pre_display_size(&stores, &line(Sign::Stretching, Order::Fil)),
+        Scaled::MAX_DIMEN
+    );
+    assert_eq!(
+        pre_display_size(&stores, &line(Sign::Shrinking, Order::Fill)),
+        Scaled::MAX_DIMEN
+    );
+}
+
+#[test]
 fn tex82_math_entry_display_probe_and_eqno_mode_matrix() {
     let mut stores = Universe::new_with_plain_catcodes();
     let hook = stores.intern_token_list(&[Token::Char {
