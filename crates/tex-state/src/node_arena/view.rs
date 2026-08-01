@@ -30,6 +30,8 @@ pub enum NodeRef<'a> {
         ch: char,
         orig: &'a [char],
         origins: &'a [OriginId],
+        left_hit: bool,
+        right_hit: bool,
     },
     Kern {
         amount: Scaled,
@@ -106,15 +108,25 @@ impl PartialEq for NodeRef<'_> {
                     font: left_font,
                     ch: left_ch,
                     orig: left_orig,
+                    left_hit: left_left_hit,
+                    right_hit: left_right_hit,
                     ..
                 },
                 Self::Lig {
                     font: right_font,
                     ch: right_ch,
                     orig: right_orig,
+                    left_hit: right_left_hit,
+                    right_hit: right_right_hit,
                     ..
                 },
-            ) => left_font == right_font && left_ch == right_ch && left_orig == right_orig,
+            ) => {
+                left_font == right_font
+                    && left_ch == right_ch
+                    && left_orig == right_orig
+                    && left_left_hit == right_left_hit
+                    && left_right_hit == right_right_hit
+            }
             _ => self.to_owned() == other.to_owned(),
         }
     }
@@ -135,11 +147,15 @@ impl NodeRef<'_> {
                 ch,
                 orig,
                 origins,
+                left_hit,
+                right_hit,
             } => Node::Lig {
                 font: *font,
                 ch: *ch,
                 orig: orig.to_vec(),
                 origins: origins.to_vec(),
+                left_hit: *left_hit,
+                right_hit: *right_hit,
             },
             Self::Kern { amount, kind } => Node::Kern {
                 amount: *amount,
@@ -497,12 +513,14 @@ impl NodeStorage {
                 origin: origins.map_or(self.origins[index], |origins| origins.word_origins[index]),
             },
             1 => NodeRef::Lig {
-                font: self.ligatures[side].0,
-                ch: self.ligatures[side].1,
-                orig: &self.ligatures[side].2,
+                font: self.ligatures[side].font,
+                ch: self.ligatures[side].ch,
+                orig: &self.ligatures[side].orig,
                 origins: origins
                     .and_then(|origins| origins.ligature_origins[side].as_deref())
-                    .unwrap_or(&self.ligatures[side].3),
+                    .unwrap_or(&self.ligatures[side].origins),
+                left_hit: self.ligatures[side].left_hit,
+                right_hit: self.ligatures[side].right_hit,
             },
             2 => NodeRef::Kern {
                 amount: Scaled::from_raw(payload as u32 as i32),

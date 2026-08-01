@@ -354,6 +354,8 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             ch: 'x',
             orig: vec!['x'],
             origins: vec![OriginId::UNKNOWN],
+            left_hit: false,
+            right_hit: false,
         },
         Node::Unset(UnsetNode::new(UnsetNodeFields {
             kind: UnsetKind::VBox,

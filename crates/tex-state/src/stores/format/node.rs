@@ -34,6 +34,8 @@ pub(super) enum FormatNode {
         font: u32,
         ch: char,
         orig: Vec<char>,
+        left_hit: bool,
+        right_hit: bool,
     },
     Kern {
         amount: Scaled,
@@ -355,10 +357,19 @@ impl FormatNode {
                 font: font.raw(),
                 ch,
             },
-            Node::Lig { font, ch, orig, .. } => Self::Lig {
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                ..
+            } => Self::Lig {
                 font: font.raw(),
                 ch,
                 orig,
+                left_hit,
+                right_hit,
             },
             Node::Kern { amount, kind } => Self::Kern { amount, kind },
             Node::MarginKern {
@@ -463,7 +474,13 @@ impl FormatNode {
                 ch,
                 origin: origins.next().unwrap_or(crate::token::OriginId::UNKNOWN),
             },
-            Self::Lig { font, ch, orig } => {
+            Self::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+            } => {
                 let node_origins = (0..orig.len())
                     .map(|_| origins.next().unwrap_or(crate::token::OriginId::UNKNOWN))
                     .collect();
@@ -472,6 +489,8 @@ impl FormatNode {
                     ch,
                     origins: node_origins,
                     orig,
+                    left_hit,
+                    right_hit,
                 }
             }
             Self::Kern { amount, kind } => Node::Kern { amount, kind },

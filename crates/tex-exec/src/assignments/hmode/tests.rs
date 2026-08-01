@@ -615,6 +615,7 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
                 ch: 'B',
                 orig,
                 origins,
+                ..
             },
             Node::Kern {
                 amount,
@@ -959,6 +960,8 @@ fn composite_rechar_keeps_ligature_provenance_when_emitted() {
         orig: vec!['B'].into(),
         origins: vec![tex_state::token::OriginId::UNKNOWN].into(),
         ligature_present: true,
+        left_hit: false,
+        right_hit: false,
     };
 
     assert!(matches!(
@@ -1645,6 +1648,15 @@ fn complete_ligature_machine_processes_both_boundaries() {
             node_characters(nodes),
             [if left_boundary.is_some() { 'L' } else { 'R' }]
         );
+        assert!(matches!(
+            nodes,
+            [Node::Lig {
+                left_hit,
+                right_hit,
+                ..
+            }] if *left_hit == left_boundary.is_some()
+                && *right_hit == right_boundary.is_some()
+        ));
     }
 }
 
@@ -1722,6 +1734,8 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
             ch: 'B',
             orig: vec!['C', '/'],
             origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         },
     ];
 

@@ -396,6 +396,8 @@ fn line_expansion_materializes_discrete_glyphs_kerns_and_reuses_fonts() {
             ch: 'C',
             orig: vec!['C'],
             origins: vec![origin],
+            left_hit: false,
+            right_hit: false,
         },
     ];
     let mut first = source.clone();

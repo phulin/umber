@@ -819,6 +819,8 @@ pub(crate) struct PendingHRunChar {
     pub(crate) orig: SmallVec<[char; 4]>,
     pub(crate) origins: SmallVec<[OriginId; 4]>,
     pub(crate) ligature_present: bool,
+    pub(crate) left_hit: bool,
+    pub(crate) right_hit: bool,
 }
 
 impl PendingHRunChar {
@@ -829,6 +831,8 @@ impl PendingHRunChar {
             orig: smallvec![ch],
             origins: smallvec![origin],
             ligature_present: false,
+            left_hit: false,
+            right_hit: false,
         }
     }
 }

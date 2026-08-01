@@ -231,6 +231,8 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
             ch: '\u{ff}',
             orig: vec!['\0', '\u{fe}'],
             origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         },
         Node::Kern {
             amount: Scaled::from_raw(i32::MIN),
@@ -272,6 +274,8 @@ fn ligature_and_character_fonts_share_the_same_dense_identity() {
             ch: 'B',
             orig: vec!['A', 'A'],
             origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         },
     ]);
     let nodes = arena.get_epoch(list).into_iter().collect::<Vec<_>>();
@@ -347,6 +351,8 @@ fn byte_char_runs_stop_at_fonts_unicode_ligatures_and_other_nodes() {
             ch: 'd',
             orig: vec!['c', 'd'],
             origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         },
         Node::Kern {
             amount: scaled(1),
@@ -660,6 +666,8 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
                 ch: 'c',
                 orig: vec!['b', '\u{100}'],
                 origins: vec![crate::token::OriginId::UNKNOWN; 2],
+                left_hit: false,
+                right_hit: false,
             },
         ]);
     }));
@@ -691,6 +699,8 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
             ch,
             orig: vec![orig.0, orig.1],
             origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         });
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

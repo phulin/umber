@@ -2881,6 +2881,8 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
         ch: 'L',
         orig: vec!['f', 'i'],
         origins: vec![OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
     }]);
 
     let children = stores.freeze_node_list(&[
@@ -2915,6 +2917,8 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             ch: 'L',
             orig: vec!['f', 'i'],
             origins: vec![OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,

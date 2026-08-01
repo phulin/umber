@@ -79,6 +79,8 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             ch: 'f',
             orig: vec!['f', 'i'],
             origins: vec![crate::token::OriginId::UNKNOWN; 2],
+            left_hit: true,
+            right_hit: true,
         },
         Node::Kern {
             amount: Scaled::from_raw(-6),

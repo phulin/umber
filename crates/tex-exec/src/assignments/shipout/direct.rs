@@ -721,6 +721,7 @@ fn emit_index(
             ch,
             orig,
             origins,
+            ..
         } => {
             let (code, width) = glyph(stores, font, ch)?;
             emit_ligature(

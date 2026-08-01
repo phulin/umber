@@ -291,7 +291,9 @@ impl NodeStorage {
     ) {
         let mut logical = 0_u64;
         let mut retained = 0_u64;
-        for (_, _, source, origins) in &self.ligatures[ligature_start..] {
+        for ligature in &self.ligatures[ligature_start..] {
+            let source = &ligature.orig;
+            let origins = &ligature.origins;
             logical += (source.len() * core::mem::size_of::<char>()) as u64;
             retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
             logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
@@ -429,7 +431,9 @@ impl NodeStorage {
         add!(self.math_lists);
         add!(self.adjusts);
         #[cfg(not(feature = "profiling"))]
-        for (_, _, source, origins) in &self.ligatures {
+        for ligature in &self.ligatures {
+            let source = &ligature.orig;
+            let origins = &ligature.origins;
             logical += (source.len() * core::mem::size_of::<char>()) as u64;
             retained += (source.capacity() * core::mem::size_of::<char>()) as u64;
             logical += (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;

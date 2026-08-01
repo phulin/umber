@@ -197,12 +197,19 @@ fn dump_node(
         Node::Char { font, ch, .. } => {
             let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_char(*ch));
         }
-        Node::Lig { font, ch, orig, .. } => {
+        Node::Lig {
+            font,
+            ch,
+            orig,
+            left_hit,
+            right_hit,
+            ..
+        } => {
             let _ = writeln!(
                 out,
                 "{} {}",
                 dump_font(stores, *font),
-                dump_ligature(*ch, orig)
+                dump_ligature(*ch, orig, *left_hit, *right_hit)
             );
         }
         Node::Disc {
@@ -677,11 +684,17 @@ fn dump_char(ch: char) -> String {
     }
 }
 
-fn dump_ligature(ch: char, orig: &[char]) -> String {
+fn dump_ligature(ch: char, orig: &[char], left_hit: bool, right_hit: bool) -> String {
     let mut rendered = dump_char(ch);
     rendered.push_str(" (ligature ");
+    if left_hit {
+        rendered.push('|');
+    }
     for &original in orig {
         rendered.push_str(&dump_char(original));
+    }
+    if right_hit {
+        rendered.push('|');
     }
     rendered.push(')');
     rendered

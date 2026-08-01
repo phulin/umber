@@ -137,6 +137,8 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
                     ch: char::from(code),
                     orig: vec!['a', 'b'],
                     origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+                    left_hit: false,
+                    right_hit: false,
                 }),
                 2 => nodes.push(Node::Kern {
                     amount: sp((seed as i32) % 100_000),

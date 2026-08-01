@@ -160,13 +160,23 @@ impl SidecarNeeds {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct LigatureSidecar {
+    pub(super) font: crate::ids::FontId,
+    pub(super) ch: char,
+    pub(super) orig: Vec<char>,
+    pub(super) origins: Vec<OriginId>,
+    pub(super) left_hit: bool,
+    pub(super) right_hit: bool,
+}
+
 /// Canonical compact storage shared by epoch and survivor arenas.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NodeStorage {
     pub(super) words: Vec<NodeWord>,
     /// Diagnostic-only provenance aligned one-for-one with `words`.
     pub(super) origins: Vec<OriginId>,
-    pub(super) ligatures: Vec<(crate::ids::FontId, char, Vec<char>, Vec<OriginId>)>,
+    pub(super) ligatures: Vec<LigatureSidecar>,
     pub(super) boxes: BoxTable,
     pub(super) unsets: UnsetTable,
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
@@ -437,6 +447,8 @@ impl NodeStorage {
                 ch,
                 orig,
                 origins,
+                left_hit,
+                right_hit,
             } => {
                 // Character nodes store only the dense font slot in their packed
                 // word. Canonicalize ligature sidecars the same way so a live
@@ -446,7 +458,14 @@ impl NodeStorage {
                 let word = push_sidecar(
                     1,
                     &mut self.ligatures,
-                    (font, *ch, orig.clone(), origins.clone()),
+                    LigatureSidecar {
+                        font,
+                        ch: *ch,
+                        orig: orig.clone(),
+                        origins: origins.clone(),
+                        left_hit: *left_hit,
+                        right_hit: *right_hit,
+                    },
                 );
                 #[cfg(feature = "profiling")]
                 self.record_last_ligature_payload();
@@ -538,9 +557,22 @@ impl NodeStorage {
                 ch,
                 orig,
                 origins,
+                left_hit,
+                right_hit,
             } => {
                 let font = crate::ids::FontId::new(font.raw());
-                let word = push_sidecar(1, &mut self.ligatures, (font, ch, orig, origins));
+                let word = push_sidecar(
+                    1,
+                    &mut self.ligatures,
+                    LigatureSidecar {
+                        font,
+                        ch,
+                        orig,
+                        origins,
+                        left_hit,
+                        right_hit,
+                    },
+                );
                 #[cfg(feature = "profiling")]
                 self.record_last_ligature_payload();
                 word

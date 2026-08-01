@@ -381,6 +381,7 @@ fn hyphenate_after_glue(
                 ch,
                 orig,
                 origins,
+                ..
             } if *node_font == font => {
                 let chars = orig.clone();
                 if word

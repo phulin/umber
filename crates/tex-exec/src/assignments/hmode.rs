@@ -1227,10 +1227,16 @@ fn replacement_glyph(
     font: FontId,
     replacement: u8,
     consumed: impl IntoIterator<Item = PendingHRunChar>,
+    left_hit: bool,
+    right_hit: bool,
 ) -> PendingHRunChar {
     let mut orig = smallvec::SmallVec::new();
     let mut origins = smallvec::SmallVec::new();
+    let mut inherited_left_hit = false;
+    let mut inherited_right_hit = false;
     for glyph in consumed {
+        inherited_left_hit |= glyph.left_hit;
+        inherited_right_hit |= glyph.right_hit;
         orig.extend(glyph.orig);
         origins.extend(glyph.origins);
     }
@@ -1240,6 +1246,8 @@ fn replacement_glyph(
         orig,
         origins,
         ligature_present: true,
+        left_hit: left_hit || inherited_left_hit,
+        right_hit: right_hit || inherited_right_hit,
     }
 }
 
@@ -1373,8 +1381,13 @@ fn run_tfm_ligature_machine(
                 ]
                 .into_iter()
                 .flatten();
-                let replacement =
-                    LigatureWorkItem::Glyph(replacement_glyph(font, lig.replacement, consumed));
+                let replacement = LigatureWorkItem::Glyph(replacement_glyph(
+                    font,
+                    lig.replacement,
+                    consumed,
+                    matches!(left_item, LigatureWorkItem::Boundary),
+                    matches!(right_item, LigatureWorkItem::Boundary),
+                ));
                 match (lig.delete_current, lig.delete_next) {
                     (true, true) => {
                         work.nodes[left_index].item = replacement;
@@ -1575,6 +1588,8 @@ fn rechar_node(current: PendingHRunChar) -> Node {
             ch: current.ch,
             orig: current.orig.into_vec(),
             origins: current.origins.into_vec(),
+            left_hit: current.left_hit,
+            right_hit: current.right_hit,
         }
     } else {
         Node::Char {

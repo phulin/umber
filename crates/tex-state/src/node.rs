@@ -22,6 +22,8 @@ pub enum Node {
         font: FontId,
         ch: char,
         orig: Vec<char>,
+        left_hit: bool,
+        right_hit: bool,
         /// One origin per original character consumed by the ligature.
         origins: Vec<OriginId>,
     },
@@ -101,15 +103,25 @@ impl PartialEq for Node {
                     font: left_font,
                     ch: left_ch,
                     orig: left_orig,
+                    left_hit: left_left_hit,
+                    right_hit: left_right_hit,
                     ..
                 },
                 Self::Lig {
                     font: right_font,
                     ch: right_ch,
                     orig: right_orig,
+                    left_hit: right_left_hit,
+                    right_hit: right_right_hit,
                     ..
                 },
-            ) => left_font == right_font && left_ch == right_ch && left_orig == right_orig,
+            ) => {
+                left_font == right_font
+                    && left_ch == right_ch
+                    && left_orig == right_orig
+                    && left_left_hit == right_left_hit
+                    && left_right_hit == right_right_hit
+            }
             (
                 Self::Kern {
                     amount: left_amount,

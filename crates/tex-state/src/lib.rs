@@ -42,7 +42,7 @@
 /// Hashes are
 /// comparable only when both this version and the named-boundary schedule
 /// match.
-pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 27;
+pub const CHECKPOINT_STATE_HASH_SCHEMA_VERSION: u32 = 28;
 
 pub mod cell;
 pub mod code_tables;

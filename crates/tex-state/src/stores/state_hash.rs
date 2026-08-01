@@ -877,7 +877,14 @@ impl Stores {
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
             }
-            NodeRef::Lig { font, ch, orig, .. } => {
+            NodeRef::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                ..
+            } => {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
@@ -885,6 +892,8 @@ impl Stores {
                 for source in orig {
                     hasher.u32(*source as u32);
                 }
+                hasher.bool(left_hit);
+                hasher.bool(right_hit);
             }
             NodeRef::Kern { amount, kind } => {
                 hasher.tag(2);
@@ -1044,7 +1053,14 @@ impl Stores {
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
             }
-            Node::Lig { font, ch, orig, .. } => {
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                left_hit,
+                right_hit,
+                ..
+            } => {
                 hasher.tag(1);
                 self.hash_font(font, hasher);
                 hasher.u32(ch as u32);
@@ -1052,6 +1068,8 @@ impl Stores {
                 for source in orig {
                     hasher.u32(source as u32);
                 }
+                hasher.bool(left_hit);
+                hasher.bool(right_hit);
             }
             Node::Kern { amount, kind } => {
                 hasher.tag(2);

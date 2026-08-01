@@ -146,6 +146,8 @@ fn owned_ligature_payloads_participate_in_totals_and_columns() {
         ch: 'f',
         orig: vec!['f', 'i'],
         origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+        left_hit: false,
+        right_hit: false,
     }]);
 
     let measured = NodeStorageObservation::from_columns(arena.memory_columns());
@@ -179,6 +181,8 @@ fn incremental_nested_payload_totals_follow_compact_copy_and_rollback() {
             ch: 'f',
             orig: vec!['f', 'i'],
             origins: vec![OriginId::from_raw(1), OriginId::from_raw(2)],
+            left_hit: false,
+            right_hit: false,
         },
         Node::Whatsit(Whatsit::Special {
             class: "measurement".to_owned(),
