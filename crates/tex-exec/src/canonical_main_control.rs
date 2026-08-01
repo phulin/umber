@@ -219,7 +219,7 @@ enum ReplayBoxKind {
     /// and are handled by a dedicated branch in `BoxEndGroup`
     /// (`finish_insert_or_adjust_group`, which also picks `ins_node` vs.
     /// `adjust_node` by this class).
-    Insert(u16),
+    Insert(u16, bool),
 }
 
 impl ReplayBoxKind {
@@ -247,7 +247,7 @@ impl ReplayBoxKind {
             Self::VBox => GroupKind::VBox,
             Self::VTop => GroupKind::VTop,
             Self::VCenter => GroupKind::VCenter,
-            Self::Insert(_) => GroupKind::Insert,
+            Self::Insert(..) => GroupKind::Insert,
         }
     }
 }
@@ -10235,8 +10235,10 @@ fn capture_replay_alignment_cell(
         // `vpackage`d with `adjust_tail` null and migrates nothing.
         let material =
             crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
-        let (retained, migrated) = crate::assignments::split_hpack_migrations(stores, material);
-        active.row_migrations.extend(migrated);
+        let (retained, mut pre_migrated, migrated) =
+            crate::assignments::split_hpack_migrations(stores, material);
+        pre_migrated.extend(migrated);
+        active.row_migrations.extend(pre_migrated);
         retained
     } else {
         cell.list_mutation().take_nodes()
@@ -10520,8 +10522,10 @@ fn show_box_context(active: &ActiveReplayBox) -> String {
         ReplayBoxKind::VBox => context.push_str("\\vbox"),
         ReplayBoxKind::VTop => context.push_str("\\vtop"),
         ReplayBoxKind::VCenter => context.push_str("\\vcenter"),
-        ReplayBoxKind::Insert(255) => context.push_str("\\vadjust"),
-        ReplayBoxKind::Insert(class) => {
+        ReplayBoxKind::Insert(255, pre) => {
+            context.push_str(if pre { "\\vadjust pre" } else { "\\vadjust" });
+        }
+        ReplayBoxKind::Insert(class, _) => {
             context.push_str("\\insert");
             context.push_str(&class.to_string());
         }
@@ -12394,7 +12398,7 @@ fn apply_scanned_step(
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
-                kind: ReplayBoxKind::Insert(class),
+                kind: ReplayBoxKind::Insert(class, construction.pre),
                 group_kind: GroupKind::Insert,
                 packing: PackSpec::Natural,
                 leader_kind: None,
@@ -12685,8 +12689,8 @@ fn apply_scanned_step(
             let box_state = boxes.active_boxes.pop().ok_or(ExecError::MissingToken {
                 context: "box group",
             })?;
-            if let ReplayBoxKind::Insert(class) = box_state.kind {
-                return finish_insert_or_adjust_group(class, modes, stores, command);
+            if let ReplayBoxKind::Insert(class, pre) = box_state.kind {
+                return finish_insert_or_adjust_group(class, pre, modes, stores, command);
             }
             // TeX82 §1085's `handle_right_brace` runs `end_graf` (§1096) for
             // `vbox_group` and `vtop_group` -- and only for those two -- before
@@ -12758,7 +12762,7 @@ fn apply_scanned_step(
                         .node
                     }
                     ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
-                    ReplayBoxKind::Insert(_) => {
+                    ReplayBoxKind::Insert(_, _) => {
                         unreachable!(
                             "insert/adjust bodies return through finish_insert_or_adjust_group above"
                         )
@@ -14244,6 +14248,7 @@ fn start_canonical_paragraph(
 /// it is forbidden in outer vertical mode).
 fn finish_insert_or_adjust_group(
     class: u16,
+    pre: bool,
     modes: &mut ModeNest,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
@@ -14266,7 +14271,7 @@ fn finish_insert_or_adjust_group(
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
     crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
-        Node::Adjust(content)
+        Node::Adjust(tex_state::node::AdjustNode { content, pre })
     } else {
         let size = packed
             .node

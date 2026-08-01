@@ -200,8 +200,11 @@ fn normalize_index(
             NodeRef::Disc {
                 pre, post, replace, ..
             } => NormalizeNode::Lists([pre, post, replace]),
-            NodeRef::Ins { content, .. } | NodeRef::Adjust(content) => {
+            NodeRef::Ins { content, .. } => {
                 NormalizeNode::List(content, suppress_deferred_streams, in_hlist)
+            }
+            NodeRef::Adjust(adjust) => {
+                NormalizeNode::List(adjust.content, suppress_deferred_streams, in_hlist)
             }
             NodeRef::Whatsit(whatsit) => NormalizeNode::Whatsit(whatsit.clone()),
             NodeRef::MathList(math) => NormalizeNode::Math(math),

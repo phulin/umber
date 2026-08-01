@@ -712,11 +712,12 @@ pub(crate) fn append_box_node_to_current_list(
     mut node: Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let migrated = if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-        extract_box_migrations(stores, &mut node)
-    } else {
-        Vec::new()
-    };
+    let (pre_migrated, migrated) =
+        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+            extract_box_migrations(stores, &mut node)
+        } else {
+            (Vec::new(), Vec::new())
+        };
     let node = if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
         let nucleus = stores.freeze_node_list(std::slice::from_ref(&node));
         Node::MathNoad(MathNoad::new(
@@ -726,6 +727,9 @@ pub(crate) fn append_box_node_to_current_list(
     } else {
         node
     };
+    for node in pre_migrated {
+        append_vertical_contribution(nest, stores, node);
+    }
     append_node_to_current_list(nest, stores, node, fuel)?;
     for node in migrated {
         append_vertical_contribution(nest, stores, node);
@@ -739,20 +743,20 @@ pub(crate) fn append_box_node_to_current_list(
     Ok(())
 }
 
-fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
+fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> (Vec<Node>, Vec<Node>) {
     let Node::HList(boxed) = node else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let children = stores
         .nodes(boxed.children)
         .into_iter()
         .map(|child| child.to_owned())
         .collect::<Vec<_>>();
-    let (retained, migrated) = split_hpack_migrations(stores, children);
-    if !migrated.is_empty() {
+    let (retained, pre_migrated, migrated) = split_hpack_migrations(stores, children);
+    if !pre_migrated.is_empty() || !migrated.is_empty() {
         boxed.children = stores.freeze_node_list(&retained);
     }
-    migrated
+    (pre_migrated, migrated)
 }
 
 /// Performs TeX82 §647's `adjust_tail` split for one horizontal list.
@@ -767,19 +771,30 @@ fn extract_box_migrations(stores: &mut Universe, node: &mut Node) -> Vec<Node> {
 pub(crate) fn split_hpack_migrations(
     stores: &Universe,
     nodes: Vec<Node>,
-) -> (Vec<Node>, Vec<Node>) {
+) -> (Vec<Node>, Vec<Node>, Vec<Node>) {
     let mut retained = Vec::with_capacity(nodes.len());
+    let mut pre_migrated = Vec::new();
     let mut migrated = Vec::new();
     for node in nodes {
         match node {
             node @ (Node::Mark { .. } | Node::Ins { .. }) => migrated.push(node),
-            Node::Adjust(list) => {
-                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
+            Node::Adjust(adjust) => {
+                let target = if adjust.pre {
+                    &mut pre_migrated
+                } else {
+                    &mut migrated
+                };
+                target.extend(
+                    stores
+                        .nodes(adjust.content)
+                        .into_iter()
+                        .map(|node| node.to_owned()),
+                );
             }
             node => retained.push(node),
         }
     }
-    (retained, migrated)
+    (retained, pre_migrated, migrated)
 }
 
 enum UnboxSource {

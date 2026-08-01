@@ -71,7 +71,7 @@ pub enum Node {
     MathChoice(MathChoice),
     MathList(MathListNode),
     Nonscript,
-    Adjust(NodeListId),
+    Adjust(AdjustNode),
 }
 
 impl PartialEq for Node {
@@ -302,6 +302,26 @@ pub fn node_append_histogram() -> Vec<(&'static str, u64)> {
 #[cfg(feature = "profiling")]
 pub(crate) fn record_node_append(node: &Node) {
     stats::record(node);
+}
+
+/// A pdfTeX adjustment node payload.
+///
+/// Ordinary TeX adjustments migrate after their containing horizontal box;
+/// pdfTeX's `pre` form migrates before it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdjustNode {
+    pub content: NodeListId,
+    pub pre: bool,
+}
+
+impl AdjustNode {
+    #[must_use]
+    pub const fn ordinary(content: NodeListId) -> Self {
+        Self {
+            content,
+            pre: false,
+        }
+    }
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
@@ -652,7 +672,8 @@ impl Node {
                 out.push(*post);
                 out.push(*replace);
             }
-            Self::Ins { content, .. } | Self::Adjust(content) => out.push(*content),
+            Self::Ins { content, .. } => out.push(*content),
+            Self::Adjust(adjust) => out.push(adjust.content),
             Self::MathNoad(noad) => {
                 push_math_field_child(&noad.nucleus, out);
                 push_math_field_child(&noad.subscript, out);

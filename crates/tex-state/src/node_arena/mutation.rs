@@ -38,7 +38,7 @@ impl NodeStorage {
                 self.choices[row].script_script = children[3];
             }
             ChildPatch::MathList { row, child } => self.math_lists[row].content = child,
-            ChildPatch::Adjust { row, child } => self.adjusts[row] = child,
+            ChildPatch::Adjust { row, child } => self.adjusts[row].content = child,
         }
     }
 }

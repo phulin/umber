@@ -1429,7 +1429,10 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
             floating_penalty: 0,
             content: insert_content,
         },
-        tex_state::node::Node::Adjust(adjust_content),
+        tex_state::node::Node::Adjust(tex_state::node::AdjustNode {
+            content: adjust_content,
+            pre: false,
+        }),
         tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Special {
             class: "dvi".to_owned(),
             payload: b"after".to_vec(),

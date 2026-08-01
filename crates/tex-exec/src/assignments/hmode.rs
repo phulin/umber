@@ -621,7 +621,11 @@ fn execute_vadjust(
     let content = stores.freeze_node_list(level.list().nodes());
     crate::leave_group(input, stores, tex_state::GroupKind::AdjustedHBox)?;
     execution.paragraph_group_exited(stores);
-    nest.current_list_mutation().push(Node::Adjust(content));
+    nest.current_list_mutation()
+        .push(Node::Adjust(tex_state::node::AdjustNode {
+            content,
+            pre: false,
+        }));
     Ok(())
 }
 

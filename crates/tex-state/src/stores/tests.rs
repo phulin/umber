@@ -158,7 +158,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             content: empty,
         }),
         Node::Nonscript,
-        Node::Adjust(empty),
+        Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
     ];
     let id = stores.freeze_node_list(&nodes);
     stores.testing_assert_owned_borrowed_node_hashes_equal(id);
@@ -168,7 +168,8 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
 fn node_semantic_ids_are_canonical_and_compose_from_children() {
     fn nested(stores: &mut Stores, penalty: i32) -> (NodeListId, NodeListId) {
         let child = stores.freeze_node_list(&[Node::Penalty(penalty)]);
-        let root = stores.freeze_node_list(&[Node::Adjust(child)]);
+        let root =
+            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
         (child, root)
     }
 
@@ -195,7 +196,9 @@ fn node_semantic_ids_are_canonical_and_compose_from_children() {
     );
 
     let mut builder = shifted.node_list_builder();
-    builder.push(Node::Adjust(shifted_child));
+    builder.push(Node::Adjust(crate::node::AdjustNode::ordinary(
+        shifted_child,
+    )));
     let built_root = shifted.finish_node_list(&mut builder);
     assert_eq!(
         shifted.node_semantic_id(built_root),
@@ -282,7 +285,8 @@ fn node_semantic_ids_follow_rollback_and_promotion() {
     assert_ne!(stale_semantic_id, stores.node_semantic_id(replacement));
     assert!(std::panic::catch_unwind(|| stores.node_semantic_id(stale)).is_err());
 
-    let root = stores.freeze_node_list(&[Node::Adjust(replacement)]);
+    let root =
+        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(replacement))]);
     let semantic_id = stores.node_semantic_id(root);
     stores.set_box_reg(0, root);
     let survivor = stores.box_reg(0).expect("box assignment promotes the list");
@@ -383,10 +387,14 @@ fn semantic_projection_visits_only_outer_nodes() {
     let mut stores = Stores::new();
     let mut nested = stores.freeze_node_list(&[Node::Penalty(1)]);
     for _ in 0..512 {
-        nested = stores.freeze_node_list(&[Node::Adjust(nested)]);
+        nested =
+            stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(nested))]);
     }
 
-    let outer = [Node::Adjust(nested), Node::Penalty(2)];
+    let outer = [
+        Node::Adjust(crate::node::AdjustNode::ordinary(nested)),
+        Node::Penalty(2),
+    ];
     let mut hasher = StateHasher::new(0x6f75_7465_725f_6e64);
     let visits = stores.hash_node_slice_semantic(&outer, &mut hasher);
     assert_eq!(visits, outer.len());
@@ -394,15 +402,39 @@ fn semantic_projection_visits_only_outer_nodes() {
     let mut equivalent = Stores::new();
     let mut equivalent_nested = equivalent.freeze_node_list(&[Node::Penalty(1)]);
     for _ in 0..512 {
-        equivalent_nested = equivalent.freeze_node_list(&[Node::Adjust(equivalent_nested)]);
+        equivalent_nested = equivalent.freeze_node_list(&[Node::Adjust(
+            crate::node::AdjustNode::ordinary(equivalent_nested),
+        )]);
     }
     let mut equivalent_hasher = StateHasher::new(0x6f75_7465_725f_6e64);
     let equivalent_visits = equivalent.hash_node_slice_semantic(
-        &[Node::Adjust(equivalent_nested), Node::Penalty(2)],
+        &[
+            Node::Adjust(crate::node::AdjustNode::ordinary(equivalent_nested)),
+            Node::Penalty(2),
+        ],
         &mut equivalent_hasher,
     );
     assert_eq!(equivalent_visits, outer.len());
     assert_eq!(hasher.finish(), equivalent_hasher.finish());
+}
+
+#[test]
+fn adjustment_pre_marker_is_semantic_state() {
+    let mut stores = Stores::new();
+    let content = stores.freeze_node_list(&[Node::Penalty(17)]);
+    let ordinary =
+        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(content))]);
+    let pre =
+        stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode { content, pre: true })]);
+
+    assert_ne!(
+        stores.node_semantic_id(ordinary),
+        stores.node_semantic_id(pre)
+    );
+    assert!(matches!(
+        stores.nodes(pre).testing_decoded(),
+        [Node::Adjust(adjust)] if adjust.pre && adjust.content == content
+    ));
 }
 
 #[test]
@@ -1295,7 +1327,7 @@ fn freeze_node_list_rejects_stale_rolled_back_child_node_list() {
 
     stores.rollback(&snapshot);
     stores.freeze_node_list(&[Node::Penalty(1), Node::Penalty(2)]);
-    stores.freeze_node_list(&[Node::Adjust(stale)]);
+    stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(stale))]);
 }
 
 #[test]
@@ -2249,7 +2281,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
             display: false,
             content: child,
         }),
-        Node::Adjust(child),
+        Node::Adjust(crate::node::AdjustNode::ordinary(child)),
     ]);
 
     stores.set_box_reg(17, root);

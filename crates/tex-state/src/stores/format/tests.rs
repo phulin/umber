@@ -29,11 +29,14 @@ fn missing_node_dto_reference_fails_before_store_publication() {
         .node_lists
         .last_mut()
         .expect("stored box contributes a node list");
-    root.nodes[0] = FormatNode::Adjust(FormatListKey {
-        survivor_root: None,
-        start: u32::MAX,
-        len: 1,
-    });
+    root.nodes[0] = FormatNode::Adjust {
+        content: FormatListKey {
+            survivor_root: None,
+            start: u32::MAX,
+            len: 1,
+        },
+        pre: false,
+    };
 
     assert!(matches!(
         format.restore(),
@@ -83,7 +86,7 @@ fn environment_dto_codec_preserves_full_30_bit_cell_indices() {
 fn isolated_transitional_restore_instrumentation_observes_prohibited_load_work() {
     let mut stores = Stores::new();
     let child = stores.freeze_node_list(&[Node::Penalty(7)]);
-    let root = stores.freeze_node_list(&[Node::Adjust(child)]);
+    let root = stores.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
     stores.set_box_reg(0, root);
     stores.set_count(0, 17);
 

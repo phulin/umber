@@ -8811,6 +8811,76 @@ fn canonical_vadjust_splices_across_a_paragraph_line_break() {
 }
 
 #[test]
+fn pdftex_vadjust_pre_retains_marker_and_dumps_it() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_pdftex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{A\vadjust pre{\penalty321}B}\showbox0\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let hbox = universe
+        .box_reg(0)
+        .and_then(|id| universe.nodes(id).first().map(|node| node.to_owned()))
+        .expect("box register stores");
+    let Node::HList(hbox) = hbox else {
+        panic!("setbox0 contains an hbox");
+    };
+    let adjust = universe
+        .nodes(hbox.children)
+        .iter()
+        .find_map(|node| match node.to_owned() {
+            Node::Adjust(adjust) => Some(adjust),
+            _ => None,
+        })
+        .expect("vadjust node remains inside an unappended hbox");
+    assert!(adjust.pre);
+    assert_eq!(universe.nodes(adjust.content), &[Node::Penalty(321)]);
+    assert!(terminal_text(&universe).contains("\\vadjust pre"));
+}
+
+#[test]
+fn pdftex_vadjust_pre_migrates_before_its_line_and_post_after() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_pdftex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027);
+    register_source(
+        &mut control,
+        br"\setbox0=\vbox{\hsize=1000pt\parindent=0pt A\vadjust pre{\penalty111}\vadjust{\penalty222}B\par}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let outer = universe.box_reg(0).expect("box register stores");
+    let Node::VList(vbox) = universe.nodes(outer).first().expect("vbox").to_owned() else {
+        panic!("setbox0 contains a vbox");
+    };
+    let children = universe.nodes(vbox.children).to_vec();
+    let pre = children
+        .iter()
+        .position(|node| *node == Node::Penalty(111))
+        .unwrap();
+    let line = children
+        .iter()
+        .position(|node| matches!(node, Node::HList(_)))
+        .unwrap();
+    let post = children
+        .iter()
+        .position(|node| *node == Node::Penalty(222))
+        .unwrap();
+    assert!(pre < line && line < post, "{children:?}");
+}
+
+#[test]
 fn canonical_vadjust_is_forbidden_in_vertical_mode() {
     // tex.web's "Forbidden cases" list includes `vmode+vadjust`; unlike
     // `\insert` (`any_mode`), `\vadjust` directly in vertical mode never

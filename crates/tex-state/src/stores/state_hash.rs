@@ -979,9 +979,10 @@ impl Stores {
                 hasher.tag(22);
                 hasher.u8(direction as u8);
             }
-            NodeRef::Adjust(content) => {
+            NodeRef::Adjust(adjust) => {
                 hasher.tag(15);
-                stack.push(NodeFrame::List(content));
+                hasher.bool(adjust.pre);
+                stack.push(NodeFrame::List(adjust.content));
             }
             NodeRef::MathNoad(noad) => {
                 hasher.tag(16);
@@ -1133,9 +1134,10 @@ impl Stores {
                 hasher.tag(22);
                 hasher.u8(direction as u8);
             }
-            Node::Adjust(content) => {
+            Node::Adjust(adjust) => {
                 hasher.tag(15);
-                stack.push(NodeFrame::List(content));
+                hasher.bool(adjust.pre);
+                stack.push(NodeFrame::List(adjust.content));
             }
             Node::MathNoad(noad) => {
                 hasher.tag(16);

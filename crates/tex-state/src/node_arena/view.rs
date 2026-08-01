@@ -76,7 +76,7 @@ pub enum NodeRef<'a> {
     MathChoice(&'a crate::math::MathChoice),
     MathList(crate::math::MathListNode),
     Nonscript,
-    Adjust(NodeListId),
+    Adjust(crate::node::AdjustNode),
 }
 
 impl PartialEq for NodeRef<'_> {
@@ -643,9 +643,8 @@ impl NodeStorage {
                 NodeRef::Disc {
                     pre, post, replace, ..
                 } => children.extend([pre, post, replace]),
-                NodeRef::Ins { content, .. } | NodeRef::Adjust(content) => {
-                    children.push(content);
-                }
+                NodeRef::Ins { content, .. } => children.push(content),
+                NodeRef::Adjust(adjust) => children.push(adjust.content),
                 _ => {}
             }
             for child in children.into_iter().rev() {

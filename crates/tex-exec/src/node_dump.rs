@@ -193,9 +193,20 @@ fn dump_node(
             pre, post, replace, ..
         } => dump_disc(stores, *pre, *post, *replace, config, depth, out),
         Node::Mark { class, tokens } => dump_mark(stores, *class, *tokens, out),
-        Node::Adjust(list) => {
-            out.push_str("\\vadjust\n");
-            dump_list(stores, *list, config, depth + 1, ListContext::VList, out);
+        Node::Adjust(adjust) => {
+            out.push_str(if adjust.pre {
+                "\\vadjust pre\n"
+            } else {
+                "\\vadjust\n"
+            });
+            dump_list(
+                stores,
+                adjust.content,
+                config,
+                depth + 1,
+                ListContext::VList,
+                out,
+            );
         }
         Node::MathOn(width) => {
             dump_math_marker("\\mathon", *width, out);

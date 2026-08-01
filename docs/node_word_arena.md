@@ -106,7 +106,7 @@ The storage includes:
 - one diagnostic origin aligned with every word, plus consumed-character
   origins for ligatures;
 - boxes, unsets, rules, leader glues, discretionaries, marks, insertions, and
-  adjusts;
+  adjustments whose sidecar retains the pdfTeX pre-migration marker;
 - detached whatsit payloads, including owned strings and bytes;
 - noads, fractions, choices, and math lists; and
 - child-list and shared-content handles required by each logical row.

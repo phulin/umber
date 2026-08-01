@@ -351,8 +351,8 @@ impl Stores {
                 self.assert_live_glue(*split_top_skip);
                 self.assert_live_child_node_list(*content);
             }
-            Node::Adjust(content) => {
-                self.assert_live_child_node_list(*content);
+            Node::Adjust(adjust) => {
+                self.assert_live_child_node_list(adjust.content);
             }
             Node::MathNoad(noad) => {
                 self.assert_live_handles_in_math_field(&noad.nucleus);

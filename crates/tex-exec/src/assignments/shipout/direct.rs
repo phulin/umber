@@ -850,7 +850,7 @@ fn emit_index(
                 emit_node_list(
                     stores,
                     overlay,
-                    content,
+                    content.content,
                     nodes,
                     None,
                     emission,

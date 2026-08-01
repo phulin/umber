@@ -748,17 +748,18 @@ fn frozen_foundational_sections_restore_ids_and_accept_job_local_additions() {
 fn frozen_node_arena_installs_outside_job_epoch_and_rejects_corrupt_metadata() {
     let mut universe = Universe::new();
     let child = universe.freeze_node_list(&[Node::Penalty(17)]);
-    let root = universe.freeze_node_list(&[Node::Adjust(child)]);
+    let root = universe.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(child))]);
     universe.set_box_reg(8, root);
     let image = universe.dump_format().expect("frozen node format");
 
     let mut loaded = Universe::from_format(World::memory(), &image).expect("load frozen nodes");
     assert_eq!(loaded.testing_epoch_node_count(), 0);
     let frozen_root = loaded.box_reg(8).expect("frozen box root");
-    let local = loaded.freeze_node_list(&[Node::Adjust(frozen_root)]);
+    let local =
+        loaded.freeze_node_list(&[Node::Adjust(crate::node::AdjustNode::ordinary(frozen_root))]);
     assert_eq!(loaded.testing_epoch_node_count(), 1);
     assert!(
-        matches!(loaded.nodes(local).testing_decoded(), [Node::Adjust(id)] if *id == frozen_root)
+        matches!(loaded.nodes(local).testing_decoded(), [Node::Adjust(adjust)] if adjust.content == frozen_root)
     );
 
     for offset in [12_usize, 32 + 24] {

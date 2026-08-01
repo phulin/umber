@@ -2131,8 +2131,8 @@ impl Stores {
                         return false;
                     }
                 }
-                crate::node_arena::NodeRef::Adjust(content) => {
-                    if !self.collect_paragraph_mount_resources(content, glues, fonts) {
+                crate::node_arena::NodeRef::Adjust(adjust) => {
+                    if !self.collect_paragraph_mount_resources(adjust.content, glues, fonts) {
                         return false;
                     }
                 }

@@ -203,9 +203,10 @@ impl Stores {
                 hasher.tag(14);
                 hasher.i32(width.raw());
             }
-            Node::Adjust(content) => {
+            Node::Adjust(adjust) => {
                 hasher.tag(15);
-                self.hash_child_identity(*content, hasher);
+                hasher.bool(adjust.pre);
+                self.hash_child_identity(adjust.content, hasher);
             }
             Node::MathNoad(noad) => {
                 hasher.tag(16);

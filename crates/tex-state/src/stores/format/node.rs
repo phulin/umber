@@ -81,7 +81,10 @@ pub(super) enum FormatNode {
     MathChoice(FormatMathChoice),
     MathList(FormatMathListNode),
     Nonscript,
-    Adjust(FormatListKey),
+    Adjust {
+        content: FormatListKey,
+        pre: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -285,7 +288,7 @@ impl FormatNode {
                 remap(post);
                 remap(replace);
             }
-            Self::Ins { content, .. } | Self::Adjust(content) => remap(content),
+            Self::Ins { content, .. } | Self::Adjust { content, .. } => remap(content),
             Self::MathNoad(noad) => {
                 noad.nucleus.remap_list_keys(keys);
                 noad.subscript.remap_list_keys(keys);
@@ -411,7 +414,10 @@ impl FormatNode {
                 Self::MathList(FormatMathListNode::capture(stores, list, roots))
             }
             Node::Nonscript => Self::Nonscript,
-            Node::Adjust(content) => Self::Adjust(key(stores, content, roots)),
+            Node::Adjust(adjust) => Self::Adjust {
+                content: key(stores, adjust.content, roots),
+                pre: adjust.pre,
+            },
         }
     }
 
@@ -505,7 +511,10 @@ impl FormatNode {
             Self::MathChoice(choice) => Node::MathChoice(choice.restore(ids)?),
             Self::MathList(list) => Node::MathList(list.restore(ids)?),
             Self::Nonscript => Node::Nonscript,
-            Self::Adjust(content) => Node::Adjust(list_id(ids, content)?),
+            Self::Adjust { content, pre } => Node::Adjust(crate::node::AdjustNode {
+                content: list_id(ids, content)?,
+                pre,
+            }),
         })
     }
 }

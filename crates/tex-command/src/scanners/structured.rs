@@ -405,6 +405,7 @@ pub enum ScannedPackingSpec {
 pub struct ScannedInsertConstruction {
     pub class: i32,
     pub is_vadjust: bool,
+    pub pre: bool,
     /// TeX82 §1099 calls §82's `error` before `scan_left_brace`, so preserve
     /// the live input display at the point the reserved class is detected.
     pub reserved_class_context: Option<String>,
@@ -2684,6 +2685,9 @@ impl CommandProcessor<'_> {
         &mut self,
         is_vadjust: bool,
     ) -> Result<ScannedInsertConstruction, CommandError> {
+        let pre = is_vadjust
+            && self.command.profile().capabilities().supports_pdftex()
+            && self.scan_keyword("pre")?.value;
         let (class, reserved_class_context) = if is_vadjust {
             (255, None)
         } else {
@@ -2697,6 +2701,7 @@ impl CommandProcessor<'_> {
         Ok(ScannedInsertConstruction {
             class,
             is_vadjust,
+            pre,
             reserved_class_context,
         })
     }

@@ -2067,7 +2067,8 @@ fn node_child_ids(node: &Node) -> Vec<NodeListId> {
         Node::Disc {
             pre, post, replace, ..
         } => out.extend([*pre, *post, *replace]),
-        Node::Ins { content, .. } | Node::Adjust(content) => out.push(*content),
+        Node::Ins { content, .. } => out.push(*content),
+        Node::Adjust(adjust) => out.push(adjust.content),
         Node::MathNoad(noad) => {
             math_field_child(&noad.nucleus, &mut out);
             math_field_child(&noad.subscript, &mut out);

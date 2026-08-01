@@ -225,7 +225,7 @@ impl NodeStorage {
                     let index = row.payload() as usize;
                     pending.push(ChildPatch::Adjust {
                         row: index,
-                        child: self.adjusts[index],
+                        child: self.adjusts[index].content,
                     });
                     row
                 }

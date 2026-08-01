@@ -416,8 +416,8 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
     let _ = crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     for node in finished {
         match node {
-            Node::Adjust(list) => {
-                let adjusted = stores.nodes(list).to_vec();
+            Node::Adjust(adjust) => {
+                let adjusted = stores.nodes(adjust.content).to_vec();
                 for node in adjusted {
                     append_migrated_contribution(nest, stores, node);
                 }
@@ -618,6 +618,7 @@ fn break_current_paragraph(
     let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
+    let mut pre_migrated = Vec::new();
     let mut retained_migrated = Vec::new();
     let mut finished_nodes = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
@@ -631,6 +632,7 @@ fn break_current_paragraph(
         extract_migrating_material(
             stores,
             &mut broken.nodes,
+            &mut pre_migrated,
             &mut migrated,
             &mut retained_migrated,
         );
@@ -646,6 +648,9 @@ fn break_current_paragraph(
             .checked_add(1)
             .expect("paragraph line count exceeds i32");
         last_line = Some(line);
+        for node in pre_migrated.drain(..) {
+            append_migrated_contribution(nest, stores, node);
+        }
         let line_node = Node::HList(line);
         finished_nodes.push(line_node.clone());
         append_node_to_current_list(nest, stores, line_node, fuel)?;
@@ -982,9 +987,11 @@ fn encode_glue_spec(spec: tex_state::glue::GlueSpec, out: &mut Vec<u8>) {
 fn extract_migrating_material(
     stores: &Universe,
     nodes: &mut Vec<Node>,
+    pre_migrated: &mut Vec<Node>,
     migrated: &mut Vec<Node>,
     retained: &mut Vec<Node>,
 ) {
+    pre_migrated.clear();
     migrated.clear();
     retained.clear();
     for node in nodes.extract_if(.., |node| {
@@ -995,9 +1002,19 @@ fn extract_migrating_material(
                 migrated.push(node.clone());
                 retained.push(node);
             }
-            Node::Adjust(list) => {
-                migrated.extend(stores.nodes(list).into_iter().map(|node| node.to_owned()));
-                retained.push(Node::Adjust(list));
+            Node::Adjust(adjust) => {
+                let target = if adjust.pre {
+                    &mut *pre_migrated
+                } else {
+                    &mut *migrated
+                };
+                target.extend(
+                    stores
+                        .nodes(adjust.content)
+                        .into_iter()
+                        .map(|node| node.to_owned()),
+                );
+                retained.push(Node::Adjust(adjust));
             }
             _ => unreachable!("extract predicate restricts migrating node kinds"),
         }

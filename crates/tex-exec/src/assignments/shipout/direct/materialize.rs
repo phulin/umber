@@ -191,7 +191,7 @@ pub(super) fn materialize_node_list(
             NodeRef::Adjust(content) => Some(PageNode::Adjust(materialize_node_list(
                 stores,
                 overlay,
-                content,
+                content.content,
                 emission,
                 anchor,
                 suppress_deferred_streams,

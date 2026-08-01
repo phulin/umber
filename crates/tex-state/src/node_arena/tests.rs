@@ -103,7 +103,7 @@ fn bottom_up_debug_assert_fires_on_hand_constructed_violation() {
     let future_id = NodeListId::testing_epoch(0, 1);
 
     let mut builder = NodeListBuilder::new();
-    builder.push(Node::Adjust(future_id));
+    builder.push(Node::Adjust(crate::node::AdjustNode::ordinary(future_id)));
 
     let _ = builder.finish(&mut arena);
 }
@@ -523,7 +523,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             display: true,
             content: empty,
         }),
-        Node::Adjust(empty),
+        Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
     ];
     let id = arena.append(&nodes);
     assert_eq!(arena.get_epoch(id), nodes);
@@ -543,7 +543,7 @@ fn rollback_truncates_words_and_every_sidecar_without_a_decoded_mirror() {
     let empty = arena.append(&[]);
     let mark = arena.watermark();
     let rare = [
-        Node::Adjust(empty),
+        Node::Adjust(crate::node::AdjustNode::ordinary(empty)),
         Node::Rule {
             width: None,
             height: None,
@@ -624,7 +624,7 @@ fn late_invalid_ligature_leaves_complete_arena_state_unchanged() {
                 ch: 'b',
                 origin: crate::token::OriginId::UNKNOWN,
             },
-            Node::Adjust(baseline),
+            Node::Adjust(crate::node::AdjustNode::ordinary(baseline)),
             Node::Lig {
                 font: FontId::testing_new(2),
                 ch: 'c',
@@ -655,7 +655,7 @@ fn builder_late_invalid_ligature_does_not_publish_valid_prefix_or_sidecar() {
         let mark = arena.watermark();
         let mut builder = NodeListBuilder::new();
         builder.push(Node::Penalty(10));
-        builder.push(Node::Adjust(empty));
+        builder.push(Node::Adjust(crate::node::AdjustNode::ordinary(empty)));
         builder.push(Node::Lig {
             font: FontId::testing_new(0),
             ch,

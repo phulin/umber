@@ -31,7 +31,8 @@ fn debug_assert_no_unset_node(node: &Node, stack: &mut Vec<NodeListId>) {
             stack.push(*post);
             stack.push(*replace);
         }
-        Node::Ins { content, .. } | Node::Adjust(content) => stack.push(*content),
+        Node::Ins { content, .. } => stack.push(*content),
+        Node::Adjust(adjust) => stack.push(adjust.content),
         Node::MathNoad(noad) => {
             debug_assert_math_field(&noad.nucleus, stack);
             debug_assert_math_field(&noad.subscript, stack);

@@ -564,8 +564,10 @@ fn package_cell(
         // onto the row's holding list for §799 to append after the row. A
         // `\valign` column is `vpackage`d with `adjust_tail` null.
         let nodes = crate::math::finish_math_lists_owned(stores, nodes, false);
-        let (retained, migrated) = crate::assignments::split_hpack_migrations(stores, nodes);
-        migrations.extend(migrated);
+        let (retained, mut pre_migrated, migrated) =
+            crate::assignments::split_hpack_migrations(stores, nodes);
+        pre_migrated.extend(migrated);
+        migrations.extend(pre_migrated);
         retained
     } else {
         nodes

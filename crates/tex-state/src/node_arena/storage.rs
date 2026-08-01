@@ -178,7 +178,7 @@ pub(crate) struct NodeStorage {
     pub(super) fractions: Vec<crate::math::MathFraction>,
     pub(super) choices: Vec<crate::math::MathChoice>,
     pub(super) math_lists: Vec<crate::math::MathListNode>,
-    pub(super) adjusts: Vec<NodeListId>,
+    pub(super) adjusts: Vec<crate::node::AdjustNode>,
     /// Exact totals for heap allocations owned below ligature and whatsit
     /// sidecar rows. Profiling reads these after every append, so keep the
     /// totals incrementally instead of rescanning all accumulated rows.

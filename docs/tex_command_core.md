@@ -810,6 +810,16 @@ new architecture: it already existed as a general `Node::Mark`/`Node::Ins`/
 `adjust_tail` and `post_line_break`), so wiring the canonical primitive was
 sufficient to exercise it correctly with no further changes.
 
+pdftex.web §§1275--1276 extend that construction in the pdfTeX profile: an
+optional `pre` keyword is scanned before the mandatory body brace and retained
+in `AdjustNode` beside the content list. The compact-node sidecar, semantic
+identity, format-image DTO, survivor traversal, and diagnostics all preserve
+the marker; `\showbox` prints `\vadjust pre`. Migration maintains separate pre
+and ordinary adjustment streams, placing pre material before its packed hlist
+or paragraph line while ordinary `\vadjust` material remains after it. TeX82
+and e-TeX profiles do not probe the keyword and retain their original scanner
+behavior.
+
 `\mark{...}` (TeX82 §1101's `make_mark`) needs none of the box-opener
 machinery: `CommandProcessor::scan_balanced_text(true)` (the same fully
 expanded general-text scan already used for `\special`/`\message`) is the

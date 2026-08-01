@@ -322,7 +322,10 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             content: empty,
         }),
         Node::Nonscript,
-        Node::Adjust(empty),
+        Node::Adjust(tex_state::node::AdjustNode {
+            content: empty,
+            pre: false,
+        }),
     ];
 
     for node in impossible {
