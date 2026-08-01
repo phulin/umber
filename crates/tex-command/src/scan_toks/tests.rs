@@ -168,6 +168,255 @@ fn install_expandable(
     symbol
 }
 
+fn etex_boundary_tokens(universe: &mut Universe) -> Vec<Token> {
+    let control_word = universe.intern("word").symbol();
+    let control_space = universe.intern(" ").symbol();
+    let active = universe.intern_active_character('~').symbol();
+    vec![
+        Token::Cs(control_word),
+        Token::Cs(control_space),
+        Token::Cs(active),
+        Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+        Token::Char {
+            ch: '$',
+            cat: Catcode::MathShift,
+        },
+        Token::Char {
+            ch: '&',
+            cat: Catcode::AlignmentTab,
+        },
+        Token::Char {
+            ch: '\r',
+            cat: Catcode::EndLine,
+        },
+        Token::Char {
+            ch: '#',
+            cat: Catcode::Parameter,
+        },
+        Token::Char {
+            ch: '^',
+            cat: Catcode::Superscript,
+        },
+        Token::Char {
+            ch: '_',
+            cat: Catcode::Subscript,
+        },
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space,
+        },
+        Token::Char {
+            ch: 'L',
+            cat: Catcode::Letter,
+        },
+        Token::Char {
+            ch: 'o',
+            cat: Catcode::Other,
+        },
+    ]
+}
+
+#[test]
+fn etex_unexpanded_preserves_empty_and_full_boundary_token_lists() {
+    // e-TeX 2.6 etex.ch [17.3623--3660, 27.465]: scan_general_text uses
+    // unexpanded get_token collection and the_toks attaches the resulting
+    // list directly. This includes empty text, control space, active control
+    // sequences, parameters, and every category that can exist as a delivered
+    // character token; ignored/comment/invalid source characters are covered
+    // separately because TeX never makes tokens for them.
+    for full_matrix in [false, true] {
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let unexpanded =
+            install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+        let expected = if full_matrix {
+            etex_boundary_tokens(&mut universe)
+        } else {
+            Vec::new()
+        };
+        let mut input = vec![Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        }];
+        input.push(Token::Cs(unexpanded));
+        input.push(Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        });
+        input.extend(expected.iter().copied());
+        input.extend([
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ]);
+        push(&mut command, input);
+        let mut capabilities = CommandHostCapabilities::default();
+        let scanned = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .scan_toks(ScanToksMode::General { expanded: true })
+            .expect("expanded collector accepts the unexpanded boundary list");
+
+        assert_eq!(
+            universe.tokens(scanned.replacement_text.token_list()),
+            expected,
+            "unexpanded must preserve exact token identity and category"
+        );
+        assert_eq!(command.scanner.status(), &ScannerStatus::Normal);
+        assert_eq!(
+            command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
+    }
+}
+
+#[test]
+fn etex_detokenize_projects_full_boundary_matrix_with_exact_spacing() {
+    // e-TeX 2.6 etex.ch [17.3623--3660, 53a]: token_show doubles parameter
+    // characters and supplies control-word separators; str_toks then makes
+    // exactly category-10 spaces and category-12 other characters.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let detokenize =
+        install_expandable(&mut universe, "detokenize", ExpandablePrimitive::Detokenize);
+    let body = etex_boundary_tokens(&mut universe);
+    let mut input = vec![
+        Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+        Token::Cs(detokenize),
+        Token::Char {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+    ];
+    input.extend(body);
+    input.extend([
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+        Token::Char {
+            ch: '}',
+            cat: Catcode::EndGroup,
+        },
+    ]);
+    push(&mut command, input);
+    let mut capabilities = CommandHostCapabilities::default();
+    let scanned = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("detokenize boundary matrix completes");
+    let output = universe.tokens(scanned.replacement_text.token_list());
+    let text = output
+        .iter()
+        .map(|token| match token {
+            Token::Char { ch, .. } => *ch,
+            _ => panic!("detokenize returned a non-character token"),
+        })
+        .collect::<String>();
+
+    assert_eq!(text, "\\word \\ ~{}$&\r##^_ Lo");
+    assert!(output.iter().all(|token| matches!(
+        token,
+        Token::Char {
+            ch: ' ',
+            cat: Catcode::Space
+        } | Token::Char {
+            cat: Catcode::Other,
+            ..
+        }
+    )));
+    assert_eq!(command.scanner.status(), &ScannerStatus::Normal);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+}
+
+#[test]
+fn etex_unexpanded_and_detokenize_discard_nontoken_categories() {
+    // e-TeX 2.6 etex.ch [17.3623--3660, 27.465, 53a] inherits TeX82
+    // §§346--348 source tokenization: ignored and invalid characters make no
+    // token, while a comment discards the rest of its physical line. The next
+    // line starts in new_line state rather than contributing a space.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(&b"{\\unexpanded{A?B%gone\nC!D}\\detokenize{E?F%gone\nG!H}}"[..]),
+        ))
+        .expect("boundary source registers");
+    command
+        .open_registered_source(source)
+        .expect("boundary source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_catcode('?', Catcode::Ignored);
+    universe.set_catcode('!', Catcode::Invalid);
+    install_expandable(&mut universe, "unexpanded", ExpandablePrimitive::Unexpanded);
+    install_expandable(&mut universe, "detokenize", ExpandablePrimitive::Detokenize);
+    let mut capabilities = CommandHostCapabilities::default();
+    let scanned = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_toks(ScanToksMode::General { expanded: true })
+        .expect("comment boundary source scans");
+
+    assert_eq!(
+        universe.tokens(scanned.replacement_text.token_list()),
+        &[
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'B',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'C',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'D',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: 'E',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'F',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'G',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: 'H',
+                cat: Catcode::Other,
+            },
+        ]
+    );
+    assert_eq!(command.scanner.status(), &ScannerStatus::Normal);
+    assert_eq!(
+        command.alignment.align_state,
+        crate::processor::TOP_LEVEL_ALIGN_STATE
+    );
+}
+
 #[test]
 fn direct_the_toks_splice_is_unexpanded_and_does_not_balance_the_collector() {
     let mut command = CommandState::default();
