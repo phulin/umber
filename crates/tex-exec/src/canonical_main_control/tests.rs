@@ -124,14 +124,14 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        b"\\def\\pair#1#2{}\\tracingmacros=1\\tracingonline=1\\pair CD\\end",
+        b"\\def\\pair#1#2{}\\tracingmacros=1 \\tracingonline=1 \\pair CD\\end",
     );
 
     run_to_end(&mut control, &mut stores);
 
     let terminal = pending_sink_text(&stores, true);
     let log = pending_sink_text(&stores, false);
-    let expected = "\n\\pair ->\n#1<-C\n#2<-D";
+    let expected = "\n\\pair ->\n#1<-C\n#2<-D\n";
     assert_eq!(terminal, expected);
     assert_eq!(log, expected);
 
@@ -139,13 +139,13 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        b"\\def\\pair#1#2{}\\tracingmacros=1\\pair AB\\end",
+        b"\\def\\pair#1#2{}\\tracingmacros=1 \\pair AB\\end",
     );
     run_to_end(&mut control, &mut stores);
     assert_eq!(pending_sink_text(&stores, true), "");
     assert_eq!(
         pending_sink_text(&stores, false),
-        "\n\\pair ->\n#1<-A\n#2<-B"
+        "\n\\pair ->\n#1<-A\n#2<-B\n"
     );
 }
 
