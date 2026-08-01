@@ -387,6 +387,9 @@ fn split_page_insertion(
     let mut content_nodes = stores.nodes(content).to_vec();
     let split = vert_break(stores, &content_nodes, capacity, split_max_depth)
         .map_err(vertical_break_error)?;
+    if stores.int_param(IntParam::TRACING_PAGES) > 0 {
+        trace_insertion_split(stores, class, capacity, &split, &content_nodes);
+    }
     let replacement = normalize_insert_content_shrink(
         stores,
         node,
@@ -411,6 +414,30 @@ fn split_page_insertion(
         }
     }
     Ok(replacement)
+}
+
+/// TeX82 §1012's insertion `vert_break` trace.
+fn trace_insertion_split(
+    stores: &mut Universe,
+    class: u16,
+    capacity: Scaled,
+    split: &tex_typeset::VerticalBreak,
+    content: &[Node],
+) {
+    let penalty = split.break_index.map_or(EJECT_PENALTY, |index| {
+        content.get(index).map_or(0, |node| match node {
+            Node::Penalty(value) => *value,
+            _ => 0,
+        })
+    });
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic.print_nl("% split").print_int(i32::from(class));
+    diagnostic.print(" to ").print_scaled(capacity);
+    diagnostic
+        .print_char(',')
+        .print_scaled(split.best_height_plus_depth);
+    diagnostic.print(" p=").print_int(penalty);
+    diagnostic.end(false);
 }
 
 fn add_insert_penalty(stores: &mut Universe, penalty: i32) {
