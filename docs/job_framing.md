@@ -37,6 +37,14 @@ the existing `CanonicalResourceHost` still selects immutable bytes or reports
 absence. This keeps terminal interaction out of engine crates and gives native,
 browser, and test drivers the same bounded protocol.
 
+The startup line and the selected root name are separate facts. TeX82 §534
+echoes the complete terminal buffer after `**`, including driver syntax such
+as web2c's `&trip`, while §§528--529 derive `job_name` from only the parsed
+filename component. Prepared-format jobs therefore carry explicit startup
+invocation text alongside the immutable root registration; a format selector
+is preserved in the log without becoming part of `\jobname` or source
+identity.
+
 ## What a job prints, and when
 
 | tex.web               | Text                                                   | Sink                     |

@@ -544,6 +544,7 @@ fn trip_profiles_reuse_authenticated_provider_entries_and_fresh_jobs() {
                         interaction: tex_state::InteractionMode::Nonstop,
                         error_context_widths: recipe.construction_error_context_widths,
                         guards: recipe.guards,
+                        startup_line: format!("{fixture_name}-provider-control.tex"),
                         source_name: format!("{fixture_name}-provider-control.tex"),
                         source_kind: RegisteredSourceKind::Generated,
                         source: Arc::from(assignment.as_bytes()),
@@ -732,6 +733,7 @@ fn run_file_with_plain_format(path: &Path) -> Result<InProcessRun, String> {
                 error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
                     .expect("canonical Plain context widths"),
                 guards: plain_guards(),
+                startup_line: source_name.clone(),
                 source_name: source_name.clone(),
                 source_kind: RegisteredSourceKind::Generated,
                 source: Arc::clone(&source),
@@ -832,6 +834,7 @@ fn run_file_with_raw_tex82_format(path: &Path) -> Result<InProcessRun, String> {
                 error_context_widths: tex_state::print::ErrorContextWidths::new(64, 32)
                     .expect("canonical raw TeX82 context widths"),
                 guards: plain_guards(),
+                startup_line: source_name.clone(),
                 source_name: source_name.clone(),
                 source_kind: RegisteredSourceKind::Generated,
                 source: Arc::clone(&source),
@@ -1161,6 +1164,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     interaction: tex_state::InteractionMode::Nonstop,
                     error_context_widths: recipe.construction_error_context_widths,
                     guards: plain_guards(),
+                    startup_line: "plain-provider-isolation.tex".into(),
                     source_name: "plain-provider-isolation.tex".into(),
                     source_kind: RegisteredSourceKind::Generated,
                     source: Arc::from(source),
@@ -1188,6 +1192,7 @@ fn plain_provider_reuses_one_authenticated_construction_with_fresh_jobs() {
                     interaction: tex_state::InteractionMode::Nonstop,
                     error_context_widths: recipe.construction_error_context_widths,
                     guards: plain_guards(),
+                    startup_line: "plain-provider-provenance-isolation.tex".into(),
                     source_name: "plain-provider-provenance-isolation.tex".into(),
                     source_kind: RegisteredSourceKind::Generated,
                     source: Arc::from(&b"\\def\\x{a}\\x\\end\n"[..]),
@@ -1904,6 +1909,11 @@ fn run_two_phase_fixture(
                 interaction: tex_state::InteractionMode::Nonstop,
                 error_context_widths: recipe.construction_error_context_widths,
                 guards: recipe.guards,
+                startup_line: format!(
+                    "&{} {}",
+                    recipe.format_ident_name,
+                    source_identity.canonical_name()
+                ),
                 source_name: source_identity.canonical_name().to_owned(),
                 source_kind: RegisteredSourceKind::Generated,
                 source: Arc::clone(&source_bytes),
@@ -1981,7 +1991,7 @@ fn run_two_phase_fixture(
 }
 
 #[test]
-#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.424"]
+#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.428"]
 fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture(TripEngineProfile::Tex82, "trip.tex", "trip.tex", gate);

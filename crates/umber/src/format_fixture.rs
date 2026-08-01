@@ -293,6 +293,7 @@ pub struct LoadedFormatFixture {
 pub(crate) struct LoadedRunConfiguration {
     pub guards: FormatGenerationGuards,
     pub engine_binary: tex_exec::EngineBinaryIdentity,
+    pub startup_line: String,
 }
 
 impl LoadedFormatFixture {
@@ -329,6 +330,7 @@ impl LoadedFormatFixture {
             LoadedRunConfiguration {
                 guards,
                 engine_binary,
+                startup_line: source_name.to_owned(),
             },
             observer,
         )
@@ -355,8 +357,9 @@ impl LoadedFormatFixture {
         });
         session.set_engine_binary(config.engine_binary);
         session.set_fuel_limit(guards.command_fuel)?;
-        let root_source = session.register_retained_root(
+        let root_source = session.register_retained_root_with_invocation(
             source_name,
+            &config.startup_line,
             tex_command::SourceRegistration::new(source_kind, source)
                 .with_name(format!("./{source_name}")),
         )?;

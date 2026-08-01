@@ -1396,6 +1396,7 @@ fn execute_loaded_format(
                 interaction: case.interaction_mode.engine_mode(),
                 error_context_widths: tex_state::print::ErrorContextWidths::default(),
                 guards: recipe.guards,
+                startup_line: case.source.clone(),
                 source_name: case.source.clone(),
                 source_kind: RegisteredSourceKind::Generated,
                 source: Arc::<[u8]>::from(source),

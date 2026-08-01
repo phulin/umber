@@ -686,19 +686,43 @@ impl CanonicalMainControl {
     /// banner and `**` line precede the root file's own `(`. See
     /// [`crate::job`].
     pub fn begin_job(&mut self, stores: &mut Universe, first_line: &str) {
-        self.begin_job_with_terminal_banner(stores, first_line, true);
+        self.begin_job_for_input(stores, first_line, first_line);
+    }
+
+    /// Frames a startup invocation whose echoed §534 line also contains
+    /// driver syntax such as web2c's `&format`, while §§528--529 derive the
+    /// immutable job name from the separately parsed input filename.
+    pub fn begin_job_for_input(
+        &mut self,
+        stores: &mut Universe,
+        first_line: &str,
+        input_name: &str,
+    ) {
+        self.begin_job_with_terminal_banner(stores, first_line, input_name, true);
     }
 
     /// Opens the transcript and catches up §534 after a driver already
     /// emitted §61's terminal headline before interactive root acquisition.
     pub fn begin_job_after_terminal_headline(&mut self, stores: &mut Universe, first_line: &str) {
-        self.begin_job_with_terminal_banner(stores, first_line, false);
+        self.begin_job_after_terminal_headline_for_input(stores, first_line, first_line);
+    }
+
+    /// Catch-up variant retaining the complete terminal line independently
+    /// from the filename selected from it.
+    pub fn begin_job_after_terminal_headline_for_input(
+        &mut self,
+        stores: &mut Universe,
+        first_line: &str,
+        input_name: &str,
+    ) {
+        self.begin_job_with_terminal_banner(stores, first_line, input_name, false);
     }
 
     fn begin_job_with_terminal_banner(
         &mut self,
         stores: &mut Universe,
         first_line: &str,
+        input_name: &str,
         print_terminal_banner: bool,
     ) {
         let binary = self
@@ -720,14 +744,18 @@ impl CanonicalMainControl {
             extended_mode: etex,
         };
         if print_terminal_banner {
-            crate::job::begin_job(
+            crate::job::begin_job_with_terminal_banner(
                 &mut self.job,
                 stores,
                 &mut self.capabilities,
                 self.initex,
                 self.preloaded_format.as_ref(),
                 engine,
-                first_line,
+                crate::job::StartupLineFraming {
+                    first_line,
+                    input_name,
+                    terminal_banner: true,
+                },
             );
         } else {
             crate::job::begin_job_with_terminal_banner(
@@ -739,6 +767,7 @@ impl CanonicalMainControl {
                 engine,
                 crate::job::StartupLineFraming {
                     first_line,
+                    input_name,
                     terminal_banner: false,
                 },
             );

@@ -91,10 +91,11 @@ pub(crate) struct JobEngineFraming {
 
 pub(crate) struct StartupLineFraming<'a> {
     pub first_line: &'a str,
+    pub input_name: &'a str,
     pub terminal_banner: bool,
 }
 
-/// Enough job state to make [`begin_job`] a one-shot.
+/// Enough job state to make [`begin_job_with_terminal_banner`] a one-shot.
 ///
 /// This is engine state that lives outside `Universe`, alongside
 /// `CanonicalMainControl`'s other replay-owned fields
@@ -293,6 +294,7 @@ fn clock_suffix(stores: &Universe) -> String {
 /// this before it opens the root source (via
 /// [`crate::CanonicalMainControl::register_root_source`] or a wrapper over
 /// it), so the banner and `**` line precede the root file's own `(`.
+#[cfg(test)]
 pub(crate) fn begin_job(
     job: &mut JobFraming,
     stores: &mut Universe,
@@ -311,6 +313,7 @@ pub(crate) fn begin_job(
         engine,
         StartupLineFraming {
             first_line,
+            input_name: first_line,
             terminal_banner: true,
         },
     );
@@ -332,7 +335,7 @@ pub(crate) fn begin_job_with_terminal_banner(
     // §537's `a_make_name_string`-derived `\jobname` reuses tex.web's own
     // stem derivation rather than re-deriving it here; see
     // `CommandHostCapabilities::set_startup_job_name`.
-    capabilities.set_startup_job_name(startup.first_line);
+    capabilities.set_startup_job_name(startup.input_name);
 
     // §61: the terminal's very first output -- `format_ident` and a
     // terminating `print_ln`, no clock (the clock is §536's log-only

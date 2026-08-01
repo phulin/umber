@@ -23,6 +23,8 @@ pub struct PreparedFormatJob<'a> {
     pub interaction: InteractionMode,
     pub error_context_widths: tex_state::print::ErrorContextWidths,
     pub guards: FormatGenerationGuards,
+    /// Complete TeX82 §534 invocation text, including any driver selector.
+    pub startup_line: String,
     pub source_name: String,
     pub source_kind: RegisteredSourceKind,
     pub source: Arc<[u8]>,
@@ -111,6 +113,7 @@ impl PreparedFormatProvider {
             LoadedRunConfiguration {
                 guards: job.guards,
                 engine_binary: job.engine_binary,
+                startup_line: job.startup_line,
             },
             job.observer,
         )

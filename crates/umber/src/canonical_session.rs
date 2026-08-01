@@ -226,6 +226,7 @@ pub struct CanonicalEngineSession<'a> {
     root_registered: bool,
     root_framing_is_command_owned: bool,
     startup_input_name: Option<String>,
+    startup_invocation_line: Option<String>,
     started: bool,
     headline_printed: bool,
     /// Whether TeX82 §1332's engine-termination boundary has committed.
@@ -249,6 +250,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_registered: false,
             root_framing_is_command_owned: false,
             startup_input_name: None,
+            startup_invocation_line: None,
             started: false,
             headline_printed: false,
             terminated: false,
@@ -274,6 +276,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_registered: false,
             root_framing_is_command_owned: false,
             startup_input_name: None,
+            startup_invocation_line: None,
             started: false,
             headline_printed: false,
             terminated: false,
@@ -296,6 +299,7 @@ impl<'a> CanonicalEngineSession<'a> {
             root_registered: false,
             root_framing_is_command_owned: false,
             startup_input_name: None,
+            startup_invocation_line: None,
             started: false,
             headline_printed: false,
             terminated: false,
@@ -366,6 +370,19 @@ impl<'a> CanonicalEngineSession<'a> {
         startup_input_name: &str,
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_root_with_invocation(startup_input_name, startup_input_name, source)
+    }
+
+    /// Registers a root while retaining the complete §534 invocation line.
+    ///
+    /// The line may include driver syntax such as web2c's `&format`; job-name
+    /// derivation and source identity continue to use `startup_input_name`.
+    pub fn register_retained_root_with_invocation(
+        &mut self,
+        startup_input_name: &str,
+        startup_invocation_line: &str,
+        source: SourceRegistration,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         if self.root_registered {
             return Err(CanonicalSessionError::RootAlreadyRegistered);
         }
@@ -376,6 +393,7 @@ impl<'a> CanonicalEngineSession<'a> {
         let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());
+        self.startup_invocation_line = Some(startup_invocation_line.to_owned());
         Ok(source)
     }
 
@@ -453,13 +471,14 @@ impl<'a> CanonicalEngineSession<'a> {
                     });
                 }
                 self.control
-                    .begin_job_after_terminal_headline(self.stores, &name);
+                    .begin_job_after_terminal_headline_for_input(self.stores, &line, &name);
                 self.control.capabilities_mut().set_startup_job_name(&name);
                 let id = self
                     .control
                     .register_startup_root_source(self.stores, source, &name)?;
                 self.root_registered = true;
                 self.root_framing_is_command_owned = true;
+                self.startup_invocation_line = Some(line);
                 self.startup_input_name = Some(name);
                 return Ok(id);
             }
@@ -497,7 +516,12 @@ impl<'a> CanonicalEngineSession<'a> {
                     .startup_input_name
                     .as_deref()
                     .expect("a started session has a root");
-                self.control.begin_job(self.stores, input);
+                let invocation = self
+                    .startup_invocation_line
+                    .as_deref()
+                    .expect("a started session has a startup invocation");
+                self.control
+                    .begin_job_for_input(self.stores, invocation, input);
             }
             self.print_startup_headline();
             self.print_startup_input_opening();
@@ -589,7 +613,12 @@ impl<'a> CanonicalEngineSession<'a> {
                     .startup_input_name
                     .as_deref()
                     .expect("a started session has a root");
-                self.control.begin_job(self.stores, input);
+                let invocation = self
+                    .startup_invocation_line
+                    .as_deref()
+                    .expect("a started session has a startup invocation");
+                self.control
+                    .begin_job_for_input(self.stores, invocation, input);
             }
             self.print_startup_headline();
             self.print_startup_input_opening();
@@ -1107,7 +1136,10 @@ mod tests {
                 .count(),
             1
         );
-        assert!(log.contains("**paper.tex"));
+        // §534 echoes the replacement terminal buffer; §529's default `.tex`
+        // extension belongs to the selected filename, not that buffer.
+        assert!(log.contains("**paper\n"));
+        assert!(!log.contains("**paper.tex"));
         assert!(!log.contains("missing"));
     }
 

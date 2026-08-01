@@ -59,6 +59,7 @@ fn job<'a>(source: &'static [u8], observer: &'a mut dyn CommandObserver) -> Prep
         interaction: InteractionMode::ErrorStop,
         error_context_widths: tex_state::print::ErrorContextWidths::default(),
         guards: guards(),
+        startup_line: "provider-job.tex".into(),
         source_name: "provider-job.tex".into(),
         source_kind: RegisteredSourceKind::World,
         source: Arc::from(source),

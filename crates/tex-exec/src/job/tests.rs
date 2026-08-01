@@ -525,6 +525,35 @@ fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal(
 }
 
 #[test]
+fn startup_selector_is_echoed_without_becoming_the_job_name() {
+    let mut stores = Universe::new();
+    let mut job = JobFraming::default();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    begin_job_with_terminal_banner(
+        &mut job,
+        &mut stores,
+        &mut capabilities,
+        false,
+        None,
+        JobEngineFraming {
+            binary: EngineBinaryIdentity::Tex82,
+            extended_mode: false,
+        },
+        StartupLineFraming {
+            first_line: "&trip inputs/trip.tex",
+            input_name: "inputs/trip.tex",
+            terminal_banner: true,
+        },
+    );
+
+    // TeX82 §534 echoes the complete terminal buffer, while §§528--529
+    // select the filename's name component for `job_name`.
+    assert!(log_text(&stores).contains("**&trip inputs/trip.tex\n"));
+    assert_eq!(capabilities.job_name(), "trip");
+}
+
+#[test]
 fn loaded_tex82_banner_is_selected_by_runtime_profile_without_etex_or_pdftex_text() {
     let mut stores = Universe::new();
     let mut job = JobFraming::default();
