@@ -133,7 +133,7 @@ impl std::fmt::Display for PdfExternalImageIdError {
 impl std::error::Error for PdfExternalImageIdError {}
 
 /// The selected PDF page box, already normalized into TeX scaled points.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PdfPageBox {
     pub left: Scaled,
     pub bottom: Scaled,
@@ -142,7 +142,7 @@ pub struct PdfPageBox {
 }
 
 /// The inherited clockwise rotation of an imported PDF page.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PdfPageRotation {
     #[default]
     None,
@@ -159,7 +159,7 @@ impl PdfPageRotation {
 }
 
 /// Metadata retained after host-neutral external-image validation.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PdfExternalImageMetadata {
     PdfPage {
         page_box: PdfPageBox,
@@ -172,20 +172,20 @@ pub enum PdfExternalImageMetadata {
     Raster(PdfRasterImageMetadata),
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PdfRasterFormat {
     Jpeg,
     Png,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PdfRasterColorSpace {
     Gray,
     Rgb,
     Cmyk,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PdfRasterImageMetadata {
     pub format: PdfRasterFormat,
     pub width: u32,
@@ -222,7 +222,7 @@ pub struct PdfExternalImageSource {
 }
 
 /// Final dimensions recorded by `\pdfximage` after optional scaling.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PdfExternalImageDimensions {
     pub width: Scaled,
     pub height: Scaled,
@@ -471,7 +471,54 @@ pub struct PdfGlyphToUnicode {
 /// PDF state that pdfTeX deliberately retains in a dumped format.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(crate) struct PdfFormatState {
+    version: u32,
+    enabled: bool,
+    next_object: u32,
+    next_form_resource: u32,
+    raw_objects: Vec<PdfFormatRawObject>,
+    forms: Vec<PdfFormatForm>,
+    external_images: Vec<PdfFormatImage>,
     glyph_to_unicode: Vec<PdfGlyphToUnicode>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PdfFormatRawObject {
+    id: u32,
+    data: Option<PdfFormatRawObjectData>,
+    immediate: bool,
+    referenced: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PdfFormatRawObjectData {
+    stream: bool,
+    stream_attr: Option<Vec<u8>>,
+    file: bool,
+    data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PdfFormatForm {
+    object: u32,
+    resource: u32,
+    nodes: Vec<u8>,
+    width: Scaled,
+    height: Scaled,
+    depth: Scaled,
+    attr: Option<Vec<u8>>,
+    resources: Option<Vec<u8>>,
+    immediate: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PdfFormatImage {
+    id: u32,
+    identity: [u8; 32],
+    metadata: PdfExternalImageMetadata,
+    dimensions: PdfExternalImageDimensions,
+    color_space_object: i32,
+    bytes: Vec<u8>,
+    mask_object: Option<u32>,
 }
 
 /// An append-only font-output mutation. The log makes snapshots cheap and
@@ -1083,8 +1130,11 @@ impl PdfState {
     pub(crate) const fn next_object(&self) -> u32 {
         self.next_object
     }
-    #[must_use]
-    pub(crate) fn capture_format(&self) -> Option<PdfFormatState> {
+    pub(crate) fn capture_format(
+        &self,
+        mut detach_tokens: impl FnMut(TokenListId) -> Result<Vec<u8>, String>,
+        mut detach_nodes: impl FnMut(NodeListId) -> Result<Vec<u8>, String>,
+    ) -> Result<Option<PdfFormatState>, String> {
         let glyph_to_unicode = self
             .font_operations
             .iter()
@@ -1092,14 +1142,14 @@ impl PdfState {
                 PdfFontOperation::GlyphToUnicode(mapping) => Some(mapping.clone()),
                 _ => None,
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>();
+        let Some(glyph_to_unicode) = glyph_to_unicode else {
+            return Ok(None);
+        };
         let has_only_format_state = self.pages.is_empty()
-            && self.next_object == FIRST_DYNAMIC_OBJECT
             && self.output_parameters.is_none()
             && self.pk_mode.is_none()
             && self.font_resources.is_empty()
-            && self.external_images.is_empty()
-            && self.raw_objects.is_empty()
             && self.document_fragments.is_empty()
             && self.document_objects == PdfDocumentObjectIds::default()
             && self.catalog_open_action.is_none()
@@ -1112,23 +1162,209 @@ impl PdfState {
             && self.color_stacks.is_empty()
             && self.last_position == (Scaled::from_raw(0), Scaled::from_raw(0))
             && self.snap_reference == (Scaled::from_raw(0), Scaled::from_raw(0))
-            && self.forms.is_empty()
+            && self.form_artifacts.is_empty()
+            && self.destinations.is_empty()
+            && self.structure_destinations.is_empty()
+            && self.outlines.is_empty()
             && self.threads.is_empty();
-        has_only_format_state.then_some(PdfFormatState { glyph_to_unicode })
+        if !has_only_format_state {
+            return Ok(None);
+        }
+        let raw_objects = self
+            .raw_objects
+            .records()
+            .iter()
+            .map(|record| {
+                let data = record
+                    .data()
+                    .map(|data| {
+                        Ok::<_, String>(PdfFormatRawObjectData {
+                            stream: data.is_stream(),
+                            stream_attr: data.stream_attr().map(&mut detach_tokens).transpose()?,
+                            file: data.is_file(),
+                            data: detach_tokens(data.data())?,
+                        })
+                    })
+                    .transpose()?;
+                Ok(PdfFormatRawObject {
+                    id: record.id().raw(),
+                    data,
+                    immediate: record.is_immediate(),
+                    referenced: record.is_referenced(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let forms = self
+            .forms
+            .iter()
+            .map(|form| {
+                Ok(PdfFormatForm {
+                    object: form.object,
+                    resource: form.resource,
+                    nodes: detach_nodes(form.box_list)?,
+                    width: form.width,
+                    height: form.height,
+                    depth: form.depth,
+                    attr: form
+                        .attr
+                        .map(|value| detach_tokens(value.tokens))
+                        .transpose()?,
+                    resources: form
+                        .resources
+                        .map(|value| detach_tokens(value.tokens))
+                        .transpose()?,
+                    immediate: form.immediate,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let external_images = self
+            .external_images
+            .iter()
+            .map(|image| PdfFormatImage {
+                id: image.id.raw(),
+                identity: image.identity.bytes(),
+                metadata: image.metadata,
+                dimensions: image.dimensions,
+                color_space_object: image.color_space_object,
+                bytes: image.bytes.to_vec(),
+                mask_object: image.mask_object,
+            })
+            .collect();
+        Ok(Some(PdfFormatState {
+            version: 1,
+            enabled: self.enabled,
+            next_object: self.next_object,
+            next_form_resource: self.next_form_resource,
+            raw_objects,
+            forms,
+            external_images,
+            glyph_to_unicode,
+        }))
     }
 
-    pub(crate) fn restore_format(format: PdfFormatState) -> Self {
+    pub(crate) fn restore_format(
+        format: PdfFormatState,
+        mut import_tokens: impl FnMut(&[u8]) -> Result<PdfTokenParameter, String>,
+        mut import_nodes: impl FnMut(&[u8]) -> Result<(NodeListId, StateHashFragment), String>,
+    ) -> Result<Self, String> {
+        if format.version != 1 || format.next_object == 0 || format.next_form_resource == 0 {
+            return Err("unsupported or invalid PDF format resource state".to_owned());
+        }
+        let mut allocated = format
+            .raw_objects
+            .iter()
+            .map(|record| record.id)
+            .chain(
+                format
+                    .forms
+                    .iter()
+                    .flat_map(|form| [form.object, form.object.saturating_add(1)]),
+            )
+            .chain(
+                format
+                    .external_images
+                    .iter()
+                    .flat_map(|image| std::iter::once(image.id).chain(image.mask_object)),
+            );
+        if allocated.any(|object| object == 0 || object >= format.next_object) {
+            return Err("PDF format resource identity is outside the allocation ledger".to_owned());
+        }
+        if !format
+            .raw_objects
+            .windows(2)
+            .all(|pair| pair[0].id < pair[1].id)
+            || !format
+                .forms
+                .windows(2)
+                .all(|pair| pair[0].object < pair[1].object)
+            || !format
+                .external_images
+                .windows(2)
+                .all(|pair| pair[0].id < pair[1].id)
+        {
+            return Err("PDF format resources are not in canonical identity order".to_owned());
+        }
         let mut state = Self::default();
+        if format.enabled {
+            state.enable();
+        }
         for mapping in format.glyph_to_unicode {
             state.set_glyph_to_unicode(mapping);
         }
-        state
+        for record in format.raw_objects {
+            let id = PdfRawObjectId::from_allocated(record.id);
+            state.raw_objects.reserve(id);
+            if let Some(data) = record.data {
+                let attr = data
+                    .stream_attr
+                    .as_deref()
+                    .map(&mut import_tokens)
+                    .transpose()?;
+                let body = import_tokens(&data.data)?;
+                state
+                    .initialize_raw_object(
+                        id,
+                        PdfRawObjectData::new(data.stream, attr, data.file, body),
+                        record.immediate,
+                    )
+                    .map_err(|_| "invalid PDF raw-object initialization".to_owned())?;
+            }
+            if record.referenced {
+                state
+                    .reference_raw_object(id)
+                    .map_err(|_| "invalid PDF raw-object reference".to_owned())?;
+            }
+        }
+        for form in format.forms {
+            let (nodes, semantic_id) = import_nodes(&form.nodes)?;
+            let attr = form.attr.as_deref().map(&mut import_tokens).transpose()?;
+            let resources = form
+                .resources
+                .as_deref()
+                .map(&mut import_tokens)
+                .transpose()?;
+            state
+                .initialize_form(
+                    (form.object, form.resource),
+                    nodes,
+                    semantic_id,
+                    (form.width, form.height, form.depth),
+                    (attr, resources),
+                    form.immediate,
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        if !format.external_images.is_empty() {
+            state.external_images = Arc::new(
+                format
+                    .external_images
+                    .into_iter()
+                    .map(|image| PdfExternalImageRecord {
+                        id: PdfExternalImageId(image.id),
+                        identity: ContentHash::new(image.identity),
+                        metadata: image.metadata,
+                        dimensions: image.dimensions,
+                        color_space_object: image.color_space_object,
+                        bytes: Arc::from(image.bytes),
+                        mask_object: image.mask_object,
+                    })
+                    .collect(),
+            );
+            state.external_image_fingerprint = external_image_fingerprint(&state.external_images);
+        }
+        state.next_object = format.next_object;
+        state.next_form_resource = format.next_form_resource;
+        Ok(state)
     }
 
     #[cfg(test)]
     pub(crate) fn is_format_empty(&self) -> bool {
-        self.capture_format()
-            .is_some_and(|format| format.glyph_to_unicode.is_empty())
+        self.next_object == FIRST_DYNAMIC_OBJECT
+            && self.raw_objects.records().is_empty()
+            && self.external_images.is_empty()
+            && self.forms.is_empty()
+            && self.font_operations.is_empty()
+            && self.document_fragments.is_empty()
     }
 
     pub(crate) fn ensure_page_capacity(&self, parameters: PdfOutputParameters) -> Result<(), ()> {

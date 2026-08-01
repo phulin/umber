@@ -128,11 +128,6 @@ impl Default for PdfRawObjects {
 
 impl PdfRawObjects {
     #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.records.is_empty()
-    }
-
-    #[must_use]
     pub(crate) fn fingerprint(&self) -> StateHashFragment {
         self.0.fingerprint
     }

@@ -2366,7 +2366,22 @@ impl Universe {
         if !self.page.is_format_empty() {
             return Err(FormatError::NonEmptyPage);
         }
-        let Some(pdf) = self.pdf.capture_format() else {
+        let pdf = self
+            .pdf
+            .capture_format(
+                |tokens| {
+                    self.detach_token_list(tokens)
+                        .and_then(|value| value.to_bytes())
+                        .map_err(|error| format!("{error:?}"))
+                },
+                |nodes| {
+                    self.detach_node_list(nodes)
+                        .and_then(|value| value.to_bytes())
+                        .map_err(|error| format!("{error:?}"))
+                },
+            )
+            .map_err(FormatError::InvalidState)?;
+        let Some(pdf) = pdf else {
             return Err(FormatError::NonEmptyPdfDocument);
         };
         let stores = self
@@ -2483,7 +2498,8 @@ impl Universe {
         stores.initialize_exact_env_identity();
         let input_summary = InputSummary::default();
         let page = PageBuilderState::default();
-        let pdf = PdfState::restore_format(format.pdf);
+        let pdf_format = format.pdf;
+        let pdf = PdfState::default();
         let input_fragment = hash_input_summary_fragment(&stores, &world, &input_summary);
         let state_hash_base = StateHashBase {
             store: stores.state_hash_cursor(),
@@ -2495,7 +2511,7 @@ impl Universe {
             pdf: pdf.cursor(),
             checkpoint_hash: container.checksum,
         };
-        Ok(Self {
+        let mut universe = Self {
             owner: UniverseOwner::new(),
             stores,
             world,
@@ -2519,7 +2535,46 @@ impl Universe {
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
             diagnostic_position: DiagnosticPosition::default(),
-        })
+        };
+        let pdf = {
+            let cell = std::cell::RefCell::new(&mut universe);
+            PdfState::restore_format(
+                pdf_format,
+                |bytes| {
+                    let value = crate::DetachedMemoValue::from_bytes(
+                        bytes,
+                        crate::MemoValueLimits::default(),
+                    )
+                    .map_err(|error| format!("{error:?}"))?;
+                    let mut universe = cell.borrow_mut();
+                    let tokens = universe
+                        .import_memo_token_list(&value, crate::MemoValueLimits::default())
+                        .map_err(|error| format!("{error:?}"))?;
+                    let semantic_id = universe.stores.token_list_semantic_fragment(tokens);
+                    Ok(PdfTokenParameter {
+                        tokens,
+                        semantic_id,
+                    })
+                },
+                |bytes| {
+                    let value = crate::DetachedMemoValue::from_bytes(
+                        bytes,
+                        crate::MemoValueLimits::default(),
+                    )
+                    .map_err(|error| format!("{error:?}"))?;
+                    let mut universe = cell.borrow_mut();
+                    let nodes = universe
+                        .import_memo_node_list(&value, crate::MemoValueLimits::default())
+                        .map_err(|error| format!("{error:?}"))?;
+                    let semantic = universe.stores.node_list_semantic_fragment(nodes);
+                    Ok((nodes, semantic))
+                },
+            )
+            .map_err(FormatError::InvalidState)?
+        };
+        universe.pdf = pdf;
+        universe.state_hash_base.pdf = universe.pdf.cursor();
+        Ok(universe)
     }
 
     /// Takes an O(1) snapshot of the whole timeline tuple.

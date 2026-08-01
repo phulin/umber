@@ -992,7 +992,7 @@ fn pdf_glyph_to_unicode_mappings_round_trip_through_formats() {
 }
 
 #[test]
-fn semantic_format_rejects_live_input_and_page_state() {
+fn semantic_format_rejects_live_input_page_and_job_only_pdf_state() {
     let mut with_input = Universe::new();
     with_input.set_input_summary(InputSummary::new(
         vec![InputFrameSummary::TokenList {
@@ -1014,14 +1014,115 @@ fn semantic_format_rejects_live_input_and_page_state() {
     assert_eq!(with_page.dump_format(), Err(FormatError::NonEmptyPage));
 
     let mut with_pdf_object = Universe::new();
-    with_pdf_object.enable_pdf_output();
-    with_pdf_object
-        .reserve_pdf_raw_object()
-        .expect("reserve PDF object");
+    with_pdf_object.set_pdf_space_font_name(b"job-only-space-font".to_vec());
     assert_eq!(
         with_pdf_object.dump_format(),
         Err(FormatError::NonEmptyPdfDocument)
     );
+}
+
+#[test]
+fn pdf_format_resources_round_trip_and_remain_usable() {
+    let mut universe = Universe::new();
+    universe.enable_pdf_output();
+    let body = universe.intern_token_list(&[Token::Char {
+        ch: '4',
+        cat: Catcode::Other,
+    }]);
+    let object = universe
+        .reserve_pdf_raw_object()
+        .expect("reserve raw object");
+    universe
+        .initialize_pdf_raw_object(object, false, None, false, body, false)
+        .expect("initialize raw object");
+    universe
+        .reference_pdf_raw_object(object.raw())
+        .expect("reference raw object");
+
+    let form_nodes = universe.freeze_node_list(&[Node::Penalty(2718)]);
+    universe.set_box_reg(0, form_nodes);
+    let form_nodes = universe
+        .take_box_reg_same_level(0)
+        .expect("take form nodes");
+    let form_identity = universe.reserve_pdf_form().expect("reserve form");
+    universe
+        .initialize_pdf_form(
+            form_identity,
+            form_nodes,
+            (
+                Scaled::from_raw(11),
+                Scaled::from_raw(12),
+                Scaled::from_raw(13),
+            ),
+            Some(body),
+            None,
+            false,
+        )
+        .expect("initialize form");
+
+    let image = universe
+        .allocate_pdf_external_image(
+            crate::PdfExternalImageSource {
+                identity: ContentHash::new([7; 32]),
+                metadata: crate::PdfExternalImageMetadata::Raster(crate::PdfRasterImageMetadata {
+                    format: crate::PdfRasterFormat::Png,
+                    width: 2,
+                    height: 3,
+                    bits_per_component: 8,
+                    color_space: crate::PdfRasterColorSpace::Rgb,
+                    alpha: false,
+                    png_color_type: Some(2),
+                }),
+                natural_width: Scaled::from_raw(20),
+                natural_height: Scaled::from_raw(30),
+                bytes: Arc::from([1_u8, 2, 3]),
+            },
+            crate::PdfExternalImageDimensions {
+                width: Scaled::from_raw(40),
+                height: Scaled::from_raw(50),
+                depth: Scaled::from_raw(0),
+            },
+            0,
+        )
+        .expect("allocate image");
+    let next_object = universe.pdf_next_object_id();
+
+    let bytes = universe.dump_format().expect("PDF resource format");
+    let mut restored =
+        Universe::from_format(World::memory(), &bytes).expect("restore PDF resources");
+    assert!(restored.pdf_output_enabled());
+    assert_eq!(restored.pdf_next_object_id(), next_object);
+    let raw = restored
+        .pdf_raw_object(object.raw())
+        .expect("restored raw object");
+    assert!(raw.is_referenced());
+    assert_eq!(
+        restored.tokens(raw.data().expect("raw payload").data()),
+        [Token::Char {
+            ch: '4',
+            cat: Catcode::Other
+        }]
+    );
+    let form = restored.pdf_form(form_identity.0).expect("restored form");
+    assert_eq!(form.width(), Scaled::from_raw(11));
+    assert!(matches!(
+        restored.nodes(form.box_list()).first(),
+        Some(crate::node_arena::NodeRef::Penalty(2718))
+    ));
+    assert_eq!(
+        restored
+            .pdf_external_image_record(image.id())
+            .expect("restored image")
+            .bytes(),
+        [1, 2, 3]
+    );
+    restored
+        .reference_pdf_raw_object(object.raw())
+        .expect("post-load raw reference");
+    let later = restored
+        .reserve_pdf_raw_object()
+        .expect("post-load allocation");
+    assert_eq!(later.raw(), next_object);
 }
 
 #[test]

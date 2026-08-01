@@ -85,8 +85,11 @@ an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
 `TransitionalSemanticV9`, but its schema-11 payload is restricted to
-Universe-level interaction mode and permitted format-level PDF configuration.
-It contains no store or environment data. The schema-11 runtime requires
+Universe-level interaction mode and a versioned pdfTeX INITEX resource DTO.
+The PDF DTO retains allocation counters, raw objects, forms, external images,
+and ToUnicode mappings; token lists and node graphs are embedded as validated
+handle-free semantic envelopes. It contains no store or environment data.
+The schema-11 runtime requires
 exactly kinds 1, 256, 257, 272, 288, 304, 320, 336, 352, 512, and 528. The
 following kinds are allocated for the complete rollout:
 
@@ -377,13 +380,13 @@ invalid structure acceptable.
 Frozen sections contain only state TeX deliberately preserves at `\dump`:
 reachable names and current meanings, reachable tokens/macros, glue/fonts, code tables,
 hyphenation data, reachable box/node graphs, format-visible environment cells,
-interaction mode, and permitted format-level PDF configuration.
+interaction mode, and pdfTeX's INITEX resource closure.
 
 The image excludes group journals, rollback epochs, allocation identities,
 input frames/cursors, page-builder and mode-nest material, output transactions,
 open streams, `World` effects/resources, clocks, random state, diagnostics and
 provenance caches, incremental checkpoints, profiling counters, pending job
-flags, and document-local PDF objects/pages/resources. Loading constructs
+flags, and PDF pages or other job-only document state. Loading constructs
 fresh job-local state, installs the current job clock, and schedules
 `\everyjob`. Later mutable entries live in an overlay; the mapped/frozen bytes
 are never mutated and group rollback applies only to job-local state.

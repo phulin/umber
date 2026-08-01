@@ -50,9 +50,13 @@ objects, in pdfTeX order. The page append occurs only after artifact storage
 and effect commit succeed. Scoped
 shipout failure, ordinary snapshot rollback, and retained-generation rollback
 therefore remove the entire suffix and replay the same identities and semantic
-hash. A format may be dumped with an enabled but empty ledger; any committed
-PDF page makes the format ineligible, and the ledger itself is omitted from
-the format image.
+hash. A format may retain pdfTeX's INITEX resource closure: the enabled flag,
+monotonic object and form-resource counters, reserved or initialized raw
+objects, captured forms, validated external-image metadata and bytes, and
+glyph-to-Unicode mappings. Token and node payloads use the existing
+handle-free semantic codecs, so loaded objects keep their observable numbers
+without embedding process-local handles. Any committed PDF page or other
+job-only document state still makes the format ineligible.
 
 Each page receipt also captures the page-local `\pdfhorigin`, `\pdfvorigin`,
 `\pdfpagewidth`, `\pdfpageheight`, `\pdfpageattr`, and
