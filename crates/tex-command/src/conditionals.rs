@@ -989,6 +989,7 @@ impl CommandProcessor<'_> {
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
                 identity: EXTRA_DELIMITER_DIAGNOSTIC,
+                runaway: None,
                 message: format!("Extra {name}"),
                 help: &["I'm ignoring this; it doesn't match any \\if."],
                 context,

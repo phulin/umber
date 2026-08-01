@@ -485,12 +485,14 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
             message: extra_message,
             help: extra_help,
             context: extra_context,
+            ..
         },
         crate::CommandSemanticDiagnostic::Recoverable {
             identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
             message: runaway_message,
             help: runaway_help,
             context: runaway_context,
+            ..
         },
     ] = extra.semantic_diagnostics.as_slice()
     else {
@@ -554,6 +556,7 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
             message,
             help,
             context,
+            ..
         },
     ] = non_long.semantic_diagnostics.as_slice()
     else {

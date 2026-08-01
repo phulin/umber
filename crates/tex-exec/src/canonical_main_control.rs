@@ -14980,11 +14980,17 @@ fn report_pending_diagnostics(
                 report.error().jump_out()?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {
+                runaway,
                 message,
                 help,
                 context,
                 ..
             }) => {
+                if let Some(runaway) = runaway {
+                    let mut output = stores.printer();
+                    output.print_nl(runaway.heading).print_ln();
+                    output.print_rendered(&runaway.partial);
+                }
                 let mut report = stores.print_err(&message);
                 report.help(help).context(context);
                 report.error().jump_out()?;

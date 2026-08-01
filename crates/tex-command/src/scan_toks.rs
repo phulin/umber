@@ -139,6 +139,17 @@ impl CommandProcessor<'_> {
             );
         }
         let result = self.scan_toks_inner(mode);
+        if let Ok(result) = &result {
+            let mut partial = parameter_text_for_runaway(result, &self.state);
+            partial.extend(
+                self.state
+                    .tokens(result.replacement_text.token_list())
+                    .iter()
+                    .copied()
+                    .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
+            );
+            self.set_runaway_partial(&partial);
+        }
         if observe_status {
             self.restore_scanner_status_with_observation(status, prior);
         } else {
@@ -853,6 +864,18 @@ impl CommandProcessor<'_> {
     }
 }
 
+fn parameter_text_for_runaway(
+    result: &ScannedToks,
+    state: &tex_state::CommandContext<'_>,
+) -> Vec<TracedTokenWord> {
+    state
+        .tokens(result.parameter_text.token_list())
+        .iter()
+        .copied()
+        .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
+        .collect()
+}
+
 fn is_parameter(token: Token) -> bool {
     matches!(
         token,
@@ -1039,6 +1062,7 @@ impl CommandProcessor<'_> {
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
                     identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
+                    runaway: None,
                     message: "File ended within \\read".into(),
                     help: &["This \\read has unbalanced braces."],
                     context: self.command.output_open_context(&self.state),

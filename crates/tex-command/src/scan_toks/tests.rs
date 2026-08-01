@@ -666,15 +666,40 @@ fn unexpanded_general_text_recovers_runaway_input_and_restores_outer_scanner_sta
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
-    let scanned = {
+    let (scanned, diagnostics) = {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
             .with_observer(&mut recorder);
-        processor
+        let scanned = processor
             .scan_toks(ScanToksMode::GeneralText {
                 purpose: "unexpanded",
             })
-            .expect("runaway general text recovers with an inserted right brace")
+            .expect("runaway general text recovers with an inserted right brace");
+        (scanned, processor.take_semantic_diagnostics())
     };
+
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            runaway: Some(runaway),
+            message,
+            help,
+            ..
+        },
+    ] = diagnostics.as_slice()
+    else {
+        panic!("expected one runaway diagnostic: {diagnostics:?}");
+    };
+    assert_eq!(runaway.heading, "Runaway text?");
+    assert_eq!(runaway.partial, "runaway ");
+    assert_eq!(message, "File ended while scanning text of ");
+    assert_eq!(
+        *help,
+        [
+            "I suspect you have forgotten a `}', causing me",
+            "to read past where you wanted me to stop.",
+            "I'll try to recover; but if the error is serious,",
+            "you'd better type `E' or `X' now and fix your file.",
+        ]
+    );
 
     assert_eq!(command.scanner.status(), &outer);
     assert_eq!(command.scanner.warning(), Some(ScannerWarning(37)));
@@ -2591,6 +2616,7 @@ fn read_unbalanced_eof_reports_file_ended_within_read() {
         processor.take_semantic_diagnostics(),
         [crate::CommandSemanticDiagnostic::Recoverable {
             identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
+            runaway: None,
             message: "File ended within \\read".into(),
             help: &["This \\read has unbalanced braces."],
             context: String::new(),

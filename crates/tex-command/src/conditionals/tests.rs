@@ -689,6 +689,7 @@ fn malformed_unless_character_is_diagnosed_and_replayed_in_extended_profiles() {
                 message,
                 help,
                 context,
+                ..
             },
         ] = command.semantic_diagnostics.as_slice()
         else {

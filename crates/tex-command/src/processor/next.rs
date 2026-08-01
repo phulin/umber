@@ -1109,6 +1109,7 @@ impl CommandProcessor<'_> {
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
                 identity: diagnostic,
+                runaway: None,
                 message,
                 help,
                 context,
@@ -1130,6 +1131,7 @@ impl CommandProcessor<'_> {
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
                 identity: diagnostic,
+                runaway: None,
                 message,
                 help,
                 context,
@@ -1995,6 +1997,16 @@ impl CommandProcessor<'_> {
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
                     identity: RUNAWAY_SCAN_DIAGNOSTIC,
+                    runaway: Some(crate::state::RunawayPrelude {
+                        heading: match &status {
+                            ScannerStatus::Defining(_) => "Runaway definition?",
+                            ScannerStatus::Matching(_) => "Runaway argument?",
+                            ScannerStatus::Aligning(_) => "Runaway preamble?",
+                            ScannerStatus::Absorbing(_) => "Runaway text?",
+                            ScannerStatus::Normal | ScannerStatus::Skipping(_) => unreachable!(),
+                        },
+                        partial: String::new(),
+                    }),
                     message: format!("{opening} while scanning {kind} of {name}"),
                     help: &[
                         "I suspect you have forgotten a `}', causing me",
@@ -2033,6 +2045,7 @@ impl CommandProcessor<'_> {
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Recoverable {
                     identity: INCOMPLETE_CONDITIONAL_DIAGNOSTIC,
+                    runaway: None,
                     message,
                     help,
                     context,
@@ -2056,6 +2069,25 @@ impl CommandProcessor<'_> {
             }),
         );
         Ok(())
+    }
+
+    pub(crate) fn set_runaway_partial(&mut self, tokens: &[TracedTokenWord]) {
+        let Some(crate::CommandSemanticDiagnostic::Recoverable {
+            runaway: Some(runaway),
+            ..
+        }) = self.command.semantic_diagnostics.last_mut()
+        else {
+            return;
+        };
+        runaway.partial.clear();
+        for token in tokens {
+            runaway
+                .partial
+                .push_str(&super::expand::token_list_token_text(
+                    &self.state,
+                    token.semantic_token(),
+                ));
+        }
     }
 
     fn observe_outer_validity_diagnostic(&mut self, status: &ScannerStatus, at_eof: bool) {
@@ -2440,6 +2472,7 @@ mod tests {
                 message,
                 help,
                 context,
+                ..
             },
         ] = diagnostics.as_slice()
         else {
@@ -4275,6 +4308,7 @@ mod tests {
                     conditional: crate::conditionals::ConditionalKind::IfTrue,
                 }),
                 vec![universe.primitive_token("fi").expect("fi is registered")],
+                None,
             ),
             (
                 ScannerStatus::Defining(DefinitionContext {
@@ -4286,6 +4320,7 @@ mod tests {
                     ch: '}',
                     cat: Catcode::EndGroup,
                 }],
+                Some("Runaway definition?"),
             ),
             (
                 ScannerStatus::Matching(MatchingContext {
@@ -4294,6 +4329,7 @@ mod tests {
                     warning,
                 }),
                 vec![universe.primitive_token("par").expect("par is registered")],
+                Some("Runaway argument?"),
             ),
             (
                 ScannerStatus::Aligning(AlignmentScanContext {
@@ -4308,6 +4344,7 @@ mod tests {
                         cat: Catcode::EndGroup,
                     },
                 ],
+                Some("Runaway preamble?"),
             ),
             (
                 ScannerStatus::Absorbing(AbsorbingContext {
@@ -4319,10 +4356,11 @@ mod tests {
                     ch: '}',
                     cat: Catcode::EndGroup,
                 }],
+                Some("Runaway text?"),
             ),
         ];
 
-        for (status, expected) in cases {
+        for (status, expected, expected_heading) in cases {
             let actual = command.with_scanner_status(status, |command| {
                 let mut processor =
                     processor(command, &mut runtime, &mut universe, &mut capabilities);
@@ -4346,6 +4384,36 @@ mod tests {
                 delivered
             });
             assert_eq!(actual, expected);
+            let diagnostics = command.take_semantic_diagnostics();
+            match expected_heading {
+                Some(expected_heading) => {
+                    let [
+                        crate::CommandSemanticDiagnostic::Recoverable {
+                            runaway: Some(runaway),
+                            help,
+                            ..
+                        },
+                    ] = diagnostics.as_slice()
+                    else {
+                        panic!("expected one runaway diagnostic: {diagnostics:?}");
+                    };
+                    assert_eq!(runaway.heading, expected_heading);
+                    assert_eq!(runaway.partial, "");
+                    assert_eq!(
+                        *help,
+                        [
+                            "I suspect you have forgotten a `}', causing me",
+                            "to read past where you wanted me to stop.",
+                            "I'll try to recover; but if the error is serious,",
+                            "you'd better type `E' or `X' now and fix your file.",
+                        ]
+                    );
+                }
+                None => assert!(matches!(
+                    diagnostics.as_slice(),
+                    [crate::CommandSemanticDiagnostic::Recoverable { runaway: None, .. }]
+                )),
+            }
         }
         assert_eq!(command.expansion.pending_diagnostics, vec![17; 5]);
     }

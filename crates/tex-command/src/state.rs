@@ -123,6 +123,9 @@ pub enum CommandSemanticDiagnostic {
     /// so a report and its recovery remain correlatable.
     Recoverable {
         identity: u64,
+        /// TeX82 §306's selector-routed heading and partial token list,
+        /// printed immediately before the ordinary error report.
+        runaway: Option<RunawayPrelude>,
         message: String,
         help: &'static [&'static str],
         context: String,
@@ -137,6 +140,13 @@ pub enum CommandSemanticDiagnostic {
     /// The command stack is the sole owner of that backed-up level, so its
     /// display crosses the deferred-report boundary with the diagnostic.
     MissingNumber { context: String },
+}
+
+/// The output TeX's `runaway` procedure emits before its caller's error.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RunawayPrelude {
+    pub heading: &'static str,
+    pub partial: String,
 }
 
 /// Opaque boundary for one executor-requested immutable token-list episode.

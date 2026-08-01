@@ -439,13 +439,24 @@ impl CommandProcessor<'_> {
     /// §396 issues this only for `long_state=call` -- a `\long` macro accepts
     /// the paragraph instead -- which is the same test the caller has already
     /// made before reaching here.
-    fn report_paragraph_ended_before_complete(&mut self) {
+    fn report_paragraph_ended_before_complete(&mut self, partial: &[TracedTokenWord]) {
         let name = self.matching_macro_name();
         let context = self.command.output_open_context(&self.state);
+        let mut display = String::new();
+        for token in partial {
+            display.push_str(&crate::processor::expand::token_list_token_text(
+                &self.state,
+                token.semantic_token(),
+            ));
+        }
         self.command
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
                 identity: RUNAWAY_ARGUMENT_DIAGNOSTIC,
+                runaway: Some(crate::state::RunawayPrelude {
+                    heading: "Runaway argument?",
+                    partial: display,
+                }),
                 message: format!("Paragraph ended before {name} was complete"),
                 help: &[
                     "I suspect you've forgotten a `}', causing me to apply this",
@@ -464,6 +475,7 @@ impl CommandProcessor<'_> {
             .semantic_diagnostics
             .push(crate::CommandSemanticDiagnostic::Recoverable {
                 identity: EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC,
+                runaway: None,
                 message: format!("Argument of {name} has an extra }}"),
                 help: &[
                     "I've run across a `}' that doesn't seem to match anything.",
@@ -521,12 +533,12 @@ impl CommandProcessor<'_> {
                 // immediately reads the `\par` it just inserted and takes
                 // §394's abort. `long_state:=call` above is there precisely so
                 // that §396 reports even for a `\long` macro.
-                self.report_paragraph_ended_before_complete();
+                self.report_paragraph_ended_before_complete(&[]);
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             break command;
         };
-        self.check_argument_paragraph(&first, flags)?;
+        self.check_argument_paragraph(&first, flags, &[])?;
         if !matches!(
             first.spelling().semantic_token(),
             Token::Char {
@@ -544,9 +556,10 @@ impl CommandProcessor<'_> {
                 .get_token()?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
+                self.set_runaway_partial(&tokens);
                 return Err(CommandError::OuterInMacroArgument);
             }
-            self.check_argument_paragraph(&command, flags)?;
+            self.check_argument_paragraph(&command, flags, &tokens)?;
             match command.spelling().semantic_token() {
                 Token::Char {
                     cat: Catcode::BeginGroup,
@@ -594,6 +607,9 @@ impl CommandProcessor<'_> {
                     .ok_or(CommandError::ParagraphInMacroArgument)?,
             };
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
+                let mut partial = tokens.clone();
+                partial.extend(prefix.iter().copied());
+                self.set_runaway_partial(&partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
             let token = command.spelling().semantic_token();
@@ -640,12 +656,12 @@ impl CommandProcessor<'_> {
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
                 // only this newly ordinary token is subject to the non-long
                 // paragraph check.
-                self.check_argument_paragraph(&command, flags)?;
+                self.check_argument_paragraph(&command, flags, &tokens)?;
                 push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
                 continue;
             }
 
-            self.check_argument_paragraph(&command, flags)?;
+            self.check_argument_paragraph(&command, flags, &tokens)?;
             push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
         }
     }
@@ -654,6 +670,7 @@ impl CommandProcessor<'_> {
         &mut self,
         command: &crate::CurrentCommand,
         flags: MeaningFlags,
+        partial: &[TracedTokenWord],
     ) -> Result<(), CommandError> {
         if matches!(
             command.meaning(),
@@ -665,7 +682,7 @@ impl CommandProcessor<'_> {
                 // §394 then aborts this match on its inserted frozen `\par`.
                 // That terminator is consumed by the failed expansion, unlike
                 // a user-supplied paragraph which `back_error` must replay.
-                self.report_paragraph_ended_before_complete();
+                self.set_runaway_partial(partial);
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             // TeX82 §394 reports this through `back_error` while the macro
@@ -676,7 +693,7 @@ impl CommandProcessor<'_> {
             self.back_input(command.copy_for_backup())?;
             // §396 ends with `back_error`, so §82 renders the context with the
             // replayed `\par` already on the stack.
-            self.report_paragraph_ended_before_complete();
+            self.report_paragraph_ended_before_complete(partial);
             return Err(CommandError::ParagraphInMacroArgument);
         }
         Ok(())
