@@ -108,12 +108,12 @@ pub(super) fn execute_pdf_font_output_action(
     Ok(())
 }
 
-enum GlyphToUnicodeParse {
+pub(crate) enum GlyphToUnicodeParse {
     Mapping(tex_state::PdfGlyphToUnicode),
     Warning(String),
 }
 
-fn parse_glyph_to_unicode(glyph: &[u8], unicode: &[u8]) -> GlyphToUnicodeParse {
+pub(crate) fn parse_glyph_to_unicode(glyph: &[u8], unicode: &[u8]) -> GlyphToUnicodeParse {
     // pdfTeX's `deftounicode` trims literal spaces and distinguishes a single
     // numeric value from a space-bearing UTF-16 sequence before validating it.
     let unicode = unicode

@@ -4256,6 +4256,20 @@ enum ScannedStep {
         skew: bool,
         value: i32,
     },
+    /// pdftex.web §§1680--1682's font expansion configuration.
+    PdfFontExpand {
+        font: FontId,
+        spec: tex_typeset::expansion::FontExpansionSpec,
+    },
+    /// pdftex.web §§1601--1607's font and map extension actions.  Operand
+    /// expansion belongs to the command processor; host-neutral state
+    /// mutation remains at the apply seam.
+    PdfFontAction {
+        primitive: UnexpandablePrimitive,
+        font: Option<FontId>,
+        first: Option<TracedTokenList>,
+        second: Option<TracedTokenList>,
+    },
     DeferredOpenOut {
         stream: u8,
         file_name: String,
@@ -6544,6 +6558,74 @@ fn scan_command(
                 stream: processor.scan_write_stream().map_err(command_error)?,
             })
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand) => {
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
+                return Err(ExecError::PdfExtensionInDviMode("pdffontexpand"));
+            }
+            let font = processor.scan_font_selector().map_err(command_error)?;
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let stretch = processor.scan_integer().map_err(command_error)?.value;
+            let shrink = processor.scan_integer().map_err(command_error)?.value;
+            let step = processor.scan_integer().map_err(command_error)?.value;
+            let auto_expand = processor
+                .scan_keyword("autoexpand")
+                .map_err(command_error)?
+                .value;
+            let spec =
+                tex_typeset::expansion::FontExpansionSpec::new(stretch, shrink, step, auto_expand)?;
+            Ok(ScannedStep::PdfFontExpand { font, spec })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfFontAttr
+            | UnexpandablePrimitive::PdfIncludeChars
+            | UnexpandablePrimitive::PdfMapFile
+            | UnexpandablePrimitive::PdfMapLine
+            | UnexpandablePrimitive::PdfGlyphToUnicode
+            | UnexpandablePrimitive::PdfNoBuiltinToUnicode),
+        ) => {
+            let dvi_name = match primitive {
+                UnexpandablePrimitive::PdfFontAttr => Some("pdffontattr"),
+                UnexpandablePrimitive::PdfIncludeChars => Some("pdfincludechars"),
+                UnexpandablePrimitive::PdfMapFile => Some("pdfmapfile"),
+                UnexpandablePrimitive::PdfMapLine => Some("pdfmapline"),
+                _ => None,
+            };
+            if processor.int_param(IntParam::PDF_OUTPUT) <= 0
+                && let Some(name) = dvi_name
+            {
+                return Err(ExecError::PdfExtensionInDviMode(name));
+            }
+            let font = matches!(
+                primitive,
+                UnexpandablePrimitive::PdfFontAttr
+                    | UnexpandablePrimitive::PdfIncludeChars
+                    | UnexpandablePrimitive::PdfNoBuiltinToUnicode
+            )
+            .then(|| processor.scan_font_selector().map_err(command_error))
+            .transpose()?;
+            let first = (!matches!(primitive, UnexpandablePrimitive::PdfNoBuiltinToUnicode))
+                .then(|| {
+                    processor
+                        .scan_balanced_text(true)
+                        .map(|text| text.tokens)
+                        .map_err(command_error)
+                })
+                .transpose()?;
+            let second = (primitive == UnexpandablePrimitive::PdfGlyphToUnicode)
+                .then(|| {
+                    processor
+                        .scan_balanced_text(true)
+                        .map(|text| text.tokens)
+                        .map_err(command_error)
+                })
+                .transpose()?;
+            Ok(ScannedStep::PdfFontAction {
+                primitive,
+                font,
+                first,
+                second,
+            })
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Write) => {
             // TeX82 §1350's `new_write_whatsit` normalizes the stream number
             // before storing it in `write_stream(tail)`, for the deferred
@@ -7509,9 +7591,16 @@ fn scan_unclassified_primitive(
         | P::PdfDest
         | P::PdfEndLink
         | P::PdfEndThread
+        | P::PdfFontAttr
+        | P::PdfFontExpand
+        | P::PdfGlyphToUnicode
+        | P::PdfIncludeChars
         | P::PdfInfo
         | P::PdfLiteral
+        | P::PdfMapFile
+        | P::PdfMapLine
         | P::PdfNames
+        | P::PdfNoBuiltinToUnicode
         | P::PdfObject
         | P::PdfOutline
         | P::PdfInterwordSpaceOff
@@ -7747,17 +7836,10 @@ fn scan_unclassified_primitive(
         | P::LetterspaceFont
         | P::PdfCopyFont
         | P::PdfEfCode
-        | P::PdfFontAttr
-        | P::PdfFontExpand
-        | P::PdfGlyphToUnicode
-        | P::PdfIncludeChars
         | P::PdfKnacCode
         | P::PdfKnbcCode
         | P::PdfKnbsCode
         | P::PdfLpCode
-        | P::PdfMapFile
-        | P::PdfMapLine
-        | P::PdfNoBuiltinToUnicode
         | P::PdfNoLigatures
         | P::PdfRpCode
         | P::PdfShbsCode
@@ -9365,6 +9447,8 @@ fn applied_mutation_observation(
         | ScannedStep::InvalidArithmeticTarget { .. }
         | ScannedStep::BoxEndGroup { .. }
         | ScannedStep::Mark { .. }
+        | ScannedStep::PdfFontExpand { .. }
+        | ScannedStep::PdfFontAction { .. }
         | ScannedStep::TextDirection { .. }
         | ScannedStep::Paragraph
         | ScannedStep::ParagraphStart
@@ -11773,6 +11857,93 @@ fn apply_scanned_step(
                         thread,
                     )
                     .map_err(|_| ExecError::PdfObjectCapacity)?;
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfFontExpand { font, spec } => {
+            stores.configure_font_expansion(
+                font,
+                tex_state::font::FontExpansion {
+                    stretch: spec.stretch() as u16,
+                    shrink: spec.shrink() as u16,
+                    step: spec.step() as u8,
+                    auto_expand: spec.auto_expand(),
+                },
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfFontAction {
+            primitive,
+            font,
+            first,
+            second,
+        } => {
+            use crate::assignments::{GlyphToUnicodeParse, parse_glyph_to_unicode};
+
+            let first = first.map(|tokens| pdf_graphics_text(tokens, stores));
+            match primitive {
+                UnexpandablePrimitive::PdfFontAttr => stores.set_pdf_font_attribute(
+                    font.expect("font attribute scanned a font"),
+                    first.expect("font attribute scanned text"),
+                ),
+                UnexpandablePrimitive::PdfIncludeChars => stores.include_pdf_font_chars(
+                    font.expect("include chars scanned a font"),
+                    first.expect("include chars scanned text"),
+                ),
+                UnexpandablePrimitive::PdfNoBuiltinToUnicode => stores
+                    .disable_pdf_builtin_to_unicode(
+                        font.expect("no builtin ToUnicode scanned a font"),
+                    ),
+                UnexpandablePrimitive::PdfGlyphToUnicode => {
+                    let glyph = first.expect("glyph mapping scanned a glyph");
+                    let unicode = pdf_graphics_text(
+                        second.expect("glyph mapping scanned a Unicode value"),
+                        stores,
+                    );
+                    match parse_glyph_to_unicode(&glyph, &unicode) {
+                        GlyphToUnicodeParse::Mapping(mapping) => {
+                            stores.set_pdf_glyph_to_unicode(mapping)
+                        }
+                        GlyphToUnicodeParse::Warning(message) => stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            &format!("\npdfTeX warning: pdftex: ToUnicode: {message}\n"),
+                        ),
+                    }
+                }
+                UnexpandablePrimitive::PdfMapFile => {
+                    let bytes = first.expect("map file scanned text");
+                    if bytes.iter().all(u8::is_ascii_whitespace) {
+                        stores.push_pdf_font_map(tex_state::PdfFontMapOperation::BlockDefault);
+                    } else {
+                        stores.push_pdf_font_map(tex_state::PdfFontMapOperation::File(
+                            tex_fonts::PdfFontMapFile::parse(&bytes)?,
+                        ));
+                    }
+                }
+                UnexpandablePrimitive::PdfMapLine => {
+                    let bytes = first.expect("map line scanned text");
+                    if bytes.iter().all(u8::is_ascii_whitespace) {
+                        stores.push_pdf_font_map(tex_state::PdfFontMapOperation::BlockDefault);
+                    } else {
+                        let duplicate_count = stores.pdf_font_map_duplicate_names().len();
+                        stores.push_pdf_font_map(tex_state::PdfFontMapOperation::Line(
+                            tex_fonts::PdfFontMapEntry::parse(&bytes)?,
+                        ));
+                        let duplicates = stores.pdf_font_map_duplicate_names();
+                        if duplicates.len() > duplicate_count
+                            && stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_MAP) <= 0
+                        {
+                            let name = String::from_utf8_lossy(
+                                duplicates.last().expect("new duplicate has a name"),
+                            );
+                            stores.world_mut().write_text(
+                                tex_state::PrintSink::TerminalAndLog,
+                                &format!("\npdfTeX warning: pdftex: fontmap entry for `{name}' already exists, duplicates ignored\n"),
+                            );
+                        }
+                    }
+                }
+                _ => unreachable!("scanner restricts PDF font actions"),
             }
             Ok(ReplayStep::Continue)
         }

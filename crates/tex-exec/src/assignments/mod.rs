@@ -122,6 +122,7 @@ pub(crate) use paragraph::{
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
+pub(crate) use pdf_fonts::{GlyphToUnicodeParse, parse_glyph_to_unicode};
 pub use primitives::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,

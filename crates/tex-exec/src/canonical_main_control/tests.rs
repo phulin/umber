@@ -1823,6 +1823,130 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
     CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
 }
 
+fn pdftex_font_action_control(stores: &mut Universe) -> CanonicalMainControl {
+    let nullfont = stores.intern("nullfont");
+    stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
+    for (name, primitive) in [
+        ("pdffontexpand", UnexpandablePrimitive::PdfFontExpand),
+        ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
+        ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
+        ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
+        ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
+        (
+            "pdfglyphtounicode",
+            UnexpandablePrimitive::PdfGlyphToUnicode,
+        ),
+        (
+            "pdfnobuiltintounicode",
+            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+}
+
+#[test]
+fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
+    // pdftex.web §§1601--1607, 1680--1682: general text is expanded before
+    // the action mutates the selected font or the global map/ToUnicode state.
+    let mut stores = Universe::new_with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut stores);
+    tex_expand::install_expandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file(
+            "cmr10.tfm",
+            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+        )
+        .expect("seed cmr10");
+    let mut setup = tex_lex::InputStack::new(tex_lex::MemoryInput::new("\\font\\base=cmr10 \\end"));
+    crate::Executor::new()
+        .run(&mut setup, &mut stores)
+        .expect("seed base font through the ordinary loader");
+    let base = match stores.meaning(stores.symbol("base").expect("base selector")) {
+        Meaning::Font(font) => font,
+        meaning => panic!("base is a font, got {meaning:?}"),
+    };
+    stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
+    let mut control = pdftex_font_action_control(&mut stores);
+    register_source(
+        &mut control,
+        concat!(
+            "\\def\\attr{/StemV 70}\\def\\chars{CABA}\\def\\uni{0041}",
+            "\\pdffontexpand\\base 100 50 10 autoexpand ",
+            "\\pdffontattr\\base{\\attr}\\pdfincludechars\\base{\\chars}",
+            "\\pdfmapline{+cmr10 CMR10 <cmr10.pfb}",
+            "\\pdfglyphtounicode{A}{\\uni}\\pdfnobuiltintounicode\\base\\end",
+        )
+        .as_bytes(),
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.font_expansion(base),
+        Some(tex_state::font::FontExpansion {
+            stretch: 100,
+            shrink: 50,
+            step: 10,
+            auto_expand: true,
+        })
+    );
+    assert_eq!(stores.pdf_font_attribute(base), b"/StemV 70");
+    assert_eq!(stores.included_pdf_font_chars(base), b"ABC");
+    assert_eq!(
+        stores.pdf_glyph_to_unicode(b"cmr10", b"A"),
+        Some([0x41].as_slice())
+    );
+    assert!(stores.pdf_builtin_to_unicode_disabled(base));
+    assert!(matches!(
+        stores.pdf_font_maps().next(),
+        Some(tex_state::PdfFontMapOperation::Line(line)) if line.tex_name == b"cmr10"
+    ));
+}
+
+#[test]
+fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
+    // pdftex.web §§1601--1607: these five extension codes require PDF mode;
+    // glyph and built-in ToUnicode definitions are deliberately exempt.
+    for (name, source) in [
+        (
+            "pdffontexpand",
+            b"\\pdffontexpand\\nullfont 1 1 1".as_slice(),
+        ),
+        ("pdffontattr", b"\\pdffontattr\\nullfont{}".as_slice()),
+        (
+            "pdfincludechars",
+            b"\\pdfincludechars\\nullfont{}".as_slice(),
+        ),
+        ("pdfmapfile", b"\\pdfmapfile{}".as_slice()),
+        ("pdfmapline", b"\\pdfmapline{}".as_slice()),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = pdftex_font_action_control(&mut stores);
+        register_source(&mut control, source);
+        assert!(matches!(
+            control.step(&mut stores),
+            Err(ExecError::PdfExtensionInDviMode(actual)) if actual == name
+        ));
+    }
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_font_action_control(&mut stores);
+    register_source(
+        &mut control,
+        b"\\pdfglyphtounicode{A}{0041}\\pdfnobuiltintounicode\\nullfont\\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        stores.pdf_glyph_to_unicode(b"cmr10", b"A"),
+        Some([0x41].as_slice())
+    );
+    assert!(stores.pdf_builtin_to_unicode_disabled(tex_state::font::NULL_FONT));
+}
+
 fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
     for (name, primitive) in [
         ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
