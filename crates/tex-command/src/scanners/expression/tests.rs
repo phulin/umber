@@ -321,16 +321,36 @@ fn glue_conversions_preserve_components_orders_and_destination_level() {
         push(&mut command, tokens);
         let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
         let value = CommandProcessor::new(
             &mut command,
             &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
+        .with_observer(&mut recorder)
         .scan_glue(scan_mu)
         .expect("glue conversion scans")
         .value;
         assert_eq!(value, expected, "source: {source}");
+        let kinds = scanner_kinds(&recorder);
+        assert_eq!(
+            &kinds[kinds.len() - 3..],
+            [
+                "glue",
+                if primitive_kind == P::GlueToMu {
+                    "glue_to_mu"
+                } else {
+                    "mu_to_glue"
+                },
+                "glue",
+            ],
+            "e-TeX 2.6 [53a.4965--4998] returns before the generic internal boundary"
+        );
+        assert!(
+            !kinds.contains(&"internal"),
+            "primitive: {primitive_kind:?}"
+        );
     }
 }
 
