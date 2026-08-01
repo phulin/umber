@@ -299,6 +299,7 @@ struct ReplayBoxes {
 #[derive(Clone, Debug)]
 struct ActiveDiscretionary {
     parts: Vec<NodeListId>,
+    rejected: bool,
 }
 
 /// The only normal reason a canonical operation may be retried by its host.
@@ -1499,8 +1500,10 @@ impl CanonicalMainControl {
             self.fuel.fuel_mut(),
         )?;
         self.open_discretionary_part(stores)?;
-        self.active_discretionaries
-            .push(ActiveDiscretionary { parts: Vec::new() });
+        self.active_discretionaries.push(ActiveDiscretionary {
+            parts: Vec::new(),
+            rejected: false,
+        });
         Ok(ReplayStep::Continue)
     }
 
@@ -1527,6 +1530,17 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         let level =
             crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let part_is_admissible = level.list().nodes().iter().all(|node| {
+            matches!(
+                node,
+                Node::Char { .. }
+                    | Node::Lig { .. }
+                    | Node::Kern { .. }
+                    | Node::Rule { .. }
+                    | Node::HList(_)
+                    | Node::VList(_)
+            )
+        });
         let nodes = stores.freeze_node_list(level.list().nodes());
         let aftergroup =
             stores
@@ -1536,7 +1550,7 @@ impl CanonicalMainControl {
                 })?;
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
 
-        let part_count = {
+        let (part_count, replacement_too_long) = {
             let active = self
                 .active_discretionaries
                 .last_mut()
@@ -1544,8 +1558,32 @@ impl CanonicalMainControl {
                     context: "active discretionary",
                 })?;
             active.parts.push(nodes);
-            active.parts.len()
+            let part_count = active.parts.len();
+            let replacement_too_long = part_count == 3 && level.list().nodes().len() > 127;
+            active.rejected |= !part_is_admissible || replacement_too_long;
+            (part_count, replacement_too_long)
         };
+        if !part_is_admissible {
+            let context = self.command.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Improper discretionary list",
+                &[
+                    "Discretionary lists must contain only boxes and kerns",
+                    "besides characters. The offending list has been deleted.",
+                ],
+                context,
+            )?;
+        }
+        if replacement_too_long {
+            let context = self.command.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Discretionary list is too long",
+                &["Wow---I never thought anybody would tweak me here."],
+                context,
+            )?;
+        }
         if part_count < 3 {
             let mut diagnostics = Vec::new();
             {
@@ -1575,6 +1613,9 @@ impl CanonicalMainControl {
             .active_discretionaries
             .pop()
             .expect("three parts require an active discretionary");
+        if active.rejected {
+            return Ok(ReplayStep::Continue);
+        }
         let [pre, post, replace]: [NodeListId; 3] = active
             .parts
             .try_into()

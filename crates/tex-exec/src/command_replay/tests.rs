@@ -12441,12 +12441,11 @@ fn canonical_discretionary_accepts_empty_one_and_127_node_replacements() {
 }
 
 #[test]
-#[ignore = "TeX82 §§1120–1121 replacement-count overflow recovery is not implemented yet"]
 fn canonical_discretionary_rejects_128_replacement_nodes_and_keeps_following_input() {
     // TeX82 §1120 stores the replacement count in a quarterword: 127 nodes
     // are legal, while 128 emits "Discretionary list is too long", flushes
     // the replacement list, and continues with the parent input.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
     let replacement = "A".repeat(128);
@@ -12464,12 +12463,11 @@ fn canonical_discretionary_rejects_128_replacement_nodes_and_keeps_following_inp
 }
 
 #[test]
-#[ignore = "TeX82 §1121 forbidden discretionary-node flushing is not implemented yet"]
 fn canonical_discretionary_flushes_forbidden_part_nodes_and_keeps_following_input() {
     // Glue is not admissible in any discretionary sublist. Section 1121
     // diagnoses the offending list, flushes it, and resumes after the third
     // group without consuming the following parent-list character.
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
     register_source(

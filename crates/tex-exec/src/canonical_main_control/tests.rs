@@ -574,13 +574,14 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
 }
 
 #[test]
-fn nested_discretionary_preserves_aftergroup_before_the_next_part_opener() {
-    // TeX82 §§282/1120: unsave inserts aftergroup material before
+fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
+    // TeX82 §§282/1120–1121: unsave inserts aftergroup material before
     // build_discretionary scans the next part's left brace. Make that token
     // itself the opener; the literal brace that follows must therefore be an
     // ordinary nested group inside the second part. The inner discretionary
-    // simultaneously proves that ActiveDiscretionary is a proper stack.
-    let mut stores = Universe::new_with_plain_catcodes();
+    // simultaneously proves that ActiveDiscretionary is a proper stack, then
+    // §1121 rejects it as a forbidden node in the outer discretionary list.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     control
         .set_fuel_limit(10_000)
@@ -596,31 +597,16 @@ fn nested_discretionary_preserves_aftergroup_before_the_next_part_opener() {
 
     run_to_end(&mut control, &mut stores);
 
-    let outer = control
-        .modes
-        .current_list()
-        .nodes()
-        .iter()
-        .find_map(|node| match node {
-            Node::Disc {
-                pre, post, replace, ..
-            } => Some((*pre, *post, *replace)),
-            _ => None,
-        })
-        .expect("outer discretionary completes");
     assert!(
-        stores
-            .nodes(outer.0)
+        !control
+            .modes
+            .current_list()
+            .nodes()
             .iter()
-            .any(|node| matches!(node.to_owned(), Node::Disc { .. })),
-        "inner discretionary remains in the outer pre-break part"
+            .any(|node| matches!(node, Node::Disc { .. })),
+        "the forbidden nested discretionary deletes the outer discretionary"
     );
-    for (part, amount) in [(outer.1, 2 * Scaled::UNITY), (outer.2, 3 * Scaled::UNITY)] {
-        assert!(stores.nodes(part).iter().any(|node| matches!(
-            node.to_owned(),
-            Node::Kern { amount: actual, .. } if actual == Scaled::from_raw(amount)
-        )));
-    }
+    assert!(terminal_text(&stores).contains("Improper discretionary list"));
     assert!(
         !terminal_text(&stores).contains("Missing { inserted"),
         "aftergroup token supplied the next part opener"
