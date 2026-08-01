@@ -10,7 +10,36 @@ use tex_state::node::{
     UnsetNode, UnsetNodeFields, Whatsit,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::OriginId;
+use tex_state::token::{Catcode, OriginId, Token};
+
+#[test]
+fn deferred_write_dump_uses_show_token_list_control_word_separator() {
+    let mut stores = Universe::new();
+    let help = stores.intern_relaxed_control_sequence("help");
+    let tokens = stores.intern_token_list(&[
+        Token::Cs(help.symbol()),
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        },
+    ]);
+    let write = Node::Whatsit(Whatsit::DeferredWrite {
+        sink: tex_state::PrintSink::TerminalAndLog,
+        tokens,
+    });
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[write],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "\\write*{\\help !}\n",
+    );
+}
 
 #[test]
 fn special_dump_prints_eight_bit_payload_as_tex_character_strings() {

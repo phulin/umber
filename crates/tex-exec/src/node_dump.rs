@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use tex_expand::token_text;
+use tex_expand::{append_token_show_text, token_text};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
@@ -329,7 +329,9 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
 fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {
     out.push('{');
     for &token in stores.tokens(tokens) {
-        out.push_str(&token_text(stores, token));
+        // §1356 delegates write-node contents to §262 `show_token_list`,
+        // including `print_cs`'s control-word separator.
+        append_token_show_text(stores, token, out);
     }
     out.push_str("}\n");
 }

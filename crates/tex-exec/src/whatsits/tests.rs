@@ -168,7 +168,7 @@ fn whatsit_copy_free_display_and_default_output_name_are_subtype_complete() {
     );
     assert_eq!(
         dump,
-        "\\openout2=plain\n\\openout3=archive.log\n\\write2{\\value}\n\\special{first}\n\\closeout*\n\\setlanguage7 (hyphenmin 2,3)\n"
+        "\\openout2=plain\n\\openout3=archive.log\n\\write2{\\value }\n\\special{first}\n\\closeout*\n\\setlanguage7 (hyphenmin 2,3)\n"
     );
 }
 
