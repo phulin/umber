@@ -1,6 +1,7 @@
 use super::opcodes::{
-    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_NUM_0, FNT1, ID_BYTE, NUM, POP, POST, POST_POST, PRE, PUSH,
-    PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1, XXX4,
+    BOP, DEN, DOWN1, EOP, FNT_DEF1, FNT_DEF2, FNT_DEF3, FNT_DEF4, FNT_NUM_0, FNT1, FNT2, FNT3,
+    FNT4, ID_BYTE, NUM, POP, POST, POST_POST, PRE, PUSH, PUT_RULE, RIGHT1, SET_RULE, SET1, XXX1,
+    XXX4,
 };
 use super::{DviError, DviPagePlan, DviPagePlanBuilder, DviStreamWriter, write_dvi};
 use crate::{
@@ -737,6 +738,126 @@ fn dvi_movement_signed_width_boundaries_choose_shortest_opcode() {
         let mut bytes = Vec::new();
         super::movement::MovementStack::default().movement(&mut bytes, sp(movement), RIGHT1);
         assert_eq!(bytes, expected, "movement {movement}");
+    }
+}
+
+/// TeX.web §§585-603 choose the shortest DVI operand at every signed
+/// movement, character, font-selection, font-definition, and special width.
+#[test]
+fn dvi_opcode_width_boundaries() {
+    let movement_cases: &[(i32, u8, usize)] = &[
+        (i32::MIN, RIGHT1 + 3, 5),
+        (-8_388_609, RIGHT1 + 3, 5),
+        (-8_388_608, RIGHT1 + 2, 4),
+        (-32_769, RIGHT1 + 2, 4),
+        (-32_768, RIGHT1 + 1, 3),
+        (-129, RIGHT1 + 1, 3),
+        (-128, RIGHT1, 2),
+        (127, RIGHT1, 2),
+        (128, RIGHT1 + 1, 3),
+        (32_767, RIGHT1 + 1, 3),
+        (32_768, RIGHT1 + 2, 4),
+        (8_388_607, RIGHT1 + 2, 4),
+        (8_388_608, RIGHT1 + 3, 5),
+        (i32::MAX, RIGHT1 + 3, 5),
+    ];
+    for &(amount, opcode, encoded_len) in movement_cases {
+        let mut bytes = Vec::new();
+        super::movement::MovementStack::default().movement(&mut bytes, sp(amount), RIGHT1);
+        assert_eq!(
+            (bytes[0], bytes.len()),
+            (opcode, encoded_len),
+            "movement {amount}"
+        );
+    }
+
+    let mut writer = super::DviWriter::new(Vec::new());
+    writer.set_char(127).expect("set_char 127");
+    writer.set_char(128).expect("set_char 128");
+    assert_eq!(writer.bytes, [127, SET1, 128]);
+
+    let font_cases = [
+        (63, FNT_NUM_0 + 63, FNT_DEF1),
+        (64, FNT1, FNT_DEF1),
+        (255, FNT1, FNT_DEF1),
+        (256, FNT2, FNT_DEF2),
+        (65_535, FNT2, FNT_DEF2),
+        (65_536, FNT3, FNT_DEF3),
+        (0x00ff_ffff, FNT3, FNT_DEF3),
+        (0x0100_0000, FNT4, FNT_DEF4),
+        (u32::MAX, FNT4, FNT_DEF4),
+    ];
+    for (font_id, selection, definition) in font_cases {
+        let mut writer = super::DviWriter::new(Vec::new());
+        writer
+            .index_fonts(&[font_resource(font_id, "f")])
+            .expect("font index");
+        writer.change_font(font_id).expect("font selection");
+        assert_eq!(writer.bytes[0], definition, "font definition {font_id}");
+        let selection_at = 16
+            + match definition {
+                FNT_DEF1 => 1,
+                FNT_DEF2 => 2,
+                FNT_DEF3 => 3,
+                FNT_DEF4 => 4,
+                _ => unreachable!(),
+            };
+        assert_eq!(
+            writer.bytes[selection_at], selection,
+            "font selection {font_id}"
+        );
+    }
+
+    for (len, opcode) in [(255, XXX1), (256, XXX4)] {
+        let mut page = empty_page(0);
+        page.root = hlist(0, 0, 0, vec![PageNode::WhatsitAnchor { effect_index: 0 }]);
+        page.effects = vec![PageEffect::Special {
+            class: "dvi".to_owned(),
+            payload: vec![b'x'; len],
+        }];
+        let dvi = write_dvi(&[page]).expect("special writes");
+        assert!(
+            page_body(&dvi, 16).contains(&opcode),
+            "special length {len}"
+        );
+    }
+}
+
+/// TeX.web §§585, 592, and 597 store comment, font-area, and font-name
+/// lengths in one byte and reject no legal 255-byte value.
+#[test]
+fn dvi_field_length_boundaries() {
+    let mut writer = super::DviWriter::new(Vec::new());
+    writer
+        .preamble(&"c".repeat(255), 1_000)
+        .expect("255-byte comment");
+    assert_eq!(writer.bytes[14], 255);
+    assert_eq!(
+        super::DviWriter::new(Vec::new()).preamble(&"c".repeat(256), 1_000),
+        Err(DviError::FieldTooLong {
+            field: "comment",
+            len: 256,
+        })
+    );
+
+    for (field, name) in [
+        ("font area", format!("{}/n", "a".repeat(254))),
+        ("font name", "n".repeat(255)),
+    ] {
+        let mut writer = super::DviWriter::new(Vec::new());
+        writer
+            .fnt_def(0, &font_resource(0, &name))
+            .expect("255-byte font field");
+        assert!(writer.bytes.contains(&255), "{field} length byte");
+    }
+    for (field, name) in [
+        ("font area", format!("{}/n", "a".repeat(255))),
+        ("font name", "n".repeat(256)),
+    ] {
+        assert_eq!(
+            super::DviWriter::new(Vec::new()).fnt_def(0, &font_resource(0, &name)),
+            Err(DviError::FieldTooLong { field, len: 256 })
+        );
     }
 }
 

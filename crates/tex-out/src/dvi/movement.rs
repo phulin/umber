@@ -170,3 +170,125 @@ fn emit_explicit_movement(bytes: &mut Vec<u8>, w: i32, o: u8) {
         bytes.extend_from_slice(&w.to_be_bytes());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dvi::opcodes::RIGHT1;
+
+    fn entry(width: i32, location: usize, info: MovementInfo) -> MovementEntry {
+        MovementEntry {
+            width,
+            location,
+            info,
+        }
+    }
+
+    /// TeX.web §§611-615: exhaust the movement search's three scan states,
+    /// six entry states, both register rewrites, both crossed-register stops,
+    /// both restriction tables, and the inclusive prune boundary.
+    #[test]
+    fn movement_search_reuse_and_prune_matrix() {
+        let infos = [
+            MovementInfo::YHere,
+            MovementInfo::ZHere,
+            MovementInfo::YzOk,
+            MovementInfo::YOk,
+            MovementInfo::ZOk,
+            MovementInfo::DFixed,
+        ];
+        let states = [MovementState::None, MovementState::Y, MovementState::Z];
+        for state in states {
+            for info in infos {
+                let mut entries = vec![entry(7, 0, info)];
+                match state {
+                    MovementState::None => {}
+                    MovementState::Y => entries.push(entry(8, 1, MovementInfo::YHere)),
+                    MovementState::Z => entries.push(entry(8, 1, MovementInfo::ZHere)),
+                }
+                let q = entries.len();
+                let mut stack = MovementStack { entries };
+                let mut bytes = vec![RIGHT1; q];
+                let hit = stack.find_hit(q, 7, &mut bytes).map(|(_, info)| info);
+                let expected = match (state, info) {
+                    (MovementState::None, MovementInfo::YzOk | MovementInfo::YOk)
+                    | (MovementState::Z, MovementInfo::YzOk | MovementInfo::YOk) => {
+                        Some(MovementInfo::YHere)
+                    }
+                    (MovementState::None, MovementInfo::ZOk)
+                    | (MovementState::Y, MovementInfo::YzOk | MovementInfo::ZOk) => {
+                        Some(MovementInfo::ZHere)
+                    }
+                    (MovementState::None, MovementInfo::YHere | MovementInfo::ZHere)
+                    | (MovementState::Y, MovementInfo::ZHere)
+                    | (MovementState::Z, MovementInfo::YHere) => Some(info),
+                    _ => None,
+                };
+                assert_eq!(hit, expected, "scan={state:?}, info={info:?}");
+            }
+        }
+
+        for intervening in [
+            [MovementInfo::YHere, MovementInfo::ZHere],
+            [MovementInfo::ZHere, MovementInfo::YHere],
+        ] {
+            let mut stack = MovementStack {
+                entries: vec![
+                    entry(7, 0, MovementInfo::YzOk),
+                    entry(8, 1, intervening[0]),
+                    entry(9, 2, intervening[1]),
+                ],
+            };
+            assert_eq!(stack.find_hit(3, 7, &mut [RIGHT1; 3]), None);
+        }
+
+        let mut y = MovementStack {
+            entries: infos
+                .into_iter()
+                .enumerate()
+                .map(|(i, info)| entry(0, i, info))
+                .collect(),
+        };
+        y.restrict_intervening_y(6, 0);
+        assert_eq!(
+            y.entries.iter().map(|entry| entry.info).collect::<Vec<_>>(),
+            [
+                MovementInfo::YHere,
+                MovementInfo::ZHere,
+                MovementInfo::ZOk,
+                MovementInfo::DFixed,
+                MovementInfo::ZOk,
+                MovementInfo::DFixed
+            ]
+        );
+        let mut z = MovementStack {
+            entries: infos
+                .into_iter()
+                .enumerate()
+                .map(|(i, info)| entry(0, i, info))
+                .collect(),
+        };
+        z.restrict_intervening_z(6, 0);
+        assert_eq!(
+            z.entries.iter().map(|entry| entry.info).collect::<Vec<_>>(),
+            [
+                MovementInfo::YHere,
+                MovementInfo::ZHere,
+                MovementInfo::YOk,
+                MovementInfo::YOk,
+                MovementInfo::DFixed,
+                MovementInfo::DFixed
+            ]
+        );
+
+        let mut stack = MovementStack {
+            entries: vec![
+                entry(1, 3, MovementInfo::YzOk),
+                entry(2, 4, MovementInfo::YzOk),
+                entry(3, 5, MovementInfo::YzOk),
+            ],
+        };
+        stack.prune_movements(4);
+        assert_eq!(stack.entries, [entry(1, 3, MovementInfo::YzOk)]);
+    }
+}
