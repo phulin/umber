@@ -877,6 +877,91 @@ fn interaction_assignment_updates_mode_and_selector_for_log_state() {
 }
 
 #[test]
+fn interaction_selector_matrix_with_open_and_closed_log() {
+    use tex_state::PrintSink;
+    use tex_state::print::{Printer, Selector};
+
+    for (source, mode) in [
+        (
+            &br"\batchmode\advance\count0 by1"[..],
+            InteractionMode::Batch,
+        ),
+        (
+            &br"\nonstopmode\advance\count0 by1"[..],
+            InteractionMode::Nonstop,
+        ),
+        (
+            &br"\scrollmode\advance\count0 by1"[..],
+            InteractionMode::Scroll,
+        ),
+        (
+            &br"\errorstopmode\advance\count0 by1"[..],
+            InteractionMode::ErrorStop,
+        ),
+    ] {
+        for (log_opened, expected_selector, expected_terminal, expected_log) in [
+            (
+                false,
+                if mode == InteractionMode::Batch {
+                    Selector::NoPrint
+                } else {
+                    Selector::TermOnly
+                },
+                mode != InteractionMode::Batch,
+                false,
+            ),
+            (
+                true,
+                if mode == InteractionMode::Batch {
+                    Selector::LogOnly
+                } else {
+                    Selector::TermAndLog
+                },
+                mode != InteractionMode::Batch,
+                true,
+            ),
+        ] {
+            let mut stores = Universe::new_with_plain_catcodes();
+            stores.set_count(1, 41);
+            let before_history = stores.world().error_channel().history();
+            let before_errors = stores.world().error_channel().error_count();
+            let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+            register_source(&mut control, source);
+
+            assert_eq!(
+                control.step(&mut stores).expect("interaction mode assigns"),
+                MainControlStep::Continue
+            );
+            assert_eq!(stores.interaction_mode(), mode);
+            let selector = Selector::for_interaction_and_log(mode, log_opened);
+            assert_eq!(selector, expected_selector);
+            Printer::new(&mut stores, selector).print("selector-marker");
+
+            assert_eq!(
+                control
+                    .step(&mut stores)
+                    .expect("following assignment executes"),
+                MainControlStep::Continue
+            );
+            assert_eq!(stores.count(0), 1, "{mode:?}, log_opened={log_opened}");
+            assert_eq!(stores.count(1), 41, "unrelated state changed");
+            assert_eq!(stores.interaction_mode(), mode);
+            assert_eq!(stores.world().error_channel().history(), before_history);
+            assert_eq!(stores.world().error_channel().error_count(), before_errors);
+
+            let terminal = stores.world().effect_records().iter().any(|effect| {
+                matches!(effect, EffectRecord::StreamWrite { sink: PrintSink::Terminal | PrintSink::TerminalAndLog, text } if text == "selector-marker")
+            });
+            let log = stores.world().effect_records().iter().any(|effect| {
+                matches!(effect, EffectRecord::StreamWrite { sink: PrintSink::Log | PrintSink::TerminalAndLog, text } if text == "selector-marker")
+            });
+            assert_eq!(terminal, expected_terminal);
+            assert_eq!(log, expected_log);
+        }
+    }
+}
+
+#[test]
 fn assignment_terminator_skips_space_and_relax_but_retains_first_command() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

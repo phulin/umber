@@ -13,13 +13,12 @@
 //!
 //! # What Umber models differently, and what it does not model
 //!
-//! - **`log_opened` is constantly true.** tex.web §75 lists four possible
-//!   `selector` values at error time, split by whether the transcript is
-//!   open. Umber's [`crate::world::World`] always accepts
-//!   [`PrintSink::Log`] writes -- there is no `open_log_file` moment -- so
-//!   §75's `no_print`/`term_only` half of the table is unreachable and
-//!   [`Selector::for_interaction`] yields only `log_only` and
-//!   `term_and_log`.
+//! - **The live transcript is constantly open.** Umber's
+//!   [`crate::world::World`] always accepts [`PrintSink::Log`] writes -- there
+//!   is no `open_log_file` moment -- so live callers use
+//!   [`Selector::for_interaction`]. [`Selector::for_interaction_and_log`]
+//!   nevertheless exposes tex.web §§1262--1265's complete initialization
+//!   table, including the pre-transcript `no_print`/`term_only` states.
 //! - **`show_context` is caller-supplied.** tex.web §82 shows the live input
 //!   stack after every error. The command core captures that display while it
 //!   owns the stack and supplies it through [`ErrorReport::context`].
@@ -139,15 +138,23 @@ pub enum Selector {
 }
 
 impl Selector {
+    /// tex.web §§1262--1265's complete interaction/log-state matrix.
+    #[must_use]
+    pub const fn for_interaction_and_log(interaction: InteractionMode, log_opened: bool) -> Self {
+        match (interaction, log_opened) {
+            (InteractionMode::Batch, false) => Self::NoPrint,
+            (InteractionMode::Batch, true) => Self::LogOnly,
+            (_, false) => Self::TermOnly,
+            (_, true) => Self::TermAndLog,
+        }
+    }
+
     /// tex.web §75's `<Initialize the print selector based on interaction>`
     /// followed by §1265's `if log_opened then selector:=selector+2`.
     /// Umber's transcript is always open, so the `+2` always applies.
     #[must_use]
     pub const fn for_interaction(interaction: InteractionMode) -> Self {
-        match interaction {
-            InteractionMode::Batch => Self::LogOnly,
-            _ => Self::TermAndLog,
-        }
+        Self::for_interaction_and_log(interaction, true)
     }
 
     /// The routed sink, or `None` for §54's `no_print`.
