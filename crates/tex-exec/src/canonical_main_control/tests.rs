@@ -137,7 +137,6 @@ fn disabled_tracingcommands_emits_no_command_diagnostic() {
 }
 
 #[test]
-#[ignore = "umber2-e51h.104: §245 warning history currently reaches §1335's terminal note"]
 fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
