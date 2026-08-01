@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
-use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::world::PrintSink;
+use tex_state::{EffectRecord, Universe};
 
 use super::*;
 use crate::input::{
@@ -50,6 +51,21 @@ fn text_tokens(text: &str) -> Vec<Token> {
                 'a'..='z' | 'A'..='Z' => Catcode::Letter,
                 _ => Catcode::Other,
             },
+        })
+        .collect()
+}
+
+fn diagnostic_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::TerminalAndLog | PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
         })
         .collect()
 }
@@ -153,6 +169,36 @@ fn character_definition_scanner_owns_target_optional_equals_and_integer() {
     assert_eq!(definition.value, 65);
     assert_eq!(definition.scanned, 65);
     assert!(!definition.recovered);
+}
+
+#[test]
+fn frozen_control_target_becomes_inaccessible_without_consuming_following_input() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [
+            Token::frozen_relax(),
+            Token::Char {
+                ch: '6',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '5',
+                cat: Catcode::Other,
+            },
+        ],
+    );
+
+    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
+        .expect("frozen target recovers");
+
+    assert_eq!(universe.resolve(definition.target), "inaccessible");
+    assert_eq!(definition.value, 65, "the following operand remains owned");
+    assert!(diagnostic_text(&universe).contains("Missing control sequence inserted"));
 }
 
 /// TeX82 §1224 spells `\chardef`'s value scan as §434's `scan_char_num` and

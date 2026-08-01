@@ -9264,6 +9264,40 @@ fn canonical_assignments_cover_code_tables_and_reject_macro_prefixes() {
 }
 
 #[test]
+fn code_table_invalid_values_substitute_zero_and_continue() {
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\catcode`@=16 \count0=1 \lccode`A=-1 \count1=2 \uccode`a=256 \count2=3 \sfcode`B=32768 \count3=4 \mathcode`x=32769 \count4=5 \delcode`(=16777216 \count5=6 \end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.catcode('@'), tex_state::token::Catcode::Escape);
+    assert_eq!(universe.lccode('A'), 0);
+    assert_eq!(universe.uccode('a'), 0);
+    assert_eq!(universe.sfcode('B'), 0);
+    assert_eq!(universe.mathcode('x'), 0);
+    assert_eq!(universe.delcode('('), 0);
+    assert_eq!(
+        (0..=5)
+            .map(|index| universe.count(index))
+            .collect::<Vec<_>>(),
+        [1, 2, 3, 4, 5, 6],
+        "each following assignment remains available after recovery"
+    );
+    let output = terminal_text(&universe);
+    assert_eq!(output.matches("Invalid code (").count(), 6, "{output}");
+    assert_eq!(
+        transcript_text(&universe)
+            .matches("I changed this one to zero.")
+            .count(),
+        6
+    );
+}
+
+#[test]
 fn code_table_selector_uses_tex82_character_code_recovery() {
     let reference =
         include_str!("../../../../tests/corpus/tex_exec/lccode_selector_recovery/expected.ref");

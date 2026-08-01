@@ -677,6 +677,44 @@ fn read_to_definition_scans_stream_keyword_target_and_installs_tokens() {
 }
 
 #[test]
+#[ignore = "umber2-gwhy: scan_keyword mismatch retirement hides the read target"]
+fn read_missing_to_and_invalid_target_recover_exactly() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::ErrorStop);
+    stores
+        .world_mut()
+        .push_memory_terminal_line("first")
+        .expect("first terminal line registers");
+    stores
+        .world_mut()
+        .push_memory_terminal_line("second")
+        .expect("second terminal line registers");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\read1 x\read1 to \line \count0=9\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(macro_text(&stores, "inaccessible"), "first ");
+    assert_eq!(macro_text(&stores, "line"), "second ");
+    assert_eq!(
+        stores.count(0),
+        9,
+        "input following the bad target continues"
+    );
+    let output = terminal_text(&stores);
+    assert_eq!(
+        output.matches("Missing `to' inserted").count(),
+        1,
+        "{output}"
+    );
+    assert_eq!(
+        output.matches("Missing control sequence inserted").count(),
+        1,
+        "{output}"
+    );
+}
+
+#[test]
 fn setbox_request_encodes_scope_and_rejects_disallowed_contexts() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
