@@ -2025,7 +2025,7 @@ fn extension_params() -> Vec<Scaled> {
     params
 }
 
-fn delimiter_code(small_family: u8, small: u8, large_family: u8, large: u8) -> u32 {
+pub(super) fn delimiter_code(small_family: u8, small: u8, large_family: u8, large: u8) -> u32 {
     (u32::from(small_family) << 20)
         | (u32::from(small) << 12)
         | (u32::from(large_family) << 8)
