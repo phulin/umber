@@ -32,7 +32,7 @@
         "box:0/0/0:whatsit"
       ],
       "channels": {
-        "events": 95,
+        "events": 90,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

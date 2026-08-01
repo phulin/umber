@@ -3275,7 +3275,12 @@ impl CommandProcessor<'_> {
     /// The `shipout` form retains the unexpanded balanced tokens so traversal
     /// can expand them against the state current when their box is shipped.
     pub fn scan_special(&mut self) -> Result<(bool, ScannedBalancedText), CommandError> {
-        let deferred = self.scan_keyword("shipout")?.value;
+        // TeX82 §473 enters `scan_toks` immediately. The preceding optional
+        // keyword probe belongs only to pdfTeX 1.40.27 §1534; in particular,
+        // an e-TeX job must enter `absorbing` before delivering the opening
+        // brace instead of speculatively backing it up and replaying it.
+        let deferred =
+            self.profile().capabilities().supports_pdftex() && self.scan_keyword("shipout")?.value;
         self.scan_balanced_text(!deferred)
             .map(|text| (deferred, text))
     }

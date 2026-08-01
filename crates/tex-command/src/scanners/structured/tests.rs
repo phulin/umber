@@ -1274,6 +1274,51 @@ fn balanced_text_enters_absorbing_before_its_opening_brace() {
 }
 
 #[test]
+fn special_shipout_probe_is_owned_only_by_the_pdftex_profile() {
+    fn scan(profile: crate::CommandProfile, source: &[u8]) -> (bool, Vec<CommandObservation>) {
+        let mut command = CommandState::new(profile);
+        let source = command
+            .register_source(SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                Arc::<[u8]>::from(source),
+            ))
+            .expect("source registers");
+        command
+            .open_registered_source(source)
+            .expect("source opens");
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let (deferred, _) = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder)
+            .scan_special()
+            .expect("special scans");
+        (deferred, recorder.0)
+    }
+
+    // TeX82 §473 enters `scan_toks` directly; e-TeX does not acquire
+    // pdfTeX 1.40.27 §1534's optional `shipout` syntax.
+    let (deferred, events) = scan(crate::CommandProfile::ETEX26, b"{x}");
+    assert!(!deferred);
+    assert!(matches!(
+        events.as_slice(),
+        [
+            CommandObservation::ScannerStatus(status),
+            CommandObservation::Command(opening),
+            ..
+        ] if status.from == "normal"
+            && status.to == "absorbing"
+            && matches!(opening.spelling, crate::ObservedToken::Character {
+                character: '{', catcode: Catcode::BeginGroup
+            })
+    ));
+
+    let (deferred, _) = scan(crate::CommandProfile::PDFTEX14027, b"shipout{x}");
+    assert!(deferred);
+}
+
+#[test]
 fn discretionary_delivers_each_opening_brace_before_body_collection() {
     // TeX82 §1117 consumes only the opening brace before returning to live
     // main control. The body and later parts must remain untouched.
