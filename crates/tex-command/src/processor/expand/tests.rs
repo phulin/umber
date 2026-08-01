@@ -2857,6 +2857,253 @@ fn print_cmd_chr_preserves_delivered_command_operands_and_aliases() {
 }
 
 #[test]
+fn etex_print_cmd_chr_selector_table_is_exact_for_primitives_registers_and_aliases() {
+    use tex_state::meaning::UnexpandablePrimitive as U;
+
+    // e-TeX 2.6's merged etex.web changes [38], [43], [48]-[54], and
+    // [76]-[77] extend print_cmd_chr and its meaning callers with these
+    // selector families.  Keep this as one exact table: several rows share a
+    // command code and differ only by chr, while the dense/sparse token
+    // registers cross e-TeX's eqtb boundary without changing their spelling.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    for (name, meaning) in [
+        (
+            "eTeXrevision",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ETeXRevision),
+        ),
+        (
+            "expandafter",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
+        ),
+        (
+            "noexpand",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::NoExpand),
+        ),
+        (
+            "unless",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless),
+        ),
+        (
+            "topmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::TopMark),
+        ),
+        (
+            "firstmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FirstMark),
+        ),
+        (
+            "botmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMark),
+        ),
+        (
+            "splitfirstmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::SplitFirstMark),
+        ),
+        (
+            "splitbotmark",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::SplitBotMark),
+        ),
+        (
+            "topmarks",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::TopMarks),
+        ),
+        (
+            "firstmarks",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FirstMarks),
+        ),
+        (
+            "botmarks",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMarks),
+        ),
+        (
+            "splitfirstmarks",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::SplitFirstMarks),
+        ),
+        (
+            "splitbotmarks",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::SplitBotMarks),
+        ),
+        ("mark", Meaning::UnexpandablePrimitive(U::Mark)),
+        ("marks", Meaning::UnexpandablePrimitive(U::Marks)),
+        ("read", Meaning::UnexpandablePrimitive(U::Read)),
+        ("readline", Meaning::UnexpandablePrimitive(U::ReadLine)),
+        ("parshape", Meaning::UnexpandablePrimitive(U::ParShape)),
+        (
+            "parshapelength",
+            Meaning::UnexpandablePrimitive(U::ParShapeLength),
+        ),
+        (
+            "parshapeindent",
+            Meaning::UnexpandablePrimitive(U::ParShapeIndent),
+        ),
+        (
+            "parshapedimen",
+            Meaning::UnexpandablePrimitive(U::ParShapeDimen),
+        ),
+        (
+            "interlinepenalties",
+            Meaning::UnexpandablePrimitive(U::InterLinePenalties),
+        ),
+        (
+            "clubpenalties",
+            Meaning::UnexpandablePrimitive(U::ClubPenalties),
+        ),
+        (
+            "widowpenalties",
+            Meaning::UnexpandablePrimitive(U::WidowPenalties),
+        ),
+        (
+            "displaywidowpenalties",
+            Meaning::UnexpandablePrimitive(U::DisplayWidowPenalties),
+        ),
+        (
+            "the",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::The),
+        ),
+        (
+            "unexpanded",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Unexpanded),
+        ),
+        (
+            "detokenize",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Detokenize),
+        ),
+        ("toks", Meaning::UnexpandablePrimitive(U::Toks)),
+        ("valign", Meaning::UnexpandablePrimitive(U::VAlign)),
+        ("beginL", Meaning::UnexpandablePrimitive(U::BeginL)),
+        ("endL", Meaning::UnexpandablePrimitive(U::EndL)),
+        ("beginR", Meaning::UnexpandablePrimitive(U::BeginR)),
+        ("endR", Meaning::UnexpandablePrimitive(U::EndR)),
+        (
+            "input",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Input),
+        ),
+        (
+            "endinput",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput),
+        ),
+        (
+            "scantokens",
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens),
+        ),
+    ] {
+        universe.register_primitive_meaning(name, meaning);
+        let canonical = universe.intern(name).symbol();
+        let alias = universe.intern(&format!("alias-{name}")).symbol();
+        universe.set_meaning(canonical, meaning);
+        universe.set_meaning(alias, meaning);
+
+        for (index, symbol) in [canonical, alias].into_iter().enumerate() {
+            let command = {
+                let mut state = universe.command_context();
+                CurrentCommand::resolve(
+                    traced(Token::Cs(symbol)),
+                    crate::command::DeliveryStamp::new(
+                        0,
+                        u64::try_from(index).expect("two selector spellings fit u64"),
+                        0,
+                    ),
+                    None,
+                    false,
+                    &mut state,
+                )
+            };
+            assert_eq!(
+                print_cmd_chr_text(
+                    &universe.command_context(),
+                    PrintCommand::from_current(&command),
+                ),
+                format!("\\{name}"),
+                "selector or alias for {name}",
+            );
+            assert_eq!(
+                meaning_text(&universe.command_context(), &command),
+                format!("\\{name}"),
+                "meaning selector or alias for {name}",
+            );
+        }
+    }
+
+    for index in [0, 255, 256, 32_767] {
+        let symbol = universe.intern(&format!("toks-{index}")).symbol();
+        universe.set_meaning(symbol, Meaning::ToksRegister(index));
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(symbol)),
+                crate::command::DeliveryStamp::new(0, u64::from(index), 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        let expected = format!("\\toks{index}");
+        assert_eq!(
+            print_cmd_chr_text(
+                &universe.command_context(),
+                PrintCommand::from_current(&command),
+            ),
+            expected,
+        );
+        assert_eq!(
+            meaning_text(&universe.command_context(), &command),
+            expected
+        );
+    }
+}
+
+#[test]
+fn etex_protected_parameterized_macro_meaning_renders_structural_end_match() {
+    // e-TeX 2.6 merged change [38] adds protected_call while retaining
+    // TeX82 §§289/294's structural end_match rendering as `->` between the
+    // parameter and replacement lists.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let parameters = universe.intern_token_list(&[
+        Token::Param(1),
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        },
+    ]);
+    let replacement = universe.intern_token_list(&[Token::Param(1)]);
+    let flags = MeaningFlags::PROTECTED;
+    let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
+    let original = universe.intern("protected-parameterized").symbol();
+    let alias = universe.intern("protected-parameterized-alias").symbol();
+    let meaning = Meaning::Macro { flags, definition };
+    universe.set_meaning(original, meaning);
+    universe.set_meaning(alias, meaning);
+
+    for (index, symbol) in [original, alias].into_iter().enumerate() {
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(symbol)),
+                crate::command::DeliveryStamp::new(
+                    0,
+                    u64::try_from(index).expect("two macro spellings fit u64"),
+                    0,
+                ),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        assert_eq!(
+            print_cmd_chr_text(
+                &universe.command_context(),
+                PrintCommand::from_current(&command),
+            ),
+            "\\protected macro",
+        );
+        assert_eq!(
+            meaning_text(&universe.command_context(), &command),
+            "\\protected macro:#1!->#1",
+        );
+    }
+}
+
+#[test]
 fn print_cmd_chr_relax_uses_live_escapechar() {
     // TeX82 §§63/227/298: the `relax` case calls `print_esc`, so command
     // diagnostics must not bake in a backslash.
