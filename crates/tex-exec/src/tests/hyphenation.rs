@@ -107,6 +107,76 @@ fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
 }
 
 #[test]
+fn etex_saved_hyphen_codes_distinguish_zero_from_absent_and_capture_grouped_values() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\savinghyphcodes=0 \language=1 \lccode`A=`a \patterns{a1b}
+          \savinghyphcodes=1
+          \language=2 {\lccode`A=`x \patterns{x1b}}
+          \language=3 \global\lccode`A=`y {\lccode`A=0 \patterns{y1b}}
+          \language=4 \lccode`A=0 \patterns{z1b}
+          \end",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("saved-code boundary setup executes");
+
+    assert_eq!(stores.saved_hyphenation_code(1, 'A'), None);
+    assert_eq!(stores.saved_hyphenation_code(2, 'A'), Some(Some('x')));
+    assert_eq!(stores.saved_hyphenation_code(3, 'A'), Some(None));
+    assert_eq!(stores.saved_hyphenation_code(4, 'A'), Some(None));
+    assert_eq!(
+        stores.saved_hyphenation_code(5, 'A'),
+        None,
+        "a language without a saved table keeps live-lccode fallback"
+    );
+    stores.set_int_param(IntParam::LEFT_HYPHEN_MIN, 1);
+    stores.set_int_param(IntParam::RIGHT_HYPHEN_MIN, 1);
+    stores.set_int_param(IntParam::LANGUAGE, 1);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Ab"),
+        "Ab"
+    );
+    stores.set_int_param(IntParam::LANGUAGE, 2);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Ab"),
+        "x-b"
+    );
+    stores.set_int_param(IntParam::LANGUAGE, 3);
+    assert_eq!(
+        crate::assignments::test_hyphenated_word_text(&stores, "Ab"),
+        "Ab"
+    );
+}
+
+#[test]
+fn saved_zero_codes_do_not_consume_the_63_letter_exception_limit() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let source = format!(
+        "\\savinghyphcodes=1 \\lccode`X=0 \\patterns{{a1b}} \\hyphenation{{{}X-a}}\\end",
+        "a".repeat(62)
+    );
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("saved zero at the eligibility boundary executes");
+
+    assert_eq!(
+        stores.hyphenation_exception(&"a".repeat(63)),
+        Some(&[62][..]),
+        "the ignored zero-code character does not displace the eligible 63rd letter"
+    );
+}
+
+#[test]
 fn word_hyphenation_honors_hyphen_minima() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);

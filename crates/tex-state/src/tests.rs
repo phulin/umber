@@ -206,6 +206,34 @@ fn packed_hyphenation_data_survives_two_format_loads_identically() {
 }
 
 #[test]
+fn saved_hyphen_code_tables_survive_two_format_loads_exactly() {
+    let mut universe = Universe::new();
+    universe.save_hyphenation_codes(7, [('A', 'a'), ('B', 'b')]);
+    universe.save_hyphenation_codes(8, std::iter::empty());
+
+    assert_eq!(universe.saved_hyphenation_code(7, 'A'), Some(Some('a')));
+    assert_eq!(universe.saved_hyphenation_code(7, 'Z'), Some(None));
+    assert_eq!(universe.saved_hyphenation_code(8, 'A'), Some(None));
+    assert_eq!(universe.saved_hyphenation_code(9, 'A'), None);
+
+    let image = universe.dump_format().expect("dump saved hyphen codes");
+    let once = Universe::from_format(World::memory(), &image).expect("first format load");
+    assert_eq!(once.saved_hyphenation_code(7, 'A'), Some(Some('a')));
+    assert_eq!(once.saved_hyphenation_code(7, 'Z'), Some(None));
+    assert_eq!(once.saved_hyphenation_code(8, 'A'), Some(None));
+    assert_eq!(once.saved_hyphenation_code(9, 'A'), None);
+
+    let once_image = once.dump_format().expect("redump saved hyphen codes");
+    assert_eq!(once_image, image);
+    let twice = Universe::from_format(World::memory(), &once_image).expect("second format load");
+    assert_eq!(twice.saved_hyphenation_code(7, 'A'), Some(Some('a')));
+    assert_eq!(twice.saved_hyphenation_code(7, 'Z'), Some(None));
+    assert_eq!(twice.saved_hyphenation_code(8, 'A'), Some(None));
+    assert_eq!(twice.saved_hyphenation_code(9, 'A'), None);
+    assert_eq!(twice.dump_format().expect("redump second load"), image);
+}
+
+#[test]
 fn paragraph_shape_is_grouped_checkpointed_and_format_stable() {
     let outer = [ParagraphShapeLine {
         indent: Scaled::from_raw(3),
