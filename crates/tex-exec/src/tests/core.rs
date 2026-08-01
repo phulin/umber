@@ -5164,6 +5164,77 @@ fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
 }
 
 #[test]
+fn show_macro_renders_parameter_tokens_and_replacement_exactly_without_mutation() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut definitions = InputStack::new(MemoryInput::new(
+        "\\def\\pair#1#2{#1 #2}\\def\\nine#1#2#3#4#5#6#7#8#9{#9}\
+         \\def\\hash{##}\\def\\empty{}\\def\\prefix abc#1{[#1]}",
+    ));
+
+    Executor::new()
+        .run(&mut definitions, &mut stores)
+        .expect("macro definitions execute");
+    let before: Vec<_> = ["pair", "nine", "hash", "empty", "prefix"]
+        .into_iter()
+        .map(|name| {
+            let meaning = stores.meaning(stores.symbol(name).expect("defined macro"));
+            let Meaning::Macro { definition, .. } = meaning else {
+                panic!("{name} should be a macro")
+            };
+            (meaning, stores.macro_definition(definition))
+        })
+        .collect();
+
+    let mut shows = InputStack::new(MemoryInput::new(
+        "\\show\\pair\\show\\nine\\show\\hash\\show\\empty\\show\\prefix",
+    ));
+    Executor::new()
+        .run(&mut shows, &mut stores)
+        .expect("macro shows execute");
+
+    let output = support::terminal_effect_text_unbroken(&stores);
+    for exact in [
+        "> \\pair=macro:\n#1#2->#1 #2.",
+        "> \\nine=macro:\n#1#2#3#4#5#6#7#8#9->#9.",
+        "> \\hash=macro:\n->##.",
+        "> \\empty=macro:\n->.",
+        "> \\prefix=macro:\nabc#1->[#1].",
+    ] {
+        assert!(
+            output.contains(exact),
+            "missing exact meaning {exact:?} in {output:?}"
+        );
+    }
+
+    let after: Vec<_> = ["pair", "nine", "hash", "empty", "prefix"]
+        .into_iter()
+        .map(|name| {
+            let meaning = stores.meaning(stores.symbol(name).expect("defined macro"));
+            let Meaning::Macro { definition, .. } = meaning else {
+                panic!("{name} should remain a macro")
+            };
+            (meaning, stores.macro_definition(definition))
+        })
+        .collect();
+    assert_eq!(
+        after, before,
+        "show must retain the definition and both token-list handles"
+    );
+}
+
+/// TeX82 §295 can print `CLOBBERED.` after a damaged token-list link. Umber's
+/// immutable `TokenListId` has no public or test-only constructor for an
+/// invalid link, and every macro installation validates both list handles, so
+/// that memory-corruption state is intentionally unrepresentable today.
+#[test]
+#[ignore = "xfail: immutable validated TokenListId cannot represent tex.web's clobbered link"]
+fn show_macro_renders_clobbered_token_list_marker() {
+    panic!("enable only with a deliberate malformed-list test seam")
+}
+
+#[test]
 fn insertion_page_goal_uses_skip_once_and_count_scaling() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
