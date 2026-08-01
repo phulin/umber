@@ -26,6 +26,7 @@ const INCOMPLETE_IF_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0001;
 const EXTRA_DELIMITER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0002;
 const MISSING_RELATION_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0003;
 const BAD_NUMBER_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0004;
+const ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0005;
 
 /// TeX conditional opcode, kept distinct from delimiter and limit values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -479,8 +480,9 @@ impl CommandProcessor<'_> {
 
     /// e-TeX's `\\unless` has no independent condition state: it consumes
     /// precisely one following conditional and flips only boolean results.
-    /// `\\ifcase` is deliberately rejected here, matching e-TeX's separate
-    /// diagnostic path rather than silently inverting a case index.
+    /// A non-conditional or `\\ifcase` operand follows e-TeX 2.6's merged
+    /// change [28.498]: `back_error` restores that command, reports the exact
+    /// prefix diagnostic, and leaves the conditional stack untouched.
     pub(crate) fn expand_unless(
         &mut self,
         _command: crate::CurrentCommand,
@@ -489,14 +491,25 @@ impl CommandProcessor<'_> {
         // ordinary expansion result: preserve its primitive command for the
         // shared evaluator to install the one inverted frame.
         let next = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        let Meaning::ExpandablePrimitive(primitive) = next.meaning() else {
-            return Err(CommandError::input_invariant());
+        let kind = match next.meaning() {
+            Meaning::ExpandablePrimitive(primitive) => ConditionalKind::from_primitive(primitive),
+            _ => None,
         };
-        let kind =
-            ConditionalKind::from_primitive(primitive).ok_or(CommandError::input_invariant())?;
-        if kind == ConditionalKind::IfCase {
-            return Err(CommandError::input_invariant());
-        }
+        let Some(_kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
+            let unless = crate::processor::expand::print_esc_text(&self.state, "unless");
+            let operand = crate::processor::expand::print_cmd_chr_text(
+                &self.state,
+                crate::processor::expand::PrintCommand::from_current(&next),
+            );
+            self.observe_command_diagnostic("illegal_unless_operand", &next);
+            self.back_error_reporting(
+                next,
+                ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
+                format!("You can't use `{unless}' before `{operand}'."),
+                &["I'll pretend you didn't say \\unless."],
+            )?;
+            return Ok(());
+        };
         self.expand_conditional(next, true)
     }
 

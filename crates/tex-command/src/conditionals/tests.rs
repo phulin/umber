@@ -614,7 +614,7 @@ fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
 
 #[test]
 fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
-    let mut command = CommandState::default();
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
@@ -653,6 +653,98 @@ fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
             ("limit", "unless_iffalse", "else", None),
         ]
     );
+}
+
+#[test]
+fn malformed_unless_character_is_diagnosed_and_replayed_in_extended_profiles() {
+    // e-TeX 2.6's merged change [28.498] accepts only a boolean `if_test`
+    // after `\unless`. Its `back_error` path diagnoses the prefix itself,
+    // leaves the operand as following input, and creates no condition frame.
+    for profile in [
+        crate::CommandProfile::ETEX26,
+        crate::CommandProfile::PDFTEX14027,
+    ] {
+        let mut command = CommandState::new(profile);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe();
+        let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
+        push(&mut command, vec![unless, letter('x'), other('z')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            assert_eq!(next_character(&mut processor), 'x');
+            assert!(processor.command.conditions.current().is_none());
+            assert_eq!(next_character(&mut processor), 'z');
+        }
+        assert_eq!(
+            command.expansion.pending_diagnostics,
+            [ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC]
+        );
+        let [
+            crate::CommandSemanticDiagnostic::Recoverable {
+                identity,
+                message,
+                help,
+                context,
+            },
+        ] = command.semantic_diagnostics.as_slice()
+        else {
+            panic!("expected one recoverable unless diagnostic")
+        };
+        assert_eq!(*identity, ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC);
+        assert_eq!(message, "You can't use `\\unless' before `the letter x'.");
+        assert_eq!(*help, ["I'll pretend you didn't say \\unless."]);
+        assert!(context.contains("<to be read again>"));
+        assert!(context.contains('x'));
+        assert!(recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Diagnostic(diagnostic)
+                if diagnostic.diagnostic == "illegal_unless_operand"
+                    && diagnostic.arguments
+                        == [crate::DiagnosticArgument::Token(ObservedToken::Character {
+                            character: 'x',
+                            catcode: tex_state::token::Catcode::Letter,
+                        })]
+        )));
+    }
+}
+
+#[test]
+fn malformed_unless_ifcase_is_replayed_as_an_ordinary_conditional() {
+    // The same merged e-TeX change [28.498] singles out `if_case_code`: it is
+    // illegal as the prefix operand but is backed up and then executes in its
+    // ordinary, non-inverted form.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
+    let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![unless, if_case, other('0'), other('a'), fi, other('z')],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'a');
+    assert!(processor.command.conditions.current().is_some());
+    assert_eq!(next_character(&mut processor), 'z');
+    assert!(processor.command.conditions.current().is_none());
+    assert_eq!(
+        processor.command.expansion.pending_diagnostics,
+        [ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC]
+    );
+    let [crate::CommandSemanticDiagnostic::Recoverable { message, help, .. }] =
+        processor.command.semantic_diagnostics.as_slice()
+    else {
+        panic!("expected one recoverable unless diagnostic")
+    };
+    assert_eq!(message, "You can't use `\\unless' before `\\ifcase'.");
+    assert_eq!(*help, ["I'll pretend you didn't say \\unless."]);
 }
 
 #[test]
