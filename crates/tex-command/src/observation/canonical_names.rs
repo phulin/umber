@@ -249,8 +249,8 @@ pub fn input_level_name(reason: super::InputReason) -> Option<&'static str> {
 /// [`input_level_name`] returns `None` for a source level because §307's
 /// `token_type` does not classify one. This is the classification that does:
 /// §303 splits `name` into the terminal (`0`), input stream `name-1`
-/// (`1..=17`), and a text file (`>17`), and §329's `end_file_reading` closes
-/// a handle for the last of those alone.
+/// (`1..=17`), and a named input (`>17`). e-TeX merged §22 reserves numeric
+/// names 18 and 19 for `\scantokens`; only names above 19 are real files.
 ///
 /// The stream number stays on [`SourceNameClass::ReadStream`] rather than in
 /// the name, so that every source level in a trace is named by its channel
@@ -261,6 +261,7 @@ pub fn source_name_class_name(class: crate::SourceNameClass) -> &'static str {
     match class {
         SourceNameClass::Terminal => "terminal",
         SourceNameClass::ReadStream(_) => "read_stream",
+        SourceNameClass::Scantokens(_) => "scantokens",
         SourceNameClass::File => "file",
     }
 }

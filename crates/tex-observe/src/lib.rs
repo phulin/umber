@@ -605,7 +605,13 @@ impl CommandObserver for Recorder {
             source_name,
             ..
         }) = observation
-            && matches!(source_name, None | Some(tex_command::SourceNameClass::File))
+            && matches!(
+                source_name,
+                None | Some(
+                    tex_command::SourceNameClass::Scantokens(_)
+                        | tex_command::SourceNameClass::File
+                )
+            )
         {
             self.retire_current_source();
         }

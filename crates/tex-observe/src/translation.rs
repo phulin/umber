@@ -348,10 +348,13 @@ pub(crate) fn translate_input(record: InputRecord, active_source: &str) -> Event
                 class @ (tex_command::SourceNameClass::Terminal
                 | tex_command::SourceNameClass::ReadStream(_)),
             ) => canonical_names::source_name_class_name(class).into(),
-            // A real or generated text file is activated by its detached
-            // source record. Preserve that full source name instead of the
-            // coarse §303 `name>17` class.
-            Some(tex_command::SourceNameClass::File) | None => active_source.into(),
+            // A real file or e-TeX scantokens pseudo-file is activated by its
+            // detached source record. Preserve that full source name instead
+            // of the coarse numeric-name class.
+            Some(
+                tex_command::SourceNameClass::Scantokens(_) | tex_command::SourceNameClass::File,
+            )
+            | None => active_source.into(),
         }
     } else {
         canonical_names::input_level_name(record.reason)

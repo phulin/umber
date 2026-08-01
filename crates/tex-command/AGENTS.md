@@ -55,8 +55,9 @@ print channel of its own outside the borrowed
   source-registration inputs and errors plus private immutable backing,
   source cursors, and focused registration tests. It also owns
   `SourceNameClass`, TeX82 §303's partition of a source level's `name` into
-  the terminal (`name=0`), input stream `name-1` (`1..=17`), and a text file
-  (`name>17`). That is a third, independent classification: `InputReason` is
+  the terminal (`name=0`), input stream `name-1` (`1..=17`), e-TeX's
+  `\scantokens` pseudo-file (`name=18` or `19`), and a text file (`name>19`).
+  That is a third, independent classification: `InputReason` is
   a strict model of §307's `token_type` codes, which a source level does not
   have at all, and `RegisteredSourceKind` names how Umber acquired the bytes
   rather than which channel TeX reads them as. An open with no explicit class

@@ -690,11 +690,13 @@ impl CommandProcessor<'_> {
             .state
             .tok_param_option(tex_state::env::banks::TokParam::EVERY_EOF)
             .map(tex_state::TracedTokenList::synthetic);
+        let tracing_scantokens = self.state.int_param(IntParam::TRACING_SCAN_TOKENS);
         let level = self
             .command
             .open_scantokens(
                 SourceRegistration::new(RegisteredSourceKind::Generated, text.into_bytes()),
                 every_eof,
+                scantokens_numeric_name(tracing_scantokens),
             )
             .map_err(|_| CommandError::input_invariant())?;
         let source = self
@@ -704,8 +706,7 @@ impl CommandProcessor<'_> {
         // e-TeX 2.6 etex.ch §53a assigns `name=19` while
         // `\tracingscantokens>0`, and `name=18` otherwise. TeX82 §48's
         // initial character strings render those names as `^^S` and `^^R`.
-        let source_name =
-            scantokens_source_name(self.state.int_param(IntParam::TRACING_SCAN_TOKENS));
+        let source_name = scantokens_source_name(tracing_scantokens);
         self.observe(CommandObservation::GeneratedSource(
             crate::GeneratedSourceRecord {
                 name: source_name.to_owned(),
@@ -1177,6 +1178,10 @@ impl CommandProcessor<'_> {
 /// §48's initial character strings.
 fn scantokens_source_name(tracing_scantokens: i32) -> &'static str {
     if tracing_scantokens > 0 { "^^S" } else { "^^R" }
+}
+
+fn scantokens_numeric_name(tracing_scantokens: i32) -> u8 {
+    if tracing_scantokens > 0 { 19 } else { 18 }
 }
 
 pub(crate) fn render_the_value(value: crate::InternalValue) -> Option<String> {

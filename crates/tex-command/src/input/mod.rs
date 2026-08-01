@@ -74,8 +74,9 @@ impl InputState {
     /// §312's `<Display the current context>`, innermost level first.
     ///
     /// §310 stops at the first level that sets `bottom_line` -- a non-token
-    /// level that is either a real file (`name>17`) or the bottom of the
-    /// stack -- so nothing below an `\input`ed file is projected at all.
+    /// level that is either a real file (`name>19` in e-TeX) or the bottom of
+    /// the stack -- so a scantokens pseudo-file (`name=18` or `19`) keeps
+    /// traversing while nothing below an `\input`ed file is projected.
     fn error_context_levels(
         &self,
         stores: &tex_state::CommandContext<'_>,
@@ -141,7 +142,9 @@ impl InputState {
             // the terminal under `read_toks` control, and §313 spells it `*`.
             SourceNameClass::ReadStream(16) => "<read *> ".to_owned(),
             SourceNameClass::ReadStream(stream) => format!("<read {stream}> "),
-            SourceNameClass::File => format!("l.{} ", line.physical.number()),
+            SourceNameClass::Scantokens(_) | SourceNameClass::File => {
+                format!("l.{} ", line.physical.number())
+            }
         };
         Some(tex_state::print::ErrorContextLevel::new(
             label,
@@ -301,7 +304,10 @@ impl InputState {
             .rev()
             .find_map(|level| match level {
                 InputLevel::Source(source)
-                    if matches!(source.name_class, SourceNameClass::File) =>
+                    if matches!(
+                        source.name_class,
+                        SourceNameClass::Scantokens(_) | SourceNameClass::File
+                    ) =>
                 {
                     source
                         .cursor

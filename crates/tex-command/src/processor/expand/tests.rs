@@ -546,6 +546,127 @@ fn etex_scantokens_pseudo_source_name_tracks_tracing() {
     assert_eq!(scantokens_source_name(0), "^^R");
     assert_eq!(scantokens_source_name(-1), "^^R");
     assert_eq!(scantokens_source_name(1), "^^S");
+    assert_eq!(scantokens_numeric_name(0), 18);
+    assert_eq!(scantokens_numeric_name(-1), 18);
+    assert_eq!(scantokens_numeric_name(1), 19);
+}
+
+#[test]
+fn nested_scantokens_error_context_crosses_numeric_names_18_and_19() {
+    // e-TeX 2.6 merged §§22 and 53a: pseudo_start assigns numeric name 18
+    // (or 19 while tracing), and show_context stops only at name>19. Both
+    // nested pseudo-files therefore remain visible above the ordinary file.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\scantokens{\scantokens{\undefined}X}Y".as_slice(),
+            )
+            .with_name("outer.tex"),
+        )
+        .expect("outer file registers");
+    command
+        .open_registered_source(source)
+        .expect("outer file opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS, 1);
+    universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
+    let mut capabilities = CommandHostCapabilities::default();
+
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let resumed = processor
+            .get_x_token()
+            .expect("nested scantokens recovery is finite")
+            .expect("inner pseudo-file resumes");
+        assert_eq!(
+            resumed.spelling().semantic_token(),
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+    let diagnostics = command.take_semantic_diagnostics();
+    let [crate::CommandSemanticDiagnostic::UndefinedControlSequence { context }] =
+        diagnostics.as_slice()
+    else {
+        panic!("one undefined-control-sequence diagnostic expected");
+    };
+    assert_eq!(
+        context,
+        "\nl.1 \\undefined\n              \nl.1 \\scantokens {\\undefined }\n                             X\nl.1 \\scantokens{\\scantokens{\\undefined}X}\n                                         Y"
+    );
+}
+
+#[test]
+fn scantokens_everyeof_context_traverses_to_ordinary_file() {
+    // e-TeX 2.6 merged §§22 and 53a: §24.362's everyeof token list sits above
+    // the exhausted name-18 pseudo-file, and context traversal reaches the
+    // enclosing real file before stopping.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let source = command
+        .register_source(
+            SourceRegistration::new(
+                RegisteredSourceKind::Generated,
+                br"\scantokens{A}Z".as_slice(),
+            )
+            .with_name("outer.tex"),
+        )
+        .expect("outer file registers");
+    command
+        .open_registered_source(source)
+        .expect("outer file opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
+    let undefined = universe.intern("undefined").symbol();
+    let every_eof = universe.intern_token_list(&[Token::Cs(undefined)]);
+    universe.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, every_eof);
+    let mut capabilities = CommandHostCapabilities::default();
+
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let first = processor
+            .get_x_token()
+            .expect("scantokens expands")
+            .expect("A");
+        assert_eq!(
+            first.spelling().semantic_token(),
+            Token::Char {
+                ch: 'A',
+                cat: Catcode::Letter
+            }
+        );
+        loop {
+            let resumed = processor
+                .get_x_token()
+                .expect("everyeof recovery is finite")
+                .expect("outer file resumes");
+            if resumed.spelling().semantic_token()
+                == (Token::Char {
+                    ch: 'Z',
+                    cat: Catcode::Letter,
+                })
+            {
+                break;
+            }
+        }
+    }
+    let diagnostics = command.take_semantic_diagnostics();
+    let [crate::CommandSemanticDiagnostic::UndefinedControlSequence { context }] =
+        diagnostics.as_slice()
+    else {
+        panic!("one undefined-control-sequence diagnostic expected");
+    };
+    assert_eq!(
+        context,
+        "\n<everyeof> \\undefined \n                      \nl.1 \\scantokens{A}\n                  Z"
+    );
 }
 
 #[test]

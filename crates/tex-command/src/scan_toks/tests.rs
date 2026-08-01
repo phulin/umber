@@ -2060,6 +2060,7 @@ fn readline_exact_bytes_nested_in_scantokens_replay_after_rollback() {
         .open_scantokens(
             SourceRegistration::new(RegisteredSourceKind::Generated, b"q\n".to_vec()),
             Some(empty),
+            18,
         )
         .expect("scantokens pseudo-file opens");
     let expected = command.clone();

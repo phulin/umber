@@ -32,24 +32,25 @@ pub enum RegisteredSourceKind {
 
 /// tex.web §303's classification of a source input level's `name`.
 ///
-/// §303 states the whole partition: `name` "is zero if we are reading from
+/// TeX82 §303 states its original partition: `name` "is zero if we are reading from
 /// the terminal; it is `n+1` if we are reading from input stream `n`, where
 /// `0<=n<=16`", and otherwise it is the string number of a text file. Only
-/// three assignments in tex.web ever set a source level's `name`, and each
-/// lands in exactly one arm below: §328's `begin_file_reading` (`name:=0`,
+/// three assignments in tex.web set a source level's `name`, and each lands
+/// in one arm below: §328's `begin_file_reading` (`name:=0`,
 /// which §331 repeats for the base terminal level), §483's
 /// `begin_file_reading; name:=m+1` inside `read_toks`, and §537's
-/// `start_input` (`name:=a_make_name_string(cur_file)`). §329's
-/// `end_file_reading` tests `name>17` to decide whether a real file handle
-/// must be closed, and §313 renders `<*>`/`<insert>` for `name=0`, `<read n>`
-/// for `1<=name<=17`, and `l.<line>` otherwise.
+/// `start_input` (`name:=a_make_name_string(cur_file)`). e-TeX merged §53a
+/// adds the fourth assignment, numeric name 18 or 19 for `\scantokens`, and
+/// merged §22 raises the real-file close and error-context bottom-line test
+/// to `name>19`. §313 renders `<*>`/`<insert>` for `name=0`, `<read n>` for
+/// `1<=name<=17`, and `l.<line>` otherwise.
 ///
 /// This is deliberately _not_ [`InputReason`](crate::InputReason). That enum
 /// is a one-to-one model of §307's sixteen `token_type` codes plus one
 /// `Source` arm for §303's `state<>token_list`; `token_type` is what §307
 /// stores in place of `index` on a token-list level and has no meaning for a
 /// source level at all. Nor is it [`RegisteredSourceKind`], which classifies
-/// how Umber _acquired_ immutable bytes rather than which of TeX's three
+/// how Umber _acquired_ immutable bytes rather than which of TeX's four
 /// input channels a level reads them as.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SourceNameClass {
@@ -63,9 +64,15 @@ pub enum SourceNameClass {
     /// input actually comes from the terminal under `read_toks` control and
     /// which §313 prints as `<read *>`.
     ReadStream(u8),
-    /// §303 `name>17`: a text file, whose name §537's `start_input` records
-    /// with `a_make_name_string`. This is the only arm §329's
-    /// `end_file_reading` closes a handle for.
+    /// e-TeX 2.6 merged §53a's generated `\scantokens` pseudo-file. Its
+    /// numeric name is 18 when `\tracingscantokens<=0` and 19 otherwise.
+    /// Both names use §313's line-number rendering, but merged §22's
+    /// `name>19` test deliberately keeps traversing to the enclosing input
+    /// level when an error context is shown.
+    Scantokens(u8),
+    /// e-TeX merged §22 `name>19`: a text file, whose name §537's
+    /// `start_input` records with `a_make_name_string`. This is the only arm
+    /// §329's `end_file_reading` closes a handle for.
     File,
 }
 

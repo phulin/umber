@@ -1064,7 +1064,9 @@ impl CommandState {
         &mut self,
         registration: SourceRegistration,
         every_eof: Option<TracedTokenList>,
+        numeric_name: u8,
     ) -> Result<InputLevelId, SourceRegistrationError> {
+        assert!(matches!(numeric_name, 18 | 19));
         let source = self.register_source(registration)?;
         let registered = self
             .input
@@ -1075,7 +1077,7 @@ impl CommandState {
             .expect("a source registered above is present");
         Ok(self.push_source_level(
             registered,
-            SourceNameClass::File,
+            SourceNameClass::Scantokens(numeric_name),
             crate::input::SourceRetirement::Pop,
             every_eof,
         ))
