@@ -1203,8 +1203,10 @@ fn u32_len(value: usize, message: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{SURVIVOR_ROOT_MAX, SurvivorArena, survivor_root_successor};
-    use crate::node::Node;
-    use crate::node_arena::NodeStorage;
+    use crate::font::NULL_FONT;
+    use crate::node::{MarginKernSide, Node};
+    use crate::node_arena::{NodeArena, NodeRef, NodeStorage};
+    use crate::scaled::Scaled;
 
     #[test]
     fn survivor_root_namespace_includes_its_last_packed_key() {
@@ -1240,5 +1242,45 @@ mod tests {
         assert!(recycled);
         assert_eq!(selected.node_capacity(), large_capacity);
         assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn promotion_preserves_packed_margin_kern_provenance() {
+        let mut epoch = NodeArena::new();
+        let source = epoch.append(&[
+            Node::MarginKern {
+                amount: Scaled::from_raw(-123),
+                side: MarginKernSide::Left,
+                font: NULL_FONT,
+                ch: b'A',
+            },
+            Node::MarginKern {
+                amount: Scaled::from_raw(456),
+                side: MarginKernSide::Right,
+                font: NULL_FONT,
+                ch: b'.',
+            },
+        ]);
+        let mut survivors = SurvivorArena::new();
+
+        let promoted = survivors.promote(source, &epoch);
+
+        assert_eq!(
+            survivors.get(promoted).iter().collect::<Vec<_>>(),
+            [
+                NodeRef::MarginKern {
+                    amount: Scaled::from_raw(-123),
+                    side: MarginKernSide::Left,
+                    font: NULL_FONT,
+                    ch: b'A',
+                },
+                NodeRef::MarginKern {
+                    amount: Scaled::from_raw(456),
+                    side: MarginKernSide::Right,
+                    font: NULL_FONT,
+                    ch: b'.',
+                },
+            ]
+        );
     }
 }
