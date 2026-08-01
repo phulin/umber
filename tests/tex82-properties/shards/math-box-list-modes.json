@@ -1289,6 +1289,22 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_discretionary_and_text_accent_boundary_matrix"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_discretionary_retains_exact_three_part_ownership"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_discretionary_accepts_empty_one_and_127_node_replacements"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_text_accent_has_exact_cmr10_numeric_geometry"
+        },
+        {
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_text_accent_replays_a_noncharacter_base_exactly_once"
         }
       ],
       "status": "covered",

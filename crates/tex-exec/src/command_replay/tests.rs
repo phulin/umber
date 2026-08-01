@@ -12379,3 +12379,170 @@ fn canonical_discretionary_and_text_accent_boundary_matrix() {
         "accent adds positioning kerns"
     );
 }
+
+#[test]
+fn canonical_discretionary_retains_exact_three_part_ownership() {
+    // TeX82 §§1117–1120 build the three restricted-horizontal sublists in
+    // pre-break, post-break, replacement order and attach each exactly once.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10\f\setbox0=\hbox{A\discretionary{B}{C}{D}H}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let children = box_children(&universe, 0);
+    let [
+        Node::Char { ch: 'A', .. },
+        Node::Disc {
+            pre, post, replace, ..
+        },
+        Node::Char { ch: 'H', .. },
+    ] = children.as_slice()
+    else {
+        panic!("discretionary must remain between its parent-list siblings: {children:?}")
+    };
+    let chars = |list| {
+        universe
+            .nodes(list)
+            .iter()
+            .map(|node| match node.to_owned() {
+                Node::Char { ch, .. } => ch,
+                other => panic!("fixture part contains only characters: {other:?}"),
+            })
+            .collect::<String>()
+    };
+    assert_eq!(chars(*pre), "B");
+    assert_eq!(chars(*post), "C");
+    assert_eq!(chars(*replace), "D");
+}
+
+#[test]
+fn canonical_discretionary_accepts_empty_one_and_127_node_replacements() {
+    // TeX82 §1120 accepts an empty replacement and stores replacement_count
+    // values through 127 inclusive. Explicit kerns avoid ligature-program
+    // rewriting, making the boundary's node count exact.
+    for replacement_count in [0_usize, 1, 127] {
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        let replacement = "\\kern1sp".repeat(replacement_count);
+        let source = format!("\\setbox0=\\hbox{{\\discretionary{{}}{{}}{{{replacement}}}}}\\end");
+        register_source(&mut control, source.as_bytes());
+        run_to_end(&mut control, &mut universe);
+
+        let children = box_children(&universe, 0);
+        let [Node::Disc { replace, .. }] = children.as_slice() else {
+            panic!("fixture must produce exactly one discretionary")
+        };
+        assert_eq!(universe.nodes(*replace).len(), replacement_count);
+    }
+}
+
+#[test]
+#[ignore = "TeX82 §§1120–1121 replacement-count overflow recovery is not implemented yet"]
+fn canonical_discretionary_rejects_128_replacement_nodes_and_keeps_following_input() {
+    // TeX82 §1120 stores the replacement count in a quarterword: 127 nodes
+    // are legal, while 128 emits "Discretionary list is too long", flushes
+    // the replacement list, and continues with the parent input.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    let replacement = "A".repeat(128);
+    let source = format!(
+        "\\font\\f=cmr10\\f\\setbox0=\\hbox{{\\discretionary{{}}{{}}{{{replacement}}}Z}}\\end"
+    );
+    register_source(&mut control, source.as_bytes());
+    run_to_end(&mut control, &mut universe);
+
+    assert!(terminal_text(&universe).contains("Discretionary list is too long"));
+    assert!(matches!(
+        box_children(&universe, 0).as_slice(),
+        [Node::Char { ch: 'Z', .. }]
+    ));
+}
+
+#[test]
+#[ignore = "TeX82 §1121 forbidden discretionary-node flushing is not implemented yet"]
+fn canonical_discretionary_flushes_forbidden_part_nodes_and_keeps_following_input() {
+    // Glue is not admissible in any discretionary sublist. Section 1121
+    // diagnoses the offending list, flushes it, and resumes after the third
+    // group without consuming the following parent-list character.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10\f\setbox0=\hbox{\discretionary{\hskip1pt}{}{}Z}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert!(terminal_text(&universe).contains("Improper discretionary list"));
+    assert!(matches!(
+        box_children(&universe, 0).as_slice(),
+        [Node::Char { ch: 'Z', .. }]
+    ));
+}
+
+#[test]
+fn canonical_text_accent_has_exact_cmr10_numeric_geometry() {
+    // TeX82 §§1123–1125 compute both acc_kerns and the vertical shift from
+    // the TFM widths, heights, slants, and x-height using TeX's scaled
+    // arithmetic. Keep the raw scaled-point values literal so rounding or a
+    // parameter/font mix-up cannot hide behind a structural assertion.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10\f\setbox0=\hbox{\accent19 A}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let children = box_children(&universe, 0);
+    let [
+        Node::Kern {
+            amount: left,
+            kind: KernKind::Accent,
+        },
+        Node::HList(accent),
+        Node::Kern {
+            amount: right,
+            kind: KernKind::Accent,
+        },
+        Node::Char { ch: 'A', .. },
+    ] = children.as_slice()
+    else {
+        panic!("accent must be kern/shifted-accent/kern/base: {children:?}")
+    };
+    assert_eq!(
+        [left.raw(), right.raw(), accent.shift.raw()],
+        [81_920, -409_601, -165_660]
+    );
+}
+
+#[test]
+fn canonical_text_accent_replays_a_noncharacter_base_exactly_once() {
+    // TeX82 §1124 backs up a command that is not a character base. The
+    // accent is appended first, then the command is delivered once in the
+    // parent hlist; it must neither disappear nor execute twice.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_cmr10_font(&mut control, &mut universe);
+    register_source(
+        &mut control,
+        br"\font\f=cmr10\f\setbox0=\hbox{\accent19\kern2pt Z}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let children = box_children(&universe, 0);
+    assert!(matches!(
+        children.as_slice(),
+        [
+            Node::Char { ch, .. },
+            Node::Kern { amount, kind: KernKind::Explicit },
+            Node::Char { ch: 'Z', .. },
+        ] if *ch == char::from(19_u8) && amount.raw() == 2 * Scaled::UNITY
+    ));
+}
