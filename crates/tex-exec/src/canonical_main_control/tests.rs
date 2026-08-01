@@ -36,16 +36,17 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
-fn tracingcommands_reports_each_reswitch_command_with_live_selector_and_mode() {
-    // TeX82 §§299/1030: `show_cur_cmd_chr` runs at `reswitch`, including
-    // each command fetched by §1211's prefix loop. The first trace is log-only
-    // because `\tracingonline` has not executed yet; the prefix and its target
-    // then use the newly live terminal-and-log selector.
+fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode() {
+    // TeX82 §§299/1030/1211: `show_cur_cmd_chr` runs after `big_switch`'s
+    // fetch, not at `reswitch`. Thus only the first prefix is traced; later
+    // prefixes and the target are fetched within `prefixed_command`. The
+    // `\tracingonline` trace is log-only because that assignment has not yet
+    // executed, while the prefix uses the newly live terminal-and-log selector.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        b"\\tracingcommands=1\\tracingonline=1\\global\\escapechar=64\\end",
+        b"\\tracingcommands=1\\tracingonline=1\\global\\global\\escapechar=64\\end",
     );
 
     run_to_end(&mut control, &mut stores);
@@ -54,8 +55,9 @@ fn tracingcommands_reports_each_reswitch_command_with_live_selector_and_mode() {
     let log = pending_sink_text(&stores, false);
     assert!(!terminal.contains("tracingonline"));
     assert!(log.contains("{vertical mode: \\tracingonline}"));
-    assert!(terminal.contains("{\\global}\n{\\escapechar}"));
-    assert!(log.contains("{\\global}\n{\\escapechar}"));
+    assert!(terminal.contains("{\\global}\n{@end}"), "{terminal:?}");
+    assert!(log.contains("{\\global}\n{@end}"), "{log:?}");
+    assert!(!terminal.contains("escapechar"), "{terminal:?}");
     assert!(terminal.contains("{@end}"), "{terminal:?}");
 }
 
@@ -74,8 +76,32 @@ fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
     run_to_end(&mut control, &mut stores);
 
     let terminal = pending_sink_text(&stores, true);
-    assert!(terminal.contains("{^^?global}\n{^^?count}"), "{terminal:?}");
+    assert!(terminal.contains("{^^?global}\n{^^?end}"), "{terminal:?}");
+    assert!(!terminal.contains("count"), "{terminal:?}");
     assert!(!terminal.as_bytes().contains(&127), "{terminal:?}");
+}
+
+#[test]
+fn tracingcommands_does_not_trace_prefix_or_reswitch_internal_fetches() {
+    // TeX82 §§1030/1045/1211: neither a later prefix, a prefixed target, nor
+    // the command fetched by `\ignorespaces` passes through `big_switch`'s
+    // diagnostic boundary. The next ordinary main-control fetch does.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingcommands=1\\tracingonline=1\\global\\global\\count0=1\\ignorespaces\\relax\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    assert!(
+        terminal.contains("{\\global}\n{\\ignorespaces}\n{\\end}"),
+        "{terminal:?}"
+    );
+    assert!(!terminal.contains("count"), "{terminal:?}");
+    assert!(!terminal.contains("relax"), "{terminal:?}");
 }
 
 #[test]

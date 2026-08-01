@@ -4812,6 +4812,7 @@ fn scan_noalign_body(
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
+    queue_command_trace(processor, mode, &command, diagnostics);
     match command.meaning() {
         Meaning::CharToken {
             cat: Catcode::EndGroup,
@@ -4863,6 +4864,7 @@ fn scan_alignment_delivery_step(
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
+            queue_command_trace(processor, mode, &command, diagnostics);
             // TeX82 §1132 dispatches every right brace seen with an active
             // `align_group` through the missing-\cr recovery, independent of
             // `align_state`. The command-owned fast path emits a structural
@@ -4975,6 +4977,7 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
+    queue_command_trace(processor, mode, &command, diagnostics);
     if main_loop_active
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(
@@ -5039,7 +5042,6 @@ fn dispatch_main_control_command(
     // This loop is that label.
     let mut suppress_left_boundary = false;
     loop {
-        queue_command_trace(processor, mode, &command, diagnostics);
         let mut global = false;
         let mut flags = MeaningFlags::EMPTY;
         loop {
@@ -5060,7 +5062,6 @@ fn dispatch_main_control_command(
                 .next_non_blank_non_relax_x_token()
                 .map_err(command_error)?
                 .ok_or(ExecError::MissingPrefixedCommand)?;
-            queue_command_trace(processor, mode, &command, diagnostics);
             // §1211's `if cur_cmd<=max_non_prefixed_command then <Discard
             // erroneous prefixes and return>`: §209's partition, not a
             // hand-listed set of assignment families.
@@ -5181,9 +5182,9 @@ fn dispatch_main_control_command(
     }
 }
 
-/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` at
-/// `reswitch`. Prefix scanning fetches commands inside one Umber step, so the
-/// trace is queued at each fetch rather than once per public step.
+/// TeX82 §1030's `if tracing_commands>0 then show_cur_cmd_chr` immediately
+/// after `big_switch` fetches. Commands fetched by a case before `goto
+/// reswitch` -- including §1211's prefix loop -- do not pass this boundary.
 fn queue_command_trace(
     processor: &CommandProcessor<'_>,
     mode: Mode,
