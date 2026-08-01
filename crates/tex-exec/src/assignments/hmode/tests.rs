@@ -855,6 +855,42 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
 }
 
 #[test]
+fn literal_hyphen_omits_discretionary_in_restricted_horizontal_mode() {
+    // TeX82 §1035 inserts the null discretionary after a font hyphen only
+    // when `mode>0`; restricted horizontal mode has the negative mode value.
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    crate::install_unexpandable_primitives(&mut stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
+    crate::Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font selection should execute");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal)
+        .expect("restricted hmode");
+
+    append_canonical_character(&mut nest, &mut stores, '-', OriginId::UNKNOWN)
+        .expect("literal hyphen append");
+    flush_pending_hchars(
+        &mut nest,
+        &mut stores,
+        tex_command::CommandFuelLedger::default().fuel_mut(),
+    )
+    .expect("restricted hlist flush");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::Char { ch: '-', .. }]
+    ));
+}
+
+#[test]
 fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
     const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();

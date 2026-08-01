@@ -63,6 +63,73 @@ fn exceptions_override_patterns() {
 }
 
 #[test]
+fn pattern_overlay_and_language_exception_matrix() {
+    // TeX82 §§923-933 overlays every matching pattern by taking the maximum
+    // value at each interletter position. Sections 951-966 qualify tries by
+    // language, while §§934-941 consult that language's exception first.
+    let mut table = HyphenationTable::new();
+
+    table.add_pattern_for_language(
+        1,
+        PatternSpec {
+            letters: "ab".chars().collect(),
+            values: vec![0, 1, 0],
+        },
+    );
+    table.add_pattern_for_language(
+        1,
+        PatternSpec {
+            letters: "abc".chars().collect(),
+            values: vec![0, 2, 0, 0],
+        },
+    );
+    table.add_pattern_for_language(
+        1,
+        PatternSpec {
+            letters: "bc".chars().collect(),
+            values: vec![0, 0, 3],
+        },
+    );
+    table.add_pattern_for_language(
+        2,
+        PatternSpec {
+            letters: "ab".chars().collect(),
+            values: vec![0, 1, 0],
+        },
+    );
+
+    assert_eq!(
+        table.hyphen_positions_for_language(1, "abcd", 0, 0),
+        vec![3]
+    );
+    assert_eq!(
+        table.hyphen_positions_for_language(2, "abcd", 0, 0),
+        vec![1]
+    );
+    assert!(
+        table
+            .hyphen_positions_for_language(3, "abcd", 0, 0)
+            .is_empty()
+    );
+
+    table.add_exception_for_language(
+        1,
+        ExceptionSpec {
+            word: "abcd".to_owned(),
+            positions: vec![2],
+        },
+    );
+    assert_eq!(
+        table.hyphen_positions_for_language(1, "abcd", 0, 0),
+        vec![2]
+    );
+    assert_eq!(
+        table.hyphen_positions_for_language(2, "abcd", 0, 0),
+        vec![1]
+    );
+}
+
+#[test]
 fn dependency_fingerprints_follow_snapshot_roots_and_invalidate_on_write() {
     let mut table = HyphenationTable::new();
     table.add_pattern(PatternSpec {
