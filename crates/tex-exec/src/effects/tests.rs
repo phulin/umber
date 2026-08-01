@@ -241,6 +241,27 @@ fn immediate_stream_effects_keep_exact_write_tokens_without_shipout_receipt() {
 }
 
 #[test]
+fn immediate_and_deferred_writes_preserve_expanded_tokens_exactly() {
+    // TeX82 §§1369--1375 route immediate and deferred writes through the same
+    // `write_out` expansion. The deferred path retains its unexpanded tokens
+    // until traversal, but both committed observations must own the identical
+    // expanded token list when no intervening meaning changes.
+    let immediate = br"\immediate\openout1=trace.out\immediate\write1{\noexpand\endgroup!\noexpand\fi}\immediate\closeout1";
+    let deferred =
+        br"\shipout\hbox{\openout1=trace.out\write1{\noexpand\endgroup!\noexpand\fi}\closeout1}";
+
+    let write_tokens = |source: &[u8]| {
+        observed_effect_records(source)
+            .into_iter()
+            .find(|effect| effect.kind == "write")
+            .expect("write effect")
+            .tokens
+            .expect("write observation owns expanded tokens")
+    };
+    assert_eq!(write_tokens(immediate), write_tokens(deferred));
+}
+
+#[test]
 fn deferred_stream_write_observation_has_the_full_expanded_payload_exactly_once() {
     // TeX82 §§1369--1372 finish the `write_out` token-list episode before
     // §1375 prints the result. The semantic effect therefore owns that exact
@@ -491,19 +512,35 @@ fn special_out_synchronizes_position_and_preserves_stored_payload_bytes() {
 }
 
 #[test]
-fn special_out_xxx1_xxx4_length_boundary_matches_tex82() {
+fn mixed_hlist_traversal_and_special_byte_lengths_match_tex82() {
+    // TeX82 §§1362--1368 visit whatsits in list order among ordinary nodes;
+    // §1368 chooses xxx1 below 256 bytes and xxx4 at 256 bytes. This is a real
+    // hlist traversal, so the surrounding kerns also prove that neither
+    // special terminates or reorders the list walk.
     let mut stores = Universe::new();
     let root = state_box(
         &mut stores,
         &[
+            Node::Kern {
+                amount: Scaled::from_raw(1),
+                kind: tex_state::node::KernKind::Explicit,
+            },
             Node::Whatsit(Whatsit::Special {
                 class: "dvi".to_owned(),
                 payload: vec![b'a'; 255],
             }),
+            Node::Kern {
+                amount: Scaled::from_raw(2),
+                kind: tex_state::node::KernKind::Explicit,
+            },
             Node::Whatsit(Whatsit::Special {
                 class: "dvi".to_owned(),
                 payload: vec![b'b'; 256],
             }),
+            Node::Kern {
+                amount: Scaled::from_raw(3),
+                kind: tex_state::node::KernKind::Explicit,
+            },
         ],
         false,
     );
@@ -518,8 +555,11 @@ fn special_out_xxx1_xxx4_length_boundary_matches_tex82() {
         .iter()
         .position(|byte| *byte == 242)
         .expect("xxx4 opcode");
+    assert!(short < long, "specials retain hlist order");
     assert_eq!(dvi[short + 1], 255);
     assert_eq!(&dvi[long + 1..long + 5], &256_i32.to_be_bytes());
+    assert_eq!(&dvi[short + 2..short + 257], &[b'a'; 255]);
+    assert_eq!(&dvi[long + 5..long + 261], &[b'b'; 256]);
 }
 
 #[test]

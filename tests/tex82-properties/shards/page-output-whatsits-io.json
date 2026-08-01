@@ -1523,10 +1523,14 @@
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "contentless_whatsits_preserve_page_and_vertical_break_boundaries"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "mixed_hlist_traversal_and_special_byte_lengths_match_tex82"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-johp.190"
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.effects.special-output",
@@ -1567,7 +1571,7 @@
         },
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "special_out_xxx1_xxx4_length_boundary_matches_tex82"
+          "test": "mixed_hlist_traversal_and_special_byte_lengths_match_tex82"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1694,6 +1698,10 @@
         },
         {
           "path": "crates/tex-exec/src/effects/tests.rs",
+          "test": "immediate_and_deferred_writes_preserve_expanded_tokens_exactly"
+        },
+        {
+          "path": "crates/tex-exec/src/effects/tests.rs",
           "test": "closed_and_normalized_output_selectors_publish_no_close_effect"
         },
         {
@@ -1725,25 +1733,7 @@
         "Exercise automatic same/changed language, all normalization boundaries, minima boundaries, explicit same-language append, and illegal modes in the structured Phase 2 units below.",
         "The committed command-semantic setlanguage-replay case observes the canonical-main-control gap as a strict xfail linked to umber2-r9nt."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
-        },
-        {
-          "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
-          "test": "declared_command_semantic_cases_match",
-          "cases": [
-            "setlanguage-replay strict xfail",
-            "linked to umber2-r9nt",
-            "pinned first mismatch rejects XPASS and changed failure"
-          ]
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Append count, language, minima, and clang match §§1376–1377."
       ],
@@ -1763,10 +1753,18 @@
         {
           "path": "crates/tex-exec/src/whatsits/tests.rs",
           "test": "fix_language_and_setlanguage_append_with_captured_hyphen_minima"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
+        },
+        {
+          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
         }
       ],
-      "status": "gap",
-      "gap_bead": "umber2-r9nt"
+      "status": "covered",
+      "gap_bead": null
     }
   ]
 }

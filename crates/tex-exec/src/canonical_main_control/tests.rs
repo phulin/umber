@@ -5050,7 +5050,7 @@ fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
 }
 
 #[test]
-fn setlanguage_appends_one_normalized_language_whatsit_per_request() {
+fn language_normalization_and_same_language_append_boundaries_match_tex82() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     // TeX82 §1377 normalizes `cur_val` in both out-of-range directions to
@@ -5069,7 +5069,7 @@ fn setlanguage_appends_one_normalized_language_whatsit_per_request() {
 }
 
 #[test]
-fn setlanguage_outside_horizontal_mode_reports_the_illegal_case_and_scans_nothing() {
+fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
