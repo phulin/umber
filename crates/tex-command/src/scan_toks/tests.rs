@@ -2012,14 +2012,23 @@ fn a_mandatory_left_brace_scan_skips_relax_as_well_as_spaces() {
 }
 
 fn read_stream(universe: &mut Universe, bytes: &[u8]) -> tex_state::world::StreamSlot {
+    read_stream_at(universe, 1, bytes)
+}
+
+fn read_stream_at(
+    universe: &mut Universe,
+    stream: u8,
+    bytes: &[u8],
+) -> tex_state::world::StreamSlot {
+    let path = format!("stream-{stream}.tex");
     universe
         .world_mut()
-        .set_memory_file("stream.tex", bytes.to_vec())
+        .set_memory_file(&path, bytes.to_vec())
         .expect("memory world accepts a seeded file");
-    let slot = tex_state::world::StreamSlot::new(1);
+    let slot = tex_state::world::StreamSlot::new(stream);
     universe
         .world_mut()
-        .open_in(slot, "stream.tex")
+        .open_in(slot, path)
         .expect("stream opens");
     slot
 }
@@ -2153,6 +2162,121 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
         [Token::Cs(par)]
     );
     assert!(processor.state.read_stream_at_eof(slot));
+}
+
+#[test]
+fn read_toks_covers_stream_boundaries_and_empty_first_line() {
+    // TeX82 §§480, 482, and 485: all sixteen slots 0..15 are read streams,
+    // and §485 accepts an empty first physical line without treating it as
+    // EOF. Its endline token becomes §351's `\par`; the next `\read` then
+    // consumes the second line while the boundary stream remains open.
+    for stream in [0_u8, 15] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let slot = read_stream_at(&mut universe, stream, b"\nedge\n");
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let target = processor.state.intern_control_sequence("line");
+        let par = processor.state.intern_control_sequence("par");
+
+        let empty = processor
+            .read_toks(i32::from(stream), target, false)
+            .expect("empty first line is a successful read");
+        assert_eq!(processor.state.tokens(empty.token_list()), [Token::Cs(par)]);
+        assert!(!processor.state.read_stream_at_eof(slot));
+
+        let edge = processor
+            .read_toks(i32::from(stream), target, false)
+            .expect("second line is independently readable");
+        assert_eq!(read_text(&processor, &edge), "edge ");
+        assert!(!processor.state.read_stream_at_eof(slot));
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+        );
+        assert!(matches!(
+            processor.command.scanner.status(),
+            crate::processor::status::ScannerStatus::Normal
+        ));
+    }
+}
+
+#[test]
+fn read_terminal_in_nonstop_mode_reports_canonical_fatal() {
+    // TeX82 §484: a closed stream selects terminal input, but interaction at
+    // or below nonstop mode cannot prompt and calls `fatal_error` instead.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let target = processor.state.intern_control_sequence("line");
+
+        let error = processor
+            .read_toks(1, target, false)
+            .expect_err("nonstop terminal read is fatal");
+        assert_eq!(
+            error,
+            CommandError::Fatal(crate::FatalError::emergency_stop(
+                "job aborted, file error in nonstop mode",
+            ))
+        );
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+        );
+        assert!(matches!(
+            processor.command.scanner.status(),
+            crate::processor::status::ScannerStatus::Normal
+        ));
+    }
+    assert_eq!(diagnostic_text(&universe), "");
+}
+
+#[test]
+fn read_unbalanced_eof_reports_file_ended_within_read() {
+    // TeX82 §486: EOF during an unbalanced `\read` reports the exact error,
+    // resets only the temporary brace state, and keeps the supplied tokens;
+    // recovery must not invent a closing brace.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let slot = read_stream(&mut universe, b"{open");
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let target = processor.state.intern_control_sequence("line");
+
+    let list = processor
+        .read_toks(1, target, false)
+        .expect("§486 recovers the unbalanced read");
+    assert_eq!(read_text(&processor, &list), "{open \0");
+    let par = processor.state.intern_control_sequence("par");
+    assert_eq!(
+        processor.state.tokens(list.token_list()).last(),
+        Some(&Token::Cs(par)),
+        "§486's appended empty line is still tokenized"
+    );
+    assert!(processor.state.read_stream_at_eof(slot));
+    assert_eq!(
+        processor.command.alignment.align_state,
+        crate::processor::alignment::TOP_LEVEL_ALIGN_STATE
+    );
+    assert!(matches!(
+        processor.command.scanner.status(),
+        crate::processor::status::ScannerStatus::Normal
+    ));
+    assert_eq!(
+        processor.take_semantic_diagnostics(),
+        [crate::CommandSemanticDiagnostic::Recoverable {
+            identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
+            message: "File ended within \\read".into(),
+            help: &["This \\read has unbalanced braces."],
+            context: String::new(),
+        }]
+    );
 }
 
 #[test]

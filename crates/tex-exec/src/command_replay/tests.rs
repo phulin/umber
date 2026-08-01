@@ -2175,6 +2175,10 @@ fn canonical_read_pseudo_sources_preserve_pending_endinput_for_parent_file() {
 #[test]
 fn canonical_read_collects_balanced_multiline_text_and_recovers_file_eof() {
     let mut universe = Universe::new_with_plain_catcodes();
+    universe
+        .world_mut()
+        .push_memory_terminal_line("")
+        .expect("return acknowledges §486's recoverable error");
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.capabilities_mut().register_input(
         "child.tex",

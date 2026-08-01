@@ -97,6 +97,7 @@ enum MacroParameterDiagnostic {
 
 const NONCONSECUTIVE_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0476;
 const ILLEGAL_REPLACEMENT_PARAMETER_DIAGNOSTIC: u64 = 0x6465_6600_0000_0479;
+const FILE_ENDED_WITHIN_READ_DIAGNOSTIC: u64 = 0x7265_6164_0000_0486;
 
 impl CommandProcessor<'_> {
     /// TeX.web's special token-list collector (parts 26--27).
@@ -1033,7 +1034,15 @@ impl CommandProcessor<'_> {
             }
             tokens.push(command.spelling());
         }
-        if file_ended {
+        if file_ended && self.command.alignment.align_state != TEMPLATE_ALIGN_STATE {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
+                    message: "File ended within \\read".into(),
+                    help: &["This \\read has unbalanced braces."],
+                    context: self.command.output_open_context(&self.state),
+                });
             self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         }
         Ok(())
@@ -1103,7 +1112,9 @@ impl CommandProcessor<'_> {
         // prompt_input("") else begin wake_up_terminal; print_ln; sprint_cs(r);
         // prompt_input("="); n:=-1; end else fatal_error(...)`.
         if !self.state.interaction_permits_terminal_input() {
-            return Err(CommandError::input_invariant());
+            return Err(CommandError::Fatal(crate::FatalError::emergency_stop(
+                "job aborted, file error in nonstop mode",
+            )));
         }
         let prompt = if *prompt_number < 0 {
             String::new()
