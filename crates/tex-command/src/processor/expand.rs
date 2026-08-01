@@ -1653,6 +1653,14 @@ pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token
             Some(name) => name,
             None => return string_text(state, token),
         },
+        Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } => {
+            // TeX82 §§262/315: `show_token_list` prints one stored `match`
+            // token as two parameter characters; storage remains singular.
+            return format!("{ch}{ch}");
+        }
         _ => return string_text(state, token),
     };
     // TeX82 §§63/294: `show_token_list` renders control sequences through

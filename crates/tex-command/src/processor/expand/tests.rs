@@ -3924,6 +3924,22 @@ fn token_list_control_sequences_use_live_escapechar() {
 }
 
 #[test]
+fn token_list_display_doubles_one_stored_parameter_character() {
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let token = Token::Char {
+        ch: '#',
+        cat: Catcode::Parameter,
+    };
+    let stored = universe.intern_token_list(&[token]);
+
+    assert_eq!(universe.tokens(stored), &[token]);
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), token),
+        "##"
+    );
+}
+
+#[test]
 fn meaning_renderer_covers_register_quantity_and_primitive_families() {
     use tex_state::env::banks::IntParam;
     use tex_state::meaning::{InternalInteger, UnexpandablePrimitive};
