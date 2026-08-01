@@ -68,7 +68,7 @@ fn etex_current_if_branch_ignores_unless_inversion() {
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
-use crate::processor::status::{DefinitionContext, TokenBuilderId};
+use crate::processor::status::{AbsorbingContext, DefinitionContext, TokenBuilderId};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandRuntime, CommandState, ConditionalMode, ConditionalState,
@@ -388,6 +388,98 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
     // If the operands were delivered with get_x_token, either `iftrue` would
     // open a nested condition or the following text would be consumed.
     assert_eq!(next_character(&mut processor), 'y');
+}
+
+#[test]
+fn ifx_temporarily_normalizes_an_absorbing_scanner() {
+    // TeX82 §507 saves `scanner_status`, assigns `normal` across both
+    // `get_next` operand deliveries, and restores the saved status. This is
+    // observable when an expanded token-list scan encounters `\ifx`.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    let first = macro_token(
+        &mut universe,
+        "ifx-absorbing-first",
+        MeaningFlags::EMPTY,
+        &[],
+        &[],
+    );
+    let second = macro_token(
+        &mut universe,
+        "ifx-absorbing-second",
+        MeaningFlags::EMPTY,
+        &[],
+        &[],
+    );
+    push(
+        &mut command,
+        vec![if_x, first, second, other('y'), otherwise, other('n'), fi],
+    );
+    let absorbing = ScannerStatus::Absorbing(AbsorbingContext {
+        owner: None,
+        builder: TokenBuilderId(1),
+        warning: ScannerWarning(1),
+    });
+    let _prior = command.begin_scanner_status(absorbing.clone());
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 'y');
+        assert_eq!(processor.command.scanner.status(), &absorbing);
+    }
+    let transitions = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::ScannerStatus(record) => Some((record.from, record.to)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transitions,
+        vec![("absorbing", "normal"), ("normal", "absorbing")]
+    );
+}
+
+#[test]
+fn ifx_in_normal_scanner_status_publishes_no_status_transition() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_x,
+            other('q'),
+            other('q'),
+            other('y'),
+            otherwise,
+            other('n'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .with_observer(&mut recorder);
+        assert_eq!(next_character(&mut processor), 'y');
+    }
+    assert!(
+        !recorder
+            .0
+            .iter()
+            .any(|observation| matches!(observation, CommandObservation::ScannerStatus(_)))
+    );
 }
 
 #[test]

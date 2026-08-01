@@ -263,9 +263,11 @@ fn condition_delivery_and_alignment_lifecycle_remain_on_the_canonical_seams() {
     // cosmetic: §365 clears `no_new_control_sequence` only inside
     // `get_token`, so reading an `\ifx` operand must not enter a new name in
     // the hash table.
-    assert!(ifx.contains("self.get_next()?"));
+    assert_eq!(ifx.matches("self.get_next()").count(), 2);
     assert!(!ifx.contains("self.get_token()?"));
     assert!(!ifx.contains("self.get_x_token()?"));
+    assert!(ifx.contains("begin_scanner_status(ScannerStatus::Normal)"));
+    assert!(ifx.contains("restore_scanner_status(prior)"));
     assert!(conditionals.contains("fn expand_unless("));
     assert!(conditionals.contains("inverted"));
     assert!(!input.contains("ConditionStack"));

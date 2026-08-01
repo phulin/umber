@@ -731,9 +731,26 @@ impl CommandProcessor<'_> {
     /// dummy `undefined_control_sequence` and is not entered. Two such
     /// operands still compare equal, because §222 gives the dummy the
     /// `undefined_cs` command every fresh hash entry also starts with.
+    /// Section 507 also makes outer operands legal by holding
+    /// `scanner_status := normal` across both deliveries, then restoring the
+    /// complete prior scanner state.
     fn evaluate_ifx(&mut self) -> Result<bool, CommandError> {
-        let first = self.get_next()?.ok_or(CommandError::input_invariant())?;
-        let second = self.get_next()?.ok_or(CommandError::input_invariant())?;
+        let prior = self.command.begin_scanner_status(ScannerStatus::Normal);
+        self.observe_scanner_status_transition(
+            prior.status().clone(),
+            self.command.scanner.status().clone(),
+        );
+        let operands = (|| {
+            let first = self.get_next()?.ok_or(CommandError::input_invariant())?;
+            let second = self.get_next()?.ok_or(CommandError::input_invariant())?;
+            Ok::<_, CommandError>((first, second))
+        })();
+        self.observe_scanner_status_transition(
+            self.command.scanner.status().clone(),
+            prior.status().clone(),
+        );
+        self.command.restore_scanner_status(prior);
+        let (first, second) = operands?;
         Ok(self.ifx_meaning_eq(first.meaning(), second.meaning()))
     }
 
