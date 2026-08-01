@@ -8868,15 +8868,15 @@ fn pdftex_vadjust_pre_migrates_before_its_line_and_post_after() {
     let pre = children
         .iter()
         .position(|node| *node == Node::Penalty(111))
-        .unwrap();
+        .expect("pre-adjustment penalty migrates to the enclosing vlist");
     let line = children
         .iter()
         .position(|node| matches!(node, Node::HList(_)))
-        .unwrap();
+        .expect("paragraph produces a line hlist");
     let post = children
         .iter()
         .position(|node| *node == Node::Penalty(222))
-        .unwrap();
+        .expect("ordinary adjustment penalty migrates to the enclosing vlist");
     assert!(pre < line && line < post, "{children:?}");
 }
 

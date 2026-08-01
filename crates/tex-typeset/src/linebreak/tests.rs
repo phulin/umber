@@ -1150,7 +1150,7 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
             class: 0,
             tokens: mark_tokens,
         },
-        Node::Adjust(adjust_content),
+        Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
         Node::Penalty(-10_000),
         rule(10),
         Node::Penalty(10_000),
@@ -1193,10 +1193,10 @@ fn post_line_break_keeps_migrating_nodes_for_execution_layer() {
         [
             Node::Rule { .. },
             Node::Mark { class: 0, tokens },
-            Node::Adjust(list),
+            Node::Adjust(adjust),
             Node::Penalty(-10_000),
             Node::Glue { .. },
-        ] if *tokens == mark_tokens && *list == adjust_content
+        ] if *tokens == mark_tokens && !adjust.pre && adjust.content == adjust_content
     ));
 }
 
