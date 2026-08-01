@@ -1405,6 +1405,41 @@ fn rollback_discards_effect_suffix_and_restores_partial_line_bytes() {
 }
 
 #[test]
+fn tex82_output_preserves_control_and_high_bytes() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(3);
+    let expected = [0x00, 0x0f, 0x7f, 0xff];
+
+    world.open_out(slot, "bytes.out");
+    world.write_encoded_bytes(PrintSink::Stream(slot), &expected);
+    world.close_out(slot);
+    let end = world.effect_pos();
+    world.commit_effects(end).expect("commit exact-byte write");
+
+    assert_eq!(world.memory_output("bytes.out"), Some(expected.as_slice()));
+}
+
+#[test]
+fn diagnostic_commits_preencoded_bytes_without_utf8_projection() {
+    let mut universe = Universe::new();
+    let expected = [0x00, 0x0f, 0x7f, 0xff];
+
+    let mut diagnostic = universe.begin_diagnostic();
+    diagnostic.print_encoded_bytes(&expected);
+    diagnostic.end(false);
+    let end = universe.world().effect_pos();
+    universe
+        .world_mut()
+        .commit_effects(end)
+        .expect("commit diagnostic bytes");
+
+    assert_eq!(
+        universe.world().memory_log_output(),
+        Some([expected.as_slice(), b"\n"].concat().as_slice())
+    );
+}
+
+#[test]
 fn effect_log_accepts_non_stream_effect_record_kinds() {
     let mut world = World::memory();
 

@@ -2972,6 +2972,11 @@ impl Universe {
                 hash_print_sink(*sink, hasher);
                 hasher.str(text);
             }
+            EffectRecord::StreamWriteBytes { sink, bytes } => {
+                hasher.tag(7);
+                hash_print_sink(*sink, hasher);
+                hasher.bytes(bytes);
+            }
             EffectRecord::DeferredWrite { stream, tokens } => {
                 hasher.tag(3);
                 hash_stream_slot(*stream, hasher);

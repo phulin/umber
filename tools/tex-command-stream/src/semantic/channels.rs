@@ -122,6 +122,20 @@ impl CapturedChannels {
                         let _ = writeln!(effects, "write:{other:?}:{}", rendered(text));
                     }
                 },
+                EffectRecord::StreamWriteBytes { sink, bytes } => {
+                    let text = String::from_utf8_lossy(bytes);
+                    match sink {
+                        PrintSink::Terminal => terminal.push_str(&text),
+                        PrintSink::Log => log.push_str(&text),
+                        PrintSink::TerminalAndLog => {
+                            terminal.push_str(&text);
+                            log.push_str(&text);
+                        }
+                        other => {
+                            let _ = writeln!(effects, "write:{other:?}:{}", rendered(&text));
+                        }
+                    }
+                }
                 EffectRecord::StreamOpen { slot, target } => {
                     let _ = writeln!(effects, "open:{slot:?}:{target:?}");
                 }

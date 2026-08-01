@@ -58,6 +58,7 @@ pub(super) fn lower_effect_record(record: &EffectRecord) -> Option<PageEffect> {
             payload: payload.clone(),
         }),
         EffectRecord::DeferredWrite { .. }
+        | EffectRecord::StreamWriteBytes { .. }
         | EffectRecord::PdfObjectPlaceholder { .. }
         | EffectRecord::ShellEscape(_) => None,
     }

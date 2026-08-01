@@ -1585,6 +1585,19 @@ fn detach_effects(records: &[EffectRecord]) -> Option<Vec<DetachedVirtualEffect>
                     payload: text.as_bytes().to_vec(),
                 })
             }
+            EffectRecord::StreamWriteBytes { sink, bytes } => {
+                let (operation, stream) = match sink {
+                    PrintSink::Terminal => ("terminal", None),
+                    PrintSink::Log => ("log", None),
+                    PrintSink::TerminalAndLog => ("terminal-and-log", None),
+                    PrintSink::Stream(stream) => ("stream", Some(stream.raw())),
+                };
+                Some(DetachedVirtualEffect {
+                    operation: operation.to_owned(),
+                    stream,
+                    payload: bytes.clone(),
+                })
+            }
             EffectRecord::StreamOpen { .. }
             | EffectRecord::StreamClose { .. }
             | EffectRecord::DeferredWrite { .. }

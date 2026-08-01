@@ -285,6 +285,14 @@ impl<'a> Printer<'a> {
         self.write_raw(text)
     }
 
+    /// Writes bytes already encoded by the active command profile.
+    pub fn print_encoded_bytes(&mut self, bytes: &[u8]) -> &mut Self {
+        if let Some(sink) = self.selector.sink() {
+            self.universe.world_mut().write_encoded_bytes(sink, bytes);
+        }
+        self
+    }
+
     fn is_newline_character(&self, character: char) -> bool {
         u32::try_from(self.universe.int_param(IntParam::NEWLINE_CHAR))
             .ok()

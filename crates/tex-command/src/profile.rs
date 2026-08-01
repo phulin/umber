@@ -306,6 +306,25 @@ impl CommandProfile {
         self.characters
     }
 
+    /// Encodes one semantic character for externally committed text output.
+    ///
+    /// Exact profiles preserve TeX82's byte domain one-for-one. Unicode
+    /// profiles use UTF-8 and reject byte-domain values, keeping the two
+    /// policies explicit rather than silently sharing a scalar projection.
+    pub fn encode_output_character(
+        self,
+        code: CharacterCode,
+    ) -> Result<Vec<u8>, CharacterCodeError> {
+        match self.characters {
+            CharacterMode::EightBitExact => Ok(vec![code.to_byte()?]),
+            CharacterMode::UnicodeExtended => {
+                let character = code.to_char()?;
+                let mut encoded = [0; 4];
+                Ok(character.encode_utf8(&mut encoded).as_bytes().to_vec())
+            }
+        }
+    }
+
     /// Returns semantic capabilities derived from this immutable profile.
     #[must_use]
     pub const fn capabilities(self) -> CommandCapabilities {

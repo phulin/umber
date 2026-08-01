@@ -71,6 +71,12 @@ impl<'a> Diagnostic<'a> {
         self
     }
 
+    /// Writes characters already encoded at the command-profile boundary.
+    pub fn print_encoded_bytes(&mut self, bytes: &[u8]) -> &mut Self {
+        self.printer.print_encoded_bytes(bytes);
+        self
+    }
+
     /// tex.web §58's `print_char`.
     pub fn print_char(&mut self, character: char) -> &mut Self {
         self.printer.print_char(character);

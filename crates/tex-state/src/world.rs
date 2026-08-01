@@ -1176,6 +1176,11 @@ pub enum EffectRecord {
         sink: PrintSink,
         text: String,
     },
+    /// Externally encoded output whose byte identity must survive retention.
+    StreamWriteBytes {
+        sink: PrintSink,
+        bytes: Vec<u8>,
+    },
     /// Deferred `\write` seam: the token list is intentionally unexpanded.
     DeferredWrite {
         stream: StreamSlot,
@@ -2198,7 +2203,23 @@ impl World {
                         .expect("pending output bytes were initialized")
                         .extend_from_slice(text.as_bytes());
                 }
+                EffectRecord::StreamWriteBytes {
+                    sink: PrintSink::Stream(slot),
+                    bytes: encoded,
+                } if active[slot.index()]
+                    .as_ref()
+                    .is_some_and(|target| target.path() == path) =>
+                {
+                    if bytes.is_none() {
+                        bytes = Some(self.materialized_file_bytes(path)?.to_vec());
+                    }
+                    bytes
+                        .as_mut()
+                        .expect("pending output bytes were initialized")
+                        .extend_from_slice(encoded);
+                }
                 EffectRecord::StreamWrite { .. }
+                | EffectRecord::StreamWriteBytes { .. }
                 | EffectRecord::DeferredWrite { .. }
                 | EffectRecord::Special { .. }
                 | EffectRecord::PdfObjectPlaceholder { .. }
@@ -2833,6 +2854,39 @@ impl World {
                     &mut self.stream_bufs_mut().partial_lines[slot.index()],
                     text,
                 );
+            }
+        }
+    }
+
+    /// Buffers bytes that have already crossed the active character-profile
+    /// encoding boundary.
+    ///
+    /// Unlike [`Self::write_text`], this API never projects through UTF-8.
+    /// It is the final output seam for TeX82 byte-domain characters and is
+    /// also suitable for any future profile with an explicit external
+    /// encoding. Encoding policy belongs to the caller; `World` retains and
+    /// commits the resulting bytes exactly.
+    pub fn write_encoded_bytes(&mut self, sink: PrintSink, bytes: &[u8]) {
+        self.append_effect(EffectRecord::StreamWriteBytes {
+            sink,
+            bytes: bytes.to_vec(),
+        });
+        let projection = bytes
+            .iter()
+            .map(|&byte| char::from(byte))
+            .collect::<String>();
+        let bufs = self.stream_bufs_mut();
+        match sink {
+            PrintSink::Terminal => {
+                append_partial_line(&mut bufs.terminal_partial_line, &projection)
+            }
+            PrintSink::Log => append_partial_line(&mut bufs.log_partial_line, &projection),
+            PrintSink::TerminalAndLog => {
+                append_partial_line(&mut bufs.terminal_partial_line, &projection);
+                append_partial_line(&mut bufs.log_partial_line, &projection);
+            }
+            PrintSink::Stream(slot) => {
+                append_partial_line(&mut bufs.partial_lines[slot.index()], &projection);
             }
         }
     }
@@ -3633,6 +3687,16 @@ impl World {
                             *sink,
                             &text.as_bytes()[..midpoint],
                         )?;
+                    } else if let EffectRecord::StreamWriteBytes { sink, bytes } =
+                        &self.effects[index]
+                    {
+                        let midpoint = bytes.len().div_ceil(2);
+                        Self::commit_write(
+                            &mut self.backend,
+                            &self.committed_write_streams,
+                            *sink,
+                            &bytes[..midpoint],
+                        )?;
                     }
                     return Err(WorldError::new(
                         "injected effect commit",
@@ -3671,6 +3735,12 @@ impl World {
                 &self.committed_write_streams,
                 *sink,
                 text.as_bytes(),
+            )?,
+            EffectRecord::StreamWriteBytes { sink, bytes } => Self::commit_write(
+                &mut self.backend,
+                &self.committed_write_streams,
+                *sink,
+                bytes,
             )?,
             EffectRecord::DeferredWrite { .. }
             | EffectRecord::Special { .. }
@@ -3922,6 +3992,7 @@ fn effect_retained_bytes(effect: &EffectRecord) -> usize {
             EffectRecord::StreamOpen { target, .. } => target.path.as_os_str().len(),
             EffectRecord::StreamClose { .. } | EffectRecord::DeferredWrite { .. } => 0,
             EffectRecord::StreamWrite { text, .. } => text.len(),
+            EffectRecord::StreamWriteBytes { bytes, .. } => bytes.len(),
             EffectRecord::Special { class, payload } => class.len().saturating_add(payload.len()),
             EffectRecord::PdfObjectPlaceholder { label } => label.len(),
             EffectRecord::ShellEscape(record) => record.command.len(),

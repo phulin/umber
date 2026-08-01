@@ -125,6 +125,35 @@ fn canonical_and_unicode_profiles_are_immutable_distinct_identities() {
 }
 
 #[test]
+fn output_encoding_policy_distinguishes_exact_bytes_from_unicode() {
+    let exact = CommandProfile::TEX82;
+    let unicode = CommandProfile::unicode_extended(CommandDialect::Tex82);
+    let byte_codes = [0x00, 0x0f, 0x7f, 0xff].map(CharacterCode::from_byte);
+    let exact_bytes = byte_codes
+        .into_iter()
+        .flat_map(|code| exact.encode_output_character(code).expect("exact byte"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(exact_bytes, [0x00, 0x0f, 0x7f, 0xff]);
+    assert_eq!(
+        unicode.encode_output_character(
+            CharacterCode::from_unicode_scalar(0xff).expect("U+00FF is a scalar")
+        ),
+        Ok(vec![0xc3, 0xbf])
+    );
+    assert_eq!(
+        unicode.encode_output_character(CharacterCode::from_byte(0xff)),
+        Err(CharacterCodeError::ExpectedUnicodeScalar)
+    );
+    assert_eq!(
+        exact.encode_output_character(
+            CharacterCode::from_unicode_scalar(0xff).expect("U+00FF is a scalar")
+        ),
+        Err(CharacterCodeError::ExpectedByte)
+    );
+}
+
+#[test]
 fn capabilities_are_semantic_and_validated_during_decode() {
     let tex = CommandProfile::TEX82.capabilities();
     assert!(!tex.supports_etex());
