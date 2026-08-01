@@ -601,9 +601,15 @@ fn parse_exception_word(
     let mut normalized = String::new();
     let mut positions = Vec::new();
     let mut not_letters = 0;
+    let mut letters_seen = 0usize;
     for &ch in word {
         if ch == '-' {
-            positions.push(normalized.chars().count());
+            // pdfTeX §§26030--27481 retain at most 63 exception letters.
+            // A marker after a discarded letter is discarded with it rather
+            // than being folded onto the last retained interletter boundary.
+            if letters_seen <= 63 {
+                positions.push(normalized.chars().count());
+            }
             continue;
         }
         // A word the live scanner produced has already had §935's `lc_code`
@@ -615,6 +621,7 @@ fn parse_exception_word(
             Some(ch)
         };
         if let Some(ch) = mapped {
+            letters_seen += 1;
             if normalized.chars().count() < 63 {
                 normalized.push(ch);
             }

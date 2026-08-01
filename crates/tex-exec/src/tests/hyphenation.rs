@@ -12,7 +12,7 @@ fn pretolerance_memo_config() -> tex_state::PureMemoConfig {
         ..tex_state::PureMemoConfig::default()
     }
 }
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 
 #[test]
@@ -298,6 +298,78 @@ fn paragraph_hyphenation_stops_at_a_font_change() {
             .iter()
             .any(|node| matches!(node, Node::Disc { .. })),
         "TeX82 sections 897 and 899 stop the word at a font change"
+    );
+}
+
+#[test]
+fn paragraph_hyphenation_distinguishes_font_and_normal_kerns() {
+    // pdfTeX §§26030--27481 preserve TeX's word boundary: a font kern may
+    // occur inside a word, while an explicit normal kern terminates it.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{ab-cd} \\lefthyphenmin=1 \\righthyphenmin=1 \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("kern-boundary setup executes");
+    let font = stores.current_font();
+    let word = |kind| {
+        let mut nodes: Vec<_> = "ab"
+            .chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect();
+        nodes.push(Node::Kern {
+            amount: Scaled::from_raw(0),
+            kind,
+        });
+        nodes.extend("cd".chars().map(|ch| Node::Char {
+            font,
+            ch,
+            origin: tex_state::token::OriginId::UNKNOWN,
+        }));
+        nodes
+    };
+
+    let font_kern = crate::assignments::test_hyphenated_hlist(&mut stores, &word(KernKind::Font));
+    let normal_kern =
+        crate::assignments::test_hyphenated_hlist(&mut stores, &word(KernKind::Explicit));
+
+    assert!(
+        font_kern
+            .iter()
+            .any(|node| matches!(node, Node::Disc { .. }))
+    );
+    assert!(
+        !normal_kern
+            .iter()
+            .any(|node| matches!(node, Node::Disc { .. }))
+    );
+}
+
+#[test]
+fn exception_markers_after_the_63_letter_boundary_are_discarded() {
+    // pdfTeX §§26030--27481 bound exception words and their marker vector
+    // together. Markers after discarded letters must not alias position 63.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let source = format!("\\hyphenation{{{}-aa-}}\\end", "a".repeat(62));
+    let mut input = InputStack::new(MemoryInput::new(source));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("bounded exception executes");
+
+    assert_eq!(
+        stores.hyphenation_exception(&"a".repeat(63)),
+        Some(&[62][..]),
+        "the marker after the discarded 64th letter is not folded onto 63"
     );
 }
 
