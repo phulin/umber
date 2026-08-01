@@ -233,6 +233,54 @@ fn run_macro(
     })
 }
 
+fn run_observed_macro_call(
+    source: &[u8],
+    flags: MeaningFlags,
+) -> (
+    CommandState,
+    Result<MacroCallOutcome, CommandError>,
+    Recorder,
+) {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.install_primitive_meaning(
+        "par",
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
+    );
+    let name = universe.intern("m").symbol();
+    let parameters = universe.intern_token_list(&[Token::param(1)]);
+    let replacement = universe.intern_token_list(&[Token::param(1)]);
+    let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
+    universe.set_meaning(name, Meaning::Macro { flags, definition });
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut recorder = Recorder::default();
+    let outcome = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        )
+        .with_observer(&mut recorder);
+        let call = processor
+            .get_next()
+            .expect("macro call delivery")
+            .expect("macro token");
+        processor.macro_call(call)
+    };
+    (command, outcome, recorder)
+}
+
 #[test]
 fn scalar_matcher_consumes_compulsory_prefix_before_undelimited_argument() {
     let (command, arguments) = run_macro(
@@ -427,31 +475,132 @@ fn undelimited_group_strips_only_its_outer_braces() {
 }
 
 #[test]
-fn paragraph_is_rejected_only_for_non_long_macros() {
+fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
+    let (extra, outcome, observations) = run_observed_macro_call(b"\\m}", MeaningFlags::LONG);
+    assert_eq!(outcome, Err(CommandError::ParagraphInMacroArgument));
+    assert!(extra.parameters.activations.is_empty());
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            identity: crate::macro_call::EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC,
+            message: extra_message,
+            help: extra_help,
+            context: extra_context,
+        },
+        crate::CommandSemanticDiagnostic::Recoverable {
+            identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+            message: runaway_message,
+            help: runaway_help,
+            context: runaway_context,
+        },
+    ] = extra.semantic_diagnostics.as_slice()
+    else {
+        panic!("expected the paired extra-brace and runaway reports")
+    };
+    assert_eq!(extra_message, "Argument of \\m has an extra }");
     assert_eq!(
-        run_macro(b"\\m\\par", MeaningFlags::EMPTY, &[Token::param(1)], false),
-        Err(CommandError::ParagraphInMacroArgument)
+        *extra_help,
+        [
+            "I've run across a `}' that doesn't seem to match anything.",
+            "For example, `\\def\\a#1{...}' and `\\a}' would produce",
+            "this error. If you simply proceed now, the `\\par' that",
+            "I've just inserted will cause me to report a runaway",
+            "argument that might be the root of the problem. But if",
+            "your `}' was spurious, just type `2' and it will go away.",
+        ]
     );
-    let (_, arguments) = run_macro(b"\\m\\par", MeaningFlags::LONG, &[Token::param(1)], false)
-        .expect("long macro accepts paragraph token");
+    assert_eq!(runaway_message, "Paragraph ended before \\m was complete");
+    assert_eq!(
+        *runaway_help,
+        [
+            "I suspect you've forgotten a `}', causing me to apply this",
+            "control sequence to too much text. How can we recover?",
+            "My plan is to forget the whole thing and hope for the best.",
+        ]
+    );
+    assert!(
+        extra_context.contains("<inserted text>"),
+        "{extra_context:?}"
+    );
+    assert!(extra_context.contains("\\par"), "{extra_context:?}");
+    assert!(
+        runaway_context.contains("<to be read again>"),
+        "{runaway_context:?}"
+    );
+    assert!(runaway_context.contains("\\par"), "{runaway_context:?}");
+    let backups = observations
+        .0
+        .iter()
+        .filter(|observation| {
+            matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Backup
+                        && record.reason == InputReason::Backup
+            )
+        })
+        .count();
+    assert_eq!(
+        backups, 2,
+        "the brace and inserted paragraph each have one backup owner"
+    );
+
+    let (non_long, outcome, observations) =
+        run_observed_macro_call(b"\\m\\par", MeaningFlags::EMPTY);
+    assert_eq!(outcome, Err(CommandError::ParagraphInMacroArgument));
+    assert!(non_long.parameters.activations.is_empty());
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+            message,
+            help,
+            context,
+        },
+    ] = non_long.semantic_diagnostics.as_slice()
+    else {
+        panic!("expected one runaway report")
+    };
+    assert_eq!(message, "Paragraph ended before \\m was complete");
+    assert_eq!(*help, *runaway_help);
+    assert!(context.contains("<to be read again>"), "{context:?}");
+    assert!(context.contains("\\par"), "{context:?}");
+    assert_eq!(
+        observations
+            .0
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                CommandObservation::Input(record)
+                    if record.transition == InputTransition::Backup
+                        && record.reason == InputReason::Backup
+            ))
+            .count(),
+        1,
+        "the rejected paragraph has exactly one backup owner"
+    );
+
+    let (long, outcome, observations) = run_observed_macro_call(b"\\m\\par", MeaningFlags::LONG);
+    assert_eq!(outcome, Ok(MacroCallOutcome::Activated));
+    assert!(long.semantic_diagnostics.is_empty());
+    let activation = long.parameters.activations.last().expect("macro activates");
+    assert_eq!(activation.arguments.buffer.len(), 1);
     assert!(matches!(
-        arguments
+        activation
+            .arguments
             .buffer
             .get(0)
-            .expect("paragraph token")
+            .expect("paragraph argument token")
             .semantic_token(),
         Token::Cs(_)
     ));
-}
-
-#[test]
-fn extra_right_brace_aborts_even_a_long_macro() {
-    // TeX82 §§394-395: a bare `}` is backed up, then an inserted `\par`
-    // aborts the match after §395 sets `long_state := call`.
-    assert_eq!(
-        run_macro(b"\\m}", MeaningFlags::LONG, &[Token::param(1)], false),
-        Err(CommandError::ParagraphInMacroArgument)
-    );
+    assert!(observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Input(record)
+            if record.transition == InputTransition::Push && record.reason == InputReason::Macro
+    )));
+    assert!(observations.0.iter().all(|observation| !matches!(
+        observation,
+        CommandObservation::Input(record) if record.transition == InputTransition::Backup
+    )));
 }
 
 #[test]
