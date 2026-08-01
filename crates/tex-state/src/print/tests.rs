@@ -110,6 +110,36 @@ fn pdftex_integer_printers_cover_widened_and_negative_boundaries() {
 }
 
 #[test]
+fn print_two_and_print_hex_have_exact_wire_text() {
+    let mut universe = Universe::new();
+    let before_interaction = universe.interaction_mode();
+    let before_history = universe.world().error_channel().history();
+    let before_error_count = universe.world().error_channel().error_count();
+
+    {
+        let mut printer = Printer::new(&mut universe, Selector::TermAndLog);
+        assert_eq!(printer.selector(), Selector::TermAndLog);
+        for value in [0, 7, 42, 99] {
+            printer.print_two(value).print_char('|');
+        }
+        for value in [0, 15, 255] {
+            printer.print_hex(value).print_char('|');
+        }
+        assert_eq!(printer.selector(), Selector::TermAndLog);
+    }
+
+    let expected = "00|07|42|99|'0|'F|'FF|";
+    assert_eq!(sink_text(&universe, PrintSink::Terminal), expected);
+    assert_eq!(sink_text(&universe, PrintSink::Log), expected);
+    assert_eq!(universe.interaction_mode(), before_interaction);
+    assert_eq!(universe.world().error_channel().history(), before_history);
+    assert_eq!(
+        universe.world().error_channel().error_count(),
+        before_error_count
+    );
+}
+
+#[test]
 fn pdftex_ignored_error_is_exactly_transcript_only_in_every_interaction_mode() {
     for interaction in [
         InteractionMode::Batch,

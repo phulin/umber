@@ -3514,6 +3514,38 @@ fn number_and_romannumeral_scan_expanded_integer_edge_cases() {
 }
 
 #[test]
+fn romannumeral_uses_subtractive_forms_and_omits_nonpositive_values() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let roman = expandable_primitive(
+        &mut stores,
+        "romannumeral",
+        ExpandablePrimitive::RomanNumeral,
+    );
+    let mut tokens = Vec::new();
+    for (index, value) in ["0", "4", "9", "1990", "-1"].into_iter().enumerate() {
+        tokens.push(Token::Cs(roman.symbol()));
+        tokens.extend(value.chars().map(char_token));
+        if index < 4 {
+            tokens.push(Token::Char {
+                ch: '|',
+                cat: Catcode::Other,
+            });
+        }
+    }
+    let list = stores.intern_token_list(&tokens);
+    let mut input = InputStack::new(MemoryInput::new(""));
+    input.push_token_list(list, TokenListReplayKind::Inserted);
+
+    assert_eq!(
+        next_expanded_chars(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(&mut stores)
+        ),
+        "|iv|ix|mcmxc|"
+    );
+}
+
+#[test]
 fn number_renders_a_nested_numexpr_and_consumes_its_relax() {
     let mut stores = Universe::new_with_plain_catcodes();
     install_expandable_primitives(&mut stores);

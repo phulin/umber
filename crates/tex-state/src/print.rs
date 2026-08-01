@@ -333,6 +333,11 @@ impl<'a> Printer<'a> {
         self.print_char(char::from(b'0' + (digits % 10) as u8))
     }
 
+    /// tex.web §64's `print_hex`: a quote followed by uppercase hexadecimal.
+    pub fn print_hex(&mut self, value: u32) -> &mut Self {
+        self.print_char('\'').print(&format!("{value:X}"))
+    }
+
     /// tex.web §103's `print_scaled`. The unit, if any, is the caller's.
     pub fn print_scaled(&mut self, value: Scaled) -> &mut Self {
         self.print(&crate::scaled::print_scaled(value))
