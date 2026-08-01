@@ -594,6 +594,36 @@ impl Cancellation {
     }
 }
 
+/// Shareable recoverable-interrupt latch polled only between atomic executor
+/// steps.
+///
+/// Unlike [`Cancellation`], an interrupt does not terminate the run. A host
+/// signal handler requests it, and the command boundary consumes it once at
+/// the next safe point. Requests raised while a scanner or executor step is
+/// live therefore remain pending until that critical section has committed.
+#[derive(Clone, Debug, Default)]
+pub struct PendingInterrupt(Arc<AtomicBool>);
+
+impl PendingInterrupt {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn request(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn take(&self) -> bool {
+        self.0.swap(false, Ordering::AcqRel)
+    }
+}
+
 pub struct ExecutionContext<'a> {
     expansion: tex_expand::ExpansionContext<'a>,
     command_fuel: Option<tex_command::CommandFuelLedger>,
@@ -1067,6 +1097,7 @@ pub struct ExecutionRun {
     budget_counters: ExecutionBudgetCounters,
     emit_dvi: bool,
     telemetry: ExecutionTelemetry,
+    pending_interrupt: PendingInterrupt,
 }
 
 struct StepSavepoint {
@@ -1124,6 +1155,7 @@ impl ExecutionRun {
                 cold_starts: 1,
                 ..ExecutionTelemetry::default()
             },
+            pending_interrupt: PendingInterrupt::new(),
         }
     }
 
@@ -1202,6 +1234,13 @@ impl ExecutionRun {
         &self.nest
     }
 
+    /// Returns the run-owned injection handle for asynchronous recoverable
+    /// interrupts.
+    #[must_use]
+    pub fn pending_interrupt(&self) -> PendingInterrupt {
+        self.pending_interrupt.clone()
+    }
+
     pub fn step(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
@@ -1218,6 +1257,27 @@ impl ExecutionRun {
                 | ExecutionLifecycle::Cancelled
         ) {
             return ExecutionStepResult::Failed(ExecError::ExecutionAlreadyTerminated);
+        }
+        if self.pending_interrupt.take() {
+            // tex.web §330's `pause_for_instructions`: force ErrorStop for
+            // this recoverable interruption, report the exact notice/help,
+            // and return to the untouched command stream after the dialog.
+            services
+                .stores
+                .set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+            let result = crate::error_report::report_input_error(
+                services.input,
+                services.stores,
+                "Interruption",
+                &[
+                    "You rang?",
+                    "Try to insert some instructions for me (e.g., `I\\showlists'),",
+                    "unless you just want to quit by typing `X'.",
+                ],
+            );
+            if let Err(error) = result {
+                return self.handle_step_error(error, self.next_step);
+            }
         }
         if self.lifecycle == ExecutionLifecycle::Awaiting {
             self.telemetry.local_step_retries = self.telemetry.local_step_retries.saturating_add(1);

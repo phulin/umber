@@ -199,14 +199,29 @@ fn owned_execution_run_observes_cancellation_before_mutation() {
     assert!(stores.input_summary().is_empty());
 }
 
-/// TeX82 §§82, 330 require an asynchronous interrupt to enter the ordinary
-/// error-stop instruction dialog at the next safe point. The current
-/// `Cancellation` boundary deliberately terminates the execution run instead;
-/// this harness pins the missing distinction until the command executor owns
-/// an injectable pending-interrupt latch and critical-section deferral.
 #[test]
-#[ignore = "umber2-e51h.18.1: executor has cancellation but no recoverable injected-interrupt state machine"]
 fn injected_interrupt_enters_and_leaves_pause_dialog_without_token_loss() {
+    struct InterruptDuringScan {
+        interrupt: PendingInterrupt,
+        requested: bool,
+    }
+
+    impl tex_expand::InputResolver for InterruptDuringScan {
+        fn open_input(
+            &mut self,
+            _input: &mut dyn tex_state::InputReadState,
+            _name: &str,
+            _request_index: u64,
+        ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
+            assert!(!self.requested, "child input is opened exactly once");
+            self.requested = true;
+            self.interrupt.request();
+            Ok(tex_expand::ResourceLookup::Available(Box::new(
+                MemoryInput::new("0 "),
+            )))
+        }
+    }
+
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     tex_expand::install_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
@@ -215,15 +230,50 @@ fn injected_interrupt_enters_and_leaves_pause_dialog_without_token_loss() {
         .world_mut()
         .push_memory_terminal_line("")
         .expect("memory terminal accepts the instruction-dialog answer");
-    let mut input = InputStack::new(MemoryInput::new(r"\count0=1 \advance\count0 by1 \end"));
+    stores
+        .world_mut()
+        .push_memory_terminal_line("")
+        .expect("memory terminal accepts the deferred interrupt answer");
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\count0=1 \advance\count\input child by1 \end",
+    ));
     let mut run = ExecutionRun::new("injected-interrupt");
+    let interrupt = run.pending_interrupt();
+    let cancellation = Cancellation::new();
+    let mut resolver = InterruptDuringScan {
+        interrupt: interrupt.clone(),
+        requested: false,
+    };
 
-    // A future deterministic hook injects here and once more while the
-    // scanner's critical section is live. The first event must be consumed at
-    // the next safe point; the second remains pending until the following safe
-    // point. Both then resume this exact input with neither replay nor loss.
-    let _ = (&mut input, &mut run, &mut stores);
-    panic!("pending recoverable interrupts are not represented yet");
+    assert!(matches!(
+        run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores),
+            &cancellation,
+        ),
+        ExecutionStepResult::Progress(_)
+    ));
+    interrupt.request();
+    loop {
+        match run.step(
+            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
+            &cancellation,
+        ) {
+            ExecutionStepResult::Progress(_) => {}
+            ExecutionStepResult::Complete(_) => break,
+            other => panic!("interrupted run must resume and complete: {other:?}"),
+        }
+    }
+
+    assert!(resolver.requested);
+    assert!(!interrupt.is_pending());
+    assert_eq!(stores.count(0), 2);
+    assert_eq!(
+        stores.interaction_mode(),
+        tex_state::InteractionMode::ErrorStop
+    );
+    let output = terminal_effect_text(&stores);
+    assert_eq!(output.matches("! Interruption.").count(), 2, "{output}");
+    assert_eq!(output.matches("? ").count(), 2, "{output}");
 }
 
 struct SuspendInputOnce {

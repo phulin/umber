@@ -51,7 +51,8 @@ pub use executor::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
     ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
-    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, ResourceSite, ResourceSuspension,
+    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, PendingInterrupt, ResourceSite,
+    ResourceSuspension,
 };
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
