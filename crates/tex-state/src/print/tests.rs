@@ -2,7 +2,8 @@
 //! `error`.
 
 use super::{
-    ErrorChannel, ErrorContextWidths, ErrorHistory, ErrorOutcome, JumpOut, Printer, Selector,
+    ErrorChannel, ErrorContextLevel, ErrorContextWidths, ErrorHistory, ErrorOutcome, JumpOut,
+    Printer, Selector, render_error_context,
 };
 use crate::universe::{InteractionMode, Universe};
 use crate::world::PrintSink;
@@ -19,6 +20,82 @@ fn error_context_widths_enforce_tex82_section_3_bounds() {
     assert_eq!(ErrorContextWidths::new(64, 29), None);
     assert_eq!(ErrorContextWidths::new(46, 32), None);
     assert_eq!(ErrorContextWidths::new(64, usize::MAX), None);
+}
+
+#[test]
+fn render_error_context_respects_width_and_context_line_limits() {
+    let widths = ErrorContextWidths::new(64, 32).expect("valid TeX82 context widths");
+    let levels = vec![
+        ErrorContextLevel::new(
+            "<current> ",
+            "before-current-abcdefghijklmnopqrstuvwxyz",
+            "after-current-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789",
+        ),
+        ErrorContextLevel::new(
+            "<first> ",
+            "before-first-abcdefghijklmnopqrstuvwxyz",
+            "after-first-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789",
+        ),
+        ErrorContextLevel::new(
+            "<second> ",
+            "before-second-abcdefghijklmnopqrstuvwxyz",
+            "after-second-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789",
+        ),
+        ErrorContextLevel::new(
+            "l.99 ",
+            "before-bottom-abcdefghijklmnopqrstuvwxyz",
+            "after-bottom-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789",
+        ),
+    ];
+    let unchanged = levels.clone();
+
+    let negative = render_error_context(&levels, widths, -1);
+    let zero = render_error_context(&levels, widths, 0);
+    let one = render_error_context(&levels, widths, 1);
+
+    assert_eq!(
+        negative,
+        concat!(
+            "\n<current> ...hijklmnopqrstuvwxyz",
+            "\n                                after-current-ABCDEFGHIJKLMNO...",
+            "\nl.99 ...cdefghijklmnopqrstuvwxyz",
+            "\n                                after-bottom-ABCDEFGHIJKLMNOP...",
+        )
+    );
+    assert_eq!(
+        zero,
+        concat!(
+            "\n<current> ...hijklmnopqrstuvwxyz",
+            "\n                                after-current-ABCDEFGHIJKLMNO...",
+            "\n...",
+            "\nl.99 ...cdefghijklmnopqrstuvwxyz",
+            "\n                                after-bottom-ABCDEFGHIJKLMNOP...",
+        )
+    );
+    assert_eq!(
+        one,
+        concat!(
+            "\n<current> ...hijklmnopqrstuvwxyz",
+            "\n                                after-current-ABCDEFGHIJKLMNO...",
+            "\n<first> ...fghijklmnopqrstuvwxyz",
+            "\n                                after-first-ABCDEFGHIJKLMNOPQ...",
+            "\n...",
+            "\nl.99 ...cdefghijklmnopqrstuvwxyz",
+            "\n                                after-bottom-ABCDEFGHIJKLMNOP...",
+        )
+    );
+
+    for output in [&negative, &zero, &one] {
+        let mut lines = output.lines();
+        assert_eq!(lines.next(), Some(""));
+        for line in lines.filter(|line| *line != "...") {
+            assert!(line.chars().count() <= widths.error_line(), "{line:?}");
+        }
+    }
+    assert_eq!(
+        levels, unchanged,
+        "rendering must not mutate source context"
+    );
 }
 
 fn terminal_text(universe: &Universe) -> String {
