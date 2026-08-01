@@ -8,6 +8,34 @@ use tex_out::{
 use tex_state::meaning::MeaningFlags;
 use tex_state::scaled::Scaled;
 
+fn read_macro_tokens(stores: &Universe, name: &str) -> Vec<Token> {
+    let symbol = stores.symbol(name).expect("read target was defined");
+    let meaning = stores
+        .macro_meaning(symbol)
+        .expect("read target is a parameterless macro");
+    stores.tokens(meaning.replacement_text()).to_vec()
+}
+
+fn run_file_reads(contents: &[u8], commands: &str, etex: bool) -> Universe {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    if etex {
+        crate::install_etex_unexpandable_primitives(&mut stores);
+    }
+    stores
+        .world_mut()
+        .set_memory_file("stream.tex", contents.to_vec())
+        .expect("seed read stream");
+    let mut input = InputStack::new(MemoryInput::new(format!(
+        "\\openin1=stream.tex {commands}\\end"
+    )));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("paired file reads execute");
+    stores
+}
+
 #[test]
 fn openin_read_defines_control_sequence_from_world_stream() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
@@ -150,6 +178,160 @@ fn readline_uses_only_space_and_other_catcodes() {
             ..
         }
     )));
+}
+
+#[test]
+fn read_and_readline_preserve_empty_lines_and_following_commands() {
+    for (command, etex) in [("read", false), ("readline", true)] {
+        let source =
+            format!("\\{command}1 to \\first \\count7=41 \\{command}1 to \\second \\count7=42 ");
+        let stores = run_file_reads(b"\nnext", &source, etex);
+
+        if command == "read" {
+            let tokens = read_macro_tokens(&stores, "first");
+            assert_eq!(tokens.len(), 1);
+            assert!(matches!(tokens[0], Token::Cs(symbol) if stores.resolve(symbol) == "par"));
+        } else {
+            assert_eq!(
+                read_macro_tokens(&stores, "first"),
+                vec![Token::Char {
+                    ch: '\r',
+                    cat: Catcode::Other,
+                }]
+            );
+        }
+        assert_eq!(stores.count(7), 42, "token after each {command} survives");
+        assert_eq!(
+            read_macro_tokens(&stores, "second")
+                .iter()
+                .filter_map(|token| match token {
+                    Token::Char { ch, .. } => Some(*ch),
+                    _ => None,
+                })
+                .collect::<String>(),
+            if command == "read" { "next " } else { "next\r" }
+        );
+    }
+}
+
+#[test]
+fn read_balances_braces_across_lines_while_readline_consumes_one_line() {
+    let read = run_file_reads(
+        b"{left% hidden\nright}\ntail",
+        "\\read1 to \\first \\read1 to \\second ",
+        false,
+    );
+    let readline = run_file_reads(
+        b"{left% hidden\nright}\ntail",
+        "\\readline1 to \\first \\readline1 to \\second ",
+        true,
+    );
+
+    assert_eq!(
+        read_macro_tokens(&read, "first")
+            .iter()
+            .filter_map(|token| match token {
+                Token::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect::<String>(),
+        "{leftright} "
+    );
+    assert_eq!(
+        read_macro_tokens(&readline, "first"),
+        "{left% hidden\r"
+            .chars()
+            .map(|ch| Token::Char {
+                ch,
+                cat: if ch == ' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                },
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        read_macro_tokens(&readline, "second"),
+        "right}\r"
+            .chars()
+            .map(|ch| Token::Char {
+                ch,
+                cat: Catcode::Other,
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        read_macro_tokens(&read, "second")
+            .iter()
+            .filter_map(|token| match token {
+                Token::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect::<String>(),
+        "tail "
+    );
+}
+
+#[test]
+fn read_and_readline_apply_endlinechar_with_their_own_categories() {
+    let read = run_file_reads(
+        b"a",
+        "\\endlinechar=`! \\catcode`!=11 \\read1 to \\line ",
+        false,
+    );
+    let readline = run_file_reads(
+        b"a",
+        "\\endlinechar=`! \\catcode`!=11 \\readline1 to \\line ",
+        true,
+    );
+
+    assert_eq!(
+        read_macro_tokens(&read, "line"),
+        vec![
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Letter,
+            },
+        ]
+    );
+    assert_eq!(
+        read_macro_tokens(&readline, "line"),
+        vec![
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Other,
+            },
+            Token::Char {
+                ch: '!',
+                cat: Catcode::Other,
+            },
+        ]
+    );
+}
+
+#[test]
+fn read_and_readline_define_targets_on_the_eof_recovery_line() {
+    for (command, etex) in [("read", false), ("readline", true)] {
+        let source = format!("\\{command}1 to \\first \\{command}1 to \\eofline ");
+        let stores = run_file_reads(b"last", &source, etex);
+
+        assert!(
+            stores
+                .macro_meaning(stores.symbol("eofline").expect("EOF read target"))
+                .is_some()
+        );
+        assert!(
+            stores
+                .world()
+                .input_stream_eof(tex_state::StreamSlot::new(1)),
+            "{command} closes the exhausted stream"
+        );
+    }
 }
 
 #[test]
