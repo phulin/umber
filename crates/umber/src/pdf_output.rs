@@ -6255,6 +6255,89 @@ mod tests {
         }
     }
 
+    fn annotation_marker_fixture(marker: tex_out::PdfAnnotationEffect) -> Vec<PositionedPage> {
+        use tex_out::positioned::PositionedPdfAnnotation;
+
+        let positioned_box = PositionedBox {
+            id: 0,
+            depth: 1,
+            kind: BoxKind::Horizontal,
+            x: Scaled::from_raw(10),
+            y: Scaled::from_raw(20),
+            width: Scaled::from_raw(100),
+            height: Scaled::from_raw(30),
+            baseline: Scaled::from_raw(40),
+        };
+        vec![positioned_fixture(
+            vec![
+                PositionedEvent::Box(positioned_box),
+                PositionedEvent::PdfAnnotation(PositionedPdfAnnotation {
+                    x: Scaled::from_raw(30),
+                    y: positioned_box.baseline,
+                    containing_box: positioned_box.id,
+                    depth: positioned_box.depth,
+                    marker,
+                }),
+            ],
+            0,
+        )]
+    }
+
+    fn assert_annotation_lowering_failure_is_retry_stable(
+        stores: &Universe,
+        marker: tex_out::PdfAnnotationEffect,
+        expected: &str,
+    ) {
+        let pages = annotation_marker_fixture(marker);
+        let commits_before = stores.world().artifact_commits().to_vec();
+        let next_object_before = stores.pdf_next_object_id();
+
+        let first = lower_page_annotations(stores, &pages, &[Scaled::from_raw(0)])
+            .expect_err("malformed annotation marker must fail lowering");
+        let second = lower_page_annotations(stores, &pages, &[Scaled::from_raw(0)])
+            .expect_err("malformed annotation marker must fail identically on retry");
+
+        assert_eq!(first.to_string(), expected);
+        assert_eq!(second.to_string(), expected);
+        assert_eq!(stores.pdf_next_object_id(), next_object_before);
+        assert_eq!(stores.world().artifact_commits(), commits_before);
+    }
+
+    #[test]
+    fn malformed_annotation_records_are_exact_retry_stable_and_leave_the_ledger_unchanged() {
+        let stores = Universe::default();
+        assert_annotation_lowering_failure_is_retry_stable(
+            &stores,
+            tex_out::PdfAnnotationEffect::Annotation { object: 41 },
+            "shipped annotation references missing object 41",
+        );
+        assert_annotation_lowering_failure_is_retry_stable(
+            &stores,
+            tex_out::PdfAnnotationEffect::LinkStart { object: 42 },
+            "shipped link references missing object 42",
+        );
+        assert_annotation_lowering_failure_is_retry_stable(
+            &stores,
+            tex_out::PdfAnnotationEffect::LinkEnd { object: 43 },
+            "shipped link end 43 has no active start",
+        );
+
+        let mut stores = Universe::default();
+        let reserved = stores
+            .reserve_pdf_annotation()
+            .expect("reserve an intentionally uninitialized annotation");
+        assert_annotation_lowering_failure_is_retry_stable(
+            &stores,
+            tex_out::PdfAnnotationEffect::Annotation {
+                object: reserved.object(),
+            },
+            &format!(
+                "shipped annotation object {} was never initialized",
+                reserved.object()
+            ),
+        );
+    }
+
     #[test]
     fn running_link_geometry_continues_with_fresh_page_local_segments() {
         use tex_out::positioned::{PositionedBoxEnd, PositionedPdfAnnotation};
@@ -8238,10 +8321,33 @@ mod tests {
             );
         }
 
+        let parsed = probe(&first);
+        let mut annotation_owners = BTreeSet::new();
+        for page in parsed.pages().expect("navigation pages") {
+            for entry in page.annotations {
+                let id = entry.referenced_id().expect("indirect annotation");
+                assert!(
+                    annotation_owners.insert(id),
+                    "annotation object {id:?} is shared by pages"
+                );
+                let annotation = entry.as_dictionary().expect("annotation dictionary");
+                if let Some(owner) = annotation.get(b"P") {
+                    assert_eq!(
+                        owner.referenced_id(),
+                        Some(page.id),
+                        "annotation /P must identify its normalized owning page"
+                    );
+                }
+            }
+        }
+        assert_eq!(annotation_owners.len(), 2);
+
         // The structure projection deliberately normalizes string syntax and
         // object framing, so retain byte-level assertions for those contracts.
         for marker in [
             b"Root (raw)".as_slice(),
+            b"/Type/Annot",
+            b"/Rect[",
             b"/Subtype /Text",
             b"/Subtype /Link",
             b"/Threads",

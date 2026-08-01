@@ -1107,6 +1107,47 @@ fn fatal_pdf_finalization_does_not_replace_the_requested_output() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn fatal_annotation_action_finalization_does_not_replace_the_requested_output() {
+    let temp_dir = tempfile::tempdir().expect("create annotation-finalization output temp dir");
+    let source = temp_dir.path().join("annotation-finalization.tex");
+    let pdf = temp_dir.path().join("annotation-finalization.pdf");
+    fs::write(
+        &source,
+        "\\pdfoutput=1\\pdfcatalog{} openaction goto page 2 {/Fit}\\shipout\\hbox{}\\end\n",
+    )
+    .expect("write annotation-finalization fixture");
+    fs::write(&pdf, b"existing output\n").expect("seed existing PDF path");
+
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_umber"))
+            .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+            .arg("run")
+            .arg("--pdftex")
+            .arg("--pdf")
+            .arg(&pdf)
+            .arg(&source)
+            .output()
+            .expect("run annotation-finalization fixture")
+    };
+    let first = run();
+    let second = run();
+
+    assert!(!first.status.success());
+    assert!(!second.status.success());
+    assert_eq!(first.stderr, second.stderr, "fatal diagnostics are stable");
+    assert_eq!(
+        String::from_utf8(first.stderr).expect("stderr is utf-8"),
+        "umber: PDF open action references missing page 2\n"
+    );
+    assert_eq!(
+        fs::read(&pdf).expect("read preserved output"),
+        b"existing output\n",
+        "fatal detached finalization must publish no partial annotation artifact"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn pdf_lowering_omits_dvi_special_and_publishes_all_driver_output() {
     let temp_dir = tempfile::tempdir().expect("create DVI-special temp dir");
     let source = temp_dir.path().join("text.tex");
