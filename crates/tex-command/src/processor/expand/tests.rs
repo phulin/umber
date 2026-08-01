@@ -1847,6 +1847,102 @@ fn the_toks_pushes_immutable_stored_input_without_reading_beyond_target() {
     );
 }
 
+#[test]
+fn the_renders_dimensions_glue_orders_and_mu_units_exactly() {
+    use tex_state::glue::{GlueSpec, Order};
+    use tex_state::scaled::Scaled;
+
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let the = install_expandable(&mut universe, "the", ExpandablePrimitive::The);
+
+    let dimen = universe.intern("testdimen").symbol();
+    universe.set_meaning(dimen, Meaning::DimenRegister(0));
+    universe.set_dimen(0, Scaled::from_raw(Scaled::UNITY + Scaled::UNITY / 2));
+
+    let skip = universe.intern("testskip").symbol();
+    universe.set_meaning(skip, Meaning::SkipRegister(0));
+    let skip_value = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch: Scaled::from_raw(3 * Scaled::UNITY),
+        stretch_order: Order::Fill,
+        shrink: Scaled::from_raw(4 * Scaled::UNITY),
+        shrink_order: Order::Normal,
+    });
+    universe.set_skip(0, skip_value);
+
+    let muskip = universe.intern("testmuskip").symbol();
+    universe.set_meaning(muskip, Meaning::MuskipRegister(0));
+    let muskip_value = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        stretch: Scaled::from_raw(2 * Scaled::UNITY),
+        stretch_order: Order::Fill,
+        ..GlueSpec::ZERO
+    });
+    universe.set_muskip(0, muskip_value);
+
+    let register = universe.intern("testtoks").symbol();
+    universe.set_meaning(register, Meaning::ToksRegister(0));
+    let copied_macro = install_macro(
+        &mut universe,
+        "copiedmacro",
+        Token::Char {
+            ch: 'Q',
+            cat: Catcode::Letter,
+        },
+    );
+    let stored = universe.intern_token_list(&[Token::Cs(copied_macro)]);
+    universe.set_toks(0, stored);
+
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(the)),
+            traced(Token::Cs(dimen)),
+            traced(Token::Cs(the)),
+            traced(Token::Cs(skip)),
+            traced(Token::Cs(the)),
+            traced(Token::Cs(muskip)),
+            traced(Token::Cs(the)),
+            traced(Token::Cs(register)),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let expected = "1.5pt2.0pt plus 3.0fill minus 4.0pt1.0mu plus 2.0fill";
+    let mut rendered = String::new();
+    for _ in expected.chars() {
+        let delivery = processor
+            .get_x_token()
+            .expect("the scalar value expands")
+            .expect("rendered scalar token");
+        let Token::Char { ch, .. } = delivery.spelling().semantic_token() else {
+            panic!("the scalar rendering must contain only character tokens")
+        };
+        rendered.push(ch);
+    }
+    assert_eq!(rendered, expected);
+
+    // Stop at the direct splice boundary: ordinary expanded delivery would
+    // expand this macro on its next step, but §466 copies its token verbatim.
+    let opener = processor.get_next().expect("raw the").expect("the command");
+    processor.expand(opener).expect("the inserts stored list");
+    assert_eq!(processor.state.tokens(stored), &[Token::Cs(copied_macro)]);
+    assert_eq!(
+        processor
+            .get_next()
+            .expect("copied token is delivered raw")
+            .expect("stored macro token")
+            .spelling()
+            .semantic_token(),
+        Token::Cs(copied_macro)
+    );
+}
+
 /// TeX82 §467's `ins_the_toks` is observed exactly like §470's `conv_toks`.
 ///
 /// Both reach the input stack through §323's `ins_list`, so `\the` of a
