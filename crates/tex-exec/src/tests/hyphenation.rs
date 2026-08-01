@@ -451,6 +451,139 @@ fn paragraph_hyphenation_distinguishes_font_and_normal_kerns() {
 }
 
 #[test]
+fn directional_regions_preserve_text_hyphenation_eligibility() {
+    // e-TeX 2.6 [17.3822--3880] adds L/R boundaries to horizontal lists;
+    // TeX82 §§896--899 still select and collect the ordinary text between
+    // them. BeginM/EndM are math-origin artifacts and remain barriers.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\tenrm=cmr10 \relax \tenrm
+          \hyphenation{di-rec-tion} \lefthyphenmin=1 \righthyphenmin=1 \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("directional hyphenation setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let chars = || {
+        "direction"
+            .chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect::<Vec<_>>()
+    };
+    let break_count = |stores: &mut Universe, nodes: Vec<Node>| {
+        crate::assignments::test_hyphenated_hlist(stores, &nodes)
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count()
+    };
+    use tex_state::node::MathBoundary::{BeginL, BeginM, BeginR, EndL, EndM, EndR};
+
+    assert_eq!(break_count(&mut stores, chars()), 2, "plain control");
+    for boundaries in [
+        vec![BeginL, EndL],
+        vec![BeginR, EndR],
+        vec![BeginL, BeginR, EndR, EndL],
+        vec![BeginR, BeginL, EndL, EndR],
+    ] {
+        let split = boundaries.len() / 2;
+        let mut nodes: Vec<_> = boundaries[..split]
+            .iter()
+            .copied()
+            .map(Node::Direction)
+            .collect();
+        nodes.extend(chars());
+        nodes.extend(boundaries[split..].iter().copied().map(Node::Direction));
+        assert_eq!(break_count(&mut stores, nodes), 2, "{boundaries:?}");
+    }
+
+    for boundaries in [[BeginM, EndM], [BeginL, BeginM]] {
+        let mut nodes = vec![Node::Direction(boundaries[0])];
+        nodes.extend(chars());
+        nodes.push(Node::Direction(boundaries[1]));
+        assert_eq!(break_count(&mut stores, nodes), 0, "{boundaries:?}");
+    }
+}
+
+#[test]
+fn directional_candidates_keep_language_whatsits_and_nontext_barriers_distinct() {
+    // TeX82 §§896--899 save language/minima while seeking the candidate.
+    // L/R markers and language whatsits are transparent there; normal kerns
+    // and boxes (including e-TeX box_lr variants) remain nonletter barriers.
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    install_etex_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\savinghyphcodes=1 \language=7 \patterns{d1irection}
+          \language=0 \lefthyphenmin=1 \righthyphenmin=1 \end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("saved-language directional setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let word = || {
+        "direction"
+            .chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect::<Vec<_>>()
+    };
+    let language = Node::Whatsit(tex_state::node::Whatsit::Language {
+        language: 7,
+        left_hyphen_min: 1,
+        right_hyphen_min: 1,
+    });
+    let breaks = |stores: &mut Universe, nodes: Vec<Node>| {
+        crate::assignments::test_hyphenated_hlist(stores, &nodes)
+            .iter()
+            .filter(|node| matches!(node, Node::Disc { .. }))
+            .count()
+    };
+    let mut eligible = vec![
+        Node::Direction(tex_state::node::Direction::BeginR),
+        language,
+    ];
+    eligible.extend(word());
+    eligible.push(Node::Direction(tex_state::node::Direction::EndR));
+    assert_eq!(breaks(&mut stores, eligible), 1);
+
+    for barrier in [
+        Node::Kern {
+            amount: Scaled::from_raw(0),
+            kind: KernKind::Explicit,
+        },
+        Node::HList(tex_state::node::BoxNode::new(
+            tex_state::node::BoxNodeFields {
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+                shift: Scaled::from_raw(0),
+                box_lr: tex_state::node::BoxLr::Reversed,
+                glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+                glue_sign: tex_state::node::Sign::Normal,
+                glue_order: tex_state::glue::Order::Normal,
+                children: stores.freeze_node_list(&[]),
+            },
+        )),
+    ] {
+        let mut nodes = vec![barrier];
+        nodes.extend(word());
+        assert_eq!(breaks(&mut stores, nodes), 0);
+    }
+}
+
+#[test]
 fn exception_markers_after_the_63_letter_boundary_are_discarded() {
     // pdfTeX §§26030--27481 bound exception words and their marker vector
     // together. Markers after discarded letters must not alias position 63.

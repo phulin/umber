@@ -483,6 +483,12 @@ fn is_pre_word_skip(node: &Node) -> bool {
             kind: KernKind::Font,
             ..
         } | Node::Whatsit(_)
+            | Node::Direction(
+                tex_state::node::Direction::BeginL
+                    | tex_state::node::Direction::EndL
+                    | tex_state::node::Direction::BeginR
+                    | tex_state::node::Direction::EndR
+            )
     ) || matches!(node, Node::Char { .. } | Node::Lig { .. })
 }
 
@@ -501,6 +507,12 @@ fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
             | Node::Adjust(_)
             | Node::Mark { .. }
             | Node::Whatsit(_)
+            | Node::Direction(
+                tex_state::node::Direction::BeginL
+                | tex_state::node::Direction::EndL
+                | tex_state::node::Direction::BeginR
+                | tex_state::node::Direction::EndR,
+            )
             | Node::Kern { .. } => return true,
             _ => return false,
         }
