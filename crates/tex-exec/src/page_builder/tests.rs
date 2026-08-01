@@ -419,6 +419,64 @@ fn page_topskip_totals_depth_and_terminal_kern_boundaries_match_tex82() {
 }
 
 #[test]
+fn page_contribution_last_items_and_max_depth_matrix() {
+    // TeX.web §§994--1004: each contribution refreshes the last-item
+    // enquiries, while §1004 corrects the preceding depth immediately before
+    // the next node is linked to the current page.
+    let mut stores = Universe::new();
+    params(&mut stores, 10_000, 3, 0);
+
+    stores.append_page_contribution(rule(5, 7));
+    build_page(&mut stores).expect("box contribution succeeds");
+    assert!(!stores.page_has_last_glue());
+    assert_eq!(stores.page_last_penalty(), 0);
+    assert_eq!(stores.page_last_kern(), s(0));
+    assert_eq!(stores.page_dimension(PageDimension::Total), s(9));
+    assert_eq!(stores.page_dimension(PageDimension::Depth), s(3));
+
+    let zero_glue = glue(&mut stores, 0, 0, Order::Normal, 0, Order::Normal);
+    stores.append_page_contribution(Node::Glue {
+        spec: zero_glue,
+        kind: GlueKind::Normal,
+        leader: None,
+    });
+    build_page(&mut stores).expect("glue contribution succeeds");
+    assert!(stores.page_has_last_glue());
+    assert_eq!(stores.page_last_skip(), GlueSpec::ZERO);
+    assert_eq!(stores.page_dimension(PageDimension::Total), s(12));
+    assert_eq!(stores.page_dimension(PageDimension::Depth), s(0));
+
+    stores.append_page_contribution(Node::Kern {
+        amount: s(11),
+        kind: KernKind::Explicit,
+    });
+    build_page(&mut stores).expect("terminal kern remains pending");
+    assert_eq!(stores.page_last_kern(), s(11));
+    assert_eq!(stores.current_page_len(), 3);
+    assert!(matches!(
+        stores.page_contribution_front(),
+        Some(Node::Kern { .. })
+    ));
+
+    stores.append_page_contribution(Node::Penalty(23));
+    build_page(&mut stores).expect("kern and penalty contributions succeed");
+    assert!(!stores.page_has_last_glue());
+    assert_eq!(stores.page_last_penalty(), 23);
+    assert_eq!(stores.page_last_kern(), s(0));
+    assert_eq!(stores.page_dimension(PageDimension::Total), s(23));
+
+    let mark = stores.intern_token_list(&[]);
+    stores.append_page_contribution(Node::Mark {
+        class: 4,
+        tokens: mark,
+    });
+    build_page(&mut stores).expect("mark contribution succeeds");
+    assert!(!stores.page_has_last_glue());
+    assert_eq!(stores.page_last_penalty(), 0);
+    assert_eq!(stores.page_last_kern(), s(0));
+}
+
+#[test]
 fn page_infinite_shrink_recovery_normalizes_only_the_offending_glue() {
     let mut stores = crate::test_harness::universe();
     params(&mut stores, 10_000, 10, 0);
@@ -587,4 +645,57 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     prepare_insertion(&mut stores, &invalid).expect("white-box operation succeeds");
     assert!(stores.box_reg(8).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
+}
+
+#[test]
+fn page_insertion_count_capacity_and_null_split_matrix() {
+    // TeX.web §§1008--1011: a class's correction glue is charged once, every
+    // repeated insertion is count-scaled, equality fits both the page and the
+    // class capacity, and a null split contributes the eject penalty.
+    let mut repeated = Universe::new();
+    params(&mut repeated, 100_000, 0, 0);
+    repeated.freeze_page_specs(PageContents::InsertsOnly);
+    ins_class(&mut repeated, 2, 500, 40_000, 7_000, 3_000);
+    let first = ins(&mut repeated, 2, 10_000, 0, &[]);
+    prepare_insertion(&mut repeated, &first).expect("first insertion fits");
+    let second = ins(&mut repeated, 2, 20_000, 0, &[]);
+    prepare_insertion(&mut repeated, &second).expect("repeated insertion fits");
+    let record = repeated.page_insertion(2).expect("class record is present");
+    assert_eq!(record.height(), s(30_000));
+    assert_eq!(record.last_ins_index(), Some(0));
+    assert_eq!(repeated.page_dimension(PageDimension::Goal), s(78_000));
+    assert_eq!(repeated.page_dimension(PageDimension::Stretch), s(3_000));
+
+    let mut exact = Universe::new();
+    params(&mut exact, 10, 0, 0);
+    exact.freeze_page_specs(PageContents::InsertsOnly);
+    ins_class(&mut exact, 3, 1_000, 10, 0, 0);
+    let at_capacity = ins(&mut exact, 3, 10, 0, &[]);
+    prepare_insertion(&mut exact, &at_capacity).expect("capacity equality fits");
+    assert_eq!(exact.page_dimension(PageDimension::Goal), s(0));
+    assert_eq!(exact.page_insertion_height(3), Some(s(10)));
+    assert_eq!(
+        exact.page_insertion(3).expect("class record").status(),
+        PageInsertionStatus::Inserting
+    );
+
+    let mut null_split = Universe::new();
+    params(&mut null_split, 0, 0, 0);
+    null_split.freeze_page_specs(PageContents::InsertsOnly);
+    ins_class(&mut null_split, 5, 1_000, 20, 0, 0);
+    let unsplittable = ins(&mut null_split, 5, 9, 37, &[rule(9, 0)]);
+    prepare_insertion(&mut null_split, &unsplittable).expect("null split is recorded");
+    assert_eq!(null_split.page_insertion_height(5), Some(s(9)));
+    assert_eq!(null_split.insert_penalties(), EJECT_PENALTY);
+    assert!(matches!(
+        null_split.page_insertion(5).expect("class record").status(),
+        PageInsertionStatus::SplitUp {
+            broken_at: None,
+            ..
+        }
+    ));
+
+    prepare_insertion(&mut null_split, &unsplittable)
+        .expect("later insertion in split class is held over");
+    assert_eq!(null_split.insert_penalties(), EJECT_PENALTY + 37);
 }
