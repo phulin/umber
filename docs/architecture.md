@@ -481,6 +481,12 @@ the output routine when configured, and resumes page building afterward.
 Outermost completed shipout is both an effect commit boundary and one of the
 named incremental checkpoint opportunities.
 
+TeX.web §§1018--1023 distributes insertions in one page-order pass with an
+independent queue for each insertion class. Once a class reaches its recorded
+best insertion, its packed prefix is committed to that class's box; a split
+remainder and every later insertion of that class stay held over in their
+original order with respect to the other held-over material.
+
 The canonical lifetime is fixed by TeX.web §§274 and 281: `new_save_level`
 opens each box or output group and `unsave` restores its local definitions only
 when that exact group ends. Box construction follows §§1073--1087, especially

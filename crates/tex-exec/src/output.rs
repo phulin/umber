@@ -263,6 +263,7 @@ struct InsertionQueue {
     nodes: Vec<Node>,
     best_ins_index: usize,
     status: PageInsertionStatus,
+    accepting: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -297,6 +298,7 @@ fn distribute_insertions(
                     nodes: insertion_box_nodes(stores, insertion.class())?,
                     best_ins_index,
                     status: insertion.status(),
+                    accepting: true,
                 },
             );
         }
@@ -323,7 +325,9 @@ fn distribute_insertions(
                     floating_penalty,
                     content,
                 });
-                if let Some(queue) = queues.get_mut(&class) {
+                if let Some(queue) = queues.get_mut(&class)
+                    && queue.accepting
+                {
                     wait = None;
                     let start = queue.nodes.len();
                     queue.nodes.extend(
@@ -350,6 +354,7 @@ fn distribute_insertions(
                         }
                         let boxed_nodes = std::mem::take(&mut queue.nodes);
                         package_insertion_box(stores, class, boxed_nodes);
+                        queue.accepting = false;
                     }
                 }
                 if let Some(node) = wait {

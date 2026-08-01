@@ -238,6 +238,113 @@ fn fire_up_split_remainder_heldover_and_holding_inserts_boundaries_match_tex82()
 }
 
 #[test]
+fn fire_up_distributes_multiple_classes_and_remainders_in_order() {
+    // TeX82 §§1018--1023 walks the page once. Each insertion class accumulates
+    // independently, while a split remainder and every insertion after that
+    // class's best insertion remain in their original page order.
+    let mut stores = Universe::new();
+    let class9_first = insertion(&mut stores, 9, &[rule(9)]);
+    let class3_split = insertion(&mut stores, 3, &[rule(31), rule(32)]);
+    let class9_last = insertion(&mut stores, 9, &[rule(19)]);
+    let class3_late = insertion(&mut stores, 3, &[rule(39)]);
+    let class9_late = insertion(&mut stores, 9, &[rule(29)]);
+
+    let mut class3 = PageInsertion::new(3, s(0));
+    class3.set_status(PageInsertionStatus::SplitUp {
+        broken_ins_index: 1,
+        broken_at: Some(1),
+    });
+    class3.set_last_ins_index(Some(1));
+    stores.upsert_page_insertion(class3);
+    let mut class9 = PageInsertion::new(9, s(0));
+    class9.set_last_ins_index(Some(2));
+    stores.upsert_page_insertion(class9);
+    stores.record_best_page_break(5, s(0), 0);
+
+    let distributed = distribute_insertions(
+        &mut stores,
+        vec![
+            class9_first,
+            class3_split,
+            class9_last,
+            class3_late,
+            class9_late,
+        ],
+    )
+    .expect("TeX82 insertion distribution succeeds");
+
+    assert!(distributed.page_nodes.is_empty());
+    assert_eq!(distributed.heldover_count, 3);
+    assert!(matches!(
+        distributed.heldover.as_slice(),
+        [
+            Node::Ins { class: 3, .. },
+            Node::Ins { class: 3, .. },
+            Node::Ins { class: 9, .. }
+        ]
+    ));
+    let remainder = match &distributed.heldover[0] {
+        Node::Ins { content, .. } => stores.nodes(*content).testing_decoded(),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        remainder
+            .iter()
+            .filter_map(|node| match node {
+                Node::Rule { height, .. } => *height,
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [s(32)]
+    );
+    let late = match &distributed.heldover[1] {
+        Node::Ins { content, .. } => stores.nodes(*content).testing_decoded(),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        late.iter()
+            .filter_map(|node| match node {
+                Node::Rule { height, .. } => *height,
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [s(39)]
+    );
+    let other_class_late = match &distributed.heldover[2] {
+        Node::Ins { content, .. } => stores.nodes(*content).testing_decoded(),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        other_class_late
+            .iter()
+            .filter_map(|node| match node {
+                Node::Rule { height, .. } => *height,
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [s(29)]
+    );
+
+    for (class, expected) in [(3, vec![s(31)]), (9, vec![s(9), s(19)])] {
+        let class_box = stores.box_reg(class).expect("class box packaged");
+        let [tex_state::node::Node::VList(box_node)] = stores.nodes(class_box).testing_decoded()
+        else {
+            panic!("insertion class {class} should be a vbox");
+        };
+        let heights = stores
+            .nodes(box_node.children)
+            .testing_decoded()
+            .iter()
+            .filter_map(|node| match node {
+                Node::Rule { height, .. } => *height,
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(heights, expected);
+    }
+}
+
+#[test]
 fn output_selection_enters_one_user_output_group_below_deadcycle_limit() {
     let mut stores = Universe::new();
     let output = nonempty_tokens(&mut stores);
@@ -284,6 +391,40 @@ fn output_deadcycle_limit_reports_and_uses_default_path() {
     ));
     assert!(stores.box_reg(255).is_none());
     assert!(effects(&stores).contains("Output loop---0 consecutive dead cycles"));
+}
+
+#[test]
+fn output_deadcycle_limit_has_exact_help_and_default_shipout() {
+    // TeX82 §§1024--1025 diagnoses the boundary before bypassing the user
+    // routine and selecting the already packed box for the default shipout.
+    let mut stores = crate::test_harness::universe();
+    let output = nonempty_tokens(&mut stores);
+    stores.set_tok_param(TokParam::OUTPUT, output);
+    stores.set_int_param(IntParam::MAX_DEAD_CYCLES, 2);
+    stores.set_page_integer(PageInteger::DeadCycles, 2);
+    let fire = push_simple_page(&mut stores);
+
+    let selected =
+        select_pending_page_output(&mut stores, fire).expect("dead-cycle escape succeeds");
+
+    assert!(matches!(
+        selected,
+        SelectedPageOutput::Default(Node::VList(_))
+    ));
+    assert!(stores.box_reg(255).is_none());
+    assert_eq!(stores.page_integer(PageInteger::DeadCycles), 2);
+    let report = effects(&stores);
+    assert!(report.contains("Output loop---2 consecutive dead cycles"));
+    for line in [
+        "I've concluded that your \\output is awry; it never does a",
+        "\\shipout, so I'm shipping \\box255 out myself. Next time",
+        "increase \\maxdeadcycles if you want me to be more patient!",
+    ] {
+        assert!(
+            report.contains(line),
+            "missing exact TeX82 help line: {line}"
+        );
+    }
 }
 
 #[test]

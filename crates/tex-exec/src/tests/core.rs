@@ -5051,6 +5051,42 @@ fn deadcycles_overflow_reports_output_loop() {
 }
 
 #[test]
+fn output_unbalanced_group_reports_and_recovers_canonically() {
+    // TeX82 §§1026--1028: §1226's safety brace reaches `off_save` while the
+    // routine's simple group is still open. The inserted closer ends that
+    // group, then the backed-up safety brace ends the output group normally.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\output={\\begingroup\\global\\count1=37\\shipout\\box255}\\
+              topskip=0pt\\setbox0=\\hbox{}\\copy0\\penalty-10000\\end"
+                .to_vec(),
+        ))
+        .expect("register canonical source");
+
+    for _ in 0..256 {
+        if control.step(&mut stores).expect("canonical recovery step") == MainControlStep::End {
+            break;
+        }
+    }
+
+    assert_eq!(stores.count(1), 37);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+    assert!(stores.box_reg(255).is_none());
+    assert_eq!(
+        stores.page_integer(tex_state::page::PageInteger::DeadCycles),
+        0
+    );
+    assert!(
+        terminal_effect_text(&stores).contains("Extra }, or forgotten \\endgroup"),
+        "canonical off_save diagnostic missing: {}",
+        terminal_effect_text(&stores)
+    );
+}
+
+#[test]
 fn end_cleanup_ejects_residual_page() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
