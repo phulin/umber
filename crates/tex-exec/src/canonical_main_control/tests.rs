@@ -4473,6 +4473,37 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
 }
 
 #[test]
+fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
+    // e-TeX 2.6 [49.1226--1227] uses `scan_register_num` for both the direct
+    // token-register assignment target and a direct token-register RHS.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(&mut control, br"\toks2000={a b c} \toks2001=\toks2000 \end");
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "register" => {
+                Some((record.key.as_deref(), record.tokens.as_ref()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[0].0, Some("toks:2000"));
+    assert_eq!(mutations[1].0, Some("toks:2001"));
+    assert_eq!(
+        stores.tokens(stores.toks(2_001)),
+        stores.tokens(stores.toks(2_000))
+    );
+    assert!(!stores.tokens(stores.toks(2_001)).is_empty());
+    assert!(stores.tokens(stores.toks(0)).is_empty());
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical

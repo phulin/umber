@@ -15,9 +15,9 @@ use crate::{CommandError, CommandProcessor};
 
 /// A completed TeX token-register assignment operand.
 ///
-/// Both register numbers are TeX82 eight-bit quantities. The token list is
-/// already frozen by the command-owned collector or copied from an internal
-/// token-list value.
+/// The register number follows the active profile: TeX82's eight-bit bound or
+/// e-TeX's 15-bit sparse-register bound. The token list is already frozen by
+/// the command-owned collector or copied from an internal token-list value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedTokenRegisterAssignment {
     pub index: u16,
@@ -32,14 +32,15 @@ enum TokenListRightHandSide {
 impl CommandProcessor<'_> {
     /// Scans the operand sequence of TeX82's `\toks` assignment.
     ///
-    /// This follows `scan_eight_bit_int`, `scan_optional_equals`, and the
-    /// internal-token-list branch before unexpanded `scan_toks` (TeX.web
-    /// §§403 and 470). A non-internal RHS is backed up before the collector
-    /// begins, preserving `scan_left_brace` recovery.
+    /// This follows TeX82 §§403/470's register scan, optional equals, and
+    /// internal-token-list branch before unexpanded `scan_toks`; e-TeX 2.6
+    /// [49.1226] widens the target scan to `scan_register_num`. A non-internal
+    /// RHS is backed up before the collector begins, preserving
+    /// `scan_left_brace` recovery.
     pub fn scan_token_register_assignment(
         &mut self,
     ) -> Result<ScannedTokenRegisterAssignment, CommandError> {
-        let index = self.scan_eight_bit_register_index()?;
+        let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
         let tokens = self.scan_token_list_right_hand_side()?.tokens();
         Ok(ScannedTokenRegisterAssignment { index, tokens })
@@ -112,7 +113,10 @@ impl CommandProcessor<'_> {
             .ok_or_else(CommandError::input_invariant)?;
         let tokens = match command.meaning() {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
-                let index = self.scan_eight_bit_register_index()?;
+                // e-TeX 2.6 [49.1227] widens this RHS enquiry alongside
+                // [49.1226]'s assignment target; both select the same sparse
+                // token-register namespace.
+                let index = self.scan_profile_register_index()?;
                 self.state.toks(index)
             }
             Meaning::ToksRegister(index) => self.state.toks(index),
