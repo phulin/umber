@@ -318,7 +318,7 @@ fn finish_job_suppresses_usage_report_when_tracingstats_is_zero() {
 }
 
 #[test]
-fn finish_job_prints_tex82_usage_report_before_dvi_tail_through_live_selector() {
+fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
     for (interaction, terminal) in [
         (InteractionMode::ErrorStop, true),
         (InteractionMode::Batch, false),
@@ -339,8 +339,36 @@ fn finish_job_prints_tex82_usage_report_before_dvi_tail_through_live_selector() 
         assert!(log.contains(
             "0i,0n,0p,0b,0s stack positions out of 200i,40n,60p,500b,600s\nNo pages of output."
         ));
-        assert_eq!(terminal_text(&stores).starts_with(report), terminal);
+        assert!(!terminal_text(&stores).contains(report));
+        assert_eq!(
+            terminal_text(&stores).contains("No pages of output."),
+            terminal
+        );
     }
+}
+
+#[test]
+fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
+    let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
+    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+
+    finish_job(
+        &mut stores,
+        CommandProfile::TEX82,
+        "doc",
+        Some(DviJobOutput {
+            file_name: "doc.dvi".into(),
+            byte_len: 44,
+        }),
+        None,
+    );
+
+    let report = "Here is how much of TeX's memory you used:";
+    let output = "Output written on doc.dvi (1 page, 44 bytes).";
+    assert!(!terminal_text(&stores).contains(report));
+    assert!(terminal_text(&stores).contains(output));
+    let log = log_text(&stores);
+    assert!(log.find(report).expect("statistics") < log.find(output).expect("DVI report"));
 }
 
 #[test]

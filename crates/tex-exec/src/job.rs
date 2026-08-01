@@ -662,7 +662,10 @@ fn print_usage_statistics(stores: &mut Universe) {
         return;
     }
     let usage = stores.engine_usage_statistics();
-    let mut printer = stores.printer();
+    // TeX82 §1333 deliberately uses `wlog*` rather than the live selector
+    // for this block: statistics belong to the transcript even when ordinary
+    // job framing is going to both terminal and log.
+    let mut printer = Printer::new(stores, Selector::LogOnly);
     printer
         .print_nl("Here is how much of TeX's memory you used:")
         .print_nl(" ");
