@@ -1,0 +1,44 @@
+\catcode `{ = 1
+\catcode `} = 2
+\immediate\write16{UMBER-PDFTEX14027-ETEX-BOUNDARIES}
+\def\expandme{EXPANDED}
+\edef\emptyunexpanded{A\unexpanded{}B}
+\edef\rawtokens{A\unexpanded{\expandme ## ~}B}
+\edef\detokenized{\detokenize{\expandme ## ~}}
+\message{UNEXPANDED=\meaning\emptyunexpanded;\meaning\rawtokens}
+\message{DETOKENIZED=\meaning\detokenized}
+\message{EXPRESSIONS=\the\numexpr 2+3*4\relax,
+  \the\dimexpr 1pt+2pt\relax,
+  \the\glueexpr 1pt plus 2pt+3pt\relax,
+  \the\muexpr 1mu plus 2mu+3mu\relax}
+\ifcsname pdftexprofilemissing\endcsname
+  \message{IFCSNAME-WRONG}
+\else
+  \message{IFCSNAME-FALSE}
+\fi
+\ifdefined\pdftexprofilemissing
+  \message{IFCSNAME-LEAKED}
+\else
+  \message{IFCSNAME-ROLLBACK}
+\fi
+\message{INTERACTION=\number\interactionmode}
+\count255=255 \count256=256 \count32767=32767
+\message{COUNTS=\the\count255,\the\count256,\the\count32767}
+\interlinepenalties 3 10 20 30
+\clubpenalties 2 40 50
+\widowpenalties 2 60 70
+\displaywidowpenalties 2 80 90
+\message{PENALTIES=\the\interlinepenalties 2,
+  \the\clubpenalties 1,\the\widowpenalties 2,
+  \the\displaywidowpenalties 1}
+\TeXXeTstate=1
+\lastlinefit=500
+\savingvdiscards=1
+\savinghyphcodes=1
+\everyeof={\message{SCANTOKENS-EOF}}
+\scantokens{\message{SCANTOKENS-BODY}}
+\immediate\openout1=etex-profile-boundaries-effects.out
+\immediate\write1{PDFTEX-ETEX-BOUNDARIES}
+\immediate\closeout1
+\shipout\hbox{}
+\end

@@ -100,7 +100,8 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   ordered Web2C/SyncTeX changes, translator, and archive-owned library build;
   publishes separate clean and instrumented eight-bit executables, gates exact
   DVI/PDF smoke plus shared, expansion/scanner, and state/enquiry/effect
-  schema-v1 traces, audits the exact canonical primitive inventory, proves
+  schema-v1 traces, including an exact extended-versus-compatibility e-TeX
+  boundary matrix, audits the exact canonical primitive inventory, proves
   byte and independently normalized PDF transparency plus determinism, supports
   offline reuse, and records complete build identities.
 - `test-oracle-regeneration.sh`: hermetic validation of the pinned three-engine

@@ -29,6 +29,9 @@ semantic_event_matrix="${repo_root}/tests/pdftex14027-oracle/semantic-event-matr
 extension_input="${repo_root}/tests/pdftex14027-oracle/extensions.tex"
 extension_bytes_input="${repo_root}/tests/pdftex14027-oracle/extensions-bytes.txt"
 extension_event_matrix="${repo_root}/tests/pdftex14027-oracle/extension-event-matrix.txt"
+etex_profile_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundaries.tex"
+etex_profile_compatibility_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-compatibility.tex"
+etex_profile_matrix="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundary-matrix.txt"
 state_input="${repo_root}/tests/pdftex14027-oracle/state.tex"
 state_event_matrix="${repo_root}/tests/pdftex14027-oracle/state-event-matrix.txt"
 state_font_input="${web_source_dir}/tests/cmr10.tfm"
@@ -392,6 +395,52 @@ run_extensions() {
     >"${run_dir}/ordinary.log"
 }
 
+run_etex_profile_boundaries() {
+  local executable="$1" profile="$2" status=0 input marker
+  local run_dir="${out_dir}/etex-profile/${profile}"
+  input="$etex_profile_input"
+  marker=UMBER-PDFTEX14027-ETEX-BOUNDARIES
+  if [[ "$profile" == *-compatibility ]]; then
+    input="$etex_profile_compatibility_input"
+    marker=UMBER-PDFTEX14027-ETEX-COMPATIBILITY-ABSENT
+  fi
+  rm -rf "$run_dir"
+  mkdir -p "$run_dir"
+  cp "$input" "${run_dir}/$(basename "$input")"
+  (
+    cd "$run_dir"
+    if [[ "$profile" == *-compatibility ]]; then
+      env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+        SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+        TEXMFCNF="${source_dir}/texk/kpathsea" \
+        "$executable" -ini -interaction=batchmode "$(basename "$input")" \
+        >terminal.txt 2>&1
+    else
+      env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
+        SOURCE_DATE_EPOCH="$source_date_epoch" FORCE_SOURCE_DATE=1 \
+        TEXMFCNF="${source_dir}/texk/kpathsea" \
+        "$executable" -ini -etex -interaction=batchmode "$(basename "$input")" \
+        >terminal.txt 2>&1
+    fi
+  ) || status="$?"
+  [[ "$status" -eq 0 ]] || fail "$profile e-TeX boundary run exited with status $status"
+  printf '%s\n' "$status" >"${run_dir}/status.txt"
+  local stem
+  stem="$(basename "$input" .tex)"
+  grep -q "$marker" "${run_dir}/${stem}.log" ||
+    fail "$profile e-TeX boundary marker is absent"
+  if [[ "$profile" == *-extended ]]; then
+    grep -q 'IFCSNAME-ROLLBACK' "${run_dir}/${stem}.log" ||
+      fail 'pdfTeX-profile ifcsname rollback marker is absent'
+    grep -q 'COUNTS=255,256,32767' "${run_dir}/${stem}.log" ||
+      fail 'pdfTeX-profile extended-register boundary is absent'
+    grep -q 'PENALTIES=20, 40,70, 80' "${run_dir}/${stem}.log" ||
+      fail 'pdfTeX-profile penalty-array boundary is absent'
+    grep -q 'SCANTOKENS-EOF' "${run_dir}/${stem}.log" ||
+      fail 'pdfTeX-profile scantokens EOF boundary is absent'
+  fi
+}
+
 run_state() {
   local executable="$1" profile="$2"
   local run_dir="${out_dir}/state/${profile}" status=0
@@ -469,6 +518,12 @@ write_build_record() {
       "$(sha_digest 256 "$state_instrumentation_change")"
     printf 'extension-event-matrix-sha256 %s\n' \
       "$(sha_digest 256 "$extension_event_matrix")"
+    printf 'etex-profile-input-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_input")"
+    printf 'etex-profile-compatibility-input-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_compatibility_input")"
+    printf 'etex-profile-boundary-matrix-sha256 %s\n' \
+      "$(sha_digest 256 "$etex_profile_matrix")"
     printf 'state-event-matrix-sha256 %s\n' \
       "$(sha_digest 256 "$state_event_matrix")"
     printf 'extension-primitive-audit-sha256 %s\n' \
@@ -657,6 +712,8 @@ for profile in clean instrumented; do
   run_transitions "$(profile_executable "$profile")" "$profile"
   run_extensions "$(profile_executable "$profile")" "$profile"
   run_state "$(profile_executable "$profile")" "$profile"
+  run_etex_profile_boundaries "$(profile_executable "$profile")" "${profile}-extended"
+  run_etex_profile_boundaries "$(profile_executable "$profile")" "${profile}-compatibility"
 done
 compare_smoke_channels dvi
 compare_smoke_channels pdf
@@ -672,6 +729,16 @@ compare_channels "extension oracle" \
 compare_channels "state oracle" \
   "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
   terminal.txt ordinary.log status.txt state.pdf state-effects.out
+compare_channels "extended pdfTeX-profile e-TeX boundary oracle" \
+  "${out_dir}/etex-profile/clean-extended" \
+  "${out_dir}/etex-profile/instrumented-extended" \
+  terminal.txt status.txt etex-profile-boundaries.log \
+  etex-profile-boundaries.dvi etex-profile-boundaries-effects.out
+compare_channels "compatibility pdfTeX-profile boundary oracle" \
+  "${out_dir}/etex-profile/clean-compatibility" \
+  "${out_dir}/etex-profile/instrumented-compatibility" \
+  terminal.txt status.txt etex-profile-compatibility.log \
+  etex-profile-compatibility.dvi
 compare_channels "independently normalized PDF state oracle" \
   "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
   normalized-pdf.txt
@@ -695,6 +762,21 @@ while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
   grep -Fq "$pattern" "$extension_trace" ||
     fail "extension trace is missing $family/$primitive/$boundary from $fixture at $seam"
 done <"$extension_event_matrix"
+etex_profile_trace="${out_dir}/etex-profile/instrumented-extended/pdftex14027-events.jsonl"
+cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_trace"
+while IFS='|' read -r family boundary pattern compatibility extra; do
+  [[ -z "$family" || "$family" == \#* ]] && continue
+  [[ -n "$boundary" && -n "$pattern" && "$compatibility" == absent &&
+    -z "${extra:-}" ]] ||
+    fail "malformed pdfTeX-profile boundary matrix row for ${family:-unknown}"
+  grep -Fq "$pattern" "$etex_profile_trace" ||
+    fail "pdfTeX extended profile is missing $family/$boundary"
+  if [[ -f "${out_dir}/etex-profile/instrumented-compatibility/pdftex14027-events.jsonl" ]]; then
+    ! grep -Fq "$pattern" \
+      "${out_dir}/etex-profile/instrumented-compatibility/pdftex14027-events.jsonl" ||
+      fail "pdfTeX compatibility profile unexpectedly emitted $family/$boundary"
+  fi
+done <"$etex_profile_matrix"
 state_trace="${out_dir}/state/instrumented/pdftex14027-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$state_trace"
 while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
@@ -720,6 +802,8 @@ done <"$extension_primitive_audit"
 run_transitions "$(profile_executable instrumented)" instrumented-repeat
 run_extensions "$(profile_executable instrumented)" instrumented-repeat
 run_state "$(profile_executable instrumented)" instrumented-repeat
+run_etex_profile_boundaries "$(profile_executable instrumented)" instrumented-repeat-extended
+run_etex_profile_boundaries "$(profile_executable instrumented)" instrumented-repeat-compatibility
 compare_channels "repeated instrumented transition oracle" \
   "${out_dir}/transitions/instrumented" \
   "${out_dir}/transitions/instrumented-repeat" \
@@ -735,5 +819,16 @@ compare_channels "repeated instrumented state oracle" \
   "${out_dir}/state/instrumented-repeat" \
   terminal.txt ordinary.log status.txt state.pdf normalized-pdf.txt state-effects.out \
   pdftex14027-events.jsonl
+compare_channels "repeated extended pdfTeX-profile e-TeX boundary oracle" \
+  "${out_dir}/etex-profile/instrumented-extended" \
+  "${out_dir}/etex-profile/instrumented-repeat-extended" \
+  terminal.txt status.txt etex-profile-boundaries.log \
+  etex-profile-boundaries.dvi etex-profile-boundaries-effects.out \
+  pdftex14027-events.jsonl
+compare_channels "repeated compatibility pdfTeX-profile boundary oracle" \
+  "${out_dir}/etex-profile/instrumented-compatibility" \
+  "${out_dir}/etex-profile/instrumented-repeat-compatibility" \
+  terminal.txt status.txt etex-profile-compatibility.log \
+  etex-profile-compatibility.dvi pdftex14027-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

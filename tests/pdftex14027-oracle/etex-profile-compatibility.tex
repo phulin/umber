@@ -1,0 +1,19 @@
+\catcode `{ = 1
+\catcode `} = 2
+\catcode `# = 6
+\def\assertundefined#1{
+  \expandafter\ifx\csname#1\endcsname\relax
+  \else\errmessage{extension #1 unexpectedly available}\fi}
+\assertundefined{unexpanded}
+\assertundefined{detokenize}
+\assertundefined{numexpr}
+\assertundefined{ifcsname}
+\assertundefined{interactionmode}
+\assertundefined{TeXXeTstate}
+\assertundefined{lastlinefit}
+\assertundefined{savingvdiscards}
+\assertundefined{savinghyphcodes}
+\assertundefined{scantokens}
+\immediate\write16{UMBER-PDFTEX14027-ETEX-COMPATIBILITY-ABSENT}
+\shipout\hbox{}
+\end
