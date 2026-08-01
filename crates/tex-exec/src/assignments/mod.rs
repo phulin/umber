@@ -110,6 +110,8 @@ pub use paragraph::cached_pretolerance_plan;
 #[cfg(test)]
 pub(crate) use paragraph::test_apply_pdf_line_dimensions;
 #[cfg(test)]
+pub(crate) use paragraph::test_materialize_pdf_line;
+#[cfg(test)]
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{

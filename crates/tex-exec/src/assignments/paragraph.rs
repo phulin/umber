@@ -629,12 +629,13 @@ fn break_current_paragraph(
     let mut finished_nodes = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         super::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
-        if adjusts_spacing {
-            apply_line_expansion(stores, &mut broken.nodes, broken.dimensions.width)?;
-        }
-        if protrudes_chars {
-            tex_typeset::protrusion::insert_margin_kerns(stores, &mut broken.nodes);
-        }
+        materialize_pdf_line(
+            stores,
+            &mut broken.nodes,
+            broken.dimensions.width,
+            adjusts_spacing,
+            protrudes_chars,
+        )?;
         extract_migrating_material(
             stores,
             &mut broken.nodes,
@@ -691,6 +692,33 @@ fn break_current_paragraph(
         finished_nodes,
         line_count,
     })
+}
+
+fn materialize_pdf_line(
+    stores: &mut Universe,
+    nodes: &mut Vec<Node>,
+    target: Scaled,
+    adjusts_spacing: bool,
+    protrudes_chars: bool,
+) -> Result<(), ExecError> {
+    if adjusts_spacing {
+        apply_line_expansion(stores, nodes, target)?;
+    }
+    if protrudes_chars {
+        tex_typeset::protrusion::insert_margin_kerns(stores, nodes);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn test_materialize_pdf_line(
+    stores: &mut Universe,
+    nodes: &mut Vec<Node>,
+    target: Scaled,
+    adjusts_spacing: bool,
+    protrudes_chars: bool,
+) -> Result<(), ExecError> {
+    materialize_pdf_line(stores, nodes, target, adjusts_spacing, protrudes_chars)
 }
 
 /// TeX82 §825: paragraph glue may shrink only at normal order. Each

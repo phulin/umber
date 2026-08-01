@@ -220,6 +220,129 @@ fn pdf_font_expand_materializes_scaled_line_fonts() {
     );
 }
 
+/// pdftex.web §§20580--21220 and §§24321--26029: modes 1 and 2 share
+/// selected-line materialization; only mode 2 was allowed to affect the
+/// breakpoint search proved in `tex-typeset`.
+#[test]
+fn pdftex_hz_modes_materialize_exact_selected_line_nodes() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new("\\font\\base=cmr10 \\end"));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font definition executes");
+    let font = font_meaning(&stores, "base");
+    stores
+        .configure_font_expansion(
+            font,
+            tex_state::font::FontExpansion {
+                stretch: 100,
+                shrink: 50,
+                step: 10,
+                auto_expand: true,
+            },
+        )
+        .expect("font expansion configuration is valid");
+    for code in [b'A', b'.'] {
+        stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, code, 1000);
+    }
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Lp, font, b'A', 500);
+    stores.set_pdf_font_code(tex_state::PdfFontCode::Rp, font, b'.', 700);
+    let source_width = stores
+        .font_char_metrics(font, b'A')
+        .expect("cmr10 contains A")
+        .width;
+    let period_width = stores
+        .font_char_metrics(font, b'.')
+        .expect("cmr10 contains period")
+        .width;
+    let natural = source_width
+        .checked_add(period_width)
+        .expect("two glyph widths fit");
+    let target = Scaled::from_raw(natural.raw() + natural.raw() / 20);
+
+    let mut signatures = Vec::new();
+    for adjust in 0..=2 {
+        for protrude in 0..=2 {
+            let mut nodes = vec![
+                tex_state::node::Node::Char {
+                    font,
+                    ch: 'A',
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                },
+                tex_state::node::Node::Char {
+                    font,
+                    ch: '.',
+                    origin: tex_state::token::OriginId::UNKNOWN,
+                },
+            ];
+            crate::assignments::test_materialize_pdf_line(
+                &mut stores,
+                &mut nodes,
+                target,
+                adjust > 0,
+                protrude > 0,
+            )
+            .expect("selected-line microtype materializes");
+            let fonts = nodes
+                .iter()
+                .filter_map(|node| match node {
+                    tex_state::node::Node::Char { font, .. } => Some(*font),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let margins = nodes
+                .iter()
+                .filter_map(|node| match node {
+                    tex_state::node::Node::MarginKern {
+                        amount, side, ch, ..
+                    } => Some((*amount, *side, *ch)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            signatures.push((fonts, margins));
+        }
+    }
+
+    for protrude in 0..=2 {
+        assert_eq!(signatures[3 + protrude], signatures[6 + protrude]);
+    }
+    assert_eq!(signatures[0].0, [font, font]);
+    assert!(signatures[0].1.is_empty());
+    assert_eq!(signatures[1].0, [font, font]);
+    let quad = stores.font_parameter(font, 6);
+    let amount = |code: i64| {
+        Scaled::from_raw(
+            i32::try_from(-((i64::from(quad.raw()) * code + 500) / 1000))
+                .expect("protrusion amount fits scaled"),
+        )
+    };
+    let left = amount(500);
+    let right = amount(700);
+    assert_eq!(
+        signatures[1].1,
+        [
+            (left, tex_state::node::MarginKernSide::Left, b'A'),
+            (right, tex_state::node::MarginKernSide::Right, b'.'),
+        ]
+    );
+    assert_ne!(signatures[3].0, [font, font]);
+    assert!(signatures[3].1.is_empty());
+    assert_ne!(signatures[4].0, [font, font]);
+    assert_eq!(
+        signatures[4]
+            .1
+            .iter()
+            .map(|(_, side, ch)| (*side, *ch))
+            .collect::<Vec<_>>(),
+        [
+            (tex_state::node::MarginKernSide::Left, b'A'),
+            (tex_state::node::MarginKernSide::Right, b'.'),
+        ]
+    );
+}
+
 #[test]
 fn line_expansion_materializes_discrete_glyphs_kerns_and_reuses_fonts() {
     let mut stores = stores_with_fonts();

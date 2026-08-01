@@ -1,8 +1,12 @@
 use super::*;
+use tex_fonts::metrics::CharTag;
+use tex_fonts::{CharMetrics, FontMetrics, LoadedFont};
 use tex_state::Universe;
+use tex_state::font::FontExpansion;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{DiscKind, GlueKind, KernKind, Node, Whatsit};
 use tex_state::scaled::Scaled;
+use tex_state::token::OriginId;
 use tex_state::token::{Catcode, Token};
 
 fn sp(raw: i32) -> Scaled {
@@ -218,6 +222,278 @@ fn rule(width: i32) -> Node {
         height: None,
         depth: None,
     }
+}
+
+fn microtype_font(name: &str, width: i32) -> LoadedFont {
+    let mut characters = vec![None; 256];
+    for code in [b'A', b'B', b'C', b'D', b'-', b'.'] {
+        characters[usize::from(code)] = Some(CharMetrics {
+            width: sp(width),
+            height: sp(0),
+            depth: sp(0),
+            italic_correction: sp(0),
+            tag: CharTag::None,
+        });
+    }
+    let mut parameters = vec![sp(0); 7];
+    parameters[5] = sp(width);
+    LoadedFont::new(
+        name,
+        format!("{name}.tfm"),
+        [width as u8; 32],
+        0,
+        sp(width),
+        sp(width),
+        parameters,
+        FontMetrics::new(characters, Vec::new(), None, None, Vec::new()),
+    )
+}
+
+fn microtype_char(font: tex_state::ids::FontId, ch: char) -> Node {
+    Node::Char {
+        font,
+        ch,
+        origin: OriginId::UNKNOWN,
+    }
+}
+
+/// pdftex.web §§20580--21220 and §§24321--26029: adjustment/protrusion mode
+/// 1 affects only selected-line materialization, while mode 2 participates in
+/// `try_break`. Keep exact winners and demerits for finite stretch, finite
+/// shrink, discretionary, and mixed-font candidates.
+#[test]
+fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
+    let mut universe = Universe::new();
+    let first = universe.intern_font(microtype_font("first", 100));
+    let second = universe.intern_font(microtype_font("second", 80));
+    for font in [first, second] {
+        universe
+            .configure_font_expansion(
+                font,
+                FontExpansion {
+                    stretch: 500,
+                    shrink: 500,
+                    step: 100,
+                    auto_expand: true,
+                },
+            )
+            .expect("microtype font expansion configuration is valid");
+        for code in [b'A', b'B', b'C', b'D', b'-', b'.'] {
+            universe.set_pdf_font_code(tex_state::PdfFontCode::Ef, font, code, 1000);
+            universe.set_pdf_font_code(tex_state::PdfFontCode::Lp, font, code, 500);
+            universe.set_pdf_font_code(tex_state::PdfFontCode::Rp, font, code, 500);
+        }
+    }
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(20),
+        stretch_order: Order::Normal,
+        shrink: sp(10),
+        shrink_order: Order::Normal,
+    });
+    let empty = universe.freeze_node_list(&[]);
+    let pre = universe.freeze_node_list(&[microtype_char(first, '-')]);
+    let scenarios = [
+        (
+            "stretch",
+            230,
+            vec![
+                microtype_char(first, 'A'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'B'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'C'),
+            ],
+            [
+                ([4, 5].as_slice(), 22_100),
+                ([4, 5].as_slice(), 22_100),
+                ([5].as_slice(), 0),
+                ([4, 5].as_slice(), 22_100),
+                ([4, 5].as_slice(), 22_100),
+                ([5].as_slice(), 0),
+                ([5].as_slice(), 2_704),
+                ([5].as_slice(), 2_704),
+                ([5].as_slice(), 225),
+            ],
+        ),
+        (
+            "shrink",
+            230,
+            vec![
+                microtype_char(first, 'A'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'B'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'C'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'D'),
+            ],
+            [
+                ([4, 7].as_slice(), 22_100),
+                ([4, 7].as_slice(), 22_100),
+                ([6, 7].as_slice(), 0),
+                ([4, 7].as_slice(), 22_100),
+                ([4, 7].as_slice(), 22_100),
+                ([6, 7].as_slice(), 0),
+                ([7].as_slice(), 100),
+                ([7].as_slice(), 100),
+                ([7].as_slice(), 1_600),
+            ],
+        ),
+        (
+            "discretionary",
+            200,
+            vec![
+                microtype_char(first, 'A'),
+                Node::Disc {
+                    kind: DiscKind::ExplicitHyphen,
+                    pre,
+                    post: empty,
+                    replace: empty,
+                },
+                microtype_char(first, 'B'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'C'),
+            ],
+            [
+                ([2, 5].as_slice(), 19_700),
+                ([2, 5].as_slice(), 19_700),
+                ([5].as_slice(), 0),
+                ([2, 5].as_slice(), 19_700),
+                ([2, 5].as_slice(), 19_700),
+                ([5].as_slice(), 0),
+                ([2, 5].as_slice(), 19_700),
+                ([2, 5].as_slice(), 19_700),
+                ([2, 5].as_slice(), 2_600),
+            ],
+        ),
+        (
+            "mixed-font",
+            180,
+            vec![
+                microtype_char(first, 'A'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(second, 'B'),
+                Node::Glue {
+                    spec: glue,
+                    kind: GlueKind::Normal,
+                    leader: None,
+                },
+                microtype_char(first, 'C'),
+            ],
+            [
+                ([4, 5].as_slice(), 12_100),
+                ([4, 5].as_slice(), 12_100),
+                ([5].as_slice(), 0),
+                ([4, 5].as_slice(), 12_100),
+                ([4, 5].as_slice(), 12_100),
+                ([5].as_slice(), 0),
+                ([5].as_slice(), 1_936),
+                ([5].as_slice(), 1_936),
+                ([5].as_slice(), 1_936),
+            ],
+        ),
+    ];
+    for (name, width, nodes, expected) in scenarios {
+        let mut index = 0;
+        for adjust in 0..=2 {
+            for protrude in 0..=2 {
+                let mut p = params(width);
+                p.pretolerance = -1;
+                p.tolerance = 500;
+                p.pdf_adjust_spacing = adjust;
+                p.expansion_steps = (adjust > 1).then_some((5, 5));
+                p.pdf_protrude_chars = protrude;
+                let mut hook = NoHyphenation;
+                let result = line_break(&universe, &nodes, p, &mut hook);
+                let positions = result
+                    .breaks
+                    .iter()
+                    .map(|br| br.position)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    (positions.as_slice(), result.demerits),
+                    expected[index],
+                    "{name}: adjust={adjust}, protrude={protrude}"
+                );
+                index += 1;
+            }
+        }
+    }
+}
+
+#[test]
+fn pdftex_hz_mode_two_is_inert_without_pdftex_font_configuration() {
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(20),
+        stretch_order: Order::Normal,
+        shrink: sp(10),
+        shrink_order: Order::Normal,
+    });
+    let nodes = vec![
+        rule(100),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(100),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(100),
+    ];
+    let run = |adjust, protrude| {
+        let mut p = params(230);
+        p.pretolerance = -1;
+        p.tolerance = 500;
+        p.pdf_adjust_spacing = adjust;
+        p.expansion_steps = (adjust > 1).then_some((5, 5));
+        p.pdf_protrude_chars = protrude;
+        let mut hook = NoHyphenation;
+        let result = line_break(&universe, &nodes, p, &mut hook);
+        (
+            result
+                .breaks
+                .iter()
+                .map(|br| br.position)
+                .collect::<Vec<_>>(),
+            result.demerits,
+        )
+    };
+    assert_eq!(run(2, 2), run(0, 0));
 }
 
 #[test]
