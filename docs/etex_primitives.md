@@ -102,10 +102,24 @@ three of the four render `etex.ch`'s exact rendered trace text:
   that state is owned by the executor's mode nest, a layer the command core
   does not reach.
 
-`\tracingnesting` remains unimplemented (`umber2-aqx9`): it is a
-substantially different mechanism (per-input-file group/conditional balance
-warnings, `etex.ch`'s `group_warning`/`if_warning`/`file_warning`) from the
-other three parameters' assignment/group/conditional tracing.
+`\tracingnesting` renders `etex.ch` [23.328]'s `file_warning`: a source level
+records the live group and conditional depth when it opens
+(`crates/tex-command/src/state.rs`'s `record_source_open_depths`, called from
+`open_registered_input`), and its retirement
+(`crates/tex-command/src/processor/next.rs`'s `retire_and_restart`) compares
+that recording against the live depth, printing a "Warning: end of file when
+... is incomplete" line for each group and conditional still open
+(`crates/tex-command/src/tracing_nesting.rs`). Unlike the other
+three parameters, this prints through the ambient selector rather than
+`begin_diagnostic`'s `\tracingonline` redirect, matching `etex.ch`'s own
+`file_warning`, which is not `stat`-gated. `group_warning`/`if_warning` (the
+sibling case: a group or conditional closes while nested inside a _different_
+file than the one it opened in, reported at that close rather than at the
+file's end) remain unimplemented (`umber2-aqx9`): unlike `file_warning`,
+which fires only where an input level is already being retired centrally,
+`group_warning`/`if_warning` need to run at every one of `canonical_main_control.rs`'s
+many scattered `leave_group_with_kind`/conditional-pop call sites, which have
+no single choke point analogous to `file_warning`'s.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 
@@ -158,8 +172,10 @@ family and the compatibility-mode visibility boundary.
 - Diagnostic trace wording for `\tracingassigns`, `\tracinggroups`, and
   `\tracingifs` is pinned by
   `crates/tex-exec/src/canonical_main_control/etex_diagnostic_tracing.rs`'s
-  focused fixtures, against real e-TeX/pdfTeX 1.40.25 output captured with
-  each parameter set in isolation. `\tracingnesting` remains unimplemented
-  (`umber2-aqx9`); `\tracingassigns` coverage of box registers, font
-  selection, and `\tracingifs`'s mode-change prefix remain open (`umber2-38hs`,
+  focused fixtures, and `\tracingnesting`'s `file_warning` case by
+  `crates/tex-command/src/processor/expand/tests.rs`'s, against real
+  e-TeX/pdfTeX 1.40.25 output captured with each parameter set in isolation.
+  `\tracingnesting`'s `group_warning`/`if_warning` case, `\tracingassigns`
+  coverage of box registers and font selection, and `\tracingifs`'s
+  mode-change prefix remain open (`umber2-aqx9`, `umber2-38hs`,
   `umber2-wb0m`).
