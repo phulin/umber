@@ -11908,12 +11908,13 @@ fn apply_scanned_step(
             font,
             global,
         } => {
-            stores.set_math_family_font(
+            assign_canonical_math_family_font(
+                stores,
                 MathFontSize::from(family.size),
                 family.family,
                 font,
                 global,
-            );
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOfInput => Ok(ReplayStep::EndOfInput),
@@ -16049,6 +16050,25 @@ fn apply_accent_nodes(
     });
     modes.current_list_mutation().set_space_factor(1000);
     Ok(ReplayStep::Continue)
+}
+
+fn assign_canonical_math_family_font(
+    stores: &mut Universe,
+    size: MathFontSize,
+    family: u8,
+    font: FontId,
+    global: bool,
+) -> Result<(), ExecError> {
+    // The typed scanner has resolved the selector, but §1234's assignment is
+    // not committed until the font is known to supply classic or OpenType
+    // MATH metrics. Keep this check before the environment mutation so a
+    // captured error can restore/retry the command without changing its
+    // checkpoint identity.
+    if !stores.font(font).supports_math() {
+        return Err(ExecError::OpenTypeMathUnsupported);
+    }
+    stores.set_math_family_font(size, family, font, global);
+    Ok(())
 }
 
 fn load_canonical_font(

@@ -7437,6 +7437,76 @@ fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
 }
 
 #[test]
+fn opentype_only_math_family_rejection_precedes_state_mutation() {
+    let key = tex_fonts::FontRequestKey::new(
+        "cmu-serif-roman",
+        0,
+        tex_fonts::VariationSelection::default(),
+        tex_fonts::FontFeaturePolicy::default(),
+    )
+    .expect("OpenType request key");
+    let request = tex_fonts::FontRequest {
+        key: key.clone(),
+        accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
+        purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
+    };
+    let bytes =
+        include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
+    let font = tex_fonts::OpenTypeFont::parse(
+        &request,
+        tex_fonts::ResolvedFont {
+            request: key,
+            container: tex_fonts::FontContainer::Woff2,
+            bytes,
+            declared_object_sha256: None,
+            declared_program_identity: None,
+            provenance: None,
+            legacy_mapping: None,
+        },
+        tex_fonts::FontLimits::default(),
+    )
+    .expect("OpenType fixture parses");
+    let selection = tex_fonts::OpenTypeProgramSelection {
+        font,
+        variation: tex_fonts::VariationSelection::default(),
+        features: tex_fonts::FontFeaturePolicy::default(),
+        direction: tex_fonts::WritingDirection::LeftToRight,
+    };
+    let size = Scaled::from_raw(10 * Scaled::UNITY);
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let unsupported = stores.intern_font(tex_fonts::LoadedFont::new_opentype(
+        "cmu-serif-roman",
+        "cmu-serif-roman",
+        size,
+        size,
+        selection,
+    ));
+    let family_before = stores.math_family_font(MathFontSize::Text, 0);
+    let state_before = stores.testing_state_hash();
+
+    let error = assign_canonical_math_family_font(
+        &mut stores,
+        MathFontSize::Text,
+        0,
+        unsupported,
+        true,
+    )
+    .expect_err("OpenType-only font cannot enter a classic math family");
+
+    assert!(matches!(error, ExecError::OpenTypeMathUnsupported));
+    assert_eq!(stores.math_family_font(MathFontSize::Text, 0), family_before);
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assign_canonical_math_family_font(
+        &mut stores,
+        MathFontSize::Text,
+        0,
+        tex_state::font::NULL_FONT,
+        true,
+    )
+    .expect("classic nullfont remains assignable");
+}
+
+#[test]
 fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
     // TeX82 §1257 compares the case-sensitive name and size when reusing a
     // font, then assigns font_id_text(f):=u even on the reuse path.
