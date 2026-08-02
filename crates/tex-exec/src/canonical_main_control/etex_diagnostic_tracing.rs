@@ -194,6 +194,29 @@ fn showgroups_reconstructs_box_shift_axis_sign_and_magnitude() {
 }
 
 #[test]
+fn showgroups_prints_the_synthetic_output_group_without_a_brace() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\n\\output={\\showgroups\\shipout\\box255}\n\\hbox{}\\vfil\\penalty-10000\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // e-TeX [49.1292] routes `output_group` directly to `found`, bypassing
+    // the `found2` branch that prints an opening brace for source groups.
+    assert!(
+        log.contains("(\\output)"),
+        "missing output context from {log:?}"
+    );
+    assert!(
+        !log.contains("(\\output{"),
+        "synthetic output group gained a source brace in {log:?}"
+    );
+}
+
+#[test]
 fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
     let (mut stores, mut control) = etex_control();
     register_source(

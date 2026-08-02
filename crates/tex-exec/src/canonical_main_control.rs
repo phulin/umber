@@ -11200,7 +11200,11 @@ fn detached_showgroups(
                 box_index = box_index.saturating_add(1);
                 context
             }
-            GroupKind::Output => "\\output{".to_owned(),
+            // e-TeX [49.1292]'s `output_group` arm jumps directly to
+            // `found`, whose closing parenthesis terminates the context.
+            // Unlike braced source groups, the synthetic output group does
+            // not pass through `found2` and therefore prints no `{`.
+            GroupKind::Output => "\\output".to_owned(),
             GroupKind::Disc => {
                 // e-TeX 2.6 [49.1292] prints one `{}` for each part already
                 // completed, followed by `{` for the currently live part.
