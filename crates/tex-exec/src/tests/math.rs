@@ -1243,16 +1243,35 @@ fn showlists_reports_unfinished_math_noad_fields() {
 
 #[test]
 fn showlists_reports_incomplete_fraction_numerator() {
-    let stores = super::core::run_canonical_tex82(r"\nonstopmode$a\above1pt\showlists b$\end");
+    let stores = super::core::run_canonical_tex82(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=10$a\above1pt\showlists b$\end",
+    );
     let log = terminal_effect_text(&stores);
 
     let numerator = log
         .find("this will begin denominator of:\n")
         .expect("incomplete fraction diagnostic");
     assert!(
-        log[numerator..].contains("this will begin denominator of:\n\\mathord"),
+        log[numerator..].contains(
+            "this will begin denominator of:\n\\fraction, thickness 1.0\n\\\\mathord\n\\.\\fam1 a"
+        ),
         "{log}"
     );
+}
+
+#[test]
+fn showlists_projects_fraction_across_middle_at_canonical_depths() {
+    let stores = super::core::run_canonical_etex(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=10$\left.p\middle.q\over r\showlists\right.\showlists$\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(log.contains(
+        "this will begin denominator of:\n\\fraction, thickness = default\n\\\\left\"0\n\\\\mathord\n\\.\\fam1 p\n\\\\middle\"0\n\\\\mathord\n\\.\\fam1 q"
+    ), "{log}");
+    assert!(log.contains(
+        "\\mathinner\n.\\left\"0\n.\\mathord\n..\\fam1 p\n.\\middle\"0\n.\\fraction, thickness = default\n.\\\\mathord\n.\\.\\fam1 q\n./\\mathord\n./.\\fam1 r\n.\\right\"0"
+    ), "{log}");
 }
 
 #[test]

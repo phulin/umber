@@ -4047,27 +4047,34 @@ fn finish_canonical_math_list(
     let mut output = nodes.to_vec();
     if let Some(fraction) = incomplete {
         let denominator = stores.freeze_node_list(&output);
-        // TeX82 §§1185 and 1191–1192: `\left` owns the math-left group, while
-        // an incomplete fraction owns only the material after its opening
-        // delimiter.  Keep that structural delimiter outside the fraction
-        // noad when the fraction is completed before `\right`.
+        // TeX82 §1185 and e-TeX [48.1185]: `delim_ptr` identifies the most
+        // recent `\left` or `\middle` in a math-left group.  Completion moves
+        // only the nodes after that boundary into the numerator, then links
+        // the fraction noad immediately after the boundary.
         let mut numerator_nodes: Vec<_> = stores
             .nodes(fraction.numerator)
             .into_iter()
             .map(|node| node.to_owned())
             .collect();
-        let leading_left = matches!(
-            numerator_nodes.first(),
-            Some(Node::MathNoad(MathNoad {
-                kind: NoadKind::LeftDelimiter { .. },
-                ..
-            }))
-        )
-        .then(|| numerator_nodes.remove(0));
-        let numerator = if leading_left.is_some() {
-            stores.freeze_node_list(&numerator_nodes)
+        let boundary = numerator_nodes.iter().rposition(|node| {
+            matches!(
+                node,
+                Node::MathNoad(MathNoad {
+                    kind: NoadKind::LeftDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
+                    ..
+                })
+            )
+        });
+        let (prefix, numerator_nodes) = if let Some(boundary) = boundary {
+            let numerator = numerator_nodes.split_off(boundary + 1);
+            (numerator_nodes, numerator)
         } else {
+            (Vec::new(), numerator_nodes)
+        };
+        let numerator = if prefix.is_empty() {
             fraction.numerator
+        } else {
+            stores.freeze_node_list(&numerator_nodes)
         };
         let fraction = Node::FractionNoad(MathFraction {
             numerator,
@@ -4076,7 +4083,7 @@ fn finish_canonical_math_list(
             left_delimiter: fraction.left_delimiter,
             right_delimiter: fraction.right_delimiter,
         });
-        output = leading_left.into_iter().chain([fraction]).collect();
+        output = prefix.into_iter().chain([fraction]).collect();
     }
     Ok(stores.freeze_node_list(&output))
 }

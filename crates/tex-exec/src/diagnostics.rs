@@ -704,9 +704,9 @@ pub(crate) fn execute_showlists(
             Mode::Math | Mode::DisplayMath => {
                 if let Some(fraction) = level.list().incomplete_fraction() {
                     text.push_str("this will begin denominator of:\n");
-                    text.push_str(&dump_node_list(
+                    text.push_str(&crate::node_dump::dump_incomplete_fraction(
                         stores,
-                        fraction.numerator,
+                        fraction,
                         DumpConfig::read(stores),
                     ));
                 }

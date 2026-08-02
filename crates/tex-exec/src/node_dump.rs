@@ -52,6 +52,22 @@ pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpCon
     out
 }
 
+pub(crate) fn dump_incomplete_fraction(
+    stores: &Universe,
+    fraction: &crate::mode::IncompleteFraction,
+    config: DumpConfig,
+) -> String {
+    let mut out = String::new();
+    dump_fraction_header(
+        fraction.thickness,
+        fraction.left_delimiter,
+        fraction.right_delimiter,
+        &mut out,
+    );
+    dump_fraction_part(stores, fraction.numerator, &config, 0, "\\", &mut out);
+    out
+}
+
 #[derive(Clone, Copy)]
 enum ListContext {
     Neutral,
@@ -520,22 +536,36 @@ fn dump_fraction(
     depth: i32,
     out: &mut String,
 ) {
+    dump_fraction_header(
+        fraction.thickness,
+        fraction.left_delimiter,
+        fraction.right_delimiter,
+        out,
+    );
+    dump_fraction_part(stores, fraction.numerator, config, depth + 1, "\\", out);
+    dump_fraction_part(stores, fraction.denominator, config, depth + 1, "/", out);
+}
+
+fn dump_fraction_header(
+    thickness: FractionThickness,
+    left_delimiter: Option<u32>,
+    right_delimiter: Option<u32>,
+    out: &mut String,
+) {
     out.push_str("\\fraction, thickness");
-    match fraction.thickness {
+    match thickness {
         FractionThickness::Default => out.push_str(" = default"),
         FractionThickness::Explicit(value) => {
             let _ = write!(out, " {}", format_scaled_without_unit(value));
         }
     }
-    if let Some(left) = fraction.left_delimiter {
+    if let Some(left) = left_delimiter {
         let _ = write!(out, ", left-delimiter \"{left:X}");
     }
-    if let Some(right) = fraction.right_delimiter {
+    if let Some(right) = right_delimiter {
         let _ = write!(out, ", right-delimiter \"{right:X}");
     }
     out.push('\n');
-    dump_fraction_part(stores, fraction.numerator, config, depth + 1, "\\", out);
-    dump_fraction_part(stores, fraction.denominator, config, depth + 1, "/", out);
 }
 
 fn dump_fraction_part(
@@ -548,8 +578,16 @@ fn dump_fraction_part(
 ) {
     let old_len = out.len();
     dump_list(stores, list, config, depth, ListContext::Neutral, out);
-    if old_len < out.len() {
-        out.replace_range(old_len..old_len + 1, marker);
+    let mut line_start = old_len;
+    while line_start < out.len() {
+        let marker_index = line_start + depth.max(0) as usize;
+        if out.as_bytes().get(marker_index) == Some(&b'.') {
+            out.replace_range(marker_index..marker_index + 1, marker);
+        }
+        let Some(newline) = out[line_start..].find('\n') else {
+            break;
+        };
+        line_start += newline + 1;
     }
 }
 
