@@ -1596,17 +1596,9 @@ fn public_empty_flush_preserves_list_and_fuel_cardinality() {
 
 #[test]
 fn public_flush_places_pdf_auto_kern_before_explicit_hyphen_disc() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     stores.set_int_param(IntParam::PDF_APPEND_KERN, 1);
@@ -1746,21 +1738,12 @@ fn complete_ligature_machine_processes_both_boundaries() {
 
 #[test]
 fn char_primitive_continues_the_pending_ligature_run() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut control = canonical_control_with_cmr10(
+        &mut stores,
         "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{f\\char102}",
-    ));
-
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("character run should execute");
+    );
+    run_canonical_to_input_end(&mut control, &mut stores);
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
@@ -1777,20 +1760,12 @@ fn char_primitive_continues_the_pending_ligature_run() {
 
 #[test]
 fn chained_ligature_retains_every_source_character() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut control = canonical_control_with_cmr10(
+        &mut stores,
         "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{ffi}",
-    ));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("ligature run should execute");
+    );
+    run_canonical_to_input_end(&mut control, &mut stores);
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
         panic!("box0 should contain an hbox");
@@ -1832,17 +1807,9 @@ fn hyphenation_does_not_partially_consume_a_boundary_ligature() {
 
 #[test]
 fn hyphenation_keeps_scanning_across_font_kerns() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     stores.add_hyphenation_exception(ExceptionSpec {
         word: "availability".to_owned(),
         positions: vec![5, 9],
@@ -1962,17 +1929,9 @@ fn hyphenation_does_not_repeat_a_left_boundary_kern() {
 
 #[test]
 fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     stores.add_hyphenation_exception(ExceptionSpec {
         word: "sentence".to_owned(),
         positions: vec![3],
@@ -2018,17 +1977,9 @@ fn discretionary_absorbs_font_kern_across_hyphenated_line_boundary() {
 fn ffi_reconstitution_suppresses_an_unsynchronized_second_hyphenation_point() {
     // TeX82 §§904 and 913-916 ignore a second point before the two branches
     // have synchronized beyond the ligature that contains the first point.
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     stores.add_hyphenation_exception(ExceptionSpec {
         word: "office".to_owned(),
         positions: vec![2, 3],
