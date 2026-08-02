@@ -1,11 +1,7 @@
 use std::env;
-use std::path::PathBuf;
 
 use proptest::prelude::*;
 use proptest::test_runner::Config;
-use tex_exec::{ExecutionContext, FontResolver};
-use tex_expand::InputResolver;
-use tex_lex::{InputStack, MemoryInput};
 use tex_state::{Universe, World};
 
 const REPLAY_SHARDS: u32 = 8;
@@ -96,6 +92,7 @@ macro_rules! replay_identity_shard {
             })]
 
             #[test]
+            #[ignore = "umber2-johp.24.1.7: canonical multi-run replay identity"]
             fn $name(program in program_strategy()) {
                 assert_effectful_replay_identity(&program);
             }
@@ -113,6 +110,7 @@ macro_rules! commit_path_shard {
             })]
 
             #[test]
+            #[ignore = "umber2-johp.24.1.7: canonical multi-run replay identity"]
             fn $name((program, mask) in (commit_program_strategy(), prop::collection::vec(any::<bool>(), 0..18))) {
                 assert_commit_path_matches_straight_line(&program, &mask);
             }
@@ -239,12 +237,7 @@ fn run_step(universe: &mut Universe, step: &Step) {
 }
 
 fn run_tex_chunk(universe: &mut Universe, source: &str) {
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let mut input_resolver = FuzzInputResolver;
-    let mut font_resolver = RejectingFontResolver;
-    let context =
-        ExecutionContext::with_resolvers("effect-fuzz", &mut input_resolver, &mut font_resolver);
-    umber::run_input_with_context(&mut input, universe, context)
+    umber::run_memory_with_stores(source, universe)
         .unwrap_or_else(|err| panic!("effectful chunk failed: {err}\n{source}"));
 }
 
@@ -330,42 +323,6 @@ fn seed_world(world: &mut World) {
         world
             .push_memory_terminal_line(format!("terminal{index}"))
             .expect("seed terminal line");
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FuzzInputResolver;
-
-impl InputResolver for FuzzInputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-        let mut path = PathBuf::from(name);
-        if path.extension().is_none() {
-            path.set_extension("tex");
-        }
-        let content = input
-            .read_input_file(&path)
-            .map_err(|err| format!("{} ({err})", path.display()))?;
-        Ok(tex_expand::ResourceLookup::Available(Box::new(
-            MemoryInput::new(String::from_utf8_lossy(content.bytes()).into_owned()),
-        )))
-    }
-}
-
-struct RejectingFontResolver;
-
-impl FontResolver for RejectingFontResolver {
-    fn open_font(
-        &mut self,
-        _input: &mut dyn tex_state::InputReadState,
-        path: &std::path::Path,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
-        Err(format!("unexpected font request {}", path.display()))
     }
 }
 

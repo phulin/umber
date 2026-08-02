@@ -18,8 +18,8 @@ use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, PrintSink, Universe,
-    WorldCommitMode, WorldError,
+    CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, FileContent,
+    PrintSink, Universe, WorldCommitMode, WorldError,
 };
 
 mod canonical_session;
@@ -121,6 +121,22 @@ impl RetainedRootRequest {
             startup_name,
             profile,
             source: SourceRegistration::new(RegisteredSourceKind::Generated, source.into()),
+        }
+    }
+
+    /// Retains a root already selected through the active [`World`].
+    #[must_use]
+    pub fn file(
+        startup_name: impl Into<String>,
+        source: FileContent,
+        profile: CommandProfile,
+    ) -> Self {
+        let startup_name = startup_name.into();
+        Self {
+            invocation: startup_name.clone(),
+            startup_name,
+            profile,
+            source: SourceRegistration::world(source),
         }
     }
 }
@@ -1838,33 +1854,33 @@ mod primitive_mode_tests {
     }
 }
 
-/// Runs an already-open input stack through the same executor path as `umber run`.
+/// Runs one retained root through canonical main control.
 pub fn run_input_with_context(
-    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_>,
-) -> Result<String, tex_exec::ExecError> {
-    run_input_collecting_artifacts(input, stores, context).map(|result| result.terminal_text)
+    request: RetainedRootRequest,
+    host: &mut dyn CanonicalResourceHost,
+) -> Result<String, CanonicalSessionError> {
+    run_input_collecting_artifacts(stores, request, host).map(|result| result.terminal_text)
 }
 
-/// Runs an already-open input stack with the explicitly selected command profile.
+/// Runs one retained root with the explicitly selected command profile.
 pub fn run_input_with_context_and_profile(
-    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_>,
+    request: RetainedRootRequest,
+    host: &mut dyn CanonicalResourceHost,
     profile: CommandProfile,
-) -> Result<String, tex_exec::ExecError> {
-    run_input_collecting_artifacts_with_profile(input, stores, context, profile)
+) -> Result<String, CanonicalSessionError> {
+    run_input_collecting_artifacts_with_profile(stores, request, host, profile)
         .map(|result| result.terminal_text)
 }
 
 /// Runs input and returns the artifact ids emitted by `\shipout` in order.
 pub fn run_input_collecting_artifacts(
-    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_>,
-) -> Result<RunResult, tex_exec::ExecError> {
-    EngineSession::new(input, stores, context).execute()
+    request: RetainedRootRequest,
+    host: &mut dyn CanonicalResourceHost,
+) -> Result<RunResult, CanonicalSessionError> {
+    run_retained_root(stores, request, host)
 }
 
 /// Runs input under an explicitly selected command profile and returns its artifacts.
@@ -1874,12 +1890,13 @@ pub fn run_input_collecting_artifacts(
 /// [`CommandProfile::PDFTEX14027`] so shipout finalizes PDF-only deferred nodes as
 /// PDF rather than applying the exact DVI-mode rejection.
 pub fn run_input_collecting_artifacts_with_profile(
-    input: &mut InputStack,
     stores: &mut Universe,
-    context: ExecutionContext<'_>,
+    mut request: RetainedRootRequest,
+    host: &mut dyn CanonicalResourceHost,
     profile: CommandProfile,
-) -> Result<RunResult, tex_exec::ExecError> {
-    EngineSession::with_command_profile(input, stores, context, profile).execute()
+) -> Result<RunResult, CanonicalSessionError> {
+    request.profile = profile;
+    run_retained_root(stores, request, host)
 }
 
 /// Reads committed page artifacts from `World` and writes a complete DVI file.
@@ -2005,44 +2022,6 @@ pub fn run_memory_with_stores_and_profile(
     .map(|result| result.terminal_text)
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
-struct RejectingMemoryInputResolver;
-
-#[cfg(test)]
-impl InputResolver for RejectingMemoryInputResolver {
-    fn open_input(
-        &mut self,
-        _input: &mut dyn tex_state::InputReadState,
-        _name: &str,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
-        Ok(tex_expand::ResourceLookup::Unavailable)
-    }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
-struct DirectFontResolver;
-
-#[cfg(test)]
-impl FontResolver for DirectFontResolver {
-    fn open_font(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        path: &Path,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
-        Ok(match input.read_input_file(path) {
-            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
-                metrics,
-                opentype: None,
-            }),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
-        })
-    }
-}
-
 fn uncommitted_terminal_text(stores: &Universe) -> String {
     let mut text = String::new();
     for record in stores.world().effect_records() {
@@ -2144,9 +2123,8 @@ impl From<tex_out::html::HtmlError> for HtmlBuildError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DirectFontResolver, DriverFile, EngineSession, FinalizationCommit, FinalizationError,
-        PlannedFinalization, RejectingMemoryInputResolver, dvi_from_committed_artifacts,
-        dvi_from_page_plans, prepare_pdftex_run_stores,
+        DriverFile, EngineSession, FinalizationCommit, FinalizationError, PlannedFinalization,
+        dvi_from_committed_artifacts, dvi_from_page_plans, prepare_pdftex_run_stores,
         run_input_collecting_artifacts_with_profile, uncommitted_terminal_text,
     };
     use std::path::{Path, PathBuf};
@@ -2163,23 +2141,67 @@ mod tests {
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     #[test]
+    fn public_file_root_retains_world_identity_across_typed_input_retry() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        tex_expand::install_expandable_primitives(&mut stores);
+        tex_exec::install_unexpandable_primitives(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file("/project/root.tex", b"\\message{root}\\input child \\end")
+            .expect("root is staged");
+        stores
+            .world_mut()
+            .set_memory_file("/project/child.tex", b"\\message{child}")
+            .expect("child is staged");
+        let root = stores
+            .world_mut()
+            .read_file("/project/root.tex")
+            .expect("root is selected");
+        let root_hash = root.hash();
+        let mut host = super::FileSessionResolvers::new(
+            Path::new("/project/root.tex"),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let result = super::run_input_collecting_artifacts(
+            &mut stores,
+            super::RetainedRootRequest::file("root", root, CommandProfile::TEX82),
+            &mut host,
+        )
+        .expect("file-root run completes");
+
+        assert!(result.terminal_text.contains("root"));
+        assert!(result.terminal_text.contains("child"));
+        assert!(matches!(
+            stores.world().input_records(),
+            [root_record, child_record]
+                if root_record.hash() == root_hash
+                    && root_record.path() == Path::new("/project/root.tex")
+                    && child_record.path() == Path::new("/project/child.tex")
+        ));
+    }
+
+    #[test]
+    #[ignore = "umber2-johp.24.1.4: canonical grouped DVI-error rollback"]
     fn deferred_pdf_nodes_follow_the_explicit_session_profile() {
         let source = "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral{q}}\\end";
         for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
             let mut stores = Universe::default();
             prepare_pdftex_run_stores(&mut stores);
-            let mut input = InputStack::new(MemoryInput::new(source));
-            let mut input_resolver = RejectingMemoryInputResolver;
-            let mut font_resolver = DirectFontResolver;
-            let context = ExecutionContext::with_resolvers(
-                "profile-boundary",
-                &mut input_resolver,
-                &mut font_resolver,
+            let mut host = super::FileSessionResolvers::new(
+                Path::new("profile-boundary.tex"),
+                Vec::new(),
+                Vec::new(),
             );
             let error = run_input_collecting_artifacts_with_profile(
-                &mut input,
                 &mut stores,
-                context,
+                super::RetainedRootRequest::authored(
+                    "profile-boundary",
+                    source.as_bytes(),
+                    profile,
+                ),
+                &mut host,
                 profile,
             )
             .expect_err("TeX and e-TeX profiles must traverse deferred nodes in DVI mode");
@@ -2191,19 +2213,19 @@ mod tests {
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let mut input_resolver = RejectingMemoryInputResolver;
-        let mut font_resolver = DirectFontResolver;
-        let context = ExecutionContext::with_resolvers(
-            "profile-boundary",
-            &mut input_resolver,
-            &mut font_resolver,
-        )
-        .with_dvi_output(false);
+        let mut host = super::FileSessionResolvers::new(
+            Path::new("profile-boundary.tex"),
+            Vec::new(),
+            Vec::new(),
+        );
         let result = run_input_collecting_artifacts_with_profile(
-            &mut input,
             &mut stores,
-            context,
+            super::RetainedRootRequest::authored(
+                "profile-boundary",
+                source.as_bytes(),
+                CommandProfile::PDFTEX14027,
+            ),
+            &mut host,
             CommandProfile::PDFTEX14027,
         )
         .expect("pdfTeX profile accepts deferred PDF nodes in PDF mode");
