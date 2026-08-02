@@ -1,5 +1,6 @@
 use super::support::*;
 use super::*;
+use tex_command::CommandProfile;
 
 fn pretolerance_memo_config() -> tex_state::PureMemoConfig {
     tex_state::PureMemoConfig {
@@ -244,8 +245,9 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
 
 #[test]
 fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
-    let mut stores =
-        super::core::run_canonical_tex82_with_fonts("\\font\\tenrm=cmr10 \\relax \\tenrm \\end");
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
+    );
     let font = stores.current_font();
     let word = vec![
         tex_state::node::Node::Char {
@@ -711,9 +713,8 @@ fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
 
 #[test]
 fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
-    let mut stores = super::core::run_canonical_tex82_with_fonts(
-        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
-    );
+    let mut stores =
+        super::core::run_canonical_tex82_with_fonts("\\font\\tenrm=cmr10 \\relax \\tenrm \\end");
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let empty = stores.freeze_node_list(&[]);
@@ -1085,9 +1086,27 @@ fn run_canonical_paragraph_program(
     source: &str,
     configure: impl FnOnce(&mut Universe),
 ) -> (Universe, Vec<u8>, usize) {
+    run_canonical_paragraph_program_with_profile(source, CommandProfile::TEX82, configure)
+}
+
+fn run_canonical_paragraph_program_with_profile(
+    source: &str,
+    profile: CommandProfile,
+    configure: impl FnOnce(&mut Universe),
+) -> (Universe, Vec<u8>, usize) {
     let mut stores = stores_with_fonts();
     configure(&mut stores);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = match profile {
+        CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(&mut stores),
+        CommandProfile::ETEX26 => {
+            tex_expand::install_expandable_primitives(&mut stores);
+            tex_expand::install_etex_expandable_primitives(&mut stores);
+            install_unexpandable_primitives(&mut stores);
+            install_etex_unexpandable_primitives(&mut stores);
+            CanonicalMainControl::prepared_initex(profile)
+        }
+        _ => panic!("paragraph helper supports only TeX82 and e-TeX"),
+    };
     let metrics = tex_state::InputReadState::read_input_file(
         &mut tex_state::InputOpenState::input_open_context(&mut stores),
         std::path::Path::new("cmr10.tfm"),
@@ -1225,18 +1244,13 @@ fn paragraph_front_end_replays_validated_count_mutations() {
 
 #[test]
 fn grouped_paragraph_redo_preserves_local_and_global_assignment_scope() {
-    let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    stores.enable_paragraph_memo();
     let local = "{\\count5=41 grouped local text\\par}\n";
     let global = "{\\global\\count6=9 grouped global text\\par}\n";
     let source = format!("{local}{local}{local}{global}{global}{global}\\vfill\\eject\\end");
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("grouped stateful paragraphs");
+    let (stores, _, _) = run_canonical_paragraph_program(&source, |stores| {
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.enable_paragraph_memo();
+    });
     assert_eq!(
         stores.count(5),
         0,
@@ -1251,17 +1265,12 @@ fn grouped_paragraph_redo_preserves_local_and_global_assignment_scope() {
 
 #[test]
 fn effectful_paragraph_commands_remain_replay_barriers() {
-    let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    stores.enable_paragraph_memo();
     let paragraph = "\\message{visible}\\advance\\count7 by1 effectful paragraph text\\par\n";
     let source = format!("{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("effectful paragraphs execute normally");
+    let (stores, _, _) = run_canonical_paragraph_program(&source, |stores| {
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.enable_paragraph_memo();
+    });
     assert_eq!(stores.count(7), 3);
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0);
@@ -1270,18 +1279,17 @@ fn effectful_paragraph_commands_remain_replay_barriers() {
 
 #[test]
 fn deterministic_message_effects_replay_in_original_order() {
-    let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    stores.enable_paragraph_memo();
     let paragraph = "\\message{visible}message paragraph text\\par\n";
-    let source = format!("{paragraph}{paragraph}{paragraph}");
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("message paragraphs");
-    assert_eq!(terminal_effect_text(&stores).matches("visible").count(), 3);
+    let source = format!("{paragraph}{paragraph}{paragraph}\\end");
+    let (stores, _, _) = run_canonical_paragraph_program(&source, |stores| {
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.enable_paragraph_memo();
+    });
+    let terminal = stores
+        .world()
+        .memory_terminal_output()
+        .expect("canonical messages reach the terminal in order");
+    assert_eq!(String::from_utf8_lossy(terminal).matches("visible").count(), 3);
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
     assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
@@ -1289,20 +1297,15 @@ fn deterministic_message_effects_replay_in_original_order() {
 
 #[test]
 fn direct_batch_executor_does_not_publish_paragraph_regions() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    stores.enable_paragraph_memo();
     let source = r"\font\tenrm=cmr10 \tenrm
         \def\body{office \accent18 a\discretionary{-}{}{x}}
         \everypar{\message{EP}}
         {\csname body\endcsname \mark{m}\insert0{\hbox{x}}\vadjust{\kern1pt}\par}
         \end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("recordable macro paragraph");
+    let (stores, _, _) = run_canonical_paragraph_program(source, |stores| {
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.enable_paragraph_memo();
+    });
 
     let regions = stores.recorded_paragraphs();
     assert!(regions.is_empty(), "{regions:#?}");
@@ -1311,18 +1314,15 @@ fn direct_batch_executor_does_not_publish_paragraph_regions() {
 #[test]
 fn direct_batch_executor_does_not_arm_incremental_barrier_tracking() {
     let run = |body: &str| {
-        let mut stores = stores_with_fonts();
-        tex_expand::install_expandable_primitives(&mut stores);
-        tex_expand::install_etex_expandable_primitives(&mut stores);
-        install_unexpandable_primitives(&mut stores);
-        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-        stores.enable_paragraph_memo();
-        let mut input = InputStack::new(MemoryInput::new(format!(
-            "\\font\\tenrm=cmr10 \\tenrm {body}\\end"
-        )));
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("barrier paragraph executes cold");
+        let source = format!("\\font\\tenrm=cmr10 \\tenrm {body}\\end");
+        let (stores, _, _) = run_canonical_paragraph_program_with_profile(
+            &source,
+            CommandProfile::ETEX26,
+            |stores| {
+                stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+                stores.enable_paragraph_memo();
+            },
+        );
         stores.pure_memo_stats()
     };
     let display = run("display text$$x$$after\\par");
