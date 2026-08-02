@@ -604,6 +604,11 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    #[cfg(test)]
+    pub(crate) const fn main_loop_active_for_test(&self) -> bool {
+        self.main_loop_active
+    }
+
     fn local_skip_pointer_reassigned(&self, stores: &Universe, scanned: &ScannedStep) -> bool {
         let ScannedStep::Skip {
             index,
