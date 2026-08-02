@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    CommandDialect, CommandProfile, FontLoadRequest, FontResource, PdfImageRequest,
-    PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    CommandDeliveryBoundary, CommandDialect, CommandObservation, CommandObserver, CommandProfile,
+    FontLoadRequest, FontResource, ObservedToken, PdfImageRequest, PdfImageResource,
+    RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
@@ -26,6 +27,114 @@ use crate::RunResult;
 
 /// Default bound for a host that repeatedly declines the same typed need.
 pub const DEFAULT_CANONICAL_NO_PROGRESS_LIMIT: u8 = 8;
+
+/// Typed, host-neutral statistics projected from committed canonical command
+/// deliveries. The counters are observational and never participate in TeX
+/// execution or user-facing CLI behavior.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CanonicalExpansionStats {
+    pub token_frame_steps: u64,
+    pub provenance_resolutions: u64,
+    pub character_tokens: u64,
+    pub meaning_lookups: u64,
+    pub meaning_cache_hits: u64,
+    pub meaning_cache_misses: u64,
+    pub literal_spans: u64,
+    pub literal_tokens: u64,
+    pub segmentation_cache_hits: u64,
+    pub segmentation_cache_misses: u64,
+    pub builder_appends: u64,
+    pub source_text_span_attempts: u64,
+    pub source_text_spans: u64,
+    pub source_text_tokens: u64,
+    pub frame_step_nanos: u64,
+    pub provenance_nanos: u64,
+    pub classification_meaning_nanos: u64,
+    pub builder_append_nanos: u64,
+    pub frame_step_timer_samples: u64,
+    pub provenance_timer_samples: u64,
+    pub classification_meaning_timer_samples: u64,
+    pub builder_append_timer_samples: u64,
+}
+
+impl CanonicalExpansionStats {
+    #[must_use]
+    pub fn character_fraction(self) -> f64 {
+        if self.token_frame_steps == 0 {
+            0.0
+        } else {
+            self.character_tokens as f64 / self.token_frame_steps as f64
+        }
+    }
+
+    #[must_use]
+    pub fn mean_literal_run(self) -> f64 {
+        if self.literal_spans == 0 {
+            0.0
+        } else {
+            self.literal_tokens as f64 / self.literal_spans as f64
+        }
+    }
+
+    #[must_use]
+    pub fn mean_source_text_run(self) -> f64 {
+        if self.source_text_spans == 0 {
+            0.0
+        } else {
+            self.source_text_tokens as f64 / self.source_text_spans as f64
+        }
+    }
+
+    #[must_use]
+    pub fn attributed_nanos(self) -> u64 {
+        self.frame_step_nanos
+            .saturating_add(self.provenance_nanos)
+            .saturating_add(self.classification_meaning_nanos)
+            .saturating_add(self.builder_append_nanos)
+    }
+}
+
+#[derive(Default)]
+struct CanonicalExpansionObserver {
+    stats: CanonicalExpansionStats,
+    in_source_span: bool,
+    in_literal_span: bool,
+}
+
+impl CommandObserver for CanonicalExpansionObserver {
+    fn committed(&mut self, observation: CommandObservation) {
+        let CommandObservation::Command(command) = observation else {
+            return;
+        };
+        if command.boundary != CommandDeliveryBoundary::Expanded {
+            return;
+        }
+        self.stats.token_frame_steps = self.stats.token_frame_steps.saturating_add(1);
+        self.stats.meaning_lookups = self.stats.meaning_lookups.saturating_add(1);
+        let character = matches!(command.spelling, ObservedToken::Character { .. });
+        if character {
+            self.stats.character_tokens = self.stats.character_tokens.saturating_add(1);
+            self.stats.literal_tokens = self.stats.literal_tokens.saturating_add(1);
+            if !self.in_literal_span {
+                self.stats.literal_spans = self.stats.literal_spans.saturating_add(1);
+            }
+        }
+        self.in_literal_span = character;
+        if command.provenance.has_origin {
+            self.stats.provenance_resolutions = self.stats.provenance_resolutions.saturating_add(1);
+        }
+        let source = command.provenance.source_range.is_some();
+        self.stats.source_text_span_attempts =
+            self.stats.source_text_span_attempts.saturating_add(1);
+        if source {
+            self.stats.source_text_tokens = self.stats.source_text_tokens.saturating_add(1);
+            if !self.in_source_span {
+                self.stats.source_text_spans = self.stats.source_text_spans.saturating_add(1);
+            }
+        }
+        self.in_source_span = source;
+    }
+}
 
 /// Explicit driver adapter for TeX82's startup `**` line and any §530
 /// replacement filename lines.
@@ -860,6 +969,18 @@ impl<'a> CanonicalEngineSession<'a> {
         }
     }
 
+    /// Runs through the same retained resource protocol while projecting
+    /// committed expanded-delivery and provenance counters for profiling.
+    pub fn run_with_expansion_stats(
+        &mut self,
+        host: &mut dyn CanonicalResourceHost,
+        checkpoints: &mut dyn CheckpointSink,
+    ) -> Result<(RunResult, CanonicalExpansionStats), CanonicalSessionError> {
+        let mut observer = CanonicalExpansionObserver::default();
+        let result = self.run_with_observer(host, checkpoints, &mut observer)?;
+        Ok((result, observer.stats))
+    }
+
     /// Observed variant of [`Self::run`] over the same production session.
     pub fn run_with_observer(
         &mut self,
@@ -1222,6 +1343,35 @@ mod tests {
                 .is_some_and(|(echo, opening)| echo < opening),
             "terminal={terminal:?} log={log:?}"
         );
+    }
+
+    #[test]
+    fn expansion_stats_project_only_committed_expanded_deliveries_with_provenance() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        session
+            .register_authored_root("stats.tex", b"\\number42\\end".to_vec().into())
+            .expect("stats root registers");
+        let (_, stats) = session
+            .run_with_expansion_stats(&mut WorldHost, &mut Vec::new())
+            .expect("stats fixture completes");
+        assert_eq!(
+            stats,
+            CanonicalExpansionStats {
+                token_frame_steps: 10,
+                provenance_resolutions: 9,
+                character_tokens: 5,
+                meaning_lookups: 10,
+                literal_spans: 2,
+                literal_tokens: 5,
+                source_text_span_attempts: 10,
+                source_text_spans: 1,
+                source_text_tokens: 3,
+                ..CanonicalExpansionStats::default()
+            }
+        );
+        assert!(stats.character_fraction().is_finite());
+        assert!(stats.mean_source_text_run().is_finite());
     }
 
     #[test]

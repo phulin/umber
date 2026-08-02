@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
@@ -16,9 +17,7 @@ use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
     SameHistoryStop, Session,
 };
-#[cfg(feature = "profiling")]
-use tex_lex::ExpansionStats;
-use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
+use tex_lex::{InputSource, MemoryInput};
 #[cfg(feature = "profiling")]
 use tex_state::measurement::{
     ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
@@ -31,7 +30,9 @@ use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
 use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
-use umber::{EngineSession, FileSessionResolvers, dvi_from_page_plans, prepare_run_stores};
+#[cfg(feature = "profiling")]
+use umber::CanonicalExpansionStats;
+use umber::{CanonicalEngineSession, FileSessionResolvers, dvi_from_page_plans};
 
 const JOB_DIR: &str = "/gentle-profile";
 const JOB_FILE: &str = "profile-job.tex";
@@ -159,7 +160,7 @@ struct RunOutput {
     checkpoints: usize,
     checkpoint_hash: u64,
     #[cfg(feature = "profiling")]
-    expansion_stats: ExpansionStats,
+    expansion_stats: CanonicalExpansionStats,
 }
 
 #[derive(Default)]
@@ -1912,7 +1913,6 @@ fn incremental_session(
     recording: PureMemoRecordingPolicy,
 ) -> Result<Session, String> {
     let mut stores = Universe::with_world(template.clone());
-    prepare_run_stores(&mut stores);
     if memo {
         stores.enable_pure_memo(PureMemoConfig {
             recording,
@@ -2220,26 +2220,30 @@ fn seed_font_dir(world: &mut World, dir: &Path) -> Result<(), String> {
 
 fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput, String> {
     let mut stores = Universe::with_world(template.clone());
-    prepare_run_stores(&mut stores);
     let path = Path::new(JOB_DIR).join(JOB_FILE);
     let content = stores
         .world_mut()
         .read_file(&path)
         .map_err(|error| error.to_string())?;
-    let mut input = InputStack::new(WorldInput::from_content(content));
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
     let mut checkpoints = ProfileCheckpointSink::default();
-    let context = resolvers.context();
-    let mut session = EngineSession::new(&mut input, &mut stores, context);
-    let run = if capture_checkpoints {
-        session.execute_with_checkpoints(&mut checkpoints)
+    let startup_name = path.to_string_lossy();
+    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+    session
+        .register_retained_root(
+            startup_name.as_ref(),
+            SourceRegistration::world(content).with_name(startup_name.as_ref()),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut no_checkpoints = Vec::new();
+    let checkpoint_sink: &mut dyn CheckpointSink = if capture_checkpoints {
+        &mut checkpoints
     } else {
-        session.execute()
+        &mut no_checkpoints
     };
-    let run = match run {
-        Ok(run) => run,
-        Err(error) => return Err(error.format_with_provenance(session.stores())),
-    };
+    let (run, _expansion_stats) = session
+        .run_with_expansion_stats(&mut resolvers, checkpoint_sink)
+        .map_err(|error| error.to_string())?;
     if run.artifacts.is_empty() {
         return Err("Gentle produced no page artifacts".to_owned());
     }
@@ -2250,7 +2254,7 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
         checkpoints: checkpoints.count,
         checkpoint_hash: checkpoints.hash,
         #[cfg(feature = "profiling")]
-        expansion_stats: input.expansion_stats(),
+        expansion_stats: _expansion_stats,
     })
 }
 
