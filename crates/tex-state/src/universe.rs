@@ -1695,6 +1695,14 @@ impl Universe {
         let Token::Frozen(frozen) = token else {
             return None;
         };
+        if frozen == crate::token::FrozenToken::END_TEMPLATE
+            || frozen == crate::token::FrozenToken::END_V
+        {
+            return Some("endtemplate");
+        }
+        if frozen == crate::token::FrozenToken::RELAX {
+            return Some("relax");
+        }
         self.primitive_names_by_index
             .get(usize::from(frozen.primitive_index()?))
             .map(String::as_str)

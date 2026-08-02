@@ -467,6 +467,23 @@ fn frozen_primitive_tokens_have_distinct_semantic_hashes_and_round_trip() {
 }
 
 #[test]
+fn permanent_frozen_control_sequences_retain_their_eqtb_names() {
+    let universe = Universe::new();
+    assert_eq!(
+        universe.frozen_primitive_name(Token::frozen_end_template()),
+        Some("endtemplate")
+    );
+    assert_eq!(
+        universe.frozen_primitive_name(Token::frozen_endv()),
+        Some("endtemplate")
+    );
+    assert_eq!(
+        universe.frozen_primitive_name(Token::frozen_relax()),
+        Some("relax")
+    );
+}
+
+#[test]
 fn frozen_relax_has_distinct_semantic_identity_and_format_round_trips() {
     let mut universe = Universe::new();
     let checkpoint = universe.snapshot();

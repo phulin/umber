@@ -4285,6 +4285,14 @@ fn token_list_control_sequences_use_live_escapechar() {
         token_list_token_text(&universe.command_context(), Token::Cs(null_cs)),
         "@csname@endcsname "
     );
+
+    // TeX82 §§262/289/294: these are permanent frozen eqtb control
+    // sequences, not anonymous sentinels. `show_token_list` therefore sends
+    // them through `print_cs`, including its control-word delimiter.
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::frozen_relax()),
+        "@relax "
+    );
 }
 
 #[test]
