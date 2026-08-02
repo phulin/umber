@@ -969,6 +969,35 @@ fn top_level_deferred_openout_closeout_without_write_materializes_empty_output()
 }
 
 #[test]
+fn final_cleanup_default_shipout_drains_break_penalty_before_retrying_end() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\openout2=empty.out \closeout2\end".to_vec(),
+        ))
+        .expect("register final-cleanup progress source");
+
+    for step_index in 0..16 {
+        let step = control
+            .step(&mut stores)
+            .expect("final-cleanup progress step succeeds");
+        assert!(
+            stores.world().artifact_commits().len() <= 1,
+            "default output repeated instead of draining at step {step_index}"
+        );
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            assert_eq!(stores.world().artifact_commits().len(), 1);
+            assert!(stores.page_contributions().is_empty());
+            assert_eq!(stores.current_page_len(), 0);
+            return;
+        }
+    }
+    panic!("final cleanup did not make bounded progress to termination");
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side committed parity fixture.
 fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
     let source = read_io_source("top_open_close");

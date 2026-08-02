@@ -2526,6 +2526,13 @@ impl CanonicalMainControl {
                     if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
+                    // TeX82 §1025 returns from the default `ship_out` path to
+                    // §1014's page-builder continuation.  In particular, the
+                    // infinite penalty that §1013 left at the chosen break is
+                    // discarded before main control can reconsider a backed-up
+                    // `\end`; otherwise every reconsideration ejects another
+                    // empty page and can never satisfy §1054's `its_all_over`.
+                    crate::page_builder::build_page(stores)?;
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
                     // This episode belongs to the step that contributed the
