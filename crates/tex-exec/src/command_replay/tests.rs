@@ -12048,10 +12048,11 @@ fn loaded_zero_parshape_stays_silent_when_early_restricted_hbox_closes() {
 #[test]
 fn loaded_ten_line_parshape_restores_before_retried_eqno() {
     // This is the later loaded-TRIP assignment history paired with the early
-    // null-shape fixture above: the job establishes ten lines, a nested local
-    // assignment clears them, and unsave restores the outer value immediately
-    // before a traced illegal `\eqno`. TeX82 §283 must show that saved eqtb
-    // transition regardless of token-list handle allocation identity.
+    // null-shape fixture above. The job establishes ten lines, then page
+    // output opens its special group. TeX82 §1026 runs `normal_paragraph` at
+    // that boundary, whose §1090 non-null decision must locally clear the
+    // loaded-overlay value through `eq_define`. Section 283 restores the
+    // saved ten-line value before the retried illegal `\eqno`.
     let mut initex = crate::test_harness::universe_with_plain_catcodes();
     let _builder = CanonicalMainControl::tex82_initex(&mut initex);
     initex.set_paragraph_shape(&[], false);
@@ -12065,7 +12066,10 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
         &mut control,
-        br"\tracingonline=1\tracingrestores=2\tracingcommands=2\parshape=10 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt\begingroup\parshape=0\tracingcommands=0\endgroup\noindent\eqno\end",
+        br"\tracingonline=1\tracingrestores=2\tracingcommands=2
+           \output={\tracingcommands=0\global\setbox9=\box255}
+           \vsize=1pt\parshape=10 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt
+           \hrule height2pt\penalty-10000\global\count1=\parshape\noindent\eqno\end",
     );
     run_to_end(&mut control, &mut universe);
 
@@ -12079,6 +12083,11 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
     assert!(
         parshape_restore < next_command,
         "loaded restore must precede the next command: {output:?}"
+    );
+    assert_eq!(
+        universe.count(1),
+        10,
+        "the output-group save entry must restore the effective job value before the next paragraph clears it"
     );
 }
 

@@ -510,6 +510,9 @@ fn run_output_routine_inner(
     nest.push(Mode::InternalVertical)?;
     nest.current_list_mutation()
         .set_prev_depth(ignored_depth(stores));
+    // TeX82 §1026: the output group owns the local default paragraph
+    // assignments and their §283 restoration records.
+    crate::assignments::normal_paragraph(nest, stores);
     let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
     *replay = Some(output_replay);
 

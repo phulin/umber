@@ -2582,6 +2582,12 @@ impl CanonicalMainControl {
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
                     )?;
+                    // TeX82 §1026 opens the output save level and then runs
+                    // `normal_paragraph`. These are real local definitions at
+                    // the output-group level: in particular a non-null
+                    // §1090 `par_shape_ptr` must enter §277's save stack so
+                    // §283 can restore and trace it when the routine ends.
+                    crate::assignments::normal_paragraph(&mut self.modes, stores);
                     stores.set_output_routine_active(true);
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
