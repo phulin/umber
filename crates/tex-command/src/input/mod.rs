@@ -85,7 +85,9 @@ impl InputState {
                 InputLevel::Source(source) => {
                     let bottom = index == 0
                         || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    if Self::source_context_level(source, index == 0).is_some() || bottom {
+                    if Self::source_context_level(source, index == 0, None, None).is_some()
+                        || bottom
+                    {
                         return false;
                     }
                 }
@@ -166,13 +168,22 @@ impl InputState {
         parameters: &crate::macro_call::ParameterState,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
+        let newlinechar =
+            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32);
+        let live_endlinechar =
+            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32);
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = levels.is_empty() && index + 1 == input_levels.len();
             match level {
                 InputLevel::Source(source) => {
                     let bottom = index == 0
                         || matches!(source.name_class, crate::input::SourceNameClass::File);
-                    let Some(rendered) = Self::source_context_level(source, index == 0) else {
+                    let Some(rendered) = Self::source_context_level(
+                        source,
+                        index == 0,
+                        live_endlinechar,
+                        newlinechar,
+                    ) else {
                         // A source level with no live line has nothing to
                         // pseudoprint, but §310 still stops here.
                         if bottom {
@@ -201,6 +212,8 @@ impl InputState {
     fn source_context_level(
         source: &SourceLevel,
         bottom_of_stack: bool,
+        live_endlinechar: Option<char>,
+        newlinechar: Option<char>,
     ) -> Option<tex_state::print::ErrorContextLevel> {
         use crate::input::SourceNameClass;
 
@@ -229,10 +242,34 @@ impl InputState {
                 format!("l.{} ", line.physical.number())
             }
         };
+        let mut before = String::from_utf8_lossy(&bytes[start..cursor]).into_owned();
+        let mut after = String::from_utf8_lossy(&bytes[cursor..end]).into_owned();
+        if let Some(endline) = line.endline {
+            let character = if endline.is_byte() {
+                char::from(endline.to_byte().ok()?)
+            } else {
+                endline.to_char().ok()?
+            };
+            // §313 sets `j:=limit` when the stored buffer sentinel still
+            // equals the live `end_line_char`, excluding it from pseudoprint;
+            // otherwise `j:=limit+1` and the stale character is visible.
+            if Some(character) != live_endlinechar {
+                let rendered = if Some(character) == newlinechar {
+                    "\n".to_owned()
+                } else {
+                    let mut rendered = String::new();
+                    tex_state::token_show::append_tex_print_char(character, &mut rendered);
+                    rendered
+                };
+                if line.endline_delivered {
+                    before.push_str(&rendered);
+                } else {
+                    after.push_str(&rendered);
+                }
+            }
+        }
         Some(tex_state::print::ErrorContextLevel::new(
-            label,
-            String::from_utf8_lossy(&bytes[start..cursor]),
-            String::from_utf8_lossy(&bytes[cursor..end]),
+            label, before, after,
         ))
     }
 
