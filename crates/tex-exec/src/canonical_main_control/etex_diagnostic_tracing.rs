@@ -606,6 +606,43 @@ fn tracingassigns_reports_let_as_reassigning_when_the_meaning_repeats() {
 }
 
 #[test]
+fn tracingassigns_reports_both_shorthand_definition_writes() {
+    // TeX82 §1224 first defines the target as `\relax`, then replaces that
+    // provisional meaning with the scanned register shorthand. e-TeX
+    // [17.687--750] observes both writes through `eq_define`.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingonline=1\tracingassigns=1
+\skipdef\1=32767
+\muskipdef\2=32766
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    let definition_lines: Vec<_> = log
+        .lines()
+        .filter(|line| line.contains("\\1=") || line.contains("\\2="))
+        .collect();
+    assert_eq!(
+        definition_lines,
+        [
+            "{changing \\1=undefined}",
+            "{into \\1=\\relax}",
+            "{changing \\1=\\relax}",
+            "{into \\1=\\skip32767}",
+            "{changing \\2=undefined}",
+            "{into \\2=\\relax}",
+            "{changing \\2=\\relax}",
+            "{into \\2=\\muskip32766}",
+        ],
+        "{log:?}"
+    );
+}
+
+#[test]
 fn disabled_tracingassigns_emits_no_assignment_diagnostic() {
     let (mut stores, mut control) = etex_control();
     register_source(

@@ -4884,6 +4884,8 @@ enum ScannedStep {
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
+        /// Meaning replaced by §1224's already-applied provisional `\relax`.
+        provisional_old: Meaning,
         /// `cur_val` after §434/§436's recover-to-zero.
         value: i32,
         global: bool,
@@ -4914,6 +4916,8 @@ enum ScannedStep {
     RegisterDefinition {
         primitive: UnexpandablePrimitive,
         target: Symbol,
+        /// Meaning replaced by §1224's already-applied provisional `\relax`.
+        provisional_old: Meaning,
         index: u16,
         global: bool,
     },
@@ -7474,6 +7478,7 @@ fn scan_command(
             Ok(ScannedStep::CharacterDefinition {
                 primitive,
                 target: definition.target,
+                provisional_old: definition.provisional_old,
                 value: definition.value,
                 global,
             })
@@ -7491,6 +7496,7 @@ fn scan_command(
             Ok(ScannedStep::RegisterDefinition {
                 primitive,
                 target: definition.target,
+                provisional_old: definition.provisional_old,
                 index: definition.index,
                 global,
             })
@@ -13413,6 +13419,7 @@ fn apply_scanned_step(
         ScannedStep::CharacterDefinition {
             primitive,
             target,
+            provisional_old,
             value,
             global,
             ..
@@ -13425,17 +13432,34 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
-            if global {
-                stores.set_meaning_global(target, meaning);
-            } else if !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning)
-            {
-                stores.set_meaning(target, meaning);
-            }
+            crate::assignments::tracing::trace_completed_provisional_meaning_write(
+                stores,
+                Token::Cs(target),
+                provisional_old,
+                Meaning::Relax,
+                global,
+            );
+            let changed =
+                !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
+            crate::assignments::tracing::trace_meaning_write(
+                stores,
+                Token::Cs(target),
+                changed,
+                global,
+                |stores| {
+                    if global {
+                        stores.set_meaning_global(target, meaning);
+                    } else if changed {
+                        stores.set_meaning(target, meaning);
+                    }
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::RegisterDefinition {
             primitive,
             target,
+            provisional_old,
             index,
             global,
         } => {
@@ -13447,11 +13471,27 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
                 _ => unreachable!("register-definition step carries only §1224 primitives"),
             };
-            if global {
-                stores.set_meaning_global(target, meaning);
-            } else {
-                stores.set_meaning(target, meaning);
-            }
+            crate::assignments::tracing::trace_completed_provisional_meaning_write(
+                stores,
+                Token::Cs(target),
+                provisional_old,
+                Meaning::Relax,
+                global,
+            );
+            let changed = stores.meaning(target) != meaning;
+            crate::assignments::tracing::trace_meaning_write(
+                stores,
+                Token::Cs(target),
+                changed,
+                global,
+                |stores| {
+                    if global {
+                        stores.set_meaning_global(target, meaning);
+                    } else if changed {
+                        stores.set_meaning(target, meaning);
+                    }
+                },
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HyphenationData {

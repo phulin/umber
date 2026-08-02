@@ -94,6 +94,8 @@ pub struct ScannedLetAssignment {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedCharacterDefinition {
     pub target: Symbol,
+    /// The meaning replaced by §1224's scanner-time provisional `\relax`.
+    pub provisional_old: Meaning,
     /// The restricted class §1224 selects for this primitive.
     pub class: RestrictedIntegerClass,
     /// `cur_val` after §434/§436's recovery.
@@ -113,6 +115,8 @@ pub struct ScannedCharacterDefinition {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScannedRegisterDefinition {
     pub target: Symbol,
+    /// The meaning replaced by §1224's scanner-time provisional `\relax`.
+    pub provisional_old: Meaning,
     pub index: u16,
 }
 
@@ -1015,6 +1019,7 @@ impl CommandProcessor<'_> {
         provisional_global: bool,
     ) -> Result<ScannedCharacterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
+        let provisional_old = self.state.meaning(target);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1031,6 +1036,7 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_restricted_integer(class)?;
         Ok(ScannedCharacterDefinition {
             target,
+            provisional_old,
             class,
             value: scanned.value,
             scanned: scanned.scanned,
@@ -1048,6 +1054,7 @@ impl CommandProcessor<'_> {
         provisional_global: bool,
     ) -> Result<ScannedRegisterDefinition, CommandError> {
         let target = self.scan_definition_target()?;
+        let provisional_old = self.state.meaning(target);
         self.state
             .set_provisional_meaning(target, Meaning::Relax, provisional_global);
         observe!(
@@ -1070,7 +1077,11 @@ impl CommandProcessor<'_> {
         } else {
             self.scan_eight_bit_register_index()?
         };
-        Ok(ScannedRegisterDefinition { target, index })
+        Ok(ScannedRegisterDefinition {
+            target,
+            provisional_old,
+            index,
+        })
     }
 
     /// Scans the unexpandable pdfTeX graphics whatsit family.

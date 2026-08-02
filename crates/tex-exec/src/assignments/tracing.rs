@@ -24,6 +24,7 @@
 
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{GlueId, TokenListId};
+use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::scaled::Scaled;
 use tex_state::token::Token;
 use tex_state::{PenaltyArrayKind, Universe};
@@ -491,5 +492,127 @@ pub(crate) fn trace_meaning_write(
         write(stores);
         let text = tex_expand::bounded_meaning_text(stores, token, 32);
         emit(stores, "reassigning", &name, &text);
+    }
+}
+
+/// Emits the assign trace for a meaning write already committed by the
+/// command-owned scanner.
+///
+/// TeX82 §1224 installs a provisional `\relax` before scanning a shorthand
+/// definition's numeric operand. That mutation must remain scanner-owned so a
+/// self-referential target terminates the scan, but e-TeX [17.687--750]
+/// observes it through the same `eq_define` hook as the later committed
+/// meaning. Carrying the copyable pre-image across the scan/apply seam lets
+/// this renderer preserve that ownership without replaying the mutation.
+pub(crate) fn trace_completed_provisional_meaning_write(
+    stores: &mut Universe,
+    token: Token,
+    old: Meaning,
+    new: Meaning,
+    global: bool,
+) {
+    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    if !tracing_before {
+        return;
+    }
+    let mut name = String::new();
+    crate::diagnostics::append_token_show_text(stores, token, &mut name);
+    let old_text = meaning_value_text(stores, old);
+    let new_text = meaning_value_text(stores, new);
+    trace_scalar(
+        stores,
+        tracing_before,
+        global,
+        old != new,
+        &name,
+        &old_text,
+        &new_text,
+    );
+}
+
+/// TeX82 §252's bounded `show_eqtb` value for a detached meaning pre-image.
+fn meaning_value_text(stores: &mut Universe, meaning: Meaning) -> String {
+    match meaning {
+        Meaning::Undefined => "undefined".to_owned(),
+        Meaning::Relax => escaped(stores, "relax"),
+        Meaning::EndV => escaped(stores, "endtemplate"),
+        Meaning::CharGiven(ch) => format!("the character {ch}"),
+        Meaning::CharToken {
+            ch,
+            cat: tex_state::token::Catcode::Letter,
+        } => format!("the letter {ch}"),
+        Meaning::CharToken { ch, .. } => format!("the character {ch}"),
+        Meaning::MathCharGiven(value) => escaped(stores, &format!("mathchar\"{value:X}")),
+        Meaning::CountRegister(index) => escaped(stores, &format!("count{index}")),
+        Meaning::DimenRegister(index) => escaped(stores, &format!("dimen{index}")),
+        Meaning::SkipRegister(index) => escaped(stores, &format!("skip{index}")),
+        Meaning::MuskipRegister(index) => escaped(stores, &format!("muskip{index}")),
+        Meaning::ToksRegister(index) => escaped(stores, &format!("toks{index}")),
+        Meaning::Macro { flags, definition } => {
+            let definition = stores.macro_definition(definition);
+            let parameter_text = stores.tokens(definition.parameter_text()).to_vec();
+            let replacement_text = stores.tokens(definition.replacement_text()).to_vec();
+            let mut text = String::new();
+            for (flag, name) in [
+                (MeaningFlags::PROTECTED, "protected"),
+                (MeaningFlags::LONG, "long"),
+                (MeaningFlags::OUTER, "outer"),
+            ] {
+                if flags.contains(flag) {
+                    text.push_str(&escaped(stores, name));
+                }
+            }
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str("macro:");
+            let mut shown = 0;
+            let mut remaining = false;
+            for token in parameter_text {
+                if shown >= 32 {
+                    remaining = true;
+                    break;
+                }
+                let before = text.chars().count();
+                crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                shown += text.chars().count() - before;
+            }
+            if !remaining && shown < 32 {
+                text.push_str("->");
+                shown += 2;
+                for token in replacement_text {
+                    if shown >= 32 {
+                        remaining = true;
+                        break;
+                    }
+                    let before = text.chars().count();
+                    crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                    shown += text.chars().count() - before;
+                }
+            } else {
+                remaining = true;
+            }
+            if remaining {
+                text.push_str(&escaped(stores, "ETC."));
+            }
+            text
+        }
+        Meaning::Font(font) => format!("select font {}", stores.font_name(font)),
+        meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
+            let name = stores.primitive_name(meaning).map(str::to_owned);
+            name.map_or_else(|| "unknown".to_owned(), |name| escaped(stores, &name))
+        }
+        meaning @ (Meaning::IntParam(_)
+        | Meaning::InternalInteger(_)
+        | Meaning::DimenParam(_)
+        | Meaning::GlueParam(_)
+        | Meaning::MuGlueParam(_)
+        | Meaning::TokParam(_)
+        | Meaning::PageDimension(_)
+        | Meaning::PageInteger(_)) => {
+            let name = stores.primitive_name(meaning).map(str::to_owned);
+            name.map_or_else(|| "unknown".to_owned(), |name| escaped(stores, &name))
+        }
+        Meaning::Unknown(_) => "unknown".to_owned(),
     }
 }
