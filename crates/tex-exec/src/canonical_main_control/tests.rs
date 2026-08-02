@@ -945,6 +945,41 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
 }
 
 #[test]
+fn terminal_write_uses_live_line_width_and_breaks_after_message() {
+    // TeX82 §§58/62/1370: stream 16 is a temporary print selector. Its text
+    // wraps at the process-selected width, and its leading `print_nl("")`
+    // closes a preceding newline-less `\message`. This is the e-TRIP
+    // `\typeout`/current-if transition in bounded form.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_error_context_widths(
+        tex_state::print::ErrorContextWidths::default()
+            .with_max_print_line(72)
+            .expect("e-TRIP line width is valid"),
+    );
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+\immediate\write16{Checking \string\showifs, \string\currentiftype, \string\currentiflevel, and \string\currentifbranch:}
+\message{current branch OK}
+\immediate\write16{current if level: \number\currentiflevel}
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = "Checking \\showifs, \\currentiftype, \\currentiflevel, and \\currentifbranch\n:\ncurrent branch OK\ncurrent if level: 0\n";
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    assert!(terminal.ends_with(expected), "{terminal:?}");
+    assert!(log.ends_with(expected), "{log:?}");
+}
+
+#[test]
 fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
     // TeX82 §§262 and 1297: direct `token_show` output recognizes the live
     // newline character, while another non-printable byte keeps its `^^`

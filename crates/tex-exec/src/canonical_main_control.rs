@@ -13554,7 +13554,7 @@ fn apply_scanned_step(
                 ImmediateExtension::Write { stream, tokens } => {
                     let text = canonical_write_text(stores.tokens(tokens.token_list()), stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
-                        stores.world_mut().write_text(sink, &text);
+                        write_immediate_text(stores, sink, &text);
                     }
                 }
                 ImmediateExtension::CloseOut { stream } => {
@@ -14792,6 +14792,43 @@ fn apply_scanned_step(
             unreachable!("accent is applied by CanonicalMainControl")
         }
     }
+}
+
+/// TeX82 §1370's printable-sink framing for an immediate `\write`.
+///
+/// A closed numbered stream (including stream 16) temporarily becomes a
+/// normal print selector: `print_nl(""); token_show(...); print_ln`. Going
+/// through [`tex_state::print::Printer`] is essential here because the
+/// process may select a `max_print_line` other than tex.web's compile-time default, and
+/// because the leading `print_nl` owns the break after a preceding
+/// newline-less `\message`. Real output files have neither print columns nor
+/// that leading break.
+fn write_immediate_text(stores: &mut Universe, sink: PrintSink, text: &str) {
+    let selector = match sink {
+        PrintSink::Terminal => tex_state::print::Selector::TermOnly,
+        PrintSink::Log => tex_state::print::Selector::LogOnly,
+        PrintSink::TerminalAndLog => tex_state::print::Selector::TermAndLog,
+        PrintSink::Stream(_) => {
+            stores.world_mut().write_text(sink, text);
+            return;
+        }
+    };
+    let line_is_open = {
+        let bufs = stores.world().stream_bufs();
+        let terminal = !bufs.terminal_partial_line().is_empty();
+        let log = !bufs.log_partial_line().is_empty();
+        match selector {
+            tex_state::print::Selector::TermOnly => terminal,
+            tex_state::print::Selector::LogOnly => log,
+            tex_state::print::Selector::TermAndLog => terminal || log,
+            tex_state::print::Selector::NoPrint => false,
+        }
+    };
+    let mut printer = tex_state::print::Printer::new(stores, selector);
+    if line_is_open {
+        printer.print_ln();
+    }
+    printer.print_rendered(text);
 }
 
 fn print_display_content(stores: &mut Universe, content: &str) {
