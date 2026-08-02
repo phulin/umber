@@ -311,6 +311,20 @@ fn tracingrestores_names_the_restored_etex_tracingassigns_parameter() {
 }
 
 #[test]
+fn tracingrestores_reports_a_locally_defined_control_sequence_as_undefined() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\def\\B{B}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(log.contains("{restoring \\B=undefined}"), "{log:?}");
+}
+
+#[test]
 fn tracingassigns_reports_globally_changing_unconditionally() {
     let (mut stores, mut control) = etex_control();
     register_source(

@@ -5701,6 +5701,11 @@ impl Universe {
                     };
                     let meaning = self.stores.meaning(symbol);
                     let value = match meaning {
+                        // TeX82 §§252 and 283 render an undefined control
+                        // sequence explicitly; it is not an absent restore
+                        // record. This is especially visible after a local
+                        // definition leaves its group.
+                        Meaning::Undefined => "undefined".to_owned(),
                         Meaning::Relax
                         | Meaning::ExpandablePrimitive(_)
                         | Meaning::UnexpandablePrimitive(_) => {
