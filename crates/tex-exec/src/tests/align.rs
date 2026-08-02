@@ -1,5 +1,9 @@
 use super::*;
-use tex_command::{FontResource, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandProcessor,
+    CommandRuntime, CommandSemanticDiagnostic, CommandState, FontResource, RegisteredSourceKind,
+    ScannedPackingSpec, SourceRegistration,
+};
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::ids::GlueId;
@@ -9,45 +13,95 @@ use tex_state::scaled::Scaled;
 use tex_state::{ExpansionState, InputOpenState};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    input.begin_alignment();
-    let mut context = crate::ExecutionContext::new("texput");
-    let state = crate::align::scan_preamble(
-        UnexpandablePrimitive::HAlign,
-        alignment_context(),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("alignment preamble should scan");
+    let (stores, state, _) = scan_alignment_preamble(UnexpandablePrimitive::HAlign, source);
     (stores, state)
 }
 
 fn scan_valign_preamble(source: &str) -> (Universe, AlignState) {
+    let (stores, state, _) = scan_alignment_preamble(UnexpandablePrimitive::VAlign, source);
+    (stores, state)
+}
+
+fn scan_alignment_preamble(
+    primitive: UnexpandablePrimitive,
+    source: &str,
+) -> (Universe, AlignState, Vec<CommandSemanticDiagnostic>) {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    input.begin_alignment();
-    let mut context = crate::ExecutionContext::new("texput");
-    let state = crate::align::scan_preamble(
-        UnexpandablePrimitive::VAlign,
-        alignment_context(),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("alignment preamble should scan");
-    (stores, state)
+    let mut command = CommandState::default();
+    let alignment = AlignmentIdentity::new(1);
+    command.begin_alignment(alignment);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("alignment preamble source should register");
+    command
+        .open_registered_source(source)
+        .expect("alignment preamble source should open");
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    let packing = {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            stores.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        let packing = processor
+            .scan_alignment_preamble_opening()
+            .expect("alignment packing specification should scan");
+        processor
+            .begin_alignment_preamble_scan()
+            .expect("alignment preamble should scan");
+        packing
+    };
+    let preamble = command
+        .take_completed_alignment_preamble(alignment)
+        .expect("alignment preamble should be frozen");
+    let diagnostics = command.take_semantic_diagnostics();
+    let kind = match primitive {
+        UnexpandablePrimitive::HAlign => AlignmentKind::HAlign,
+        UnexpandablePrimitive::VAlign => AlignmentKind::VAlign,
+        _ => unreachable!("alignment helper requires an alignment primitive"),
+    };
+    let pack_spec = match packing {
+        ScannedPackingSpec::Natural => AlignmentPackSpec::Natural,
+        ScannedPackingSpec::Exactly(size) => AlignmentPackSpec::Exactly(size),
+        ScannedPackingSpec::Spread(size) => AlignmentPackSpec::Spread(size),
+    };
+    let mut columns = Vec::with_capacity(preamble.columns.len());
+    for templates in preamble.columns {
+        let mut v_template = stores.tokens(templates.v_template.token_list()).to_vec();
+        v_template.push(stores.frozen_end_template_token());
+        columns.push(AlignColumn {
+            u_template: templates
+                .u_template
+                .expect("canonical preamble columns retain u templates")
+                .token_list(),
+            v_template: stores.intern_token_list(&v_template),
+        });
+    }
+    let tabskips = preamble
+        .tabskips
+        .into_iter()
+        .map(|spec| stores.intern_glue(spec))
+        .collect();
+    let default_tabskip = stores.intern_glue(preamble.default_tabskip);
+    let state = AlignState::new(
+        kind,
+        pack_spec,
+        columns,
+        tabskips,
+        default_tabskip,
+        preamble.repeat_start,
+    );
+    (stores, state, diagnostics)
 }
 
 fn char_token(ch: char, cat: Catcode) -> Token {
     Token::Char { ch, cat }
-}
-
-fn alignment_context() -> TracedTokenWord {
-    TracedTokenWord::pack(char_token('&', Catcode::AlignmentTab), OriginId::UNKNOWN)
 }
 
 fn sp(points: i32) -> Scaled {
@@ -1128,37 +1182,20 @@ fn valign_and_crcr_use_alignment_preamble_scanner() {
 
 #[test]
 fn alignment_preamble_errors_match_reference_wording() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("{abc\\cr}"));
-    input.begin_alignment();
-    let mut context = crate::ExecutionContext::new("texput");
-    crate::align::scan_preamble(
-        UnexpandablePrimitive::HAlign,
-        alignment_context(),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("missing hash should be inserted recoverably");
-    assert!(
-        support::terminal_effect_text(&stores).contains("Missing # inserted in alignment preamble")
-    );
+    let (_, _, diagnostics) = scan_alignment_preamble(UnexpandablePrimitive::HAlign, "{abc\\cr}");
+    assert!(diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic,
+        CommandSemanticDiagnostic::Recoverable { message, .. }
+            if message.contains("Missing # inserted in alignment preamble")
+    )));
 
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("{#a#b\\cr}"));
-    input.begin_alignment();
-    let mut context = crate::ExecutionContext::new("texput");
-    let state = crate::align::scan_preamble(
-        UnexpandablePrimitive::HAlign,
-        alignment_context(),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("extra hash should be ignored recoverably");
-    assert!(support::terminal_effect_text(&stores).contains("Only one # is allowed per tab"));
+    let (stores, state, diagnostics) =
+        scan_alignment_preamble(UnexpandablePrimitive::HAlign, "{#a#b\\cr}");
+    assert!(diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic,
+        CommandSemanticDiagnostic::Recoverable { message, .. }
+            if message.contains("Only one # is allowed per tab")
+    )));
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
         &[
