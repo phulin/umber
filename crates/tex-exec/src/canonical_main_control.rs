@@ -965,7 +965,7 @@ impl CanonicalMainControl {
     fn resolve_pdf_image_resource(
         &self,
         scanned: ScannedStep,
-        stores: &Universe,
+        stores: &mut Universe,
     ) -> Result<ScannedStep, ExecError> {
         let ScannedStep::PdfXImage { mut request, .. } = scanned else {
             return Ok(scanned);
@@ -978,6 +978,7 @@ impl CanonicalMainControl {
                 resource: PdfImageResource::Unavailable,
             });
         }
+        apply_pdf_image_compatibility_policy(stores);
         request.page_box = canonical_pdf_image_page_box(stores, &request);
         let resource = self.capabilities.pdf_image(&request).ok_or_else(|| {
             ExecError::MissingCanonicalPdfImage {
@@ -10085,6 +10086,32 @@ fn canonical_pdf_image_dimensions(
         width,
         height,
         depth: depth.unwrap_or_else(|| Scaled::from_raw(0)),
+    }
+}
+
+/// Applies pdfTeX §§1550--1552's obsolete image-inclusion parameter aliases
+/// before the effective request is exposed to the host. These writes remain
+/// inside the canonical step snapshot, so a resource suspension rolls them
+/// back together with their diagnostics and retries the transition once.
+fn apply_pdf_image_compatibility_policy(stores: &mut Universe) {
+    let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
+    if obsolete_page_box != 0 {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "PDF inclusion: Primitive \\pdfoptionalwaysusepdfpagebox is obsolete; use \\pdfpagebox instead.\n",
+        );
+        stores.set_int_param_global(IntParam::PDF_FORCE_PAGE_BOX, obsolete_page_box);
+        stores.set_int_param_global(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX, 0);
+    }
+
+    let obsolete_error_level = stores.int_param(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL);
+    if obsolete_error_level != 0 {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "PDF inclusion: Primitive \\pdfoptionpdfinclusionerrorlevel is obsolete; use \\pdfinclusionerrorlevel instead.\n",
+        );
+        stores.set_int_param_global(IntParam::PDF_INCLUSION_ERROR_LEVEL, obsolete_error_level);
+        stores.set_int_param_global(IntParam::PDF_OPTION_INCLUSION_ERROR_LEVEL, 0);
     }
 }
 

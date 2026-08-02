@@ -5576,7 +5576,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.5: canonical obsolete page-box override"]
     fn ximage_applies_resolution_and_obsolete_pagebox_controls_to_the_host_request() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

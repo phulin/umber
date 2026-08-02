@@ -2963,6 +2963,10 @@ mod tests {
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_pdftex_run_stores(&mut stores);
         stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+        stores.set_int_param_global(
+            tex_state::env::banks::IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX,
+            4,
+        );
         let mut input = InputStack::new(MemoryInput::new("legacy input"));
         let mut session = EngineSession::with_command_profile(
             &mut input,
@@ -3000,8 +3004,21 @@ mod tests {
             request.depth.expect("depth scanned").raw(),
             3 * tex_state::scaled::Scaled::UNITY
         );
-        assert_eq!(request.page_box, tex_command::PdfImagePageBox::Media);
+        assert_eq!(request.page_box, tex_command::PdfImagePageBox::Trim);
         assert!(session.stores().pdf_external_images().is_empty());
+        assert_eq!(
+            session
+                .stores()
+                .int_param(tex_state::env::banks::IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            4,
+            "resource suspension rolls back the obsolete compatibility transition"
+        );
+        assert_eq!(
+            session
+                .stores()
+                .int_param(tex_state::env::banks::IntParam::PDF_FORCE_PAGE_BOX),
+            0
+        );
 
         let source = tex_state::PdfExternalImageSource {
             identity: tex_state::ContentHash::from_bytes(b"canonical image"),
@@ -3027,6 +3044,29 @@ mod tests {
                 .expect("fulfilled image retries"),
             CanonicalStepResult::Progress(MainControlStep::Continue)
         ));
+        assert_eq!(
+            session
+                .stores()
+                .int_param(tex_state::env::banks::IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX),
+            0
+        );
+        assert_eq!(
+            session
+                .stores()
+                .int_param(tex_state::env::banks::IntParam::PDF_FORCE_PAGE_BOX),
+            4
+        );
+        let obsolete_warnings = session
+            .stores()
+            .world()
+            .effect_records()
+            .iter()
+            .filter(|effect| {
+                matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
+                    if text.contains("\\pdfoptionalwaysusepdfpagebox is obsolete"))
+            })
+            .count();
+        assert_eq!(obsolete_warnings, 1, "successful retry warns exactly once");
         let image = session
             .stores()
             .pdf_last_external_image()
@@ -3125,6 +3165,11 @@ mod tests {
             request_for(2, 5, b"\\pdfximage mediabox {image.pdf}").page_box,
             tex_command::PdfImagePageBox::Art,
             "pdfforcepagebox overrides an explicit selector before acquisition"
+        );
+        assert_eq!(
+            request_for(4, 0, b"\\pdfximage mediabox {image.pdf}").page_box,
+            tex_command::PdfImagePageBox::Media,
+            "modern pdfpagebox does not override an explicit selector"
         );
     }
 
