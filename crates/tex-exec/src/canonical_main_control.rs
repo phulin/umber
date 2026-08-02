@@ -11027,6 +11027,23 @@ fn finish_replay_alignment(
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, fuel)?;
     let mut alignment = crate::assignments::commit_current_list(modes, stores, fuel)?;
+    // TeX82 §800 makes §661's box-diagnostic origin negative for the whole
+    // `fin_align` setting pass. The magnitude is the alignment level's
+    // `mode_line`, captured by §774's `push_nest`, and §812 restores the
+    // enclosing diagnostic state after the finished alignment is appended.
+    let restore_pack_begin_line = stores.pack_begin_line();
+    stores.set_pack_begin_line(-alignment.entry_line());
+    let result = finish_replay_alignment_with_origin(active, modes, stores, &mut alignment);
+    stores.set_pack_begin_line(restore_pack_begin_line);
+    result
+}
+
+fn finish_replay_alignment_with_origin(
+    active: &ActiveReplayAlignment,
+    modes: &mut ModeNest,
+    stores: &mut Universe,
+    alignment: &mut crate::mode::ModeLevelSummary,
+) -> Result<(), ExecError> {
     let rows = alignment.list_mutation().take_nodes();
     let columns = active
         .columns

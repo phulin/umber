@@ -49,6 +49,29 @@ fn run_to_end(control: &mut CanonicalMainControl, universe: &mut Universe) {
 }
 
 #[test]
+fn fin_align_pack_diagnostic_uses_alignment_entry_line() {
+    // TeX82 §§661/800: fin_align negates the alignment level's mode_line so
+    // prototype packing reports an alignment range rather than a detected-at
+    // line. A forced-width row makes that diagnostic observable without a
+    // font or external fixture.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        b"\\hbadness=0\n\\halign to10pt{#\\hfil\\cr\\hbox to1pt{}\\cr}\n\\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = transcript_text(&universe);
+    assert!(
+        output.contains("in alignment at lines 2--2"),
+        "alignment pack diagnostic must retain its entry line: {output}"
+    );
+    assert!(!output.contains("detected at line 2"));
+}
+
+#[test]
 fn extra_right_brace_keeps_semisimple_group_and_exact_bop_counts() {
     // TeX82 §1068: `}` cannot close a `\begingroup`; `extra_right_brace`
     // diagnoses and discards it without `unsave`. The later `\endgroup`
