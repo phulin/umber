@@ -952,6 +952,36 @@ fn rebox_observes_each_tex82_packaging_call() {
 }
 
 #[test]
+fn clean_math_character_observes_tex82_hpack_completion() {
+    // TeX82 §720 routes a math-character field through a temporary mlist
+    // and then hpack(q, natural), even though the resulting box can be built
+    // directly from the same character metrics.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let mut ctx = Context {
+        state: &universe,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(0),
+        layout: MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
+    };
+    let boxed = clean_box(&mut ctx, &MathField::MathChar(math_char('a')), Style::TEXT);
+    let expected = MathPackObservation {
+        axis: BoxAxis::Horizontal,
+        width: boxed.width,
+        height: boxed.height,
+        depth: boxed.depth,
+    };
+    let layout = ctx.layout.finish(boxed.list);
+
+    assert_eq!(layout.pack_observations(), &[expected]);
+}
+
+#[test]
 fn make_fraction_uses_default_rule_and_delimiter_target() {
     let mut universe = setup_universe();
     let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);

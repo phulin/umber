@@ -733,7 +733,16 @@ pub(crate) fn clean_box(
         MathField::Empty => ctx.layout.hpack(ctx.layout.empty()),
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             if let Some(fetched) = fetch(ctx, *ch, style) {
-                char_box(ctx, fetched, ch.origin)
+                // TeX82 §720 does not return `char_box` directly here. It
+                // converts a temporary one-noad mlist, then sends the
+                // resulting character list through `hpack(q, natural)` at
+                // `clean_box`'s common `found` branch. `char_box` has the
+                // same finalized dimensions after the trivial italic-kern
+                // simplification, but its construction alone does not cross
+                // §651's observable hpack return seam.
+                let boxed = char_box(ctx, fetched, ch.origin);
+                ctx.layout.observe_completed_pack(&boxed);
+                boxed
             } else {
                 ctx.layout.hpack(ctx.layout.empty())
             }
