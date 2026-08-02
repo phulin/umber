@@ -13,7 +13,7 @@ use tex_exec::{
     try_execute_assignment,
 };
 use tex_expand::{InputResolver, get_x_token_with_context};
-use tex_lex::{InputSource, InputStack, MemoryInput};
+use tex_lex::{InputSource, InputStack};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
@@ -99,6 +99,56 @@ pub use tex_fonts::{
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutcome};
 pub use umber_vfs::FileContentId;
+
+/// Complete immutable startup capability for one retained canonical run.
+pub struct RetainedRootRequest {
+    pub startup_name: String,
+    pub invocation: String,
+    pub profile: CommandProfile,
+    pub source: SourceRegistration,
+}
+
+impl RetainedRootRequest {
+    #[must_use]
+    pub fn authored(
+        startup_name: impl Into<String>,
+        source: impl Into<Arc<[u8]>>,
+        profile: CommandProfile,
+    ) -> Self {
+        let startup_name = startup_name.into();
+        Self {
+            invocation: startup_name.clone(),
+            startup_name,
+            profile,
+            source: SourceRegistration::new(RegisteredSourceKind::Generated, source.into()),
+        }
+    }
+}
+
+struct NoCanonicalCheckpoints;
+
+impl CheckpointSink for NoCanonicalCheckpoints {
+    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
+        false
+    }
+
+    fn checkpoint(&mut self, _checkpoint: tex_exec::EngineCheckpoint) {}
+}
+
+/// Runs one retained immutable root through canonical main control.
+pub fn run_retained_root(
+    stores: &mut Universe,
+    request: RetainedRootRequest,
+    host: &mut dyn CanonicalResourceHost,
+) -> Result<RunResult, CanonicalSessionError> {
+    let mut session = CanonicalEngineSession::new(stores, request.profile);
+    session.register_retained_root_with_invocation(
+        &request.startup_name,
+        &request.invocation,
+        request.source,
+    )?;
+    session.run(host, &mut NoCanonicalCheckpoints)
+}
 
 /// Registers the one exact Cargo-test entry used when an authenticated format
 /// worker re-executes the already-trusted current test image.
@@ -1934,13 +1984,8 @@ pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
 pub fn run_memory_with_stores(
     source: &str,
     stores: &mut Universe,
-) -> Result<String, tex_exec::ExecError> {
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let mut input_resolver = RejectingMemoryInputResolver;
-    let mut font_resolver = DirectFontResolver;
-    let context =
-        ExecutionContext::with_resolvers("texput", &mut input_resolver, &mut font_resolver);
-    run_input_with_context(&mut input, stores, context)
+) -> Result<String, CanonicalSessionError> {
+    run_memory_with_stores_and_profile(source, stores, CommandProfile::TEX82, true)
 }
 
 /// Runs in-memory input with an explicit command profile and output backend.
@@ -1949,34 +1994,38 @@ pub fn run_memory_with_stores_and_profile(
     stores: &mut Universe,
     profile: CommandProfile,
     emit_dvi: bool,
-) -> Result<String, tex_exec::ExecError> {
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let mut input_resolver = RejectingMemoryInputResolver;
-    let mut font_resolver = DirectFontResolver;
-    let context =
-        ExecutionContext::with_resolvers("texput", &mut input_resolver, &mut font_resolver)
-            .with_dvi_output(emit_dvi);
-    run_input_with_context_and_profile(&mut input, stores, context, profile)
+) -> Result<String, CanonicalSessionError> {
+    let _ = emit_dvi;
+    let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
+    run_retained_root(
+        stores,
+        RetainedRootRequest::authored("texput", Arc::<[u8]>::from(source.as_bytes()), profile),
+        &mut host,
+    )
+    .map(|result| result.terminal_text)
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default)]
 struct RejectingMemoryInputResolver;
 
+#[cfg(test)]
 impl InputResolver for RejectingMemoryInputResolver {
     fn open_input(
         &mut self,
         _input: &mut dyn tex_state::InputReadState,
-        name: &str,
+        _name: &str,
         _request_index: u64,
     ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
-        let _ = name;
         Ok(tex_expand::ResourceLookup::Unavailable)
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default)]
 struct DirectFontResolver;
 
+#[cfg(test)]
 impl FontResolver for DirectFontResolver {
     fn open_font(
         &mut self,

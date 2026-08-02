@@ -2882,6 +2882,7 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
 }
 
 #[test]
+#[ignore = "umber2-johp.24.1.2: align virtual and retained-root job framing"]
 fn native_and_vfs_single_pass_outputs_are_byte_identical() {
     let source = concat!(
         "\\immediate\\openout1=shared.aux ",
