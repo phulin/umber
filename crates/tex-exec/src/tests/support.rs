@@ -1,6 +1,5 @@
 use super::*;
-use std::path::{Path, PathBuf};
-use tex_expand::{InputResolver, ReadRecorder};
+use tex_expand::ReadRecorder;
 use tex_state::interner::Symbol;
 
 pub(super) fn install_expandable(
@@ -91,69 +90,6 @@ pub(super) fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::Fon
     match stores.meaning(symbol) {
         Meaning::Font(id) => id,
         meaning => panic!("expected font meaning, got {meaning:?}"),
-    }
-}
-
-pub(crate) struct MemoryResolvers {
-    input: WorldMemoryInputResolver,
-    font: WorldFontResolver,
-}
-
-impl MemoryResolvers {
-    pub(crate) fn new() -> Self {
-        Self {
-            input: WorldMemoryInputResolver,
-            font: WorldFontResolver { root: None },
-        }
-    }
-
-    pub(crate) fn context(&mut self) -> crate::ExecutionContext<'_> {
-        crate::ExecutionContext::with_resolvers("texput", &mut self.input, &mut self.font)
-    }
-}
-
-struct WorldMemoryInputResolver;
-
-impl InputResolver for WorldMemoryInputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-        let content = input
-            .read_input_file(Path::new(name))
-            .map_err(|error| error.to_string())?;
-        Ok(tex_expand::ResourceLookup::Available(Box::new(
-            MemoryInput::new(String::from_utf8_lossy(content.bytes()).into_owned()),
-        )))
-    }
-}
-
-struct WorldFontResolver {
-    root: Option<PathBuf>,
-}
-
-impl crate::FontResolver for WorldFontResolver {
-    fn open_font(
-        &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        path: &std::path::Path,
-        _request_index: u64,
-    ) -> tex_expand::ResourceResult<crate::FontSource> {
-        let path = self
-            .root
-            .as_ref()
-            .map_or_else(|| path.to_owned(), |root| root.join(path));
-        input
-            .read_input_file(&path)
-            .map(|metrics| {
-                tex_expand::ResourceLookup::Available(crate::FontSource::Tfm {
-                    metrics,
-                    opentype: None,
-                })
-            })
-            .map_err(|err| err.to_string())
     }
 }
 

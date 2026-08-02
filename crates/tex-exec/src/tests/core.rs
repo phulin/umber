@@ -2070,35 +2070,20 @@ fn input_expands_while_scanning_assignment_values() {
 
 #[test]
 fn input_expands_while_scanning_conditional_operands() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\ifdim\\input{left}<\\input{right}\\count0=1\\fi\
+    let stores = run_canonical_tex82_with_inputs(
+        "\\endlinechar=-1\\ifdim\\input{left}<\\input{right}\\count0=1\\fi\
          \\ifcat\\input{a}\\input{b}\\count1=1\\fi\
          \\ifnum 1 \\input{relation} 2\\count2=1\\fi\
          \\ifeof\\input{stream}\\count3=1\\fi\\end",
-    ));
-    for (path, contents) in [
-        ("left", "1pt"),
-        ("right", "2pt"),
-        ("a", "a"),
-        ("b", "b"),
-        ("relation", "<"),
-        ("stream", "15"),
-    ] {
-        stores
-            .world_mut()
-            .write_file(path, contents)
-            .expect("seed scanner input");
-    }
-    let mut resolvers = MemoryResolvers::new();
-    let mut context = resolvers.context();
-
-    Executor::new()
-        .run_with_context(&mut input, &mut stores, &mut context)
-        .expect("conditionals scan through input context");
+        &[
+            ("left", b"1pt"),
+            ("right", b"2pt"),
+            ("a", b"a"),
+            ("b", b"b"),
+            ("relation", b"<"),
+            ("stream", b"15"),
+        ],
+    );
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.count(1), 1);
@@ -2108,23 +2093,10 @@ fn input_expands_while_scanning_conditional_operands() {
 
 #[test]
 fn input_expands_while_scanning_register_indices_and_the_operands() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\count\\input{idx}=9\\edef\\e{\\the\\count\\input{idx}}\\end",
-    ));
-    stores
-        .world_mut()
-        .write_file("idx", "5")
-        .expect("seed register-index input");
-    let mut resolvers = MemoryResolvers::new();
-    let mut context = resolvers.context();
-
-    Executor::new()
-        .run_with_context(&mut input, &mut stores, &mut context)
-        .expect("register and the scans use input context");
+    let stores = run_canonical_tex82_with_inputs(
+        "\\endlinechar=-1\\count\\input{idx}=9\\edef\\e{\\the\\count\\input{idx}}\\end",
+        &[("idx", b"5")],
+    );
 
     assert_eq!(stores.count(5), 9);
     let e = stores.symbol("e").expect("macro was defined");
