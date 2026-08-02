@@ -296,6 +296,34 @@ fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
 }
 
 #[test]
+fn tracingassigns_reports_glue_arithmetic_across_dimension_bounds() {
+    // TeX82 §1236 commits glue arithmetic through `define`, whose e-TeX
+    // [19.277--279] hook traces the old and committed glue values. Glue
+    // widths may cross `max_dimen` in either direction; only a later scan as
+    // a dimension diagnoses and saturates them.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br#"\nonstopmode\tracingonline=1\tracingassigns=1
+\skip44="3FFFFFFFsp \advance\skip44 by 1sp
+\skip45=-"3FFFFFFFsp \advance\skip45 by -1sp
+\end"#,
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("{changing \\skip44=16383.99998pt}\n{into \\skip44=16384.0pt}"),
+        "{log:?}"
+    );
+    assert!(
+        log.contains("{changing \\skip45=-16383.99998pt}\n{into \\skip45=-16384.0pt}"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn tracingrestores_names_the_restored_etex_tracingassigns_parameter() {
     let (mut stores, mut control) = etex_control();
     register_source(

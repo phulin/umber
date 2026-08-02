@@ -15112,45 +15112,62 @@ fn apply_arithmetic(
 ) -> Result<(), ExecError> {
     match (target, operand) {
         (ArithmeticTarget::IntegerRegister(index), ArithmeticOperand::Integer(rhs)) => {
-            let value = arithmetic_integer(primitive, stores.count(index), rhs)?;
+            let old = stores.count(index);
+            let value = arithmetic_integer(primitive, old, rhs)?;
             if global {
                 stores.set_count_global(index, value);
             } else {
                 stores.set_count(index, value);
             }
+            crate::assignments::tracing::trace_int_register(stores, index, global, old, value);
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
             let parameter = IntParam::new(index);
-            let value = arithmetic_integer(primitive, stores.int_param(parameter), rhs)?;
+            let old = stores.int_param(parameter);
+            let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+            let value = arithmetic_integer(primitive, old, rhs)?;
             if global {
                 stores.set_int_param_global(parameter, value);
             } else {
                 stores.set_int_param(parameter, value);
             }
+            crate::assignments::tracing::trace_int_param(
+                stores,
+                index,
+                tracing_before,
+                global,
+                old,
+                value,
+            );
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
-            let value = arithmetic_dimension(primitive, stores.dimen(index), operand)?;
+            let old = stores.dimen(index);
+            let value = arithmetic_dimension(primitive, old, operand)?;
             if global {
                 stores.set_dimen_global(index, value);
             } else {
                 stores.set_dimen(index, value);
             }
+            crate::assignments::tracing::trace_dimen_register(stores, index, global, old, value);
         }
         (ArithmeticTarget::DimensionParameter(index), operand) => {
             let parameter = DimenParam::new(index);
-            let value = arithmetic_dimension(primitive, stores.dimen_param(parameter), operand)?;
+            let old = stores.dimen_param(parameter);
+            let value = arithmetic_dimension(primitive, old, operand)?;
             if global {
                 stores.set_dimen_param_global(parameter, value);
             } else {
                 stores.set_dimen_param(parameter, value);
             }
+            crate::assignments::tracing::trace_dimen_param(stores, index, global, old, value);
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
-            let old = stores.glue(if mu {
+            let old_id = if mu {
                 stores.muskip(index)
             } else {
                 stores.skip(index)
-            });
+            };
+            let old = stores.glue(old_id);
             let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
             if mu {
                 if global {
@@ -15163,16 +15180,27 @@ fn apply_arithmetic(
             } else {
                 stores.set_skip(index, value);
             }
+            if mu {
+                crate::assignments::tracing::trace_muglue_register(
+                    stores, index, global, old_id, value,
+                );
+            } else {
+                crate::assignments::tracing::trace_glue_register(
+                    stores, index, global, old_id, value,
+                );
+            }
         }
         (ArithmeticTarget::GlueParameter { index, .. }, operand) => {
             let parameter = GlueParam::new(index);
-            let old = stores.glue(stores.glue_param(parameter));
+            let old_id = stores.glue_param(parameter);
+            let old = stores.glue(old_id);
             let value = stores.intern_glue(arithmetic_glue(primitive, old, operand)?);
             if global {
                 stores.set_glue_param_global(parameter, value);
             } else {
                 stores.set_glue_param(parameter, value);
             }
+            crate::assignments::tracing::trace_glue_param(stores, index, global, old_id, value);
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
     }
