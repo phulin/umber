@@ -44,12 +44,14 @@ fn canonical_candidate_control(
     bytes: Vec<u8>,
     profile: CommandProfile,
     initex: bool,
+    emit_dvi: bool,
 ) -> Result<CanonicalMainControl, SessionError> {
     let mut control = if initex {
         CanonicalMainControl::prepared_initex(profile)
     } else {
         CanonicalMainControl::with_profile(profile)
     };
+    control.set_dvi_output(emit_dvi);
     control.register_root_source(
         SourceRegistration::new(RegisteredSourceKind::Generated, bytes).with_name(source_path),
     )?;
@@ -1085,6 +1087,7 @@ impl Session {
             self.source_file_bytes(&self.source),
             self.effective_command_profile(),
             self.initex,
+            self.dvi_output,
         )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
@@ -1290,10 +1293,11 @@ impl Session {
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let anchor = &setup.old_history[restart];
         let mut control = if self.initex {
-            CanonicalMainControl::prepared_initex(self.command_profile)
+            CanonicalMainControl::prepared_initex(self.effective_command_profile())
         } else {
-            CanonicalMainControl::with_profile(self.command_profile)
+            CanonicalMainControl::with_profile(self.effective_command_profile())
         };
+        control.set_dvi_output(self.dvi_output);
         control
             .capabilities_mut()
             .set_startup_job_name(&self.job_name);
@@ -1346,6 +1350,7 @@ impl Session {
             self.source_file_bytes(&setup.next),
             self.effective_command_profile(),
             self.initex,
+            self.dvi_output,
         )?;
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));

@@ -81,6 +81,10 @@ pub struct CanonicalMainControl {
     runtime: CommandRuntime,
     fuel: tex_command::CommandFuelLedger,
     capabilities: CommandHostCapabilities,
+    /// Host output capability for shipout traversal. `None` preserves the
+    /// profile default: TeX/e-TeX emit DVI, while pdfTeX defers pages to its
+    /// PDF driver. Virtual multi-output sessions set this explicitly.
+    emit_dvi_override: Option<bool>,
     modes: ModeNest,
     next_alignment_identity: u64,
     active_alignment: Option<ActiveReplayAlignment>,
@@ -546,6 +550,7 @@ struct CommandMachine<'a> {
     /// session flag: §1252's `\patterns` and §1335's `\dump` are the two
     /// commands whose whole behavior it selects.
     initex: bool,
+    emit_dvi_override: Option<bool>,
 }
 
 impl CommandMachine<'_> {
@@ -705,6 +710,14 @@ impl CanonicalMainControl {
     #[must_use]
     pub const fn fuel_burned(&self) -> u64 {
         self.fuel.burned()
+    }
+
+    /// Selects whether canonical shipout also prepares DVI page receipts.
+    ///
+    /// This is immutable host policy for a retained run, not TeX state, and
+    /// therefore remains outside formats and command checkpoints.
+    pub fn set_dvi_output(&mut self, enabled: bool) {
+        self.emit_dvi_override = Some(enabled);
     }
 
     /// Reports whether this job terminated through an effective INITEX
@@ -1241,6 +1254,7 @@ impl CanonicalMainControl {
             observations: &mut self.operation_observations,
             shown_mode: &mut self.shown_mode,
             initex: self.initex,
+            emit_dvi_override: self.emit_dvi_override,
         }
     }
 
@@ -1566,6 +1580,7 @@ impl CanonicalMainControl {
                 observations: &mut self.operation_observations,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
+                emit_dvi_override: self.emit_dvi_override,
             },
             &mut self.boxes,
             &self.active_discretionaries,
@@ -2141,6 +2156,7 @@ impl CanonicalMainControl {
                 observations: &mut self.operation_observations,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
+                emit_dvi_override: self.emit_dvi_override,
             },
             &mut self.boxes,
             &self.active_discretionaries,
@@ -2348,6 +2364,7 @@ impl CanonicalMainControl {
                         observations: &mut self.operation_observations,
                         shown_mode: &mut self.shown_mode,
                         initex: self.initex,
+                        emit_dvi_override: self.emit_dvi_override,
                     };
                     if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
@@ -3623,6 +3640,7 @@ impl CanonicalMainControl {
                 observations: &mut self.operation_observations,
                 shown_mode: &mut self.shown_mode,
                 initex: self.initex,
+                emit_dvi_override: self.emit_dvi_override,
             },
             &mut self.boxes,
             &self.active_discretionaries,
@@ -10778,7 +10796,7 @@ fn shipout_replay_box(
     let mut effect_cursor = effect_start;
     let mut write_diagnostics = Vec::new();
     let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
-    let emit_dvi = !supports_pdftex;
+    let emit_dvi = command.emit_dvi_override.unwrap_or(!supports_pdftex);
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
@@ -10939,6 +10957,7 @@ pub(crate) fn test_shipout_replay_box(
         observations: &mut None,
         shown_mode: &mut shown_mode,
         initex: true,
+        emit_dvi_override: None,
     };
     shipout_replay_box(node, stores, &mut command)
 }
