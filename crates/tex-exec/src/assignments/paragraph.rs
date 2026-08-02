@@ -647,6 +647,16 @@ fn break_current_paragraph(
             .into_iter()
             .filter(|node| !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)))
             .collect::<Vec<_>>();
+        let needs_physical_diagnostic = diagnostic_nodes.iter().any(|node| {
+            matches!(
+                node,
+                Node::Disc {
+                    replace,
+                    physical_replace_count,
+                    ..
+                } if usize::from(*physical_replace_count) != stores.nodes(*replace).len()
+            )
+        });
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
                 *replace = empty_list;
@@ -655,7 +665,7 @@ fn break_current_paragraph(
         let line = hpack_owned_with_overfull_rule(
             stores,
             &mut broken.nodes,
-            Some(&mut diagnostic_nodes),
+            needs_physical_diagnostic.then_some(&mut diagnostic_nodes),
             PackSpec::Exactly(broken.dimensions.width),
         );
         let mut line = line;

@@ -48,7 +48,15 @@ pub(crate) fn dump_node_list(stores: &Universe, id: NodeListId, config: DumpConf
 
 pub(crate) fn dump_node_slice(stores: &Universe, nodes: &[Node], config: DumpConfig) -> String {
     let mut out = String::new();
-    dump_nodes(stores, nodes, &config, -1, ListContext::Neutral, &mut out);
+    dump_nodes(
+        stores,
+        nodes,
+        &config,
+        -1,
+        ListContext::Neutral,
+        false,
+        &mut out,
+    );
     out
 }
 
@@ -84,7 +92,7 @@ fn dump_list(
     out: &mut String,
 ) {
     let nodes = stores.nodes(id).to_vec();
-    dump_nodes(stores, &nodes, config, depth, context, out);
+    dump_nodes(stores, &nodes, config, depth, context, false, out);
 }
 
 fn dump_nodes(
@@ -93,18 +101,69 @@ fn dump_nodes(
     config: &DumpConfig,
     depth: i32,
     context: ListContext,
+    physical_replacement_spans: bool,
     out: &mut String,
 ) {
     if config.depth < 0 || depth > config.depth {
         return;
     }
     let limit = config.breadth.max(0) as usize;
-    for node in nodes.iter().take(limit) {
+    let mut index = 0;
+    let mut displayed = 0;
+    while displayed < limit && index < nodes.len() {
+        if physical_replacement_spans
+            && let (
+                Some(Node::Lig { .. }),
+                Some(
+                    disc @ Node::Disc {
+                        kind: tex_state::node::DiscKind::AutomaticHyphen,
+                        physical_replace_count: 2,
+                        ..
+                    },
+                ),
+                Some(Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                }),
+            ) = (nodes.get(index), nodes.get(index + 1), nodes.get(index + 2))
+        {
+            // TeX82 §904 links the automatic discretionary ahead of the
+            // preceding structured ligature and boundary kern. The semantic
+            // carrier keeps the ligature in place; render its physical order
+            // without mutating the frozen diagnostic list.
+            dump_node(stores, disc, config, depth, context, out);
+            index += 3;
+            displayed += 1;
+            continue;
+        }
+
+        let node = &nodes[index];
+        index += 1;
+        displayed += 1;
         dump_node(stores, node, config, depth, context, out);
+        if physical_replacement_spans
+            && let Node::Disc {
+                physical_replace_count,
+                ..
+            } = node
+        {
+            let mut remaining = usize::from(*physical_replace_count);
+            while remaining > 0 && index < nodes.len() {
+                remaining = remaining.saturating_sub(diagnostic_physical_width(&nodes[index]));
+                index += 1;
+            }
+        }
     }
-    if nodes.len() > limit {
+    if index < nodes.len() {
         write_prefix(depth, out);
         out.push_str("etc.\n");
+    }
+}
+
+fn diagnostic_physical_width(node: &Node) -> usize {
+    match node {
+        Node::Lig { orig, .. } => 1 + orig.len(),
+        _ => 1,
     }
 }
 
@@ -230,8 +289,19 @@ fn dump_node(
             );
         }
         Node::Disc {
-            pre, post, replace, ..
-        } => dump_disc(stores, *pre, *post, *replace, config, depth, out),
+            pre,
+            post,
+            physical_replace_count,
+            ..
+        } => dump_disc(
+            stores,
+            *pre,
+            *post,
+            *physical_replace_count,
+            config,
+            depth,
+            out,
+        ),
         Node::Mark { class, tokens } => dump_mark(stores, *class, *tokens, out),
         Node::Adjust(adjust) => {
             out.push_str(if adjust.pre {
@@ -657,19 +727,15 @@ fn dump_disc(
     stores: &Universe,
     pre: NodeListId,
     post: NodeListId,
-    replace: NodeListId,
+    physical_replace_count: u8,
     config: &DumpConfig,
     depth: i32,
     out: &mut String,
 ) {
-    if stores.nodes(replace).is_empty() {
+    if physical_replace_count == 0 {
         out.push_str("\\discretionary\n");
     } else {
-        let _ = writeln!(
-            out,
-            "\\discretionary replacing {}",
-            stores.nodes(replace).len()
-        );
+        let _ = writeln!(out, "\\discretionary replacing {}", physical_replace_count);
     }
     dump_list(stores, pre, config, depth + 1, ListContext::Neutral, out);
     if !stores.nodes(post).is_empty() {
@@ -767,7 +833,9 @@ fn dump_box(
     _context: ListContext,
     out: &mut String,
 ) {
-    let children = box_node.diagnostic_children.unwrap_or(box_node.children);
+    let (children, physical_replacement_spans) = box_node
+        .diagnostic_children
+        .map_or((box_node.children, false), |children| (children, true));
     let _ = write!(
         out,
         "\\{}({}+{})x{}",
@@ -802,7 +870,16 @@ fn dump_box(
     } else {
         ListContext::VList
     };
-    dump_list(stores, children, config, depth + 1, child_context, out);
+    let nodes = stores.nodes(children).to_vec();
+    dump_nodes(
+        stores,
+        &nodes,
+        config,
+        depth + 1,
+        child_context,
+        physical_replacement_spans,
+        out,
+    );
 }
 
 fn dump_unset(

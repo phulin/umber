@@ -776,6 +776,45 @@ fn automatic_discretionary_rejects_replacement_counts_above_127() {
 }
 
 #[test]
+fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
+    // TeX82 §§904/914/918 counts the reconstitution's physical linked nodes,
+    // not Umber's structured replacement-list entries.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let font = stores.current_font();
+    let boundary_kern = Node::Kern {
+        amount: Scaled::from_raw(1),
+        kind: KernKind::Font,
+    };
+    let ligature = || Node::Lig {
+        font,
+        ch: 'A',
+        orig: vec!['A', 'A'],
+        origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
+    };
+    let replacements = [
+        vec![boundary_kern],
+        vec![ligature()],
+        Vec::new(),
+        vec![ligature()],
+    ];
+    let counts = replacements.map(|replace| {
+        let Node::Disc {
+            physical_replace_count,
+            ..
+        } = crate::assignments::test_automatic_discretionary(&mut stores, &replace)
+            .expect("bounded replacement creates a discretionary")
+        else {
+            unreachable!()
+        };
+        physical_replace_count
+    });
+
+    assert_eq!(counts, [2, 3, 0, 3]);
+}
+
+#[test]
 fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

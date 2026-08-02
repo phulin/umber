@@ -835,6 +835,106 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
 }
 
 #[test]
+fn discretionary_dump_skips_the_physical_replacement_span() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let structured_replace = stores.freeze_node_list(&[Node::Penalty(9)]);
+    let nodes = [
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: structured_replace,
+            physical_replace_count: 2,
+        },
+        Node::Penalty(1),
+        Node::Penalty(2),
+        Node::Penalty(3),
+    ];
+
+    let diagnostic_children = stores.freeze_node_list(&nodes);
+    let mut box_node = zero_sized_hbox(empty);
+    box_node.diagnostic_children = Some(diagnostic_children);
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[Node::HList(box_node)],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        concat!(
+            "\\hbox(0.0+0.0)x0.0\n",
+            ".\\discretionary replacing 2\n",
+            ".\\penalty 3\n",
+        ),
+    );
+}
+
+#[test]
+fn diagnostic_box_reorders_boundary_discs_and_weights_ligature_spans() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let pre = stores.freeze_node_list(&[Node::Penalty(7)]);
+    let boundary_kern = Node::Kern {
+        amount: Scaled::from_raw(1),
+        kind: KernKind::Font,
+    };
+    let boundary_replace = stores.freeze_node_list(std::slice::from_ref(&boundary_kern));
+    let font = stores.current_font();
+    let ligature = || Node::Lig {
+        font,
+        ch: 'A',
+        orig: vec!['A', 'A'],
+        origins: vec![OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
+    };
+    let ligature_replace = stores.freeze_node_list(&[ligature()]);
+    let physical = stores.freeze_node_list(&[
+        ligature(),
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre,
+            post: empty,
+            replace: boundary_replace,
+            physical_replace_count: 2,
+        },
+        boundary_kern,
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace: ligature_replace,
+            physical_replace_count: 3,
+        },
+        ligature(),
+        Node::Penalty(9),
+    ]);
+    let mut box_node = zero_sized_hbox(empty);
+    box_node.diagnostic_children = Some(physical);
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[Node::HList(box_node)],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        concat!(
+            "\\hbox(0.0+0.0)x0.0\n",
+            ".\\discretionary replacing 2\n",
+            "..\\penalty 7\n",
+            ".\\discretionary replacing 3\n",
+            ".\\penalty 9\n",
+        ),
+    );
+}
+
+#[test]
 fn etex_mlr_boundaries_dump_with_exact_identity() {
     // Merged e-TeX WEB §12 keeps all six M/L/R math-node subtypes distinct.
     let mut stores = Universe::new();

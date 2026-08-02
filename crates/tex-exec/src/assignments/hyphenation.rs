@@ -781,13 +781,32 @@ fn automatic_discretionary(
     post: &[Node],
     replace: &[Node],
 ) -> Option<Node> {
-    (replace.len() <= 127).then(|| Node::Disc {
+    let physical_replace_count = automatic_physical_replace_count(replace)?;
+    Some(Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre: stores.freeze_node_list(pre),
         post: stores.freeze_node_list(post),
         replace: stores.freeze_node_list(replace),
-        physical_replace_count: replace.len() as u8,
+        physical_replace_count,
     })
+}
+
+/// TeX82 §§904/914/918 counts the physical nodes between an automatic
+/// discretionary and the reconstitution synchronization point. Umber keeps
+/// a ligature and its boundary kern structured, so recover that pre-collapse
+/// physical span at the construction boundary where the distinction is known.
+fn automatic_physical_replace_count(replace: &[Node]) -> Option<u8> {
+    let count = match replace {
+        [
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            },
+        ] => 2,
+        [Node::Lig { orig, .. }] => 1_usize.checked_add(orig.len())?,
+        _ => replace.len(),
+    };
+    u8::try_from(count).ok().filter(|&count| count <= 127)
 }
 
 #[cfg(test)]
@@ -828,7 +847,10 @@ fn discretionary_hyphen(
         pre,
         post: empty,
         replace,
-        physical_replace_count: u8::from(replacement.is_some()),
+        physical_replace_count: replacement.as_ref().map_or(0, |node| {
+            automatic_physical_replace_count(std::slice::from_ref(node))
+                .expect("one reconstituted node fits TeX82's replacement count")
+        }),
     }
 }
 
