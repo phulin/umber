@@ -1572,12 +1572,24 @@ fn empty_equation_number_checks_math_fonts_on_both_sides() {
 
     run_to_end(&mut control, &mut stores);
 
+    let terminal = terminal_text(&stores);
     assert_eq!(
-        terminal_text(&stores)
+        terminal
             .matches("Math formula deleted: Insufficient symbol fonts")
             .count(),
         2
     );
+    let first_font_error = terminal
+        .find("Math formula deleted: Insufficient symbol fonts")
+        .expect("equation-number font error");
+    let display_end_error = terminal
+        .find("Display math should end with $$")
+        .expect("unpaired display end error");
+    let second_font_error = terminal
+        .rfind("Math formula deleted: Insufficient symbol fonts")
+        .expect("display font error");
+    assert!(first_font_error < display_end_error);
+    assert!(display_end_error < second_font_error);
 }
 
 #[test]

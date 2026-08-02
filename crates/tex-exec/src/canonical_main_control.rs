@@ -1567,7 +1567,7 @@ impl CanonicalMainControl {
             // after_math else off_save`. §1090 backs a `vmode+math_shift` up
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
-            ScannedStep::MathShift { paired } => self.apply_canonical_math_shift(paired, stores),
+            ScannedStep::MathShift { pairing } => self.apply_canonical_math_shift(pairing, stores),
             ScannedStep::DiscretionaryOpening(opening) => self.begin_discretionary(opening, stores),
             ScannedStep::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
             ScannedStep::DiscretionaryHyphen { origin } => {
@@ -2645,11 +2645,12 @@ impl CanonicalMainControl {
 
     fn apply_canonical_math_shift(
         &mut self,
-        paired: bool,
+        pairing: MathShiftPairing,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
+                debug_assert_ne!(pairing, MathShiftPairing::ProbeDisplayEnd);
                 crate::assignments::flush_pending_hchars_with_fuel(
                     &mut self.modes,
                     stores,
@@ -2659,7 +2660,7 @@ impl CanonicalMainControl {
                 // in restricted horizontal mode the second `$` was backed up
                 // rather than consumed, so `paired` is false there and this
                 // must not retest the mode and disagree with the backup.
-                if paired {
+                if pairing == MathShiftPairing::Paired {
                     self.enter_canonical_display(stores)?;
                 } else {
                     self.enter_canonical_math(false, stores)?;
@@ -2667,25 +2668,72 @@ impl CanonicalMainControl {
             }
             Mode::Math => {
                 if self.modes.current_list().display_eq_no().is_some() {
+                    debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
+                    let content = self.prepare_canonical_math_list(stores)?;
+                    let paired = self.scan_canonical_display_end(stores)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
-                    self.finish_canonical_equation_number(stores)?;
+                    self.finish_canonical_equation_number(stores, content)?;
                 } else {
+                    debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
                     self.finish_canonical_inline_math(stores)?;
                 }
             }
             Mode::DisplayMath => {
+                debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
+                if let Some((nodes, aux_prev_depth)) =
+                    self.modes.current_list_mutation().take_display_alignment()
+                {
+                    let paired = self.scan_canonical_display_end(stores)?;
+                    if !paired {
+                        report_unpaired_display_end(&self.command, stores)?;
+                    }
+                    self.finish_canonical_display_alignment(
+                        stores,
+                        crate::align::FinishedAlignment {
+                            nodes,
+                            aux_prev_depth,
+                            aux_space_factor: None,
+                        },
+                    )?;
+                    return Ok(ReplayStep::Continue);
+                }
+                let content = self.prepare_canonical_math_list(stores)?;
+                let paired = self.scan_canonical_display_end(stores)?;
                 if !paired {
                     report_unpaired_display_end(&self.command, stores)?;
                 }
-                self.finish_canonical_display_math(stores, None)?;
+                self.finish_canonical_display_math_content(stores, content, None, true)?;
             }
             Mode::Vertical | Mode::InternalVertical => {
                 unreachable!("vertical math shifts retry through ParagraphStart")
             }
         }
         Ok(ReplayStep::Continue)
+    }
+
+    /// TeX82 §1194 checks the current formula's math fonts before `fin_mlist`
+    /// and before §1197 probes for the second display-closing `$`.
+    fn prepare_canonical_math_list(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_state::ids::NodeListId, ExecError> {
+        let math_font_context = self.command.output_open_context(&stores.command_context());
+        let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
+        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        Ok(if rejected {
+            stores.freeze_node_list(&[])
+        } else {
+            content
+        })
+    }
+
+    fn scan_canonical_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
+        self.command_machine()
+            .processor(stores)
+            .scan_display_end_math_shift()
+            .map_err(command_error)
     }
 
     fn enter_canonical_math(
@@ -2780,19 +2828,17 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn finish_canonical_equation_number(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+    fn finish_canonical_equation_number(
+        &mut self,
+        stores: &mut Universe,
+        content: tex_state::ids::NodeListId,
+    ) -> Result<(), ExecError> {
         let mut level =
             crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
-        let mut eq = level
+        let eq = level
             .list_mutation()
             .take_display_eq_no()
             .expect("equation number mode state");
-        let math_font_context = self.command.output_open_context(&stores.command_context());
-        if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
-            content = stores.freeze_node_list(&[]);
-            eq.display = stores.freeze_node_list(&[]);
-        }
         let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
@@ -2804,33 +2850,7 @@ impl CanonicalMainControl {
         // TeX82 §1194's equation-number branch assigns `p:=fin_mlist(null)`
         // a second time after boxing `a`: the display must be finished from
         // the saved outer formula, not from the now-empty display mode list.
-        self.finish_canonical_display_math_content(stores, eq.display, Some(finished))
-    }
-
-    fn finish_canonical_display_math(
-        &mut self,
-        stores: &mut Universe,
-        eq_no: Option<crate::math::display::FinishedEqNo>,
-    ) -> Result<(), ExecError> {
-        // TeX82 §812 routes a display alignment to §§1206–1207 instead of
-        // §1199's ordinary math-list lowering and hpack. The finished rows
-        // are already vertical display material; math-packing them collapses
-        // a multi-row alignment to the height and depth of one horizontal box.
-        if let Some((nodes, aux_prev_depth)) =
-            self.modes.current_list_mutation().take_display_alignment()
-        {
-            debug_assert!(eq_no.is_none());
-            return self.finish_canonical_display_alignment(
-                stores,
-                crate::align::FinishedAlignment {
-                    nodes,
-                    aux_prev_depth,
-                    aux_space_factor: None,
-                },
-            );
-        }
-        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-        self.finish_canonical_display_math_content(stores, content, eq_no)
+        self.finish_canonical_display_math_content(stores, eq.display, Some(finished), false)
     }
 
     fn finish_canonical_display_alignment(
@@ -2863,11 +2883,12 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         mut content: tex_state::ids::NodeListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
+        fonts_checked: bool,
     ) -> Result<(), ExecError> {
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
         let math_font_context = self.command.output_open_context(&stores.command_context());
-        if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
+        if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
         let mut level =
@@ -4946,7 +4967,7 @@ enum ScannedStep {
     },
     Paragraph,
     MathShift {
-        paired: bool,
+        pairing: MathShiftPairing,
     },
     ParagraphStart,
     Character {
@@ -4961,6 +4982,13 @@ enum ScannedStep {
     DiscretionaryHyphen {
         origin: tex_state::token::OriginId,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MathShiftPairing {
+    Unpaired,
+    Paired,
+    ProbeDisplayEnd,
 }
 
 impl ScannedStep {
@@ -7707,26 +7735,28 @@ fn scan_command(
                 let paired = processor
                     .scan_init_math_display_pair(mode == Mode::Horizontal)
                     .map_err(command_error)?;
-                Ok(ScannedStep::MathShift { paired })
+                Ok(ScannedStep::MathShift {
+                    pairing: if paired {
+                        MathShiftPairing::Paired
+                    } else {
+                        MathShiftPairing::Unpaired
+                    },
+                })
             }
             // §1194 `after_math` reaches §1197's `get_x_token` probe twice
             // over: once for a closing display (`m>=0` with `a=null`) and
             // once for a closing equation number (`mode=-m`).
-            Mode::DisplayMath => {
-                let paired = processor
-                    .scan_display_end_math_shift()
-                    .map_err(command_error)?;
-                Ok(ScannedStep::MathShift { paired })
-            }
-            Mode::Math if display_eq_no => {
-                let paired = processor
-                    .scan_display_end_math_shift()
-                    .map_err(command_error)?;
-                Ok(ScannedStep::MathShift { paired })
-            }
+            Mode::DisplayMath => Ok(ScannedStep::MathShift {
+                pairing: MathShiftPairing::ProbeDisplayEnd,
+            }),
+            Mode::Math if display_eq_no => Ok(ScannedStep::MathShift {
+                pairing: MathShiftPairing::ProbeDisplayEnd,
+            }),
             // §1194's `m<0` closes inline math through `@<Finish math in
             // text@>`, which probes nothing at all.
-            Mode::Math => Ok(ScannedStep::MathShift { paired: false }),
+            Mode::Math => Ok(ScannedStep::MathShift {
+                pairing: MathShiftPairing::Unpaired,
+            }),
         },
         // §1090's shared backup already handled `vmode+letter` and
         // `vmode+other_char`, so a letter or other character reaching here is
