@@ -1915,53 +1915,28 @@ fn assert_replayed_math_error_is_source_backed(source: &str) {
     );
 }
 
-trait MathTestControl {
-    fn math_test_mode(&self) -> Mode;
-    fn math_test_nodes(&self) -> &[Node];
-}
-
-impl MathTestControl for CanonicalMainControl {
-    fn math_test_mode(&self) -> Mode {
-        self.current_mode()
-    }
-
-    fn math_test_nodes(&self) -> &[Node] {
-        self.current_list().nodes()
-    }
-}
-
-// Removed with the two legacy tests owned by umber2-alfh.4.55.
-impl MathTestControl for Executor {
-    fn math_test_mode(&self) -> Mode {
-        self.nest().current_mode()
-    }
-
-    fn math_test_nodes(&self) -> &[Node] {
-        self.nest().current_list().nodes()
-    }
-}
-
-fn math_nodes<'a, C: MathTestControl>(stores: &'a Universe, control: &'a C) -> &'a [Node] {
-    if matches!(control.math_test_mode(), Mode::Math | Mode::DisplayMath) {
-        return control.math_test_nodes();
+fn math_nodes<'a>(stores: &'a Universe, control: &'a CanonicalMainControl) -> &'a [Node] {
+    if matches!(control.current_mode(), Mode::Math | Mode::DisplayMath) {
+        return control.current_list().nodes();
     }
     let lists = math_list_nodes(control);
     assert_eq!(lists.len(), 1);
     stores.nodes(lists[0].content).testing_decoded()
 }
 
-fn unfinished_math_list<C: MathTestControl>(stores: &mut Universe, control: &C) -> MathListNode {
-    assert_eq!(control.math_test_mode(), Mode::Math);
-    let content = stores.freeze_node_list(control.math_test_nodes());
+fn unfinished_math_list(stores: &mut Universe, control: &CanonicalMainControl) -> MathListNode {
+    assert_eq!(control.current_mode(), Mode::Math);
+    let content = stores.freeze_node_list(control.current_list().nodes());
     MathListNode {
         display: false,
         content,
     }
 }
 
-fn math_list_nodes<C: MathTestControl>(control: &C) -> Vec<MathListNode> {
+fn math_list_nodes(control: &CanonicalMainControl) -> Vec<MathListNode> {
     control
-        .math_test_nodes()
+        .current_list()
+        .nodes()
         .iter()
         .filter_map(|node| match node {
             Node::MathList(list) => Some(*list),
