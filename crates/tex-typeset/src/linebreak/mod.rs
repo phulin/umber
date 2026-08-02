@@ -185,6 +185,7 @@ pub enum LineBreakTrace {
     Pass(LineBreakPass),
     Feasible {
         display: core::ops::Range<usize>,
+        display_suffix: Option<NodeListId>,
         breakpoint: TraceBreakpoint,
         via: usize,
         badness: Option<i32>,
@@ -673,6 +674,7 @@ fn run_pass<S: TypesetState>(
                         // discretionaries (their pre/post lists), even though
                         // width accounting stops before those nodes.
                         display: displayed_through..display_end,
+                        display_suffix: trace_display_suffix(nodes, bp),
                         breakpoint: trace_breakpoint(nodes, bp),
                         via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                         badness: (b <= INF_BAD).then_some(b),
@@ -696,7 +698,7 @@ fn run_pass<S: TypesetState>(
                     // Consecutive discretionaries are still distinct
                     // breakpoints; their shared replacement run begins only
                     // after the cluster.
-                    displayed_through = display_end;
+                    displayed_through = trace_display_next_start(nodes, bp, display_end);
                 }
                 if !canonical_trace_admission {
                     next_serial += 1;
@@ -774,6 +776,32 @@ fn run_pass<S: TypesetState>(
     Some(reconstruct(active[chosen], &passive, last_line_fit))
 }
 
+fn trace_display_suffix(nodes: &[Node], bp: Breakpoint) -> Option<NodeListId> {
+    // §903's boundary-kern reconstitution keeps the displaced ligature in
+    // the automatic discretionary's side list. TeX82's linked list exposes
+    // it to §851; Umber carries it as this detached trace suffix instead.
+    if !matches!(
+        bp.position
+            .checked_sub(2)
+            .and_then(|index| nodes.get(index)),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    ) {
+        return None;
+    }
+    let Node::Disc {
+        kind: tex_state::node::DiscKind::AutomaticHyphen,
+        replace,
+        ..
+    } = nodes.get(bp.position.checked_sub(1)?)?
+    else {
+        return None;
+    };
+    Some(*replace)
+}
+
 fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint) -> usize {
     let Some(Node::Disc { replace, .. }) = bp
         .position
@@ -782,6 +810,24 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
     else {
         return bp.position;
     };
+    if matches!(
+        bp.position
+            .checked_sub(2)
+            .and_then(|index| nodes.get(index)),
+        Some(Node::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    ) {
+        // The flattened paragraph retains both the boundary kern and the
+        // displaced replacement after the discretionary. The trace slice
+        // consumes the kern; `trace_display_next_start` advances over the
+        // replacement after its detached suffix has been rendered.
+        return bp
+            .position
+            .saturating_add(state.nodes(*replace).len())
+            .min(nodes.len());
+    }
     if !matches!(
         bp.position
             .checked_sub(2)
@@ -803,6 +849,14 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
     bp.position
         .saturating_add(replacement_count)
         .min(nodes.len())
+}
+
+fn trace_display_next_start(nodes: &[Node], bp: Breakpoint, display_end: usize) -> usize {
+    if trace_display_suffix(nodes, bp).is_some() {
+        display_end.saturating_add(1).min(nodes.len())
+    } else {
+        display_end
+    }
 }
 
 fn trace_breakpoint(nodes: &[Node], bp: Breakpoint) -> TraceBreakpoint {

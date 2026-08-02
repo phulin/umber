@@ -215,6 +215,14 @@ impl ShortDisplayRenderer {
         out
     }
 
+    pub(crate) fn render_line_break_trace_suffix(
+        &mut self,
+        stores: &Universe,
+        list: NodeListId,
+    ) -> String {
+        self.render_list(stores, list)
+    }
+
     fn render_list(&mut self, stores: &Universe, list: NodeListId) -> String {
         let mut out = String::new();
         append_short_display(stores, list, &mut self.font, &mut out);

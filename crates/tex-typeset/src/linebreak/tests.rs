@@ -1040,6 +1040,50 @@ fn tracing_display_skips_replacement_run_after_discretionary_cluster() {
 }
 
 #[test]
+fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern() {
+    // TeX82's reconstitution can leave the replaced ligature in the
+    // discretionary after a font kern; §851 displays that replacement before
+    // reporting the feasible discretionary.
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let replace = universe.freeze_node_list(&[rule(2)]);
+    let nodes = vec![
+        rule(1),
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Font,
+        },
+        Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            pre: empty,
+            post: empty,
+            replace,
+        },
+        Node::Kern {
+            amount: sp(1),
+            kind: KernKind::Font,
+        },
+        rule(2),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+    let (_, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+
+    assert!(
+        trace.iter().any(|event| matches!(
+            event,
+            LineBreakTrace::Feasible {
+                display_suffix: Some(suffix),
+                breakpoint: TraceBreakpoint::Discretionary,
+                ..
+            } if *suffix == replace
+        )),
+        "{trace:?}"
+    );
+}
+
+#[test]
 fn paragraph_prefix_widths_remain_exact_past_i32_max() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

@@ -971,6 +971,7 @@ fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineB
             }
             LineBreakTrace::Feasible {
                 display,
+                display_suffix,
                 breakpoint,
                 via,
                 badness,
@@ -981,6 +982,13 @@ fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineB
                     let rendered =
                         short_display.render_nodes(diagnostic.state(), &nodes[display.clone()]);
                     diagnostic.print_nl("").print_rendered(&rendered);
+                }
+                if !display.is_empty()
+                    && let Some(suffix) = display_suffix
+                {
+                    let rendered =
+                        short_display.render_line_break_trace_suffix(diagnostic.state(), *suffix);
+                    diagnostic.print_rendered(&rendered);
                 }
                 diagnostic.print_nl("@");
                 match breakpoint {
