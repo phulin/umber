@@ -837,7 +837,7 @@ fn v_template_macros_expand_when_the_cell_finishes() {
 #[test]
 fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
         "\\halign{#&#\\cr \\futurelet\\x\\missing&a\\cr}",
@@ -1686,7 +1686,7 @@ fn span_template_side_effects_are_local_to_alignment_entry() {
 #[test]
 fn macro_after_span_executes_remaining_assignment_tokens() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         "\\setbox0=\\vbox{\\count1=2 \\def\\xx{\\global\\gdef\\A{\\global\\count\\count1=-17\\cr\\omit\\cr\\tabskip}}\\halign{#&\\A#\\cr \\expandafter\\xx\\span A&x\\cr}}",
@@ -1698,7 +1698,7 @@ fn macro_after_span_executes_remaining_assignment_tokens() {
 #[test]
 fn expandafter_intercepts_span_before_replaying_saved_macro() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         "\\setbox0=\\vbox{\\def\\A{\\ifnum\\count4=0 \\global\\count2=1\\fi \\global\\advance\\count4 by1}\\def\\xx{\\global\\def\\A{\\ifnum\\count4=0 \\global\\count2=2\\fi \\global\\advance\\count4 by1}}\\halign{#\\A&#\\cr z\\expandafter\\xx\\span x&y\\cr}}",
@@ -1736,7 +1736,7 @@ fn noalign_material_is_spliced_between_finished_rows() {
 #[test]
 fn noalign_backtick_brace_keeps_local_meaning_until_balancing_idiom() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         r"\let\normal\relax
@@ -2153,7 +2153,7 @@ fn expanded_definition_brace_delta_preserves_outer_box_closer() {
     // inside an expanded definition; its matching skipped brace follows a
     // makecell-shaped nested vcenter/alignment.
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         "\\setbox0=\\vbox{\
@@ -2334,7 +2334,7 @@ fn right_brace_before_cr_uses_missing_cr_recovery() {
 #[test]
 fn noexpand_unexpandable_cr_terminates_alignment_row() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}",
@@ -2349,7 +2349,7 @@ fn noexpand_unexpandable_cr_terminates_alignment_row() {
 #[test]
 fn noexpand_preserves_unexpandable_cr_alias_but_suppresses_macro_alias() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     run_alignment_source_in(
         &mut stores,
         "\\def\\m{M}\\let\\endrow=\\cr \\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\m y\\noexpand\\endrow z\\cr}}",
@@ -2364,7 +2364,7 @@ fn noexpand_preserves_unexpandable_cr_alias_but_suppresses_macro_alias() {
 #[test]
 fn noexpand_alignment_delivery_replays_identically_after_rollback() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     let source = "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}";
 
@@ -2388,7 +2388,7 @@ fn empty_accent_group_preserves_later_alignment_delimiters() {
 #[test]
 fn trip_pathological_alignment_closes_before_following_material() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let before = stores.snapshot();
     let source = r#"
         \font\f=cmr10 \f \let\smalltrip=\f
@@ -2435,7 +2435,7 @@ fn trip_pathological_alignment_closes_before_following_material() {
 #[test]
 fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let before = stores.snapshot();
     let source = r#"
         \font\f=cmr10 \f
@@ -2469,7 +2469,7 @@ fn trip_show_of_aliased_tab_recovers_and_closes_alignment() {
 #[test]
 fn malformed_template_row_closes_before_following_box() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let before = stores.snapshot();
     let source = r#"
         \font\f=cmr10 \f
@@ -2499,7 +2499,7 @@ fn malformed_template_row_closes_before_following_box() {
 #[test]
 fn paragraph_at_alignment_base_depth_is_not_recovery_input() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let source = r#"
         \halign{#\cr \par\cr}
         \global\count7=789
@@ -2519,7 +2519,7 @@ fn paragraph_at_alignment_base_depth_is_not_recovery_input() {
 #[test]
 fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let before = stores.snapshot();
     let source = r#"
         \outer\def\lo{}
@@ -2551,7 +2551,7 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
 #[test]
 fn expandafter_may_expand_outer_sentinel_in_alignment_cell() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let source = r#"
         \outer\def\sentinel{\relax}
         \def\scan{\futurelet\next\scanone}
@@ -2580,7 +2580,7 @@ fn expandafter_may_expand_outer_sentinel_in_alignment_cell() {
 #[test]
 fn trip_conditional_preamble_recovery_stops_before_following_input() {
     let mut stores = support::stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     let source = r#"
         \setbox0=\hbox{}\copy0
