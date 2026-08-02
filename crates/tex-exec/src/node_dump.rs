@@ -284,16 +284,21 @@ fn dump_node(
 fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
     match whatsit {
         Whatsit::OpenOut { slot, path } => {
-            let _ = writeln!(out, "\\openout{}={path}", slot.raw());
+            append_escaped_name(stores, "openout", out);
+            let _ = writeln!(out, "{}={path}", slot.raw());
         }
         Whatsit::CloseOut { slot } => match slot {
             Some(slot) => {
-                let _ = writeln!(out, "\\closeout{}", slot.raw());
+                append_escaped_name(stores, "closeout", out);
+                let _ = writeln!(out, "{}", slot.raw());
             }
-            None => out.push_str("\\closeout*\n"),
+            None => {
+                append_escaped_name(stores, "closeout", out);
+                out.push_str("*\n");
+            }
         },
         Whatsit::DeferredWrite { sink, tokens } => {
-            out.push_str("\\write");
+            append_escaped_name(stores, "write", out);
             match sink {
                 tex_state::PrintSink::Stream(slot) => {
                     let _ = write!(out, "{}", slot.raw());
@@ -306,7 +311,8 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
             dump_token_list(stores, *tokens, out);
         }
         Whatsit::Special { payload, .. } => {
-            out.push_str("\\special{");
+            append_escaped_name(stores, "special", out);
+            out.push('{');
             for &byte in payload {
                 append_tex_print_char(char::from(byte), out);
             }
@@ -317,13 +323,22 @@ fn dump_whatsit(stores: &Universe, whatsit: &Whatsit, out: &mut String) {
             left_hyphen_min,
             right_hyphen_min,
         } => {
+            append_escaped_name(stores, "setlanguage", out);
             let _ = writeln!(
                 out,
-                "\\setlanguage{language} (hyphenmin {left_hyphen_min},{right_hyphen_min})"
+                "{language} (hyphenmin {left_hyphen_min},{right_hyphen_min})"
             );
         }
         _ => out.push_str("[]\n"),
     }
+}
+
+/// TeX82 §§63/1356 names each whatsit through the live `print_esc` rule.
+fn append_escaped_name(stores: &Universe, name: &str, out: &mut String) {
+    if let Ok(escape) = u8::try_from(stores.int_param(IntParam::ESCAPE_CHAR)) {
+        out.push(char::from(escape));
+    }
+    out.push_str(name);
 }
 
 fn dump_token_list(stores: &Universe, tokens: TokenListId, out: &mut String) {

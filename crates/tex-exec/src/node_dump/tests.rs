@@ -42,6 +42,29 @@ fn deferred_write_dump_uses_show_token_list_control_word_separator() {
 }
 
 #[test]
+fn whatsit_dump_uses_live_escape_character() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+    let tokens = stores.intern_token_list(&[]);
+    let write = Node::Whatsit(Whatsit::DeferredWrite {
+        sink: tex_state::PrintSink::Log,
+        tokens,
+    });
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[write],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "|write-{}\n",
+    );
+}
+
+#[test]
 fn special_dump_prints_eight_bit_payload_as_tex_character_strings() {
     let stores = Universe::new();
     let special = Node::Whatsit(Whatsit::Special {
