@@ -9,6 +9,7 @@
 
 use crate::token::Catcode;
 use core::array;
+use std::collections::HashSet;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
@@ -135,6 +136,32 @@ struct CodeTableRoots {
     mathcodes: Arc<Root<MathCode>>,
     delcodes: Arc<Root<DelCode>>,
     global_writes: GlobalWriteHistory,
+    saved: Vec<CodeTableRestoreRecord>,
+    local_runs: HashSet<CodeTableKey>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum CodeTableKind {
+    Catcode,
+    Lccode,
+    Uccode,
+    Sfcode,
+    Mathcode,
+    Delcode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CodeTableKey {
+    kind: CodeTableKind,
+    ch: char,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CodeTableRestoreRecord {
+    pub(crate) kind: CodeTableKind,
+    pub(crate) ch: char,
+    pub(crate) value: i64,
+    pub(crate) retaining: bool,
 }
 
 impl CodeTableRoots {
@@ -329,11 +356,13 @@ impl CodeTables {
             mathcodes: self.mathcodes.root(),
             delcodes: self.delcodes.root(),
             global_writes: self.global_writes.clone(),
+            saved: Vec::new(),
+            local_runs: HashSet::new(),
         };
         Arc::make_mut(&mut self.group_roots).push(roots);
     }
 
-    pub(crate) fn leave_group(&mut self) {
+    pub(crate) fn leave_group(&mut self) -> Vec<CodeTableRestoreRecord> {
         let mut roots = Arc::make_mut(&mut self.group_roots)
             .pop()
             .expect("leave_group without matching code-table roots");
@@ -345,9 +374,16 @@ impl CodeTables {
         self.sfcodes.restore_group_root(roots.sfcodes);
         self.mathcodes.restore_group_root(roots.mathcodes);
         self.delcodes.restore_group_root(roots.delcodes);
+        for record in &mut roots.saved {
+            if record.retaining {
+                record.value = self.current_value(record.kind, record.ch);
+            }
+        }
         if self.group_roots.is_empty() {
             self.global_writes = GlobalWriteHistory::default();
         }
+        roots.saved.reverse();
+        roots.saved
     }
 
     /// Returns the generation vector for all code tables.
@@ -369,10 +405,16 @@ impl CodeTables {
     }
 
     pub(crate) fn set_catcode(&mut self, ch: char, value: Catcode) {
+        self.record_local(
+            CodeTableKind::Catcode,
+            ch,
+            i64::from(self.catcodes.get(ch) as u8),
+        );
         self.catcodes.set(ch, value);
     }
 
     pub(crate) fn set_catcode_global(&mut self, ch: char, value: Catcode) {
+        self.record_global_trace(CodeTableKind::Catcode, ch);
         self.catcodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::Catcode(ch, value));
     }
@@ -384,11 +426,13 @@ impl CodeTables {
 
     pub(crate) fn set_lccode(&mut self, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
+        self.record_local(CodeTableKind::Lccode, ch, i64::from(self.lccodes.get(ch)));
         self.lccodes.set(ch, value);
     }
 
     pub(crate) fn set_lccode_global(&mut self, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
+        self.record_global_trace(CodeTableKind::Lccode, ch);
         self.lccodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::LcCode(ch, value));
     }
@@ -400,11 +444,13 @@ impl CodeTables {
 
     pub(crate) fn set_uccode(&mut self, ch: char, value: UcCode) {
         assert_unicode_code(value, "uccode");
+        self.record_local(CodeTableKind::Uccode, ch, i64::from(self.uccodes.get(ch)));
         self.uccodes.set(ch, value);
     }
 
     pub(crate) fn set_uccode_global(&mut self, ch: char, value: UcCode) {
         assert_unicode_code(value, "uccode");
+        self.record_global_trace(CodeTableKind::Uccode, ch);
         self.uccodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::UcCode(ch, value));
     }
@@ -415,10 +461,12 @@ impl CodeTables {
     }
 
     pub(crate) fn set_sfcode(&mut self, ch: char, value: SfCode) {
+        self.record_local(CodeTableKind::Sfcode, ch, i64::from(self.sfcodes.get(ch)));
         self.sfcodes.set(ch, value);
     }
 
     pub(crate) fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
+        self.record_global_trace(CodeTableKind::Sfcode, ch);
         self.sfcodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::SfCode(ch, value));
     }
@@ -429,10 +477,16 @@ impl CodeTables {
     }
 
     pub(crate) fn set_mathcode(&mut self, ch: char, value: MathCode) {
+        self.record_local(
+            CodeTableKind::Mathcode,
+            ch,
+            i64::from(self.mathcodes.get(ch)),
+        );
         self.mathcodes.set(ch, value);
     }
 
     pub(crate) fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
+        self.record_global_trace(CodeTableKind::Mathcode, ch);
         self.mathcodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::MathCode(ch, value));
     }
@@ -443,10 +497,12 @@ impl CodeTables {
     }
 
     pub(crate) fn set_delcode(&mut self, ch: char, value: DelCode) {
+        self.record_local(CodeTableKind::Delcode, ch, i64::from(self.delcodes.get(ch)));
         self.delcodes.set(ch, value);
     }
 
     pub(crate) fn set_delcode_global(&mut self, ch: char, value: DelCode) {
+        self.record_global_trace(CodeTableKind::Delcode, ch);
         self.delcodes.set(ch, value);
         self.record_global(GlobalCodeTableWrite::DelCode(ch, value));
     }
@@ -454,6 +510,54 @@ impl CodeTables {
     fn record_global(&mut self, write: GlobalCodeTableWrite) {
         if !self.group_roots.is_empty() {
             self.global_writes.push(write);
+        }
+    }
+
+    fn record_local(&mut self, kind: CodeTableKind, ch: char, old: i64) {
+        let Some(frame) = Arc::make_mut(&mut self.group_roots).last_mut() else {
+            return;
+        };
+        let key = CodeTableKey { kind, ch };
+        if frame.local_runs.insert(key) {
+            frame.saved.push(CodeTableRestoreRecord {
+                kind,
+                ch,
+                value: old,
+                retaining: false,
+            });
+        }
+    }
+
+    fn record_global_trace(&mut self, kind: CodeTableKind, ch: char) {
+        let key = CodeTableKey { kind, ch };
+        if !self
+            .group_roots
+            .iter()
+            .any(|frame| frame.local_runs.contains(&key))
+        {
+            return;
+        }
+        for frame in Arc::make_mut(&mut self.group_roots) {
+            if frame.local_runs.remove(&key)
+                && let Some(saved) = frame
+                    .saved
+                    .iter_mut()
+                    .rev()
+                    .find(|saved| saved.kind == kind && saved.ch == ch)
+            {
+                saved.retaining = true;
+            }
+        }
+    }
+
+    fn current_value(&self, kind: CodeTableKind, ch: char) -> i64 {
+        match kind {
+            CodeTableKind::Catcode => i64::from(self.catcodes.get(ch) as u8),
+            CodeTableKind::Lccode => i64::from(self.lccodes.get(ch)),
+            CodeTableKind::Uccode => i64::from(self.uccodes.get(ch)),
+            CodeTableKind::Sfcode => i64::from(self.sfcodes.get(ch)),
+            CodeTableKind::Mathcode => i64::from(self.mathcodes.get(ch)),
+            CodeTableKind::Delcode => i64::from(self.delcodes.get(ch)),
         }
     }
 

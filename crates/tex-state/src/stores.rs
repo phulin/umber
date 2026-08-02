@@ -5,7 +5,8 @@
 //! restored atomically.
 
 use crate::code_tables::{
-    CodeTableGenerations, CodeTables, CodeTablesSnapshot, DelCode, LcCode, MathCode, SfCode, UcCode,
+    CodeTableGenerations, CodeTableRestoreRecord, CodeTables, CodeTablesSnapshot, DelCode, LcCode,
+    MathCode, SfCode, UcCode,
 };
 use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use crate::env::{Env, EnvSnapshot};
@@ -23,6 +24,7 @@ type GroupExitObservation = (
     CodeTableGenerations,
     CodeTableGenerations,
     Vec<crate::env::group::RestoreRecord>,
+    Vec<CodeTableRestoreRecord>,
 );
 
 fn pdf_font_code_bank(table: PdfFontCode) -> crate::cell::BankTag {
@@ -2316,7 +2318,7 @@ impl Stores {
             self.env.leave_group_observing_meanings();
         Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
         let code_before = self.code_tables.generations();
-        self.code_tables.leave_group();
+        let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
@@ -2325,7 +2327,14 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        (payloads, changed_cells, code_before, code_after, restores)
+        (
+            payloads,
+            changed_cells,
+            code_before,
+            code_after,
+            restores,
+            code_restores,
+        )
     }
 
     pub(crate) fn leave_group_with_kind_observing_dependencies(
@@ -2345,7 +2354,7 @@ impl Stores {
             .leave_group_with_kind_observing_meanings(expected)?;
         Self::attach_box_restore_texts(&mut restores, &box_trace_texts);
         let code_before = self.code_tables.generations();
-        self.code_tables.leave_group();
+        let code_restores = self.code_tables.leave_group();
         let code_after = self.code_tables.generations();
         if meaning_changed {
             self.bump_meaning_generation();
@@ -2354,7 +2363,14 @@ impl Stores {
                 crate::measurement::MeaningCacheInvalidation::GroupExit,
             );
         }
-        Ok((payloads, changed_cells, code_before, code_after, restores))
+        Ok((
+            payloads,
+            changed_cells,
+            code_before,
+            code_after,
+            restores,
+            code_restores,
+        ))
     }
 
     /// Stores the token to insert after the next assignment.

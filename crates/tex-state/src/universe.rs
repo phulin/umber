@@ -5642,11 +5642,12 @@ impl Universe {
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         let trace_context = self.leaving_group_trace_context();
-        let (tokens, changed_cells, code_before, code_after, restores) =
+        let (tokens, changed_cells, code_before, code_after, restores, code_restores) =
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         self.trace_restores(&restores);
+        self.trace_code_restores(&code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
         }
@@ -5658,12 +5659,13 @@ impl Universe {
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
         let trace_context = self.leaving_group_trace_context();
-        let (tokens, changed_cells, code_before, code_after, restores) = self
+        let (tokens, changed_cells, code_before, code_after, restores, code_restores) = self
             .stores
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         self.trace_restores(&restores);
+        self.trace_code_restores(&code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
         }
@@ -5846,6 +5848,44 @@ impl Universe {
                 .print(&name)
                 .print_char('=')
                 .print(&value)
+                .print_char('}');
+            diagnostic.end(false);
+        }
+    }
+
+    fn trace_code_restores(&mut self, records: &[crate::code_tables::CodeTableRestoreRecord]) {
+        use crate::code_tables::CodeTableKind;
+
+        let tracing_restores = self.int_param(crate::env::banks::IntParam::TRACING_RESTORES);
+        if tracing_restores <= 0 {
+            return;
+        }
+        let tracing_online = self.int_param(crate::env::banks::IntParam::TRACING_ONLINE);
+        let escape_char = self.int_param(crate::env::banks::IntParam::ESCAPE_CHAR);
+        for record in records {
+            let name = match record.kind {
+                CodeTableKind::Catcode => "catcode",
+                CodeTableKind::Lccode => "lccode",
+                CodeTableKind::Uccode => "uccode",
+                CodeTableKind::Sfcode => "sfcode",
+                CodeTableKind::Mathcode => "mathcode",
+                CodeTableKind::Delcode => "delcode",
+            };
+            let mut diagnostic =
+                crate::diagnostic::Diagnostic::begin_with_tracing_online(self, tracing_online);
+            diagnostic.print_char('{').print(if record.retaining {
+                "retaining "
+            } else {
+                "restoring "
+            });
+            if let Ok(byte) = u8::try_from(escape_char) {
+                diagnostic.print_ascii(char::from(byte));
+            }
+            diagnostic
+                .print(name)
+                .print_int(record.ch as i32)
+                .print_char('=')
+                .print_int(record.value as i32)
                 .print_char('}');
             diagnostic.end(false);
         }

@@ -450,6 +450,29 @@ fn tracingrestores_reports_dimension_register_restoration() {
 }
 
 #[test]
+fn tracingrestores_reports_code_table_restoration_and_retained_globals() {
+    for (source, expected) in [
+        (
+            &br"\tracingrestores=1\tracingonline=1{\sfcode`B=1234}\end"[..],
+            "{restoring \\sfcode66=999}\n",
+        ),
+        (
+            &br"\tracingrestores=1\tracingonline=1{\sfcode`B=1234\global\sfcode`B=777}\end"[..],
+            "{retaining \\sfcode66=777}\n",
+        ),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, source);
+
+        run_to_end(&mut control, &mut stores);
+
+        assert_eq!(pending_sink_text(&stores, true), expected);
+        assert_eq!(pending_sink_text(&stores, false), expected);
+    }
+}
+
+#[test]
 fn tracingrestores_reports_current_font_selector_restoration() {
     // TeX82 §§252/283: `cur_font_loc` has the unescaped label `current font`,
     // followed by the restored font's control-sequence identifier. Loading a
