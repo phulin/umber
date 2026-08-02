@@ -5555,6 +5555,11 @@ fn report_main_control_command_trace(
     boxes: &ReplayBoxes,
     shown_mode: &mut Option<Mode>,
 ) {
+    // Expansion can invoke §299 itself for e-TeX's `\tracingifs`. Its mode
+    // prefix and `shown_mode` transition precede this settled command.
+    if processor.command_trace_printed() {
+        *shown_mode = Some(mode);
+    }
     let output_routine_opening = boxes.output_routine_opening_pending
         && matches!(
             command.meaning(),

@@ -339,7 +339,7 @@ fn tracingifs_reports_entering_and_the_ordinary_closing_delimiter() {
 
     let log = terminal_text(&stores);
     assert!(
-        log.contains("{\\iftrue: (level 1) entered on line 2}"),
+        log.contains("{vertical mode: \\iftrue: (level 1) entered on line 2}"),
         "{log:?}"
     );
     assert!(
@@ -360,7 +360,7 @@ fn tracingifs_reports_the_else_branch_skip_and_its_closing_fi_separately() {
 
     let log = terminal_text(&stores);
     assert!(
-        log.contains("{\\iftrue: (level 1) entered on line 2}"),
+        log.contains("{vertical mode: \\iftrue: (level 1) entered on line 2}"),
         "{log:?}"
     );
     // The true branch is read normally, so its own \else arrives through
@@ -389,7 +389,7 @@ fn tracingifs_reports_a_false_conditions_skip_to_else_via_pass_text() {
 
     let log = terminal_text(&stores);
     assert!(
-        log.contains("{\\iffalse: (level 1) entered on line 2}"),
+        log.contains("{vertical mode: \\iffalse: (level 1) entered on line 2}"),
         "{log:?}"
     );
     // The false branch is skipped by pass_text, so its own \else is found
@@ -416,7 +416,7 @@ fn tracingifs_prefixes_an_inverted_conditional_with_unless() {
 
     let log = terminal_text(&stores);
     assert!(
-        log.contains("{\\unless\\iftrue: (level 1) entered on line 2}"),
+        log.contains("{vertical mode: \\unless\\iftrue: (level 1) entered on line 2}"),
         "{log:?}"
     );
     assert!(
@@ -437,7 +437,7 @@ fn tracingifs_numbers_nested_conditionals_by_open_depth() {
 
     let log = terminal_text(&stores);
     assert!(
-        log.contains("{\\iftrue: (level 1) entered on line 2}"),
+        log.contains("{vertical mode: \\iftrue: (level 1) entered on line 2}"),
         "{log:?}"
     );
     assert!(

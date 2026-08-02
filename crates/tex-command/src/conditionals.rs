@@ -1162,20 +1162,19 @@ impl CommandProcessor<'_> {
     /// show_cur_cmd_chr`. `frame` is already the pushed top-of-stack entry,
     /// so its own depth is the level e-TeX displays.
     ///
-    /// tex.web's `show_cur_cmd_chr` (§299) also prefixes the line with the
-    /// current mode the first time it changes (`shown_mode`). That
-    /// continuity state is owned by the executor's mode nest, which this
-    /// command-core layer does not observe, so the mode prefix is not yet
-    /// rendered here; see `docs/etex_primitives.md`.
     fn trace_conditional_enter(&mut self, frame: &ConditionFrame) {
         if !self.tracing_ifs_active() {
             return;
         }
         let level = self.command.conditions.frames.len();
         let name = self.conditional_kind_text(frame);
+        let mode_prefix = self.claim_command_trace_mode_prefix();
         let mut diagnostic = self.state.begin_diagnostic();
+        diagnostic.print_char('{');
+        if let Some(mode_prefix) = mode_prefix {
+            diagnostic.print(&mode_prefix).print(": ");
+        }
         diagnostic
-            .print_char('{')
             .print(&name)
             .print(": (level ")
             .print_int(i32::try_from(level).unwrap_or(i32::MAX))

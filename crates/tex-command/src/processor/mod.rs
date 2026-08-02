@@ -195,6 +195,13 @@ impl<'a> CommandProcessor<'a> {
         self.command_trace_mode_prefix = mode_prefix;
     }
 
+    /// Claims TeX82 §299's pending mode prefix for an expansion-side command
+    /// trace and records that `shown_mode` must advance in the executor.
+    pub(crate) fn claim_command_trace_mode_prefix(&mut self) -> Option<String> {
+        self.command_trace_printed = true;
+        self.command_trace_mode_prefix.take()
+    }
+
     /// Whether this processor episode crossed a command-trace boundary.
     #[must_use]
     pub const fn command_trace_printed(&self) -> bool {
