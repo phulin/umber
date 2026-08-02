@@ -1286,6 +1286,67 @@ pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
     }
 }
 
+/// TeX82 §252's `show_eqtb` meaning text, whose macro token list is
+/// bounded by §262's `show_token_list(...,32)` breadth.
+pub fn bounded_meaning_text(stores: &impl ExpansionState, token: Token, breadth: usize) -> String {
+    let Token::Cs(symbol) = token else {
+        return meaning_text(stores, token);
+    };
+    let Meaning::Macro { flags, definition } = stores.meaning(symbol) else {
+        return meaning_text(stores, token);
+    };
+    let macro_meaning = stores.macro_definition(definition);
+    let mut text = String::new();
+    if flags.contains(MeaningFlags::PROTECTED) {
+        text.push_str("\\protected");
+    }
+    if flags.contains(MeaningFlags::LONG) {
+        text.push_str("\\long");
+    }
+    if flags.contains(MeaningFlags::OUTER) {
+        text.push_str("\\outer");
+    }
+    if flags.bits() & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
+        != 0
+    {
+        text.push(' ');
+    }
+    text.push_str("macro:");
+
+    let mut shown = 0;
+    let mut tally = 0;
+    let parameter = stores.tokens(macro_meaning.parameter_text());
+    let replacement = stores.tokens(macro_meaning.replacement_text());
+    while shown < parameter.len() && tally < breadth {
+        let before = text.chars().count();
+        append_token_show_text(stores, parameter[shown], &mut text);
+        tally += text.chars().count() - before;
+        shown += 1;
+    }
+    let mut remaining = shown < parameter.len();
+    if !remaining {
+        if tally < breadth {
+            text.push_str("->");
+            tally += 2;
+            shown = 0;
+            while shown < replacement.len() && tally < breadth {
+                let before = text.chars().count();
+                append_token_show_text(stores, replacement[shown], &mut text);
+                tally += text.chars().count() - before;
+                shown += 1;
+            }
+            remaining = shown < replacement.len();
+        } else {
+            // The end-match marker and replacement text are still pending.
+            remaining = true;
+        }
+    }
+    if remaining {
+        text.push_str("\\ETC.");
+    }
+    text
+}
+
 fn token_list_text(stores: &impl ExpansionState, token_list: TokenListId) -> String {
     let mut text = String::new();
     for &token in stores.tokens(token_list) {

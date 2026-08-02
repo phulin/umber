@@ -5817,14 +5817,14 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
     let mut control = canonical_etex_initex(&mut stores);
     register_source(
         &mut control,
-        br"\def\line{old}\tracingassigns=1\tracingcommands=2\readline16to\line\endlinechar=-1\end",
+        br"\def\line{\begingroup\scantokens{\message{level=\the\currentgrouplevel}}}\tracingassigns=1\tracingcommands=2\readline16to\line\endlinechar=-1\end",
     );
 
     run_to_end(&mut control, &mut stores);
 
     let log = pending_sink_text(&stores, false);
     let changing = log
-        .find("{changing \\line =macro:->old}")
+        .find("{changing \\line =macro:->\\begingroup \\scantokens {\\message \\ETC.}")
         .unwrap_or_else(|| panic!("missing read target pre-image: {log:?}"));
     let into = log
         .find("{into \\line =macro:->replacement")

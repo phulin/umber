@@ -419,20 +419,20 @@ pub(crate) fn trace_meaning_write(
     let mut name = String::new();
     crate::diagnostics::append_token_show_text(stores, token, &mut name);
     if global {
-        let old_text = tex_expand::meaning_text(stores, token);
+        let old_text = tex_expand::bounded_meaning_text(stores, token, 32);
         write(stores);
-        let new_text = tex_expand::meaning_text(stores, token);
+        let new_text = tex_expand::bounded_meaning_text(stores, token, 32);
         print_trace(stores, "globally changing", &name, &old_text);
         emit(stores, "into", &name, &new_text);
     } else if changed {
-        let old_text = tex_expand::meaning_text(stores, token);
+        let old_text = tex_expand::bounded_meaning_text(stores, token, 32);
         write(stores);
-        let new_text = tex_expand::meaning_text(stores, token);
+        let new_text = tex_expand::bounded_meaning_text(stores, token, 32);
         print_trace(stores, "changing", &name, &old_text);
         emit(stores, "into", &name, &new_text);
     } else {
         write(stores);
-        let text = tex_expand::meaning_text(stores, token);
+        let text = tex_expand::bounded_meaning_text(stores, token, 32);
         emit(stores, "reassigning", &name, &text);
     }
 }
