@@ -1,10 +1,7 @@
 #![allow(clippy::disallowed_methods)] // host-side parity test files.
 
-use crate::{Executor, install_unexpandable_primitives};
 use test_support::read_fixture;
-use tex_lex::{InputStack, MemoryInput};
 use tex_state::Universe;
-use tex_state::meaning::{ExpandablePrimitive, Meaning};
 
 #[test]
 fn grouping_after_tokens_match_reference_micro_suite() {
@@ -256,14 +253,7 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
     let source = include_str!(
         "../../../../tests/corpus/tex_exec/hskip_penalty_recovery/hskip_penalty_recovery.tex"
     );
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let checkpoint = stores.snapshot();
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hskip recovery should leave penalty for execution");
+    let mut stores = run_umber_exec(source);
     let first_hash = stores.snapshot().state_hash();
     let box0 = stores.box_reg(0).expect("recovery hbox should be assigned");
     let [tex_state::node::Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
@@ -276,25 +266,13 @@ fn hskip_replays_unexpandable_penalty_after_numeric_recovery() {
             if stores.glue(*spec).width.raw() == 0
     ));
 
-    stores.rollback(&checkpoint);
-    let mut replay = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut replay, &mut stores)
-        .expect("replayed hskip recovery should succeed");
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
+    assert_eq!(run_umber_exec(source).snapshot().state_hash(), first_hash);
 }
 
 #[test]
 fn vertical_mode_hskip_runs_everypar_before_scanning_glue() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     let source = r"\everypar{\def\skipamount{2.5in}}\hskip\skipamount\dimen0=\lastskip\par\end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vertical-mode hskip should replay after everypar");
+    let stores = run_umber_exec(source);
 
     assert_eq!(stores.dimen(0).raw(), 11_840_716);
 }
@@ -308,7 +286,7 @@ fn insert_group_delimiters_match_reference_micro_suite() {
         insertion
     );
 
-    let stores = run_umber_exec(
+    let (stores, nodes) = super::core::run_canonical_tex82_current_list(
         r"\let\bgroup={\let\egroup=}\count0=1\splittopskip=1pt\insert7\bgroup\count0=2\global\count1=3\splittopskip=9pt\hrule height4pt\egroup",
     );
     assert_eq!(stores.count(0), 1);
@@ -319,9 +297,10 @@ fn insert_group_delimiters_match_reference_micro_suite() {
             .width,
         tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY)
     );
-    let insertion_split_top_skip = stores
-        .current_page_nodes()
+    let insertion_split_top_skip = nodes
         .iter()
+        .chain(stores.page_contributions().iter())
+        .chain(stores.current_page_nodes().iter())
         .find_map(|node| match node {
             tex_state::node::Node::Ins {
                 class: 7,
@@ -342,30 +321,9 @@ fn reference_fixture(stem: &str) -> String {
 }
 
 fn run_umber_exec(input: &str) -> Universe {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(input));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("umber execution succeeds");
-    stores
+    super::core::run_canonical_tex82(&format!("{input}\\end"))
 }
 
 fn run_umber_exec_with_box_expandables(input: &str) -> Universe {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    for (name, primitive) in [
-        ("the", ExpandablePrimitive::The),
-        ("ifvoid", ExpandablePrimitive::IfVoid),
-        ("else", ExpandablePrimitive::Else),
-        ("fi", ExpandablePrimitive::Fi),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
-    }
-    let mut input = InputStack::new(MemoryInput::new(input));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("umber execution succeeds");
-    stores
+    run_umber_exec(input)
 }
