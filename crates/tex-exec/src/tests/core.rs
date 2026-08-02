@@ -1,9 +1,11 @@
 use super::support::*;
 use super::*;
 use tex_command::{
-    CommandProfile, RegisteredSourceKind, SourceRegistration, install_tex82_expandable_primitives,
+    CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration,
+    install_tex82_expandable_primitives,
 };
 use tex_lex::TokenListReplayKind;
+use tex_state::InputOpenState;
 use tex_state::ids::ArenaRef;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
@@ -6043,8 +6045,41 @@ pub(super) fn run_canonical_tex82_current_list(source: &str) -> (Universe, Vec<N
 }
 
 pub(super) fn run_canonical_tex82(source: &str) -> Universe {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    run_canonical_tex82_with_universe(crate::test_harness::universe_with_plain_catcodes(), source)
+}
+
+pub(super) fn run_canonical_tex82_with_fonts(source: &str) -> Universe {
+    let mut stores = stores_with_fonts();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    for name in ["cmr10.tfm", "cmmi10.tfm"] {
+        let metrics = tex_state::InputReadState::read_input_file(
+            &mut stores.input_open_context(),
+            std::path::Path::new(name),
+        )
+        .expect("seeded font fixture reads");
+        control.capabilities_mut().register_font(
+            name,
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
+        );
+    }
+    run_registered_canonical_tex82(&mut control, &mut stores, source);
+    stores
+}
+
+fn run_canonical_tex82_with_universe(mut stores: Universe, source: &str) -> Universe {
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    run_registered_canonical_tex82(&mut control, &mut stores, source);
+    stores
+}
+
+fn run_registered_canonical_tex82(
+    control: &mut CanonicalMainControl,
+    stores: &mut Universe,
+    source: &str,
+) {
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -6052,8 +6087,8 @@ pub(super) fn run_canonical_tex82(source: &str) -> Universe {
         ))
         .expect("register canonical source");
     for _ in 0..1024 {
-        if control.step(&mut stores).expect("canonical step") == MainControlStep::End {
-            return stores;
+        if control.step(stores).expect("canonical step") == MainControlStep::End {
+            return;
         }
     }
     panic!("canonical source did not terminate");

@@ -169,16 +169,9 @@ fn word_hyphenation_honors_hyphen_minima() {
 
 #[test]
 fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hyphenation setup executes");
+    );
     let font = stores.current_font();
     let word: Vec<_> = "Aba"
         .chars()
@@ -208,16 +201,9 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
 
 #[test]
 fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hyphenation setup executes");
+    );
     let font = stores.current_font();
     let word: Vec<_> = "aba"
         .chars()
@@ -258,16 +244,8 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
 
 #[test]
 fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font setup executes");
+    let mut stores =
+        super::core::run_canonical_tex82_with_fonts("\\font\\tenrm=cmr10 \\relax \\tenrm \\end");
     let font = stores.current_font();
     let word = vec![
         tex_state::node::Node::Char {
@@ -321,15 +299,9 @@ fn unchanged_hyphenation_reuses_the_owned_paragraph_buffer() {
 
 #[test]
 fn paragraph_hyphenation_stops_at_a_font_change() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\a=cmr10 \\font\\b=cmmi10 \\relax \\hyphenation{ab-cdefgh} \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("mixed-font hyphenation setup executes");
+    );
     let first = font_meaning(&stores, "a");
     let second = font_meaning(&stores, "b");
     stores.set_font_hyphen_char(first, i32::from(b'-'));
@@ -370,15 +342,9 @@ fn paragraph_hyphenation_stops_at_a_font_change() {
 fn paragraph_hyphenation_distinguishes_font_and_normal_kerns() {
     // pdfTeX §§26030--27481 preserve TeX's word boundary: a font kern may
     // occur inside a word, while an explicit normal kern terminates it.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{ab-cd} \\lefthyphenmin=1 \\righthyphenmin=1 \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("kern-boundary setup executes");
+    );
     let font = stores.current_font();
     let word = |kind| {
         let mut nodes: Vec<_> = "ab"
