@@ -835,7 +835,7 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
 }
 
 #[test]
-fn discretionary_dump_skips_the_physical_replacement_span() {
+fn discretionary_dump_retains_the_physical_replacement_span() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     let structured_replace = stores.freeze_node_list(&[Node::Penalty(9)]);
@@ -867,13 +867,15 @@ fn discretionary_dump_skips_the_physical_replacement_span() {
         concat!(
             "\\hbox(0.0+0.0)x0.0\n",
             ".\\discretionary replacing 2\n",
+            ".\\penalty 1\n",
+            ".\\penalty 2\n",
             ".\\penalty 3\n",
         ),
     );
 }
 
 #[test]
-fn diagnostic_box_reorders_boundary_discs_and_weights_ligature_spans() {
+fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     let pre = stores.freeze_node_list(&[Node::Penalty(7)]);
@@ -928,7 +930,10 @@ fn diagnostic_box_reorders_boundary_discs_and_weights_ligature_spans() {
             "\\hbox(0.0+0.0)x0.0\n",
             ".\\discretionary replacing 2\n",
             "..\\penalty 7\n",
+            ".\\nullfont A (ligature AA)\n",
+            ".\\kern0.00002\n",
             ".\\discretionary replacing 3\n",
+            ".\\nullfont A (ligature AA)\n",
             ".\\penalty 9\n",
         ),
     );

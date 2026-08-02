@@ -132,8 +132,16 @@ fn dump_nodes(
             // carrier keeps the ligature in place; render its physical order
             // without mutating the frozen diagnostic list.
             dump_node(stores, disc, config, depth, context, out);
-            index += 3;
             displayed += 1;
+            if displayed < limit {
+                dump_node(stores, &nodes[index], config, depth, context, out);
+                displayed += 1;
+            }
+            if displayed < limit {
+                dump_node(stores, &nodes[index + 2], config, depth, context, out);
+                displayed += 1;
+            }
+            index += 3;
             continue;
         }
 
@@ -141,29 +149,10 @@ fn dump_nodes(
         index += 1;
         displayed += 1;
         dump_node(stores, node, config, depth, context, out);
-        if physical_replacement_spans
-            && let Node::Disc {
-                physical_replace_count,
-                ..
-            } = node
-        {
-            let mut remaining = usize::from(*physical_replace_count);
-            while remaining > 0 && index < nodes.len() {
-                remaining = remaining.saturating_sub(diagnostic_physical_width(&nodes[index]));
-                index += 1;
-            }
-        }
     }
     if index < nodes.len() {
         write_prefix(depth, out);
         out.push_str("etc.\n");
-    }
-}
-
-fn diagnostic_physical_width(node: &Node) -> usize {
-    match node {
-        Node::Lig { orig, .. } => 1 + orig.len(),
-        _ => 1,
     }
 }
 
@@ -742,7 +731,8 @@ fn dump_disc(
         let old_len = out.len();
         dump_list(stores, post, config, depth + 1, ListContext::Neutral, out);
         if old_len < out.len() {
-            out.replace_range(old_len..old_len + 1, "|");
+            let marker = old_len + usize::try_from(depth.max(-1) + 1).unwrap_or(0);
+            out.replace_range(marker..marker + 1, "|");
         }
     }
 }
