@@ -565,6 +565,7 @@ fn run_pass<S: TypesetState>(
         let prior_active_len = active.len();
         let mut survivor_count = 0;
         let forced = bp.penalty <= EJECT_PENALTY;
+        let mut feasible_traces = Vec::new();
         for active_index in 0..prior_active_len {
             let active_candidate = active[active_index];
             // Material discarded after the active break can extend beyond a
@@ -664,33 +665,36 @@ fn run_pass<S: TypesetState>(
                         |(_, _, adjustment)| adjustment,
                     ),
                 };
-                if let Some(events) = trace.as_deref_mut() {
+                if trace.is_some() {
                     let display_end = trace_display_end(state, nodes, bp);
-                    events.push(LineBreakTrace::Feasible {
-                        // TeX82 §851 temporarily terminates the list at
-                        // `cur_p` and calls `short_display`, so the displayed
-                        // range includes the breakpoint node itself. This is
-                        // visible for glue (a trailing space) and
-                        // discretionaries (their pre/post lists), even though
-                        // width accounting stops before those nodes.
-                        display: displayed_through..display_end,
-                        display_suffix: trace_display_suffix(nodes, bp),
-                        breakpoint: trace_breakpoint(nodes, bp),
-                        via: active_candidate.passive.map_or(0, |id| passive[id].serial),
-                        badness: (b <= INF_BAD).then_some(b),
-                        penalty: bp.penalty,
-                        demerits: (!artificial).then(|| {
-                            compute_route_demerits(
-                                params,
-                                &active_candidate,
-                                badness,
-                                bp.penalty,
-                                fitness,
-                                bp,
-                                terminal,
-                            )
-                        }),
-                    });
+                    feasible_traces.push((
+                        line_number_class(candidate.line, easy_line),
+                        LineBreakTrace::Feasible {
+                            // TeX82 §851 temporarily terminates the list at
+                            // `cur_p` and calls `short_display`, so the displayed
+                            // range includes the breakpoint node itself. This is
+                            // visible for glue (a trailing space) and
+                            // discretionaries (their pre/post lists), even though
+                            // width accounting stops before those nodes.
+                            display: displayed_through..display_end,
+                            display_suffix: trace_display_suffix(nodes, bp),
+                            breakpoint: trace_breakpoint(nodes, bp),
+                            via: active_candidate.passive.map_or(0, |id| passive[id].serial),
+                            badness: (b <= INF_BAD).then_some(b),
+                            penalty: bp.penalty,
+                            demerits: (!artificial).then(|| {
+                                compute_route_demerits(
+                                    params,
+                                    &active_candidate,
+                                    badness,
+                                    bp.penalty,
+                                    fitness,
+                                    bp,
+                                    terminal,
+                                )
+                            }),
+                        },
+                    ));
                     // TeX82 §855 advances `printed_node` across a
                     // discretionary's replacement nodes. Umber retains those
                     // nodes in the flattened paragraph as well as the disc's
@@ -725,6 +729,7 @@ fn run_pass<S: TypesetState>(
         } else {
             active.len() - prior_active_len
         };
+        let mut active_traces = Vec::new();
         for candidate in &mut active[prior_active_len..] {
             if canonical_trace_admission {
                 candidate.serial = next_serial;
@@ -741,18 +746,40 @@ fn run_pass<S: TypesetState>(
                 serial: candidate.serial,
             });
             candidate.passive = Some(passive_id);
-            if let Some(events) = trace.as_deref_mut() {
-                events.push(LineBreakTrace::Active {
-                    serial: candidate.serial,
-                    line: candidate.line,
-                    fitness: trace_fitness(candidate.fitness),
-                    hyphenated: candidate.hyphenated
-                        || (candidate.penalty <= EJECT_PENALTY
-                            && candidate.position >= nodes.len()),
-                    total_demerits: candidate.path_demerits,
-                    previous: candidate.previous.map_or(0, |id| passive[id].serial),
-                });
+            if trace.is_some() {
+                active_traces.push((
+                    line_number_class(candidate.line, easy_line),
+                    LineBreakTrace::Active {
+                        serial: candidate.serial,
+                        line: candidate.line,
+                        fitness: trace_fitness(candidate.fitness),
+                        hyphenated: candidate.hyphenated
+                            || (candidate.penalty <= EJECT_PENALTY
+                                && candidate.position >= nodes.len()),
+                        total_demerits: candidate.path_demerits,
+                        previous: candidate.previous.map_or(0, |id| passive[id].serial),
+                    },
+                ));
             }
+        }
+        if let Some(events) = trace.as_deref_mut() {
+            // TeX82 §§851--854 creates and reports the champions for one
+            // line-number class before it examines feasible routes in the
+            // next class. The pure breaker computes all champions in one
+            // batch, so restore that observable class boundary here.
+            let mut active_traces = active_traces.into_iter().peekable();
+            for (class, event) in feasible_traces {
+                while active_traces
+                    .peek()
+                    .is_some_and(|(active_class, _)| *active_class < class)
+                {
+                    if let Some((_, active_event)) = active_traces.next() {
+                        events.push(active_event);
+                    }
+                }
+                events.push(event);
+            }
+            events.extend(active_traces.map(|(_, event)| event));
         }
         merge_active_candidates(
             &mut active,

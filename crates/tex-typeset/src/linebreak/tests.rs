@@ -69,6 +69,65 @@ fn tracing_records_second_and_emergency_pass_boundaries_without_effects() {
     );
 }
 
+#[test]
+fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() {
+    // TeX82 §§851--854 creates the first class's active node when traversal
+    // reaches the next line number, before reporting that next route.
+    let mut universe = Universe::new();
+    let stretch = universe.intern_glue(GlueSpec {
+        stretch: sp(100),
+        ..GlueSpec::ZERO
+    });
+    let nodes = vec![
+        rule(40),
+        Node::Glue {
+            spec: stretch,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(40),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+    parameters.left_skip.stretch = sp(100);
+    parameters.looseness = -1;
+
+    let (_, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
+    let terminal = trace
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                LineBreakTrace::Feasible {
+                    breakpoint: TraceBreakpoint::Paragraph,
+                    via: 0,
+                    ..
+                }
+            )
+        })
+        .expect("the initial route reaches the forced paragraph break");
+
+    assert!(
+        matches!(
+            trace.get(terminal + 1),
+            Some(LineBreakTrace::Active { line: 1, .. })
+        ),
+        "{trace:?}"
+    );
+    assert!(
+        matches!(
+            trace.get(terminal + 2),
+            Some(LineBreakTrace::Feasible {
+                breakpoint: TraceBreakpoint::Paragraph,
+                via,
+                ..
+            }) if *via != 0
+        ),
+        "{trace:?}"
+    );
+}
+
 /// tex.web §828: positive `emergency_stretch` keeps the tolerance threshold
 /// and obtains a real feasible route instead of the final-pass artificial one.
 #[test]
