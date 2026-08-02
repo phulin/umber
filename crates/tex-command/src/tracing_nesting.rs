@@ -11,6 +11,17 @@ use crate::input::SourceOpenDepths;
 use crate::processor::CommandProcessor;
 
 impl CommandProcessor<'_> {
+    /// Completes e-TeX 2.6 [23.328]'s `group_warning`/`if_warning` tail.
+    /// Both procedures terminate the warning line and render the live
+    /// `show_context` only at `\tracingnesting>1`.
+    fn finish_cross_file_nesting_warning(&mut self, tracing_nesting: i32) {
+        if tracing_nesting > 1 {
+            let context = self.error_context();
+            self.state.printer().print_rendered(&context);
+        }
+        self.state.record_warning_history();
+    }
+
     /// e-TeX 2.6 [23.328]'s `group_warning`, emitted immediately before an
     /// `unsave` closes a group that was already open when this file began.
     pub fn warn_cross_file_group_close(
@@ -19,7 +30,8 @@ impl CommandProcessor<'_> {
         kind: &str,
         entered_line: u32,
     ) {
-        if self.state.int_param(IntParam::TRACING_NESTING) <= 0 {
+        let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);
+        if tracing_nesting <= 0 {
             return;
         }
         let Some(open_depths) = self.command.current_source_open_depths() else {
@@ -28,24 +40,27 @@ impl CommandProcessor<'_> {
         if group_depth > open_depths.group_depth as usize {
             return;
         }
-        let mut printer = self.state.printer();
-        printer.print_nl("Warning: end of ");
-        printer.print(kind);
-        printer.print(" (level ");
-        printer.print_int(i32::try_from(group_depth).unwrap_or(i32::MAX));
-        printer.print_char(')');
-        if entered_line != 0 {
-            printer.print(" entered at line ");
-            printer.print_int(i32::try_from(entered_line).unwrap_or(i32::MAX));
+        {
+            let mut printer = self.state.printer();
+            printer.print_nl("Warning: end of ");
+            printer.print(kind);
+            printer.print(" (level ");
+            printer.print_int(i32::try_from(group_depth).unwrap_or(i32::MAX));
+            printer.print_char(')');
+            if entered_line != 0 {
+                printer.print(" entered at line ");
+                printer.print_int(i32::try_from(entered_line).unwrap_or(i32::MAX));
+            }
+            printer.print(" of a different file");
         }
-        printer.print(" of a different file");
-        self.state.record_warning_history();
+        self.finish_cross_file_nesting_warning(tracing_nesting);
     }
 
     /// e-TeX 2.6 [23.328]'s `if_warning`, emitted when a delimiter closes a
     /// conditional that was already open when the current file began.
     pub(crate) fn warn_cross_file_conditional_close(&mut self, frame: &ConditionFrame) {
-        if self.state.int_param(IntParam::TRACING_NESTING) <= 0 {
+        let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);
+        if tracing_nesting <= 0 {
             return;
         }
         let Some(open_depths) = self.command.current_source_open_depths() else {
@@ -55,15 +70,17 @@ impl CommandProcessor<'_> {
             return;
         }
         let name = self.conditional_kind_text(frame);
-        let mut printer = self.state.printer();
-        printer.print_nl("Warning: end of ");
-        printer.print(&name);
-        if frame.source_line != 0 {
-            printer.print(" entered on line ");
-            printer.print_int(i32::try_from(frame.source_line).unwrap_or(i32::MAX));
+        {
+            let mut printer = self.state.printer();
+            printer.print_nl("Warning: end of ");
+            printer.print(&name);
+            if frame.source_line != 0 {
+                printer.print(" entered on line ");
+                printer.print_int(i32::try_from(frame.source_line).unwrap_or(i32::MAX));
+            }
+            printer.print(" of a different file");
         }
-        printer.print(" of a different file");
-        self.state.record_warning_history();
+        self.finish_cross_file_nesting_warning(tracing_nesting);
     }
 
     /// `etex.ch` [23.328]'s `file_warning`, called once a source level has

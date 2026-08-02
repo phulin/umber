@@ -1347,6 +1347,75 @@ fn effect_text(universe: &Universe) -> String {
         .collect()
 }
 
+fn cross_file_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> String {
+    let mut command = CommandState::default();
+    if conditional {
+        command.conditions.push(ConditionalKind::IfTrue, 3);
+    }
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"a".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let level = command
+        .top_input_level_identity()
+        .expect("source level is live");
+    command.record_source_open_depths(
+        level,
+        u32::from(!conditional),
+        None,
+        u32::from(conditional),
+        command.conditions.current().map(|frame| frame.identity.0),
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(
+        tex_state::env::banks::IntParam::TRACING_NESTING,
+        tracing_nesting,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("source reads")
+            .expect("source token is delivered");
+        if conditional {
+            let frame = processor
+                .command
+                .conditions
+                .current()
+                .expect("condition is live")
+                .clone();
+            processor.warn_cross_file_conditional_close(&frame);
+        } else {
+            processor.warn_cross_file_group_close(1, "simple group", 3);
+        }
+    }
+    effect_text(&universe)
+}
+
+#[test]
+fn tracingnesting_two_shows_context_after_cross_file_warnings() {
+    // e-TeX 2.6 [23.328] shares this exact tail between `group_warning` and
+    // `if_warning`: value 1 prints only the warning, while value 2 additionally
+    // calls `show_context` against the live input cursor.
+    for conditional in [false, true] {
+        let terse = cross_file_nesting_warning_text(1, conditional);
+        let contextual = cross_file_nesting_warning_text(2, conditional);
+        assert!(terse.contains("of a different file"), "{terse:?}");
+        assert!(!terse.contains("l.1"), "{terse:?}");
+        assert!(
+            contextual.contains("of a different file\nl.1"),
+            "{contextual:?}"
+        );
+    }
+}
+
 #[test]
 fn tracingnesting_warns_when_a_file_ends_with_an_open_group() {
     // e-TeX 2.6 [23.328]'s `file_warning`: a group opened while reading
