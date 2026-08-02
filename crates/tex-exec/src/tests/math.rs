@@ -822,15 +822,12 @@ fn equation_number_outside_display_reports_illegal_case_without_starting_math() 
 
 #[test]
 fn math_shift_inserts_endgroup_for_open_semisimple_group() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
         r"\count0=1 $x\begingroup\count0=2$\count1=3",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("off_save should close begingroup before retrying the math shift");
+        false,
+    );
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.count(1), 3);
@@ -839,13 +836,12 @@ fn math_shift_inserts_endgroup_for_open_semisimple_group() {
 
 #[test]
 fn math_shift_inserts_right_brace_for_open_simple_group() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"\count0=1 $x{\count0=2$\count1=3"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("off_save should close a brace group before retrying math shift");
+    let (stores, _) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"\count0=1 $x{\count0=2$\count1=3",
+        false,
+    );
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.count(1), 3);
