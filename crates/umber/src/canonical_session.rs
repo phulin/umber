@@ -1039,7 +1039,7 @@ impl<'a> CanonicalEngineSession<'a> {
                 ))
             })?;
             Some(tex_exec::DviJobOutput {
-                file_name: format!("{}.dvi", self.control.capabilities_mut().job_name()),
+                file_name: self.control.dvi_output_name(self.stores)?,
                 byte_len: dvi.len() as u64,
             })
         };

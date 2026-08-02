@@ -106,10 +106,11 @@ pub(crate) struct StartupLineFraming<'a> {
 /// on `World` -- see [`tex_state::file_framing`] -- because §362 prints its
 /// `)` from inside `get_next`, one line ahead of the `check_outer_validity`
 /// diagnostic it must precede, where no engine driver is on the stack.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct JobFraming {
     /// Guards [`begin_job`] against printing the banner twice.
     started: bool,
+    pub(crate) output: crate::job_output::JobOutput,
 }
 
 /// Immutable facts about a serialized `.dvi` file that only the driver which
@@ -336,6 +337,12 @@ pub(crate) fn begin_job_with_terminal_banner(
     // stem derivation rather than re-deriving it here; see
     // `CommandHostCapabilities::set_startup_job_name`.
     capabilities.set_startup_job_name(startup.input_name);
+    // §§534--536 open the transcript as soon as the first input establishes
+    // the job name. Ordinary drivers have an available retained target;
+    // focused retry paths exercise the structured owner directly.
+    job.output
+        .open_log(stores, capabilities.job_name())
+        .expect("startup transcript target must be available or retried by the driver");
 
     // §61: the terminal's very first output -- `format_ident` and a
     // terminating `print_ln`, no clock (the clock is §536's log-only

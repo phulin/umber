@@ -17,6 +17,7 @@ mod error;
 mod error_report;
 mod executor;
 mod job;
+mod job_output;
 mod math;
 mod mode;
 mod node_dump;

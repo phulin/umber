@@ -69,6 +69,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   incomplete-conditional and history notes, the `\dump`-outside-INITEX
   note), and §1333's `close_files_and_terminate` DVI/transcript report. See
   `docs/job_framing.md`; tests in `src/job/tests.rs`.
+- `src/job_output.rs`: TeX82 §§532--536's engine-owned lazy DVI/transcript
+  names, `texput` fallback, transcript-open state, and interactive open retry;
+  direct lifecycle tests live in `src/job_output/tests.rs`.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.

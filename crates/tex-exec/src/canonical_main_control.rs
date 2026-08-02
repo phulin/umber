@@ -445,7 +445,7 @@ impl CanonicalStepSnapshot {
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
-            job: control.job,
+            job: control.job.clone(),
             universe: stores.snapshot(),
         }
     }
@@ -926,6 +926,20 @@ impl CanonicalMainControl {
             dvi,
             pdf,
         );
+    }
+
+    /// Selects TeX82 §§532--533's lazy DVI output name at the first point a
+    /// driver needs to serialize shipped pages.
+    pub fn dvi_output_name(&mut self, stores: &mut Universe) -> Result<String, ExecError> {
+        self.job
+            .output
+            .dvi_name(stores, self.capabilities.job_name())
+            .map(str::to_owned)
+            .map_err(|error| {
+                ExecError::InvalidShipoutArtifact(format!(
+                    "unable to open canonical DVI output name: {error:?}"
+                ))
+            })
     }
 
     /// Renders whatever §537/§362 bracketing the command core queued but had

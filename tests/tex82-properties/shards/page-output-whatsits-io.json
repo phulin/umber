@@ -534,7 +534,8 @@
       "stimulus": [
         "Run the structured Phase 2 units below and tiny boundary fixture `job-output-names.tex` with named and unnamed jobs plus one retry."
       ],
-      "planned_coverage": [
+      "planned_coverage": [],
+      "coverage": [
         {
           "path": "crates/tex-exec/src/job_output/tests.rs",
           "test": "lazy_dvi_and_log_names_follow_job_name_and_texput_default"
@@ -557,10 +558,9 @@
         "An unavailable DVI/log target requests another name in interactive mode; an unavailable transcript temporarily permits terminal output even from batch mode."
       ],
       "semantic_owner": "tex-exec::job-output",
-      "test_level": "planned-rust-unit+semantic-minifixture",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-7e32"
+      "test_level": "rust-unit",
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.shipout.dvi-byte-stream",
