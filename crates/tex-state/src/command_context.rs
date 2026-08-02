@@ -347,6 +347,18 @@ impl CommandContext<'_> {
         self.universe.int_param(param)
     }
 
+    /// Advances pdfTeX's checkpointed MetaPost-derived random stream and
+    /// returns a uniform deviate for the signed bound.
+    pub fn pdf_uniform_deviate(&mut self, bound: i32) -> i32 {
+        self.universe.pdf_uniform_deviate(bound)
+    }
+
+    /// Advances pdfTeX's checkpointed MetaPost-derived random stream and
+    /// returns one 16.16 normal deviate.
+    pub fn pdf_normal_deviate(&mut self) -> i32 {
+        self.universe.pdf_normal_deviate()
+    }
+
     /// Reads one token parameter for direct `\\the` insertion.
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {

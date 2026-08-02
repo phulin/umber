@@ -1929,7 +1929,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdftex_random_primitives_match_seeded_reference_sequence() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

@@ -665,6 +665,21 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text("27", command.origin());
                 Ok(())
             }
+            // pdftex.web §§1587--1588 use the ordinary integer scanner for
+            // the signed uniform bound, then advance the single checkpointed
+            // MetaPost-derived stream shared with the operand-free normal
+            // deviate conversion.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfUniformDeviate) => {
+                let bound = self.scan_integer()?.value;
+                let value = self.state.pdf_uniform_deviate(bound);
+                self.push_rendered_text(&value.to_string(), command.origin());
+                Ok(())
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfNormalDeviate) => {
+                let value = self.state.pdf_normal_deviate();
+                self.push_rendered_text(&value.to_string(), command.origin());
+                Ok(())
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original
