@@ -7944,6 +7944,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             initex: control.initex,
         },
         &mut control.boxes,
+        &control.active_discretionaries,
         &mut control.prepared_dvi_pages,
     )
     .expect("nested alignment begins through typed suspension");
@@ -7977,6 +7978,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
             initex: control.initex,
         },
         &mut control.boxes,
+        &control.active_discretionaries,
         &mut control.prepared_dvi_pages,
     )
     .expect("right-brace align_peek finish resumes the outer context");
@@ -8006,6 +8008,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
                 initex: control.initex,
             },
             &mut control.boxes,
+            &control.active_discretionaries,
             &mut control.prepared_dvi_pages,
         )
         .expect("typed alignment begins");
@@ -8032,6 +8035,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
                 initex: control.initex,
             },
             &mut control.boxes,
+            &control.active_discretionaries,
             &mut control.prepared_dvi_pages,
         )
         .expect_err("missing fin_align save level is an internal invariant failure")

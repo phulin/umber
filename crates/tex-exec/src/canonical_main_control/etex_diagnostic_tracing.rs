@@ -132,6 +132,23 @@ fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
 }
 
 #[test]
+fn showgroups_discretionary_opener_includes_completed_parts() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\\discretionary{}{\\showgroups}{}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("(\\discretionary{}{)"),
+        "second-part opener missing from {log:?}"
+    );
+}
+
+#[test]
 fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
     let (mut stores, mut control) = etex_control();
     register_source(

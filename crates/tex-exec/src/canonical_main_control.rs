@@ -1421,6 +1421,7 @@ impl CanonicalMainControl {
                 initex: self.initex,
             },
             &mut self.boxes,
+            &self.active_discretionaries,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -1938,6 +1939,7 @@ impl CanonicalMainControl {
                 initex: self.initex,
             },
             &mut self.boxes,
+            &self.active_discretionaries,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -3290,6 +3292,7 @@ impl CanonicalMainControl {
                     &self.modes,
                     &self.active_alignment,
                     &self.boxes,
+                    &self.active_discretionaries,
                 )),
             },
             scanned => scanned,
@@ -3356,6 +3359,7 @@ impl CanonicalMainControl {
                 initex: self.initex,
             },
             &mut self.boxes,
+            &self.active_discretionaries,
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok()
@@ -11060,6 +11064,7 @@ fn detached_showgroups(
     modes: &ModeNest,
     active_alignment: &Option<ActiveReplayAlignment>,
     boxes: &ReplayBoxes,
+    active_discretionaries: &[ActiveDiscretionary],
 ) -> crate::diagnostics::ShowGroupsDiagnostic {
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
@@ -11073,6 +11078,7 @@ fn detached_showgroups(
     let mut mode_index = 1usize;
     let mut align_level = 0usize;
     let mut box_index = 0usize;
+    let mut discretionary_index = 0usize;
     let align_kind = active_alignment.as_ref().map(|active| active.kind);
     let mut rendered = Vec::with_capacity(frames.len());
     for (index, frame) in frames.into_iter().enumerate() {
@@ -11095,7 +11101,15 @@ fn detached_showgroups(
                 context
             }
             GroupKind::Output => "\\output{".to_owned(),
-            GroupKind::Disc => "\\discretionary{".to_owned(),
+            GroupKind::Disc => {
+                // e-TeX 2.6 [49.1292] prints one `{}` for each part already
+                // completed, followed by `{` for the currently live part.
+                let completed = active_discretionaries
+                    .get(discretionary_index)
+                    .map_or(0, |active| active.parts.len());
+                discretionary_index = discretionary_index.saturating_add(1);
+                format!("\\discretionary{}{{", "{}".repeat(completed))
+            }
             GroupKind::MathChoice => "\\mathchoice{".to_owned(),
             GroupKind::MathShift => match mode {
                 Some(Mode::DisplayMath) => "$$".to_owned(),
@@ -11216,6 +11230,7 @@ fn apply_scanned_step(
     active_alignment: &mut Option<ActiveReplayAlignment>,
     command: &mut CommandMachine<'_>,
     boxes: &mut ReplayBoxes,
+    active_discretionaries: &[ActiveDiscretionary],
     prepared_dvi_pages: &mut PreparedDviPages,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
@@ -12967,7 +12982,13 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups { diagnostic: None } => {
-            let diagnostic = detached_showgroups(stores, modes, active_alignment, boxes);
+            let diagnostic = detached_showgroups(
+                stores,
+                modes,
+                active_alignment,
+                boxes,
+                active_discretionaries,
+            );
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
