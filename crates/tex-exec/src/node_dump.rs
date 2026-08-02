@@ -571,10 +571,10 @@ fn dump_math_field(
             } else {
                 // TeX82 §681 represents an empty sub-mlist by a present field
                 // whose info pointer is null. Section 692's subsidiary-data
-                // printer still emits the field marker and newline; only an
+                // printer emits the field marker followed by `{}`; only an
                 // `empty` math_type is silent.
                 write_prefix(depth - 1, out);
-                let _ = writeln!(out, "{marker}");
+                let _ = writeln!(out, "{marker}{{}}");
             }
         }
     }

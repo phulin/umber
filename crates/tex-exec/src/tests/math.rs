@@ -1260,6 +1260,21 @@ fn showlists_reports_incomplete_fraction_numerator() {
 }
 
 #[test]
+fn showlists_reports_empty_submlist_in_incomplete_fraction_numerator() {
+    let stores = super::core::run_canonical_tex82(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=10${}\over\showlists b$\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains(
+            "this will begin denominator of:\n\\fraction, thickness = default\n\\\\mathord\n\\.{}"
+        ),
+        "{log}"
+    );
+}
+
+#[test]
 fn showlists_projects_fraction_across_middle_at_canonical_depths() {
     let stores = super::core::run_canonical_etex(
         r"\nonstopmode\showboxdepth=10\showboxbreadth=10$\left.p\middle.q\over r\showlists\right.\showlists$\end",

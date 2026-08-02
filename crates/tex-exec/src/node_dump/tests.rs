@@ -1365,7 +1365,7 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
 
 /// TeX82 §681 (`tex.web:13366-13426`) gives an empty sub-mlist a nonempty
 /// math-field type with a null list pointer. Section 692 prints its subsidiary
-/// marker and newline, unlike the wholly absent `empty` field.
+/// marker and `{}`, unlike the wholly absent `empty` field.
 #[test]
 fn math_dump_distinguishes_empty_submlist() {
     let mut stores = Universe::new();
@@ -1390,7 +1390,7 @@ fn math_dump_distinguishes_empty_submlist() {
                 depth: 100,
             },
         ),
-        "\\mathord\n\\mathord\n.\n",
+        "\\mathord\n\\mathord\n.{}\n",
     );
 }
 
