@@ -5727,7 +5727,7 @@ impl Universe {
                     true,
                 ),
                 BankTag::IntParam if cell.index() < 128 => {
-                    let Some(name) = IntParam::new(cell.index() as u16).tex82_name() else {
+                    let Some(name) = IntParam::new(cell.index() as u16).canonical_name() else {
                         continue;
                     };
                     (

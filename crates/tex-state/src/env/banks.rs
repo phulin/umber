@@ -60,10 +60,10 @@ param_index!(GlueParam);
 param_index!(TokParam);
 
 impl IntParam {
-    /// TeX82's §236 parameter spelling used by §283's `show_eqtb`-based
-    /// restoration trace.
+    /// TeX82 §236 and e-TeX's extended parameter spellings used by §283's
+    /// `show_eqtb`-based restoration trace.
     #[must_use]
-    pub fn tex82_name(self) -> Option<&'static str> {
+    pub fn canonical_name(self) -> Option<&'static str> {
         const NAMES: [&str; 60] = [
             "pretolerance",
             "tolerance",
@@ -126,10 +126,25 @@ impl IntParam {
             "floatingpenalty",
             "fam",
         ];
-        match NAMES.get(self.0 as usize) {
+        let base = match NAMES.get(self.0 as usize) {
             Some(&"") | None => None,
             Some(&name) => Some(name),
-        }
+        };
+        base.or_else(|| {
+            Some(match self {
+                Self::TRACING_SCAN_TOKENS => "tracingscantokens",
+                Self::TEX_XET_STATE => "TeXXeTstate",
+                Self::PRE_DISPLAY_DIRECTION => "predisplaydirection",
+                Self::TRACING_ASSIGNS => "tracingassigns",
+                Self::TRACING_GROUPS => "tracinggroups",
+                Self::TRACING_IFS => "tracingifs",
+                Self::TRACING_NESTING => "tracingnesting",
+                Self::SAVING_V_DISCARDS => "savingvdiscards",
+                Self::LAST_LINE_FIT => "lastlinefit",
+                Self::SAVING_HYPH_CODES => "savinghyphcodes",
+                _ => return None,
+            })
+        })
     }
 
     /// TeX's first-pass paragraph badness cutoff.

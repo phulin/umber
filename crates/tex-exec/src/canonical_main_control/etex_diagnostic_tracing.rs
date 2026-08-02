@@ -98,6 +98,21 @@ fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
 }
 
 #[test]
+fn tracingrestores_names_the_restored_etex_tracingassigns_parameter() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\tracingassigns=1}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(log.contains("{into \\tracingassigns=1}"), "{log:?}");
+    assert!(log.contains("{restoring \\tracingassigns=0}"), "{log:?}");
+}
+
+#[test]
 fn tracingassigns_reports_globally_changing_unconditionally() {
     let (mut stores, mut control) = etex_control();
     register_source(
