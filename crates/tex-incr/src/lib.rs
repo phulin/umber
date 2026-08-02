@@ -32,10 +32,8 @@ use tex_state::{
     LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation, Universe, WorldError,
 };
 
-mod delivery;
 mod trace;
 
-pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
 fn canonical_candidate_control(
