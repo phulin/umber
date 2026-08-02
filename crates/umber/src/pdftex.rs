@@ -1615,7 +1615,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_document_fragments_match_dvi_mode_consumption() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1624,8 +1623,10 @@ mod tests {
             &mut stores,
         )
         .expect("warning form scans and ignores its argument");
+        let output = complete_memory_terminal(&output, &stores);
         assert!(output.contains("pdfTeX warning (\\pdfinfo)"));
         assert!(output.contains("continued"));
+        assert_eq!(stores.pdf_next_object_id(), 1);
         assert_eq!(
             stores
                 .pdf_document_fragments(PdfDocumentFragmentKind::Info)
@@ -1693,22 +1694,36 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdfcatalog_openaction_is_consumed_without_allocation_in_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = run_pdf_memory(
-            concat!(
-                "\\pdfcatalog{} openaction goto file{other.pdf} page 2 {/Fit} newwindow",
-                "\\pdfcatalog{} openaction user{<< /S /Named /N /Print >>}",
-                "\\message{continued}\\end",
-            ),
-            &mut stores,
-        )
-        .expect("DVI mode consumes repeated ignored open actions");
+        let baseline = stores.snapshot();
+        let source = concat!(
+            "\\pdfcatalog{} openaction goto file{other.pdf} page 2 {/Fit} newwindow",
+            "\\pdfcatalog{} openaction user{<< /S /Named /N /Print >>}",
+            "\\message{continued}\\end",
+        );
+        let output = run_pdf_memory(source, &mut stores)
+            .expect("DVI mode consumes repeated ignored open actions");
+        let output = complete_memory_terminal(&output, &stores);
         assert!(output.contains("pdfTeX warning (\\pdfcatalog)"));
         assert!(output.contains("continued"));
         assert_eq!(stores.pdf_catalog_open_action(), None);
+        assert_eq!(stores.pdf_next_object_id(), 1);
+        assert_eq!(
+            stores
+                .pdf_document_fragments(PdfDocumentFragmentKind::Catalog)
+                .count(),
+            0
+        );
+        let completed_hash = stores.testing_state_hash();
+
+        stores.rollback(&baseline);
+        let replay = run_pdf_memory(source, &mut stores)
+            .expect("checkpoint replay consumes the same ignored actions");
+        assert_eq!(complete_memory_terminal(&replay, &stores), output);
+        assert_eq!(stores.testing_state_hash(), completed_hash);
+        assert_eq!(stores.pdf_next_object_id(), 1);
     }
 
     #[test]

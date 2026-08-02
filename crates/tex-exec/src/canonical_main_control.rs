@@ -12812,6 +12812,21 @@ fn apply_scanned_step(
                 if dvi_only_error {
                     return Err(ExecError::PdfExtensionInDviMode("pdfnames"));
                 }
+                let name = match request.kind {
+                    tex_state::PdfDocumentFragmentKind::Info => "pdfinfo",
+                    tex_state::PdfDocumentFragmentKind::Catalog => "pdfcatalog",
+                    tex_state::PdfDocumentFragmentKind::Trailer => "pdftrailer",
+                    tex_state::PdfDocumentFragmentKind::TrailerId => "pdftrailerid",
+                    tex_state::PdfDocumentFragmentKind::Names => {
+                        unreachable!("pdfnames is rejected before the ignored-fragment warning")
+                    }
+                };
+                stores.world_mut().write_text(
+                    PrintSink::TerminalAndLog,
+                    &format!(
+                        "\npdfTeX warning (\\{name}): not allowed in DVI mode (\\pdfoutput <= 0); ignoring it\n"
+                    ),
+                );
                 return Ok(ReplayStep::Continue);
             }
             stores.append_pdf_document_fragment(request.kind, request.text.tokens.token_list());

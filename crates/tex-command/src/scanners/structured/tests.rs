@@ -2877,6 +2877,53 @@ fn malformed_pdf_navigation_keeps_the_nonoperand_token() {
 }
 
 #[test]
+fn pdf_catalog_scanner_consumes_the_complete_open_action_suffix() {
+    // pdftex.web §1571 scans the expanded catalog fragment and the complete
+    // optional action before DVI-mode execution decides whether to publish it.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        text_tokens("{} openaction goto file{other.pdf} page 2 {/Fit} newwindow!"),
+    );
+
+    let request = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .scan_pdf_document_fragment_request(UnexpandablePrimitive::PdfCatalog)
+            .expect("scan catalog open action")
+    };
+    assert_eq!(request.kind, tex_state::PdfDocumentFragmentKind::Catalog);
+    let tex_state::PdfActionSpec::GoTo(destination) =
+        request.open_action.expect("open action is present")
+    else {
+        panic!("expected GoTo action");
+    };
+    assert!(destination.file.is_some());
+    assert_eq!(destination.window, tex_state::PdfActionWindow::New);
+    assert!(matches!(
+        destination.target,
+        tex_state::PdfActionTarget::Page { number: 2, .. }
+    ));
+
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    assert_eq!(
+        processor
+            .get_x_token()
+            .expect("read following token")
+            .expect("following token exists")
+            .spelling()
+            .semantic_token(),
+        Token::Char {
+            ch: '!',
+            cat: Catcode::Other,
+        }
+    );
+}
+
+#[test]
 fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
     let mut command = CommandState::default();
     let source = command
