@@ -85,6 +85,18 @@ impl CanonicalResourceFulfillment {
     }
 }
 
+fn same_run_input_fulfillment(name: &str, content: FileContent) -> CanonicalResourceFulfillment {
+    CanonicalResourceFulfillment::Input {
+        name: name.to_owned(),
+        // TeX82 §537 prints the name of the file that was actually opened,
+        // not the spelling scanned after `\input`. The same-run fallback
+        // selects this job-local path directly, matching the `./name`
+        // resolved spelling supplied by the loaded-format host for other
+        // files beside the job.
+        source: SourceRegistration::world(content).with_name(format!("./{name}")),
+    }
+}
+
 /// Borrow-scoped access to the active aggregate World at one declared
 /// canonical resource suspension.
 ///
@@ -843,7 +855,7 @@ impl<'a> CanonicalEngineSession<'a> {
             .read_same_run_output_file(name)
             .ok()
             .flatten()
-            .map(|content| CanonicalResourceFulfillment::world_input(name, content))
+            .map(|content| same_run_input_fulfillment(name, content))
     }
 
     fn publish_completed_boundaries(
@@ -1882,6 +1894,28 @@ mod tests {
                         && record.origin() == tex_state::InputOrigin::SameRunGenerated
                 })
         );
+    }
+
+    #[test]
+    fn same_run_input_fulfillment_retains_its_resolved_local_name() {
+        let mut stores = Universe::new();
+        stores
+            .world_mut()
+            .set_memory_file("same.out", b"generated")
+            .expect("same-run stand-in is seeded");
+        let content = stores
+            .world_mut()
+            .read_file("same.out")
+            .expect("selected bytes are retained");
+
+        let CanonicalResourceFulfillment::Input { name, source } =
+            same_run_input_fulfillment("same.out", content)
+        else {
+            panic!("same-run input helper returned a non-input fulfillment");
+        };
+
+        assert_eq!(name, "same.out");
+        assert_eq!(source.name().map(AsRef::as_ref), Some("./same.out"));
     }
 
     #[test]
