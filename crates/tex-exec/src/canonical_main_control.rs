@@ -12144,7 +12144,7 @@ fn apply_scanned_step(
             let value = stores.intern_glue(value);
             if global {
                 stores.set_muskip_global(index, value);
-            } else {
+            } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_muskip(index, value);
             }
             crate::assignments::tracing::trace_muglue_register(
@@ -12598,7 +12598,7 @@ fn apply_scanned_step(
             let new = tokens.token_list();
             if global {
                 stores.set_toks_global(index, new);
-            } else if !etex_redundant_local_word_assignment(stores, old, new) || index > 255 {
+            } else if !etex_redundant_local_word_assignment(stores, old, new) {
                 stores.set_toks(index, new);
             }
             crate::assignments::tracing::trace_toks_register(stores, index, global, old, new);

@@ -701,6 +701,32 @@ fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
 }
 
 #[test]
+fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
+    // e-TeX 2.6 [53a] `sa_def` reports an identical pointer as
+    // `reassigning`, destroys the scanned reference, and never calls
+    // `sa_save`. The sparse mutation remains observable, but §283 therefore
+    // has no register entry to restore before the ordinary parameter entry.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingrestores=1\tracingonline=1{\tracingassigns=1\muskip2000=0mu\toks2000={}}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        concat!(
+            "{into \\tracingassigns=1}\n",
+            "{reassigning \\muskip2000=0.0mu}\n",
+            "{reassigning \\toks2000=}\n",
+            "{restoring \\tracingassigns=0}\n",
+        )
+    );
+}
+
+#[test]
 fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
