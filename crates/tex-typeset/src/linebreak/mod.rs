@@ -176,6 +176,8 @@ pub struct LineBreakResult {
     pub breaks: Vec<BreakDecision>,
     pub demerits: i32,
     pub nodes: Vec<Node>,
+    pub physical_nodes: Vec<Node>,
+    pub physical_boundaries: Vec<usize>,
     pub last_line_fill: Option<GlueSpec>,
 }
 
@@ -264,10 +266,14 @@ where
 }
 
 pub fn plan_with_nodes(plan: BreakPlan, nodes: Vec<Node>) -> LineBreakResult {
+    let physical_boundaries = (0..=nodes.len()).collect();
+    let physical_nodes = nodes.clone();
     LineBreakResult {
         breaks: plan.breaks,
         demerits: plan.demerits,
         nodes,
+        physical_nodes,
+        physical_boundaries,
         last_line_fill: plan.last_line_fill,
     }
 }

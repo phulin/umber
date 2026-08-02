@@ -608,7 +608,11 @@ fn break_current_paragraph(
     let paragraph_start_line = stores.pop_paragraph_start_line().unwrap_or(0);
     stores.set_pack_begin_line(paragraph_start_line);
     let mut materializer = LineMaterializer::new(
-        tex_state::node_sequence::NodeSequence::mirrored(decisions.nodes),
+        tex_state::node_sequence::NodeSequence::from_projection(
+            decisions.nodes,
+            decisions.physical_nodes,
+            decisions.physical_boundaries,
+        ),
         decisions.breaks,
         post_params,
     );
@@ -959,6 +963,7 @@ fn break_hlist_with_trace(
         Ok((tex_typeset::linebreak::plan_with_nodes(first, hlist), trace))
     } else {
         let mut hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(stores, hlist, fuel)?;
+        let physical_nodes = hyphenated.clone();
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let (plan, trace) = if tracing {
             line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)
@@ -968,11 +973,28 @@ fn break_hlist_with_trace(
                 trace,
             )
         };
-        Ok((
-            tex_typeset::linebreak::plan_with_nodes(plan, hyphenated),
-            trace,
-        ))
+        let mut result = tex_typeset::linebreak::plan_with_nodes(plan, hyphenated);
+        result.physical_boundaries = physical_boundaries(&result.nodes, physical_nodes.len());
+        result.physical_nodes = physical_nodes;
+        Ok((result, trace))
     }
+}
+
+fn physical_boundaries(nodes: &[Node], physical_len: usize) -> Vec<usize> {
+    let mut boundary = 0usize;
+    let mut boundaries = Vec::with_capacity(nodes.len() + 1);
+    boundaries.push(0);
+    for node in nodes {
+        boundary = boundary.saturating_add(match node {
+            Node::Lig { orig, .. } => orig.len().max(1),
+            _ => 1,
+        });
+        boundaries.push(boundary.min(physical_len));
+    }
+    if let Some(last) = boundaries.last_mut() {
+        *last = physical_len;
+    }
+    boundaries
 }
 
 fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineBreakTrace]) {
