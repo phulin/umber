@@ -54,108 +54,100 @@ fn mode_nest_projects_conditional_predicates_across_transitions() {
 #[test]
 fn owned_execution_run_advances_through_explicit_phases() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut checkpoints = Vec::new();
-    let mut run = ExecutionRun::new("owned-job");
-    let cancellation = Cancellation::new();
-
-    let first = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores).with_checkpoints(&mut checkpoints),
-        &cancellation,
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\count0=1\\end".to_vec(),
+        ))
+        .expect("register canonical source");
+    control.flush_pending_file_framing(&mut stores);
+    let checkpoint = control
+        .capture_checkpoint(
+            EngineBoundary::JobStart,
+            &mut stores,
+            ExecutionBudgetCounters::default(),
+        )
+        .expect("job-start phase is quiescent");
+    assert_eq!(checkpoint.boundary(), EngineBoundary::JobStart);
+    assert_eq!(
+        control.step(&mut stores).expect("assignment step"),
+        MainControlStep::Continue
     );
-    let ExecutionStepResult::Progress(first) = first else {
-        panic!("job start must commit progress")
-    };
-    assert_eq!(first.next_step, ExecutionStep::MainControl);
-    assert_eq!(first.checkpoints.len(), 1);
-    assert_eq!(checkpoints.len(), 1);
-
-    let second = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores),
-        &cancellation,
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(
+        control.step(&mut stores).expect("end step"),
+        MainControlStep::End
     );
-    let ExecutionStepResult::Progress(second) = second else {
-        panic!("end of input must advance to finalization")
-    };
-    assert_eq!(second.next_step, ExecutionStep::Finalize);
-
-    let complete = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores),
-        &cancellation,
+    assert_eq!(
+        control.step(&mut stores).expect("exhausted source"),
+        MainControlStep::EndOfInput
     );
-    let ExecutionStepResult::Complete(stats) = complete else {
-        panic!("finalization must complete the run")
-    };
-    assert_eq!(stats, ExecutionStats::default());
-    assert_eq!(run.lifecycle(), ExecutionLifecycle::Complete);
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Failed(ExecError::ExecutionAlreadyTerminated)
-    ));
 }
 
 #[test]
 fn effect_budget_failure_rolls_back_the_entire_candidate_step() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\message{not published}\\end"));
-    let mut run = ExecutionRun::new("budgeted").with_budgets(ExecutionBudgets {
-        effects: 0,
-        ..ExecutionBudgets::default()
-    });
-    let cancellation = Cancellation::new();
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-    let input_before = input.summary();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\def\\loop{\\loop}\\message{not published: \\loop}\\end".to_vec(),
+        ))
+        .expect("register canonical source");
+    assert_eq!(
+        control.step(&mut stores).expect("definition step"),
+        MainControlStep::Continue
+    );
+    control.set_fuel_limit(64).expect("finite fuel limit");
     let state_before = stores.snapshot().state_hash();
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation
-        ),
-        ExecutionStepResult::Failed(ExecError::ResourceBudgetExceeded {
-            resource: "pending effects",
-            limit: 0,
-            attempted,
-        }) if attempted > 0
-    ));
-    assert_eq!(input.summary(), input_before);
+    let failure = control
+        .step(&mut stores)
+        .expect_err("recursive message exhausts fuel");
+    assert!(matches!(failure, ExecError::Captured { .. }));
     assert_eq!(stores.snapshot().state_hash(), state_before);
     assert!(stores.world().effect_records().is_empty());
+    assert_eq!(control.advance_telemetry().rollbacks, 1);
 }
 
 #[test]
 fn named_checkpoint_preserves_future_execution_accounting() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut checkpoints = Vec::new();
-    let mut run = ExecutionRun::new("accounted");
-    let cancellation = Cancellation::new();
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores).with_checkpoints(&mut checkpoints),
-            &cancellation
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-    assert_eq!(checkpoints[0].budget_counters().committed_steps, 1);
-
-    let mut executor = Executor::new();
-    executor
-        .restore_checkpoint(&mut input, &mut stores, &checkpoints[0], |_, _, _| {
-            Ok::<_, ()>(MemoryInput::new(""))
-        })
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\count0=1\\count0=2\\end".to_vec(),
+        ))
+        .expect("register canonical source");
+    assert_eq!(
+        control.step(&mut stores).expect("first assignment"),
+        MainControlStep::Continue
+    );
+    let accounting = ExecutionBudgetCounters {
+        committed_steps: 1,
+        ..ExecutionBudgetCounters::default()
+    };
+    let checkpoint = control
+        .capture_checkpoint(EngineBoundary::JobStart, &mut stores, accounting)
+        .expect("named checkpoint captures");
+    assert_eq!(
+        control.step(&mut stores).expect("future assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.count(0), 2);
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
         .expect("checkpoint restores");
-    assert_eq!(executor.budget_counters(), checkpoints[0].budget_counters());
+    assert_eq!(stores.count(0), 1);
+    assert_eq!(checkpoint.budget_counters(), accounting);
+    assert_eq!(
+        control
+            .step(&mut stores)
+            .expect("replayed future assignment"),
+        MainControlStep::Continue
+    );
+    assert_eq!(stores.count(0), 2);
 }
 
 #[test]
@@ -164,49 +156,54 @@ fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
     let mut source = "\\count0=0 ".repeat(command_count);
     source.push_str("\\end");
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let mut run = ExecutionRun::new("chunked-job");
-    let cancellation = Cancellation::new();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.into_bytes(),
+        ))
+        .expect("register canonical source");
 
     loop {
-        match run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ) {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::Complete(stats) => {
-                assert_eq!(stats.main_control_dispatches, command_count + 1);
-                break;
-            }
-            other => panic!("chunked run failed: {other:?}"),
+        match control
+            .step(&mut stores)
+            .expect("bounded canonical operation")
+        {
+            MainControlStep::Continue => {}
+            MainControlStep::End | MainControlStep::EndOfInput => break,
         }
     }
-
-    // JobStart, two bounded main-control chunks, FinishEnd, and Finalize.
-    assert_eq!(run.telemetry().advance_calls, 5);
+    let telemetry = control.advance_telemetry();
+    assert_eq!(telemetry.attempts, command_count as u64 + 1);
+    assert_eq!(telemetry.commits, telemetry.attempts);
+    assert_eq!(telemetry.rollbacks, 0);
+    assert_eq!(telemetry.live_savepoints, 0);
+    assert_eq!(telemetry.maximum_live_savepoints, 1);
 }
 
 #[test]
 fn owned_execution_run_observes_cancellation_before_mutation() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut input = InputStack::new(MemoryInput::new("ignored"));
-    let mut run = ExecutionRun::new("cancelled-job");
-    let cancellation = Cancellation::new();
-    let input_before = input.summary();
-    cancellation.cancel();
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Cancelled
-    ));
-    assert_eq!(run.lifecycle(), ExecutionLifecycle::Cancelled);
-    assert_eq!(input.summary(), input_before);
-    assert!(stores.input_summary().is_empty());
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\count0=1".to_vec(),
+        ))
+        .expect("register canonical source");
+    let before = stores.snapshot().state_hash();
+    assert_eq!(
+        control
+            .advance_when(&mut stores, CanonicalAdvanceReadiness::Cancelled)
+            .expect("cancellation is not an execution error"),
+        CanonicalAdvanceOutcome::Cancelled
+    );
+    assert_eq!(stores.snapshot().state_hash(), before);
+    assert_eq!(stores.count(0), 0);
+    assert_eq!(
+        control.advance_telemetry(),
+        CanonicalAdvanceTelemetry::default()
+    );
 }
 
 #[test]

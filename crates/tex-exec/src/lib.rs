@@ -41,6 +41,7 @@ pub use assignments::{
     register_unexpandable_primitives, retry_unavailable_stream_open, try_execute_assignment,
 };
 pub use canonical_main_control::{
+    CanonicalAdvanceOutcome, CanonicalAdvanceReadiness, CanonicalAdvanceTelemetry,
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
     CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
 };

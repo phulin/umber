@@ -218,6 +218,9 @@ pub struct CanonicalMainControl {
     /// Effect-record boundary immediately before §1335 final-cleanup
     /// framing. Drivers can project a root body without deleting framing.
     job_body_effect_end: Option<tex_state::EffectPos>,
+    /// Operational accounting only; snapshots and durable checkpoints never
+    /// observe it.
+    advance_telemetry: CanonicalAdvanceTelemetry,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -393,6 +396,30 @@ pub enum CanonicalResourceNeed {
 pub enum CanonicalStepResult {
     Progress(MainControlStep),
     Suspended(CanonicalResourceNeed),
+}
+
+/// Host decision sampled immediately before a canonical aggregate operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanonicalAdvanceReadiness {
+    Ready,
+    Cancelled,
+}
+
+/// Outcome of a cancellation-aware canonical advance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalAdvanceOutcome {
+    Step(CanonicalStepResult),
+    Cancelled,
+}
+
+/// Non-semantic accounting for canonical aggregate savepoint ownership.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CanonicalAdvanceTelemetry {
+    pub attempts: u64,
+    pub commits: u64,
+    pub rollbacks: u64,
+    pub live_savepoints: u64,
+    pub maximum_live_savepoints: u64,
 }
 
 /// One retained diagnostic-expansion operation. Assignments are executed by
@@ -614,6 +641,26 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    /// Reports aggregate-operation/savepoint accounting without exposing the
+    /// mode journal or any rollback capability.
+    #[must_use]
+    pub const fn advance_telemetry(&self) -> CanonicalAdvanceTelemetry {
+        self.advance_telemetry
+    }
+
+    /// Samples host cancellation before creating a savepoint or mutating
+    /// command, mode, or Universe state.
+    pub fn advance_when(
+        &mut self,
+        stores: &mut Universe,
+        readiness: CanonicalAdvanceReadiness,
+    ) -> Result<CanonicalAdvanceOutcome, ExecError> {
+        if readiness == CanonicalAdvanceReadiness::Cancelled {
+            return Ok(CanonicalAdvanceOutcome::Cancelled);
+        }
+        self.advance(stores).map(CanonicalAdvanceOutcome::Step)
+    }
+
     #[cfg(test)]
     pub(crate) const fn main_loop_active_for_test(&self) -> bool {
         self.main_loop_active
@@ -2103,21 +2150,48 @@ impl CanonicalMainControl {
         if self.fatal.is_some() {
             return Ok(CanonicalStepResult::Progress(MainControlStep::End));
         }
+        self.advance_telemetry.attempts += 1;
+        self.advance_telemetry.live_savepoints += 1;
+        self.advance_telemetry.maximum_live_savepoints = self
+            .advance_telemetry
+            .maximum_live_savepoints
+            .max(self.advance_telemetry.live_savepoints);
         let snapshot = self.snapshot_step(stores);
         match self.step_once(stores, None) {
             Ok(step) => {
                 self.commit_step(snapshot);
+                self.advance_telemetry.live_savepoints -= 1;
+                self.advance_telemetry.commits += 1;
                 Ok(CanonicalStepResult::Progress(step))
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
                     if matches!(error, ExecError::Captured { .. }) {
-                        return self.finish_failed_step(snapshot, stores, error);
+                        let rolled_back = snapshot.can_rollback(stores);
+                        let result = self.finish_failed_step(snapshot, stores, error);
+                        self.advance_telemetry.live_savepoints -= 1;
+                        if rolled_back {
+                            self.advance_telemetry.rollbacks += 1;
+                        } else {
+                            self.advance_telemetry.commits += 1;
+                        }
+                        return result;
                     }
                     self.commit_step(snapshot);
+                    self.advance_telemetry.live_savepoints -= 1;
+                    self.advance_telemetry.commits += 1;
                     return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
                 }
-                self.finish_failed_step(snapshot, stores, error)
+                let rolled_back = !matches!(error, ExecError::PdfXFormVoidBox)
+                    && snapshot.can_rollback(stores);
+                let result = self.finish_failed_step(snapshot, stores, error);
+                self.advance_telemetry.live_savepoints -= 1;
+                if rolled_back {
+                    self.advance_telemetry.rollbacks += 1;
+                } else {
+                    self.advance_telemetry.commits += 1;
+                }
+                result
             }
         }
     }
