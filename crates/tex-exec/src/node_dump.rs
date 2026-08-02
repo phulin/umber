@@ -268,7 +268,12 @@ fn dump_node(
             let _ = writeln!(out, "\\penalty {value}");
         }
         Node::Char { font, ch, .. } => {
-            let _ = writeln!(out, "{} {}", dump_font(stores, *font), dump_char(*ch));
+            let _ = writeln!(
+                out,
+                "{} {}",
+                dump_font(stores, *font),
+                dump_character_string(stores, *ch)
+            );
         }
         Node::Lig {
             font,
@@ -282,7 +287,7 @@ fn dump_node(
                 out,
                 "{} {}",
                 dump_font(stores, *font),
-                dump_ligature(*ch, orig, *left_hit, *right_hit)
+                dump_ligature(stores, *ch, orig, *left_hit, *right_hit)
             );
         }
         Node::Disc {
@@ -811,14 +816,34 @@ fn dump_char(ch: char) -> String {
     }
 }
 
-fn dump_ligature(ch: char, orig: &[char], left_hit: bool, right_hit: bool) -> String {
-    let mut rendered = dump_char(ch);
+/// TeX82 §§59/173--174 print node character codes as one-character strings.
+/// The live new-line character is recognized before the string's otherwise
+/// unprintable byte is expanded to its `^^` spelling.
+fn dump_character_string(stores: &Universe, ch: char) -> String {
+    let newline_char = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
+        .ok()
+        .and_then(char::from_u32);
+    if newline_char == Some(ch) {
+        "\n".to_owned()
+    } else {
+        dump_char(ch)
+    }
+}
+
+fn dump_ligature(
+    stores: &Universe,
+    ch: char,
+    orig: &[char],
+    left_hit: bool,
+    right_hit: bool,
+) -> String {
+    let mut rendered = dump_character_string(stores, ch);
     rendered.push_str(" (ligature ");
     if left_hit {
         rendered.push('|');
     }
     for &original in orig {
-        rendered.push_str(&dump_char(original));
+        rendered.push_str(&dump_character_string(stores, original));
     }
     if right_hit {
         rendered.push('|');

@@ -117,6 +117,42 @@ fn ligature_dump_includes_original_character_list() {
 }
 
 #[test]
+fn node_dump_honors_live_newline_character_in_ligature_components() {
+    // TeX82 §§59/173--174: `show_node_list` displays a ligature's character
+    // and original list through `print_ASCII`/`short_display`, both aliases
+    // of the one-character-string `print` path. It tests `\newlinechar`
+    // before expanding an unprintable byte to caret notation.
+    let mut stores = Universe::new();
+    stores.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, 10);
+    let identifier = stores.intern_relaxed_control_sequence("f");
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+    let ligature = Node::Lig {
+        font: tex_state::font::NULL_FONT,
+        ch: '-',
+        orig: vec!['[', '\n', ']'],
+        origins: vec![OriginId::UNKNOWN; 3],
+        left_hit: false,
+        right_hit: false,
+    };
+    let config = || DumpConfig {
+        breadth: 10,
+        depth: 10,
+        profile: tex_command::CommandProfile::TEX82,
+    };
+
+    assert_eq!(
+        dump_node_slice(&stores, &[ligature.clone()], config()),
+        "\\f - (ligature [\n])\n",
+    );
+
+    stores.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, -1);
+    assert_eq!(
+        dump_node_slice(&stores, &[ligature], config()),
+        "\\f - (ligature [^^J])\n",
+    );
+}
+
+#[test]
 fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
     let mut stores = Universe::new();
     let identifier = stores.intern_relaxed_control_sequence("f");
