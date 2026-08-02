@@ -130,6 +130,15 @@ pub struct CanonicalMainControl {
     /// step, so the prologue is carried as a one-shot on the first step rather
     /// than by a distinct entry call every driver would have to remember.
     main_control_entered: bool,
+    /// True while TeX82 §1054's end-job material is still queued for §994's
+    /// page builder.
+    ///
+    /// A nonempty contribution list does not imply that the end-job trio has
+    /// already been appended: it may be the residual material that made
+    /// `its_all_over` false in the first place. Keep this continuation
+    /// explicit across command-sized steps so a suffix resumed after
+    /// shipout is not given a duplicate trio either.
+    end_job_ejection_pending: bool,
     /// tex.web's `init`/`tini` compile-time split as a session flag.
     ///
     /// tex.web builds INITEX and production TeX from the same source with
@@ -465,6 +474,7 @@ struct CanonicalStepSnapshot {
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
     pending_shipout_boundary: bool,
+    end_job_ejection_pending: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -493,6 +503,7 @@ impl CanonicalStepSnapshot {
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
             pending_shipout_boundary: control.pending_shipout_boundary,
+            end_job_ejection_pending: control.end_job_ejection_pending,
             job: control.job.clone(),
             universe: stores.snapshot(),
         }
@@ -530,6 +541,7 @@ impl CanonicalStepSnapshot {
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
+        control.end_job_ejection_pending = self.end_job_ejection_pending;
         control.job = self.job;
     }
 
@@ -1845,6 +1857,7 @@ impl CanonicalMainControl {
             &self.active_math_left_boundaries,
             &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
+            &mut self.end_job_ejection_pending,
         )?;
         if dumped_format {
             self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
@@ -2524,6 +2537,7 @@ impl CanonicalMainControl {
             &self.active_math_left_boundaries,
             &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
+            &mut self.end_job_ejection_pending,
         )?;
         if dumped_format {
             self.dumped_format = Some(crate::job::FormatDumpReceipt::new(
@@ -4098,6 +4112,7 @@ impl CanonicalMainControl {
             &self.active_math_left_boundaries,
             &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
+            &mut self.end_job_ejection_pending,
         );
         if result.is_ok()
             && !redundant_skip
@@ -12448,6 +12463,7 @@ fn apply_scanned_step(
     active_math_left_boundaries: &[bool],
     active_math_shifts: &[MathShiftContext],
     prepared_dvi_pages: &mut PreparedDviPages,
+    end_job_ejection_pending: &mut bool,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
         ScannedStep::Continue | ScannedStep::AlignmentTemplateEntered => Ok(ReplayStep::Continue),
@@ -14921,10 +14937,14 @@ fn apply_scanned_step(
             // This matters when an insertion split contributes `-10000`:
             // the filler glue can become the chosen breakpoint and leave the
             // forced penalty queued.
-            if stores.page_contributions().is_empty() {
+            if !*end_job_ejection_pending {
                 crate::output::append_end_job_contributions(stores);
+                *end_job_ejection_pending = true;
             }
             crate::page_builder::build_page(stores)?;
+            if stores.page_contributions().is_empty() {
+                *end_job_ejection_pending = false;
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalStop { token } => {

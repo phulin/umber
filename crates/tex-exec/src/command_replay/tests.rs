@@ -2914,15 +2914,23 @@ fn a_noalign_from_everycr_is_delivered_before_the_v_template_retires() {
         br"\everycr{\noalign{\kern1pt}}\halign{#\cr\kern2pt\cr}\end",
     );
     let mut observations = ObservationRecorder::default();
-    loop {
+    let mut terminated = false;
+    for _ in 0..128 {
         match control
             .step_with_observer(&mut universe, &mut observations)
             .expect("canonical program executes")
         {
-            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::End | MainControlStep::EndOfInput => {
+                terminated = true;
+                break;
+            }
             MainControlStep::Continue => {}
         }
     }
+    assert!(
+        terminated,
+        "canonical program did not terminate in 128 steps"
+    );
 
     let script: Vec<&'static str> = observations
         .0
@@ -8132,6 +8140,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &control.active_math_left_boundaries,
         &control.active_math_shifts,
         &mut control.prepared_dvi_pages,
+        &mut control.end_job_ejection_pending,
     )
     .expect("nested alignment begins through typed suspension");
 
@@ -8170,6 +8179,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
         &control.active_math_left_boundaries,
         &control.active_math_shifts,
         &mut control.prepared_dvi_pages,
+        &mut control.end_job_ejection_pending,
     )
     .expect("right-brace align_peek finish resumes the outer context");
     assert_eq!(control.active_alignment(), Some(outer));
@@ -8207,6 +8217,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
             &control.active_math_left_boundaries,
             &control.active_math_shifts,
             &mut control.prepared_dvi_pages,
+            &mut control.end_job_ejection_pending,
         )
         .expect("typed alignment begins");
         let alignment = control.active_alignment().expect("alignment is active");
@@ -8238,6 +8249,7 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
             &control.active_math_left_boundaries,
             &control.active_math_shifts,
             &mut control.prepared_dvi_pages,
+            &mut control.end_job_ejection_pending,
         )
         .expect_err("missing fin_align save level is an internal invariant failure")
     }
