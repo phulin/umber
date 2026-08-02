@@ -116,6 +116,18 @@ fn page_insertion_heights_are_checkpointed_live_state_and_forbid_format_dump() {
 }
 
 #[test]
+fn ignore_primitive_error_parameter_rolls_back_with_the_environment() {
+    let mut universe = Universe::new();
+    let baseline = universe.snapshot();
+    universe.set_int_param(IntParam::IGNORE_PRIMITIVE_ERROR, 3);
+    assert_eq!(universe.int_param(IntParam::IGNORE_PRIMITIVE_ERROR), 3);
+    assert_ne!(universe.snapshot().state_hash(), baseline.state_hash());
+    universe.rollback(&baseline);
+    assert_eq!(universe.int_param(IntParam::IGNORE_PRIMITIVE_ERROR), 0);
+    assert_eq!(universe.snapshot().state_hash(), baseline.state_hash());
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's

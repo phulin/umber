@@ -6662,6 +6662,18 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoIndent) => {
             Ok(ScannedStep::ParagraphIndent { indent: false })
         }
+        // pdftex.web §1092 installs `quitvmode` as an ordinary `start_par`
+        // command: vertical modes begin an indented paragraph, while
+        // horizontal (including restricted hmode) and math modes do nothing.
+        // Unlike `\indent`, the nonvertical cases must not append an indent
+        // box or noad.
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::QuitVMode) => {
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                Ok(ScannedStep::ParagraphStart)
+            } else {
+                Ok(ScannedStep::Continue)
+            }
+        }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::ParShape) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let count = processor
@@ -8274,6 +8286,7 @@ fn scan_unclassified_primitive(
         | P::WidowPenalties
         | P::NonstopMode
         | P::ScrollMode
+        | P::QuitVMode
         | P::ErrorStopMode => unreachable!(
             "UnexpandablePrimitive::{primitive:?} has an explicit, mode-complete \
              scan_command dispatch arm and must never reach the exhaustive fallback"
@@ -8433,7 +8446,6 @@ fn scan_unclassified_primitive(
         | P::PdfStbsCode
         | P::PdfTagCode
         | P::PdfTeXUnimplemented
-        | P::QuitVMode
         | P::SpaceFactor
         | P::VFil
         | P::VFilNeg

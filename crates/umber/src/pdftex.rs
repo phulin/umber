@@ -3049,7 +3049,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn mode_and_primitive_error_controls_match_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_compatibility_controls", "ref");
         let expected = [
