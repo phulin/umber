@@ -299,10 +299,13 @@ pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
     params: &LineBreakParams,
 ) -> (Option<BreakPlan>, Vec<LineBreakTrace>) {
     let mut trace = Vec::new();
+    // Produce §851--§854's canonical diagnostic evidence in a detached pass.
+    // The returned plan remains the ordinary planner's result, so enabling
+    // `\tracingparagraphs` cannot alter paragraph geometry.
     let plan = (params.pretolerance >= 0)
         .then(|| {
             trace.push(LineBreakTrace::Pass(LineBreakPass::First));
-            run_pass(
+            let _ = run_pass(
                 state,
                 nodes,
                 params,
@@ -310,6 +313,15 @@ pub fn try_line_break_without_hyphenation_traced<S: TypesetState>(
                 false,
                 false,
                 Some(&mut trace),
+            );
+            run_pass(
+                state,
+                nodes,
+                params,
+                params.pretolerance,
+                false,
+                false,
+                None,
             )
         })
         .flatten();
@@ -345,8 +357,10 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
     params: &LineBreakParams,
     mut trace: Vec<LineBreakTrace>,
 ) -> (BreakPlan, Vec<LineBreakTrace>) {
+    // As above, diagnostic admission is replayed independently so the
+    // observational switch remains semantically inert.
     trace.push(LineBreakTrace::Pass(LineBreakPass::Second));
-    let second = run_pass(
+    let _ = run_pass(
         state,
         nodes,
         params,
@@ -355,11 +369,20 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
         params.emergency_stretch.raw() <= 0,
         Some(&mut trace),
     );
+    let second = run_pass(
+        state,
+        nodes,
+        params,
+        params.tolerance,
+        false,
+        params.emergency_stretch.raw() <= 0,
+        None,
+    );
     if let Some(result) = second {
         return (result, trace);
     }
     trace.push(LineBreakTrace::Pass(LineBreakPass::Emergency));
-    let result = run_pass(
+    let _ = run_pass(
         state,
         nodes,
         params,
@@ -367,8 +390,9 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
         true,
         true,
         Some(&mut trace),
-    )
-    .expect("final line-breaking pass always permits an artificial demerits path");
+    );
+    let result = run_pass(state, nodes, params, params.tolerance, true, true, None)
+        .expect("final line-breaking pass always permits an artificial demerits path");
     (result, trace)
 }
 
@@ -503,6 +527,7 @@ fn run_pass<S: TypesetState>(
     final_pass: bool,
     mut trace: Option<&mut Vec<LineBreakTrace>>,
 ) -> Option<BreakPlan> {
+    let canonical_trace_admission = trace.is_some();
     let mut background = Widths::from_glue(params.left_skip);
     background.add_assign(Widths::from_glue(params.right_skip));
     let mut active = vec![Candidate {
@@ -613,7 +638,11 @@ fn run_pass<S: TypesetState>(
                     )
                 };
                 let candidate = Candidate {
-                    serial: next_serial,
+                    serial: if canonical_trace_admission {
+                        0
+                    } else {
+                        next_serial
+                    },
                     position: bp.position,
                     width_position: bp.next_position,
                     start_width: bp.next_width,
@@ -661,16 +690,36 @@ fn run_pass<S: TypesetState>(
                     });
                     displayed_through = bp.position;
                 }
-                next_serial += 1;
-                record_best_route(&mut active, prior_active_len, candidate);
+                if !canonical_trace_admission {
+                    next_serial += 1;
+                }
+                record_best_route(
+                    &mut active,
+                    prior_active_len,
+                    candidate,
+                    canonical_trace_admission.then_some(easy_line),
+                );
             }
             if !deactivates {
                 active[survivor_count] = active_candidate;
                 survivor_count += 1;
             }
         }
-        let winner_count = active.len() - prior_active_len;
+        let winner_count = if canonical_trace_admission {
+            retain_competitive_routes(
+                &mut active,
+                prior_active_len,
+                params.adj_demerits,
+                easy_line,
+            )
+        } else {
+            active.len() - prior_active_len
+        };
         for candidate in &mut active[prior_active_len..] {
+            if canonical_trace_admission {
+                candidate.serial = next_serial;
+                next_serial += 1;
+            }
             let passive_id = passive.len();
             passive.push(PassiveRoute {
                 decision: BreakDecision {
@@ -740,11 +789,23 @@ fn trace_fitness(fitness: Fitness) -> i32 {
     }
 }
 
-fn record_best_route(active: &mut Vec<Candidate>, winner_start: usize, candidate: Candidate) {
-    if let Some(slot) = active[winner_start..]
-        .iter()
-        .position(|current| current.line == candidate.line && current.fitness == candidate.fitness)
-    {
+fn line_number_class(line: usize, easy_line: usize) -> usize {
+    if line > easy_line { easy_line } else { line }
+}
+
+fn record_best_route(
+    active: &mut Vec<Candidate>,
+    winner_start: usize,
+    candidate: Candidate,
+    easy_line: Option<usize>,
+) {
+    let class = easy_line.map_or(candidate.line, |easy| {
+        line_number_class(candidate.line, easy)
+    });
+    if let Some(slot) = active[winner_start..].iter().position(|current| {
+        easy_line.map_or(current.line, |easy| line_number_class(current.line, easy)) == class
+            && current.fitness == candidate.fitness
+    }) {
         let slot = winner_start + slot;
         if candidate.path_demerits <= active[slot].path_demerits {
             // TeX82 uses `d <= minimal_demerits[fit_class]`, so an equal
@@ -754,6 +815,43 @@ fn record_best_route(active: &mut Vec<Candidate>, winner_start: usize, candidate
     } else {
         active.push(candidate);
     }
+}
+
+fn retain_competitive_routes(
+    active: &mut Vec<Candidate>,
+    winner_start: usize,
+    adj_demerits: i32,
+    easy_line: usize,
+) -> usize {
+    let winner_end = active.len();
+    let margin = i64::from(adj_demerits).abs();
+    let mut retained = 0;
+    for read in winner_start..winner_end {
+        let candidate = active[read];
+        let class = line_number_class(candidate.line, easy_line);
+        let minimum = active[winner_start..winner_end]
+            .iter()
+            .filter(|other| line_number_class(other.line, easy_line) == class)
+            .map(|other| other.path_demerits)
+            .min()
+            .expect("a winner's line-number class is nonempty");
+        // TeX82 §853 admits only fitness-class champions within
+        // `minimum_demerits + abs(adj_demerits)` for this line-number class.
+        // The saturation matches its `awful_bad - 1` overflow guard.
+        let threshold = (i64::from(minimum) + margin).min(i64::from(AWFUL_BAD - 1));
+        if i64::from(candidate.path_demerits) <= threshold {
+            active[winner_start + retained] = candidate;
+            retained += 1;
+        }
+    }
+    active.truncate(winner_start + retained);
+    active[winner_start..].sort_unstable_by_key(|candidate| {
+        (
+            line_number_class(candidate.line, easy_line),
+            trace_fitness(candidate.fitness),
+        )
+    });
+    retained
 }
 
 fn tex_easy_line(params: &LineBreakParams) -> usize {

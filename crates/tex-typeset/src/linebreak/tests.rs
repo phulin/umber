@@ -1136,9 +1136,9 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
     ];
     let mut active = Vec::new();
 
-    record_best_route(&mut active, 0, candidates[1]);
-    record_best_route(&mut active, 0, candidates[2]);
-    record_best_route(&mut active, 0, candidates[3]);
+    record_best_route(&mut active, 0, candidates[1], None);
+    record_best_route(&mut active, 0, candidates[2], None);
+    record_best_route(&mut active, 0, candidates[3], None);
 
     assert_eq!(
         active
@@ -1146,6 +1146,41 @@ fn equal_demerits_prefer_later_route_in_same_line_and_fitness_class() {
             .map(|candidate| candidate.position)
             .collect::<Vec<_>>(),
         vec![6, 6]
+    );
+}
+
+#[test]
+fn equivalent_line_classes_discard_noncompetitive_fitness_routes() {
+    let candidate = |serial, line, fitness, path_demerits| Candidate {
+        serial,
+        position: serial,
+        width_position: serial,
+        start_width: Widths::zero(),
+        penalty: 0,
+        line,
+        fitness,
+        path_demerits,
+        passive: None,
+        previous: None,
+        hyphenated: false,
+        line_shortfall: sp(0),
+        line_glue: sp(0),
+    };
+    let mut active = vec![
+        candidate(1, 1, Fitness::Loose, 2_704),
+        candidate(2, 2, Fitness::Decent, 100_000_782),
+        candidate(3, 3, Fitness::Tight, 3_000),
+    ];
+
+    let retained = retain_competitive_routes(&mut active, 0, 10_000, 0);
+
+    assert_eq!(retained, 2);
+    assert_eq!(
+        active
+            .iter()
+            .map(|candidate| candidate.serial)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
     );
 }
 
