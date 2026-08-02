@@ -2064,8 +2064,11 @@ impl CommandProcessor<'_> {
     /// The ordering follows pdfTeX 1.40.27's `scan_image`: a repeated rule
     /// specification, optional `attr` general text, mutually exclusive
     /// `named` expanded general text or `page` integer, optional `colorspace`
-    /// integer, then one page-box selector and an expanded-general-text
-    /// filename. Resource acquisition is expressly outside this scanner.
+    /// integer, then one page-box selector and the filename operand. The
+    /// filename uses TeX82 §§511–520's expanded
+    /// filename scanner, so braces are optional, quotes protect spaces, and
+    /// the first unquoted space or noncharacter remains the request boundary.
+    /// Resource acquisition is expressly outside this scanner.
     pub fn scan_pdf_image_request(&mut self) -> Result<PdfImageRequest, CommandError> {
         let mut width = None;
         let mut height = None;
@@ -2115,9 +2118,7 @@ impl CommandProcessor<'_> {
         } else {
             None
         };
-        let name_tokens = self.scan_balanced_text(true)?.tokens;
-        let name =
-            crate::processor::token_list_string_text(&mut self.state, name_tokens.token_list());
+        let name = self.scan_file_name()?.packed();
         Ok(PdfImageRequest {
             name,
             width,

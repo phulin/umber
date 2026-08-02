@@ -2692,6 +2692,45 @@ fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
 }
 
 #[test]
+fn pdf_image_filename_uses_canonical_quoted_unquoted_and_grouped_boundaries() {
+    for (source, expected, following) in [
+        (r#""figure name.png" !"#, "figure name.png", '!'),
+        ("figure.png !", "figure.png", '!'),
+        ("{figure.png}!", "figure.png", '!'),
+    ] {
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        push(&mut command, text_tokens(source));
+
+        let request = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            processor
+                .scan_pdf_image_request()
+                .expect("pdfximage filename scans")
+        };
+        assert_eq!(request.name, expected, "source {source:?}");
+
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("following token delivery succeeds")
+                .expect("following token remains")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: following,
+                cat: Catcode::Other,
+            },
+            "source {source:?}"
+        );
+    }
+}
+
+#[test]
 fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
