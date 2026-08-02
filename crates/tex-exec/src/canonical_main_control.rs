@@ -1766,6 +1766,16 @@ impl CanonicalMainControl {
             ScannedStep::Accent(accent) => self.apply_accent(accent, stores),
             scanned => return ControlFlow::Continue(scanned),
         };
+        // TeX82 §§994/1005 run `fire_up` inside the host-owned operation's
+        // `build_page` call.  In particular, §1200's display resumption has
+        // already installed its horizontal level when page fire-up enters
+        // §1025's output routine.  Do this before handing the completed step
+        // back to any driver: the unobserved driver returns directly here,
+        // while observed drivers have a later publication-only tail.
+        let applied = applied.and_then(|step| {
+            self.fire_pending_page_output(stores)?;
+            Ok(step)
+        });
         self.main_loop_active = false;
         ControlFlow::Break(applied)
     }

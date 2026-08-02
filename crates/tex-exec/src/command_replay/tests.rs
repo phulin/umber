@@ -12865,6 +12865,7 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 #[test]
 fn display_resumption_enters_output_before_the_next_command() {
     let mut universe = Universe::new_with_plain_catcodes();
+    universe.enable_geometry_observation();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_math_fonts(&mut control, &mut universe);
     register_source(
@@ -12881,6 +12882,22 @@ fn display_resumption_enters_output_before_the_next_command() {
            \noindent$$\copy0$$\global\count2=\count1 \end",
     );
 
+    for _ in 0..128 {
+        control.step(&mut universe).expect("canonical display step");
+        if universe.innermost_group_kind() == Some(tex_state::GroupKind::Output) {
+            assert_eq!(control.current_mode(), crate::Mode::InternalVertical);
+            assert_eq!(control.modes.depth(), 3);
+            let summary = control.modes.summary();
+            assert_eq!(summary.levels()[1].mode(), crate::Mode::Horizontal);
+            assert!(universe.page_fire_up().is_none());
+            break;
+        }
+    }
+    assert_eq!(
+        universe.innermost_group_kind(),
+        Some(tex_state::GroupKind::Output),
+        "the host-owned display closer enters output before its step returns"
+    );
     run_to_end(&mut control, &mut universe);
 
     assert_eq!(
@@ -12893,6 +12910,19 @@ fn display_resumption_enters_output_before_the_next_command() {
         1,
         "\\output ran during the command that closed the display, so the very \
          next command already sees its global assignment"
+    );
+    let widths = universe
+        .geometry_observations_since(0)
+        .iter()
+        .filter_map(|event| match event {
+            tex_state::GeometryObservation::Hpack { width_sp, .. } => Some(*width_sp),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (widths, universe.world().artifact_commits().len()),
+        (vec![0, 0, 0], 0),
+        "host-owned display/output sequence keeps exact packs and artifacts"
     );
 }
 
