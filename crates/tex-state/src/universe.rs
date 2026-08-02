@@ -5651,7 +5651,7 @@ impl Universe {
 
     fn trace_restores(&mut self, records: &[crate::env::group::RestoreRecord]) {
         use crate::cell::BankTag;
-        use crate::env::banks::{GlueParam, IntParam};
+        use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 
         for record in records {
             if record.tracing_restores() <= 0 {
@@ -5725,12 +5725,46 @@ impl Universe {
                     };
                     (name.to_owned(), (record.old() as u32 as i32).to_string())
                 }
+                BankTag::DimenParam if cell.index() < 128 => {
+                    let Some(name) = DimenParam::new(cell.index() as u16).tex82_name() else {
+                        continue;
+                    };
+                    (
+                        name.to_owned(),
+                        format!(
+                            "{}pt",
+                            format_restore_scaled(crate::scaled::Scaled::from_raw(record.old()
+                                as u32
+                                as i32,))
+                        ),
+                    )
+                }
                 BankTag::GlueParam if cell.index() < 128 => {
                     let Some(name) = GlueParam::new(cell.index() as u16).tex82_name() else {
                         continue;
                     };
                     let id = GlueId::new(record.old() as u32);
                     (name.to_owned(), format_restore_glue(self.glue(id)))
+                }
+                BankTag::TokParam if cell.index() < 128 => {
+                    let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {
+                        continue;
+                    };
+                    let mut value = String::new();
+                    if let Some(raw) = record.old().checked_sub(1) {
+                        let id = TokenListId::new(raw as u32);
+                        let tokens = self.tokens(id);
+                        let mut shown = 0;
+                        while shown < tokens.len() && value.chars().count() < 32 {
+                            let token = tokens[shown];
+                            crate::token_show::append_token_show_text(self, token, &mut value);
+                            shown += 1;
+                        }
+                        if shown < tokens.len() {
+                            value.push_str(&escaped_restore_name(record.escape_char(), "ETC."));
+                        }
+                    }
+                    (name.to_owned(), value)
                 }
                 _ => continue,
             };

@@ -501,6 +501,28 @@ fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
 }
 
 #[test]
+fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingrestores=1\tracingonline=1\everypar={aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}{\vsize=1pt\global\vsize=2pt\everypar={B}\splitmaxdepth=3pt\count15=1\count15=2}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        concat!(
+            "{restoring \\count15=0}\n",
+            "{restoring \\splitmaxdepth=0.0pt}\n",
+            "{restoring \\everypar=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ETC.}\n",
+            "{retaining \\vsize=2.0pt}\n",
+        )
+    );
+}
+
+#[test]
 fn tracingrestores_reports_primitive_meaning_through_an_alias() {
     // TeX82 §§252/283 render the restored meaning, not the target control
     // sequence twice. An alias is the negative control: `\foo` must be named

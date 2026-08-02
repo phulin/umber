@@ -3,6 +3,7 @@ use crate::cell::{BankTag, CellId};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
 use crate::token::Token;
 use ahash::AHashMap;
+use ahash::AHashSet;
 use smallvec::SmallVec;
 
 pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
@@ -564,12 +565,30 @@ impl Env {
                 Entry::Marker(_) => false,
             });
         let mut restores = Vec::new();
+        // TeX's `eq_define` saves a cell only on its first local assignment
+        // at the current level. Our journal deliberately records every write,
+        // so select the entries that correspond to real save-stack words for
+        // `\tracingrestores`; a global write starts a new local run.
+        let mut locally_saved = AHashSet::new();
+        let mut traced_local_entries = AHashSet::new();
+        for index in marker_index + 1..group_end {
+            let Entry::Undo(rec) = self.journal.entry(index) else {
+                continue;
+            };
+            let key = cell_key(rec.cell());
+            if rec.cell().is_global() {
+                locally_saved.remove(&key);
+            } else if locally_saved.insert(key) {
+                traced_local_entries.insert(index);
+            }
+        }
         let meaning_changed = if has_globals {
             self.leave_group_with_globals(
                 marker_index,
                 group_end,
                 boundary.box_undo_len,
                 leaving_depth,
+                &traced_local_entries,
                 &mut restores,
             )
         } else {
@@ -578,7 +597,9 @@ impl Env {
                 if let Entry::Undo(rec) = self.journal.entry(index) {
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
-                    restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
+                    if traced_local_entries.contains(&index) {
+                        restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
+                    }
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
                     self.boxes.restore(rec.index(), rec.old());
@@ -619,6 +640,7 @@ impl Env {
         group_end: usize,
         box_undo_len: u32,
         leaving_depth: u32,
+        traced_local_entries: &AHashSet<usize>,
         restores: &mut Vec<RestoreRecord>,
     ) -> bool {
         let mut globals = Vec::new();
@@ -656,8 +678,10 @@ impl Env {
                     if !state.has_later_global {
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
-                        restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
-                    } else {
+                        if traced_local_entries.contains(&index) {
+                            restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
+                        }
+                    } else if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::retaining(self, rec.cell()));
                     }
                 }

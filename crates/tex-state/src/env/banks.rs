@@ -377,6 +377,35 @@ impl IntParam {
 }
 
 impl DimenParam {
+    /// TeX82's §236 parameter spelling used by §283's restoration trace.
+    #[must_use]
+    pub fn tex82_name(self) -> Option<&'static str> {
+        const NAMES: [&str; 21] = [
+            "parindent",
+            "mathsurround",
+            "lineskiplimit",
+            "hsize",
+            "vsize",
+            "maxdepth",
+            "splitmaxdepth",
+            "boxmaxdepth",
+            "hfuzz",
+            "vfuzz",
+            "delimitershortfall",
+            "nulldelimiterspace",
+            "scriptspace",
+            "predisplaysize",
+            "displaywidth",
+            "displayindent",
+            "overfullrule",
+            "hangindent",
+            "hoffset",
+            "voffset",
+            "emergencystretch",
+        ];
+        NAMES.get(usize::from(self.0)).copied()
+    }
+
     /// TeX's `\parindent` dimension parameter.
     pub const PAR_INDENT: Self = Self::new(0);
 
@@ -524,6 +553,23 @@ impl GlueParam {
 }
 
 impl TokParam {
+    /// TeX82's §236 parameter spelling used by §283's restoration trace.
+    #[must_use]
+    pub fn tex82_name(self) -> Option<&'static str> {
+        const NAMES: [&str; 9] = [
+            "output",
+            "everypar",
+            "everymath",
+            "everydisplay",
+            "everyhbox",
+            "everyvbox",
+            "everyjob",
+            "everycr",
+            "errhelp",
+        ];
+        NAMES.get(usize::from(self.0)).copied()
+    }
+
     /// Internal immutable payloads backing e-TeX's scoped penalty arrays.
     /// These are not user-visible token-list parameters.
     pub(crate) const INTER_LINE_PENALTIES_INTERNAL: Self = Self::new(123);
