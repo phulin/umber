@@ -14,7 +14,7 @@ mod tests;
 pub struct MathLayout {
     nodes: Vec<MathNode>,
     root: FrozenHList,
-    hpack_observations: Vec<MathPackObservation>,
+    pack_observations: Vec<MathPackObservation>,
     conversion_events: Vec<MathConversionEvent>,
     recovered: bool,
 }
@@ -70,7 +70,7 @@ impl MathLayout {
 /// Read-only access to formula-local structural spans during sink lowering.
 pub trait MathLayoutReader {
     fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
-    fn hpack_observations(&self) -> &[MathPackObservation];
+    fn pack_observations(&self) -> &[MathPackObservation];
     fn conversion_events(&self) -> &[MathConversionEvent];
     fn recovered(&self) -> bool;
 }
@@ -80,8 +80,8 @@ impl MathLayoutReader for MathLayout {
         self.nodes(list)
     }
 
-    fn hpack_observations(&self) -> &[MathPackObservation] {
-        &self.hpack_observations
+    fn pack_observations(&self) -> &[MathPackObservation] {
+        &self.pack_observations
     }
 
     fn conversion_events(&self) -> &[MathConversionEvent] {
@@ -109,6 +109,7 @@ pub enum MathConversionEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MathPackObservation {
+    pub axis: BoxAxis,
     pub width: Scaled,
     pub height: Scaled,
     pub depth: Scaled,
@@ -227,14 +228,14 @@ pub enum BoxAxis {
 
 pub(crate) struct MathLayoutBuilder {
     nodes: Vec<MathNode>,
-    hpack_observations: Vec<MathPackObservation>,
+    pack_observations: Vec<MathPackObservation>,
 }
 
 impl MathLayoutBuilder {
     pub(crate) fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            hpack_observations: Vec::new(),
+            pack_observations: Vec::new(),
         }
     }
 
@@ -256,7 +257,7 @@ impl MathLayoutBuilder {
         MathLayout {
             nodes: self.nodes,
             root,
-            hpack_observations: self.hpack_observations,
+            pack_observations: self.pack_observations,
             conversion_events,
             recovered,
         }
@@ -277,26 +278,27 @@ impl MathLayoutBuilder {
     }
 
     pub(crate) fn observe_source_box_pack(&mut self, boxed: &MathBox) {
-        self.hpack_observations.push(MathPackObservation {
+        self.pack_observations.push(MathPackObservation {
+            axis: BoxAxis::Horizontal,
             width: boxed.width,
             height: boxed.height,
             depth: boxed.depth,
         });
     }
 
-    pub(crate) fn take_hpack_observations_since(
+    pub(crate) fn take_pack_observations_since(
         &mut self,
         start: usize,
     ) -> Vec<MathPackObservation> {
-        self.hpack_observations.split_off(start)
+        self.pack_observations.split_off(start)
     }
 
-    pub(crate) fn replay_hpack_observations(&mut self, observations: &[MathPackObservation]) {
-        self.hpack_observations.extend_from_slice(observations);
+    pub(crate) fn replay_pack_observations(&mut self, observations: &[MathPackObservation]) {
+        self.pack_observations.extend_from_slice(observations);
     }
 
-    pub(crate) fn hpack_observation_count(&self) -> usize {
-        self.hpack_observations.len()
+    pub(crate) fn pack_observation_count(&self) -> usize {
+        self.pack_observations.len()
     }
 
     /// Stores the already-boxed child payload of a source box.
@@ -350,7 +352,8 @@ impl MathLayoutBuilder {
         // reaches it for every structural clean/sub-mlist box, not only for
         // source boxes that arrived already packaged. Retain the finalized
         // dimensions here so execution can publish every such transition.
-        self.hpack_observations.push(MathPackObservation {
+        self.pack_observations.push(MathPackObservation {
+            axis: BoxAxis::Horizontal,
             width: boxed.width,
             height: boxed.height,
             depth: boxed.depth,
@@ -358,10 +361,10 @@ impl MathLayoutBuilder {
         boxed
     }
 
-    pub(crate) fn vpack(&self, list: FrozenHList) -> MathBox {
+    pub(crate) fn vpack(&mut self, list: FrozenHList) -> MathBox {
         let mut meas = Measurement::ZERO;
         self.measure_vnodes(list, &mut meas);
-        MathBox {
+        let boxed = MathBox {
             width: meas.width,
             height: meas.height,
             depth: meas.depth,
@@ -372,7 +375,16 @@ impl MathLayoutBuilder {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-        }
+        };
+        // TeX82 §668's vertical package is complete and observable here,
+        // independently of how Appendix G later consumes its box.
+        self.pack_observations.push(MathPackObservation {
+            axis: BoxAxis::Vertical,
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+        });
+        boxed
     }
 
     pub(crate) fn nodes(&self, list: FrozenHList) -> &[MathNode] {

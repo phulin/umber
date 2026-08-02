@@ -1086,8 +1086,9 @@ fn direct_sub_box_nucleus_records_one_hpack_observation() {
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert_eq!(
-        layout.hpack_observations(),
+        layout.pack_observations(),
         &[MathPackObservation {
+            axis: BoxAxis::Horizontal,
             width: sc(120),
             height: sc(7),
             depth: sc(1),
@@ -1099,7 +1100,7 @@ fn direct_sub_box_nucleus_records_one_hpack_observation() {
         MathField::Empty,
     ))]);
     let layout = mlist_to_hlist(&universe, empty, Style::TEXT, false, &params);
-    assert!(layout.hpack_observations().is_empty());
+    assert!(layout.pack_observations().is_empty());
 }
 
 #[test]
@@ -1115,8 +1116,9 @@ fn nested_sub_mlist_records_its_structural_hpack() {
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert_eq!(
-        layout.hpack_observations(),
+        layout.pack_observations(),
         &[MathPackObservation {
+            axis: BoxAxis::Horizontal,
             width: Scaled::from_raw(0),
             height: Scaled::from_raw(0),
             depth: Scaled::from_raw(0),
@@ -1148,7 +1150,7 @@ fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert_eq!(
-        layout.hpack_observations().len(),
+        layout.pack_observations().len(),
         4,
         "TeX82 Appendix G and §651 perform both nested hpacks for each shared-list occurrence"
     );

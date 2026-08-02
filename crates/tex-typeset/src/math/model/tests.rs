@@ -7,6 +7,8 @@ use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
 
+use super::{BoxAxis, MathLayoutBuilder, MathLayoutReader};
+
 fn math_char(ch: char) -> MathChar {
     MathChar {
         family: 3,
@@ -98,4 +100,24 @@ fn tex82_noad_field_layout_initialization_and_release_matrix() {
     }
 
     drop((choice, fraction, stores));
+}
+
+#[test]
+fn cached_pack_template_preserves_horizontal_and_vertical_completion_order() {
+    let mut layout = MathLayoutBuilder::new();
+    let empty = layout.empty();
+
+    let _ = layout.hpack(empty);
+    let _ = layout.vpack(empty);
+    let template = layout.take_pack_observations_since(0);
+
+    assert_eq!(
+        template.iter().map(|pack| pack.axis).collect::<Vec<_>>(),
+        [BoxAxis::Horizontal, BoxAxis::Vertical],
+        "TeX82 §§651 and 668 complete in call order"
+    );
+
+    layout.replay_pack_observations(&template);
+    let completed = layout.finish(empty);
+    assert_eq!(completed.pack_observations(), template.as_slice());
 }

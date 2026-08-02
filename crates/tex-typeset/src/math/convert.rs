@@ -100,14 +100,14 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
     // iterative planner may share its pure node layout, but §651's completed
     // hpacks are observable effects and must be replayed at every demand.
     ctx.layout
-        .replay_hpack_observations(&converted.hpack_observations);
+        .replay_pack_observations(&converted.pack_observations);
     converted.list
 }
 
 #[derive(Clone)]
 pub(crate) struct ConvertedMlist {
     list: FrozenHList,
-    hpack_observations: Vec<MathPackObservation>,
+    pack_observations: Vec<MathPackObservation>,
 }
 
 fn convert_mlist_uncached<S: MathTypesetState>(
@@ -458,14 +458,14 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     }
 
     for (list, style) in postorder.into_iter().filter(|key| *key != root) {
-        let observation_start = ctx.layout.hpack_observation_count();
+        let observation_start = ctx.layout.pack_observation_count();
         let converted = convert_mlist_uncached(ctx, list, style, false);
-        let hpack_observations = ctx.layout.take_hpack_observations_since(observation_start);
+        let pack_observations = ctx.layout.take_pack_observations_since(observation_start);
         ctx.converted.insert(
             (list, style),
             ConvertedMlist {
                 list: converted,
-                hpack_observations,
+                pack_observations,
             },
         );
     }

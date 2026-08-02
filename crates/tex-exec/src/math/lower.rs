@@ -329,13 +329,19 @@ impl MathLayoutSink for LoweredMathSink<'_> {
             self.root_nodes.clear();
             return;
         }
-        for packed in layout.hpack_observations() {
-            self.stores
-                .record_geometry_observation(GeometryObservation::Hpack {
+        for packed in layout.pack_observations() {
+            self.stores.record_geometry_observation(match packed.axis {
+                tex_typeset::math::BoxAxis::Horizontal => GeometryObservation::Hpack {
                     width_sp: i64::from(packed.width.raw()),
                     height_sp: i64::from(packed.height.raw()),
                     depth_sp: i64::from(packed.depth.raw()),
-                });
+                },
+                tex_typeset::math::BoxAxis::Vertical => GeometryObservation::Vpack {
+                    width_sp: i64::from(packed.width.raw()),
+                    height_sp: i64::from(packed.height.raw()),
+                    depth_sp: i64::from(packed.depth.raw()),
+                },
+            });
         }
         let mut root = std::mem::take(&mut self.root_nodes);
         root.clear();
