@@ -941,20 +941,47 @@ fn italic_correction_in_math_appends_a_zero_kern() {
 }
 
 #[test]
-#[ignore = "xfail umber2-mlzo: canonical math discretionary omits TeX82 recovery diagnostic"]
 fn math_discretionary_deletes_a_nonempty_replacement_part() {
     let (stores, control) = run_canonical_math_recovery(
         crate::test_harness::universe_with_plain_catcodes(),
         CommandProfile::TEX82,
-        r"$\discretionary{\kern1pt}{\kern2pt}{\kern3pt}",
+        r"$\discretionary{\kern1pt}{\kern2pt}{\kern3pt}\kern4pt",
         false,
     );
 
-    assert!(support::terminal_effect_text(&stores).contains("Illegal math \\discretionary"));
-    assert!(matches!(
-        control.current_list().nodes(),
-        [Node::Disc { .. }]
-    ));
+    let transcript = support::terminal_effect_text(&stores);
+    assert!(transcript.contains("Illegal math \\discretionary"));
+    assert!(transcript.contains("I had to delete your third part."));
+    let [
+        Node::Disc {
+            pre, post, replace, ..
+        },
+        Node::Kern { amount, .. },
+    ] = control.current_list().nodes()
+    else {
+        panic!("recovered discretionary and following input must survive")
+    };
+    assert_eq!(stores.nodes(*pre).len(), 1);
+    assert_eq!(stores.nodes(*post).len(), 1);
+    assert!(stores.nodes(*replace).is_empty());
+    assert_eq!(*amount, Scaled::from_raw(4 * Scaled::UNITY));
+}
+
+#[test]
+fn math_discretionary_diagnostic_respects_escapechar() {
+    let (stores, control) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"\escapechar=`! $\discretionary{}{}{\kern1pt}",
+        false,
+    );
+
+    let transcript = support::terminal_effect_text(&stores);
+    assert!(transcript.contains("Illegal math !discretionary"));
+    let [Node::Disc { replace, .. }] = control.current_list().nodes() else {
+        panic!("recovered discretionary must survive")
+    };
+    assert!(stores.nodes(*replace).is_empty());
 }
 
 #[test]

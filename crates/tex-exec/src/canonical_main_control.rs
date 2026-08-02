@@ -1968,10 +1968,29 @@ impl CanonicalMainControl {
         if active.rejected {
             return Ok(ReplayStep::Continue);
         }
-        let [pre, post, replace]: [NodeListId; 3] = active
+        let [pre, post, mut replace]: [NodeListId; 3] = active
             .parts
             .try_into()
             .expect("discretionary completes after exactly three parts");
+        if matches!(self.modes.current_mode(), Mode::Math | Mode::DisplayMath)
+            && !stores.nodes(replace).is_empty()
+        {
+            // TeX82 §1120 diagnoses and deletes only a nonempty third part
+            // in math mode; the discretionary and its first two parts survive.
+            let context = self.command.output_open_context(&stores.command_context());
+            report_escaped_error(
+                stores,
+                "Illegal math ",
+                "discretionary",
+                "",
+                &[
+                    "Sorry: The third part of a discretionary break must be",
+                    "empty, in math formulas. I had to delete your third part.",
+                ],
+                context,
+            )?;
+            replace = stores.freeze_node_list(&[]);
+        }
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::Discretionary,
             pre,
