@@ -789,6 +789,33 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
 }
 
 #[test]
+fn etex_scantokens_warns_for_box_group_before_following_conditional() {
+    // e-TeX 2.6 [23.328]: each closer warns immediately before its own
+    // `unsave`/conditional pop. The two lines of one scantokens source must
+    // therefore report the hbox group before the enclosing ifcase.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\let\egroup=}\tracingonline=1\tracingnesting=1
+           \setbox0=\hbox{\ifcase0
+           \scantokens{\egroup^^J\fi}
+           \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    let group = output
+        .find("Warning: end of hbox group")
+        .unwrap_or_else(|| panic!("box group warning is rendered: {output:?}"));
+    let condition = output
+        .find("Warning: end of \\ifcase")
+        .unwrap_or_else(|| panic!("conditional warning is rendered: {output:?}"));
+    assert!(group < condition, "{output:?}");
+}
+
+#[test]
 fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
     // TeX82 §1012 preserves an empty class-zero `bot_mark` pointer as the new
     // `top_mark`, while e-TeX 2.6 `etex.ch` [26.1396] discards an empty old

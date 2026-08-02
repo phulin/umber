@@ -14030,6 +14030,11 @@ fn apply_scanned_step(
                 })
             };
             let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
+            // e-TeX 2.6 [23.328]'s `group_warning` runs immediately before
+            // every `unsave`, including §1086's hbox/vbox packaging path.
+            // Keeping the hook here preserves save-stack order when one
+            // nested source closes both a box group and a conditional.
+            warn_cross_file_group_close(stores, command);
             stores
                 .leave_group_with_kind(box_state.group_kind)
                 .map_err(|_| ExecError::MissingToken {
