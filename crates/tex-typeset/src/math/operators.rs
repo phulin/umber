@@ -204,12 +204,12 @@ fn displayed_limits(
         let sup_extent = add(add(sup.height, sup.depth), shift_up);
         list.push(MathNode::Kern {
             amount: size_params.big_op_spacing5,
-            kind: KernKind::Explicit,
+            kind: KernKind::Font,
         });
         list.push(boxed_node(sup));
         list.push(MathNode::Kern {
             amount: shift_up,
-            kind: KernKind::Explicit,
+            kind: KernKind::Font,
         });
         height = add(height, add(size_params.big_op_spacing5, sup_extent));
     }
@@ -220,12 +220,12 @@ fn displayed_limits(
         let sub_extent = add(add(sub_box.height, sub_box.depth), shift_down);
         list.push(MathNode::Kern {
             amount: shift_down,
-            kind: KernKind::Explicit,
+            kind: KernKind::Font,
         });
         list.push(boxed_node(sub_box));
         list.push(MathNode::Kern {
             amount: size_params.big_op_spacing5,
-            kind: KernKind::Explicit,
+            kind: KernKind::Font,
         });
         depth = add(depth, add(size_params.big_op_spacing5, sub_extent));
     }

@@ -16,10 +16,21 @@ fn tex82_noad_constructor_clearance_and_italic_matrix() {
     limits.subscript = MathField::MathChar(math_char('c'));
     let limits_list = stores.freeze_node_list(&[Node::MathNoad(limits)]);
     let layout = mlist_to_hlist(&stores, limits_list, Style::DISPLAY, false, &params);
-    assert!(matches!(
-        root_nodes(&layout).as_slice(),
-        [MathNode::VList(_)]
-    ));
+    let [MathNode::VList(limits)] = root_nodes(&layout).as_slice() else {
+        panic!("limits operator builds one vertical box");
+    };
+    // TeX82 §749 constructs all four limit clearances with `new_kern`, whose
+    // subtype is normal. They are synthesized font-layout kerns, not the
+    // explicit subtype reserved for user `\kern` input.
+    assert!(
+        list_nodes(&layout, limits.list)
+            .iter()
+            .filter_map(|node| match node {
+                MathNode::Kern { kind, .. } => Some(kind),
+                _ => None,
+            })
+            .all(|kind| *kind == KernKind::Font)
+    );
 
     let mut side = MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),

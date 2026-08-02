@@ -136,7 +136,7 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     );
     assert_eq!(
         math_layout_digest(&web_layouts),
-        "2c9bbe287f7c772381051b4fde4a679e885fce3e2a2ebeb0ec5d4b1dcaa2d661"
+        "87115432e19e60589aed30b5f9fee9b5126d99c1e75cd8c76cb0779c55dd02ef"
     );
 }
 
