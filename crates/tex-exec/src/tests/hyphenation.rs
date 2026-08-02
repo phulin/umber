@@ -388,16 +388,10 @@ fn directional_regions_preserve_text_hyphenation_eligibility() {
     // e-TeX 2.6 [17.3822--3880] adds L/R boundaries to horizontal lists;
     // TeX82 §§896--899 still select and collect the ordinary text between
     // them. BeginM/EndM are math-origin artifacts and remain barriers.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         r"\font\tenrm=cmr10 \relax \tenrm
           \hyphenation{di-rec-tion} \lefthyphenmin=1 \righthyphenmin=1 \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("directional hyphenation setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let chars = || {
@@ -449,17 +443,10 @@ fn directional_candidates_keep_language_whatsits_and_nontext_barriers_distinct()
     // TeX82 §§896--899 save language/minima while seeking the candidate.
     // L/R markers and language whatsits are transparent there; normal kerns
     // and boxes (including e-TeX box_lr variants) remain nonletter barriers.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_etex(
         r"\savinghyphcodes=1 \language=7 \patterns{d1irection}
           \language=0 \lefthyphenmin=1 \righthyphenmin=1 \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("saved-language directional setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let word = || {
@@ -520,15 +507,8 @@ fn directional_candidates_keep_language_whatsits_and_nontext_barriers_distinct()
 fn exception_markers_after_the_63_letter_boundary_are_discarded() {
     // pdfTeX §§26030--27481 bound exception words and their marker vector
     // together. Markers after discarded letters must not alias position 63.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     let source = format!("\\hyphenation{{{}-aa-}}\\end", "a".repeat(62));
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("bounded exception executes");
+    let stores = super::core::run_canonical_tex82(&source);
 
     assert_eq!(
         stores.hyphenation_exception(&"a".repeat(63)),
@@ -540,15 +520,9 @@ fn exception_markers_after_the_63_letter_boundary_are_discarded() {
 #[test]
 fn punctuation_and_whatsits_preserve_the_next_hyphenation_candidate() {
     // TeX82 §896 skips nonletters and whatsits while seeking the first letter.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{tes-ting} \\lefthyphenmin=1 \\righthyphenmin=1 \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("candidate-boundary setup executes");
+    );
     let font = stores.current_font();
     let mut nodes = vec![
         Node::Char {
@@ -589,18 +563,12 @@ fn paragraph_candidates_keep_patterns_and_exceptions_language_qualified() {
     // `\language<0` and `\language>255` select language zero, while 255 is a
     // distinct pattern/exception namespace. This intentionally uses live
     // `\lccode` fallback; saved-code switching belongs to umber2-e51h.83.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         r"\language=-1 \hyphenation{de-fault}
           \language=255 \patterns{b1ound} \hyphenation{ex-ception}
           \language=256 \patterns{a1fter}
           \lefthyphenmin=1 \righthyphenmin=1 \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("language-qualified hyphenation setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let chars = |word: &str| {
@@ -646,17 +614,11 @@ fn language_whatsit_after_candidate_start_does_not_requalify_that_word() {
     // TeX82 §896 updates `cur_lang` while seeking a candidate, then §897
     // holds that language fixed while collecting the word. A language whatsit
     // that terminates the candidate affects the next post-glue search only.
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         r"\language=0 \hyphenation{be-fore}
           \language=255 \hyphenation{af-ter}
           \lefthyphenmin=1 \righthyphenmin=1 \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("candidate-boundary setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let chars = |word: &str| {
