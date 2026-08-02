@@ -14741,7 +14741,18 @@ fn apply_scanned_step(
             // `@<Check if node p is a new champion breakpoint...@>` decides
             // whether the `-'10000000000` penalty fires §1012's `fire_up`,
             // and §1025 alone ever starts `\output`.
-            crate::output::append_end_job_contributions(stores);
+            // A default output can return with the suffix after its chosen
+            // breakpoint still waiting in the contribution list. TeX82
+            // §§1014--1015 resumes `build_page` synchronously after shipout,
+            // before §1054 can retry the backed-up stop. Our shipout is
+            // deferred to the command-step tail, so complete that pending
+            // builder invocation before publishing another end-job trio.
+            // This matters when an insertion split contributes `-10000`:
+            // the filler glue can become the chosen breakpoint and leave the
+            // forced penalty queued.
+            if stores.page_contributions().is_empty() {
+                crate::output::append_end_job_contributions(stores);
+            }
             crate::page_builder::build_page(stores)?;
             Ok(ReplayStep::Continue)
         }

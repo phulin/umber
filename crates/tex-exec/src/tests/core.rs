@@ -3498,7 +3498,6 @@ fn showlists_preserves_page_goal_row_leading_space() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-dog1 canonical insertion split accounting does not complete"]
 fn showlists_reports_count_scaled_split_page_insertions() {
     let stores = run_canonical_tex82(
         "\\nonstopmode\\vsize=5pt \\count7=500 \\dimen7=100pt \\skip7=0pt \\insert7{\\hrule height20pt}\\showlists\\end",
@@ -3512,7 +3511,6 @@ fn showlists_reports_count_scaled_split_page_insertions() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-dog1 canonical insertion split diagnostic does not complete"]
 fn tracingpages_reports_insertion_split_capacity_height_and_penalty() {
     let stores = run_canonical_tex82(
         "\\nonstopmode\\tracingpages=1 \\vsize=5pt \\count7=500 \\dimen7=100pt \\skip7=0pt \\insert7{\\hrule height20pt}\\end",
@@ -3520,6 +3518,23 @@ fn tracingpages_reports_insertion_split_capacity_height_and_penalty() {
     let log = terminal_effect_text(&stores);
 
     assert!(log.contains("% split7 to 9.9945,20.0 p=-10000\n"), "{log}");
+}
+
+#[test]
+fn end_job_resumes_the_suffix_left_by_a_split_insertion_break() {
+    // TeX82 §§1014--1015 resume the page builder after default output before
+    // §1054 retries the backed-up `\end`. A null insertion split contributes
+    // `-10000`, allowing the filler glue to fire output while the forced
+    // penalty is still queued; that suffix must be consumed, not accompanied
+    // by another end-job filler trio on every retry.
+    let stores = run_canonical_tex82(
+        "\\nonstopmode\\vsize=5pt \\count7=500 \\dimen7=100pt \\skip7=0pt \\insert7{\\hrule height20pt}\\end",
+    );
+
+    assert_eq!(stores.current_page_len(), 0);
+    assert!(stores.page_contributions().is_empty());
+    assert!(stores.page_fire_up().is_none());
+    assert!(stores.page_insertions().is_empty());
 }
 
 #[test]
