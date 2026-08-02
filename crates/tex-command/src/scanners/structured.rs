@@ -2420,10 +2420,11 @@ impl CommandProcessor<'_> {
         Ok(ScannedSetBoxAssignment { index, payload })
     }
 
-    /// Scans the register operand of TeX82 §1079's `make_box(box_code)`.
+    /// Scans the register operand of TeX82 §1079's `make_box(box_code)` and
+    /// e-TeX 2.6 [47.1079]'s sparse-array replacement.
     pub fn scan_box_register(&mut self) -> Result<ScannedBoxRegister, CommandError> {
         Ok(ScannedBoxRegister {
-            index: self.scan_eight_bit_register_index()?,
+            index: self.scan_profile_register_index()?,
         })
     }
 

@@ -463,7 +463,10 @@ control invokes TeX82 §1079's `scan_int` for its box-register operand. That
 command-owned scan preserves raw digit delivery and any terminator backup;
 TeX82 §15 assigns the shared `make_box` command code, and §35 initializes
 `\box` with `box_code` (`0`). The executor consumes only the resulting typed
-box semantics.
+box semantics. Under the e-TeX profile, [47.1079] replaces the eight-bit
+selector for both `\box` and `\copy` with `scan_register_num`, so this same
+command-owned scan accepts sparse box registers through 32767 while TeX82
+retains its 0--255 bound.
 
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw

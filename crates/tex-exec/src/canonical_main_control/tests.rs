@@ -4740,6 +4740,37 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
 }
 
 #[test]
+fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
+    // TeX82 §§1079--1081 make `\copy` a non-destructive read. e-TeX 2.6
+    // [47.1077] extends the same operation to sparse box registers.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+           \setbox32101=\hbox{\global\setbox32102=\vbox{\setbox32103=\vtop{}}}
+           \showbox32101
+           \setbox32103=\copy32101 \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.key.as_deref() == Some("box:32103") => {
+                Some(record.value.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(mutations, ["name:occupied", "name:occupied"]);
+    assert!(stores.box_reg(32101).is_some());
+    assert!(stores.box_reg(32103).is_some());
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical
