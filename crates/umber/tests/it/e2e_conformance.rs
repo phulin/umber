@@ -1991,7 +1991,7 @@ fn run_two_phase_fixture(
 }
 
 #[test]
-#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.522"]
+#[ignore = "manual direct canonical TRIP parity; xfail front: umber2-johp.528"]
 fn e2e_conformance_trip_canonical() {
     assets::with_gate("trip", |gate| {
         run_two_phase_fixture(TripEngineProfile::Tex82, "trip.tex", "trip.tex", gate);

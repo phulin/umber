@@ -994,6 +994,52 @@ fn tracing_display_includes_the_feasible_glue_breakpoint() {
 }
 
 #[test]
+fn tracing_display_skips_replacement_run_after_discretionary_cluster() {
+    // TeX82 §855 advances `printed_node` over replacement nodes after the
+    // last discretionary in a cluster. Umber stores that run in the flat
+    // paragraph too, so the following terminal fragment must begin after it.
+    let mut universe = Universe::new();
+    let empty = universe.freeze_node_list(&[]);
+    let first_replace = universe.freeze_node_list(&[kern(1)]);
+    let second_replace = universe.freeze_node_list(&[kern(2), rule(3)]);
+    let nodes = vec![
+        rule(1),
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: first_replace,
+        },
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: second_replace,
+        },
+        kern(1),
+        kern(2),
+        rule(3),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+    let (_, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+    let displays = trace
+        .iter()
+        .filter_map(|event| match event {
+            LineBreakTrace::Feasible { display, .. } if !display.is_empty() => {
+                Some(display.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(displays.contains(&(0..2)), "{trace:?}");
+    assert!(displays.contains(&(2..6)), "{trace:?}");
+    assert!(displays.contains(&(6..7)), "{trace:?}");
+}
+
+#[test]
 fn paragraph_prefix_widths_remain_exact_past_i32_max() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

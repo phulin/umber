@@ -664,6 +664,7 @@ fn run_pass<S: TypesetState>(
                     ),
                 };
                 if let Some(events) = trace.as_deref_mut() {
+                    let display_end = trace_display_end(state, nodes, bp);
                     events.push(LineBreakTrace::Feasible {
                         // TeX82 §851 temporarily terminates the list at
                         // `cur_p` and calls `short_display`, so the displayed
@@ -671,7 +672,7 @@ fn run_pass<S: TypesetState>(
                         // visible for glue (a trailing space) and
                         // discretionaries (their pre/post lists), even though
                         // width accounting stops before those nodes.
-                        display: displayed_through..bp.position,
+                        display: displayed_through..display_end,
                         breakpoint: trace_breakpoint(nodes, bp),
                         via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                         badness: (b <= INF_BAD).then_some(b),
@@ -688,7 +689,14 @@ fn run_pass<S: TypesetState>(
                             )
                         }),
                     });
-                    displayed_through = bp.position;
+                    // TeX82 §855 advances `printed_node` across a
+                    // discretionary's replacement nodes. Umber retains those
+                    // nodes in the flattened paragraph as well as the disc's
+                    // side list, so keep them out of the next trace fragment.
+                    // Consecutive discretionaries are still distinct
+                    // breakpoints; their shared replacement run begins only
+                    // after the cluster.
+                    displayed_through = display_end;
                 }
                 if !canonical_trace_admission {
                     next_serial += 1;
@@ -764,6 +772,37 @@ fn run_pass<S: TypesetState>(
         return None;
     }
     Some(reconstruct(active[chosen], &passive, last_line_fit))
+}
+
+fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint) -> usize {
+    let Some(Node::Disc { replace, .. }) = bp
+        .position
+        .checked_sub(1)
+        .and_then(|index| nodes.get(index))
+    else {
+        return bp.position;
+    };
+    if !matches!(
+        bp.position
+            .checked_sub(2)
+            .and_then(|index| nodes.get(index)),
+        Some(Node::Disc { .. })
+    ) || matches!(nodes.get(bp.position), Some(Node::Disc { .. }))
+    {
+        return bp.position;
+    }
+    let mut replacement_count = state.nodes(*replace).len();
+    let mut index = bp.position - 1;
+    while let Some(previous) = index.checked_sub(1) {
+        let Node::Disc { replace, .. } = &nodes[previous] else {
+            break;
+        };
+        replacement_count = replacement_count.saturating_add(state.nodes(*replace).len());
+        index = previous;
+    }
+    bp.position
+        .saturating_add(replacement_count)
+        .min(nodes.len())
 }
 
 fn trace_breakpoint(nodes: &[Node], bp: Breakpoint) -> TraceBreakpoint {
