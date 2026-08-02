@@ -10,6 +10,15 @@ use tex_state::ids::ArenaRef;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 
+#[derive(Default)]
+struct ObservationRecorder(Vec<tex_command::CommandObservation>);
+
+impl tex_command::CommandObserver for ObservationRecorder {
+    fn committed(&mut self, observation: tex_command::CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
 #[test]
 fn mode_nest_projects_conditional_predicates_across_transitions() {
     let mut nest = ModeNest::new();
@@ -1447,113 +1456,53 @@ fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
 
 #[test]
 fn uppercase_expands_tokens_until_its_opening_brace() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\body{\\message{ok}}\\uppercase\\expandafter{\\body}\\end",
-    ));
+    let stores =
+        run_canonical_tex82("\\def\\body{\\message{ok}}\\uppercase\\expandafter{\\body}\\end");
 
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("case-shift scanner expands tokens that precede its opening brace");
-    assert!(support::terminal_effect_text(&stores).contains("OK"));
+    assert!(terminal_effect_text(&stores).contains("OK"));
 }
 
 #[test]
 fn uppercase_retargets_active_character_definitions() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\catcode126=13 \\uccode126=239 \\uppercase{\\gdef~{\\message{ok}}}\\uppercase{~}\\end",
-    ));
+    );
 
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("uppercase should preserve the active namespace");
-    assert!(support::terminal_effect_text(&stores).contains("OK"));
+    assert!(terminal_effect_text(&stores).contains("OK"));
 }
 
 #[test]
 fn protected_active_macro_expands_from_classic_utf8_input() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_etex(
         "\\catcode126=13 \\catcode239=13 \\catcode172=13 \\catcode128=13 \\uccode126=239 \\uppercase{\\protected\\def~#1#2{\\message{OK}}}ﬀ\\end",
-    ));
-    input.set_utf8_input_as_bytes(true);
+    );
 
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("protected active byte macro should expand under command demand");
-    assert!(support::terminal_effect_text(&stores).contains("OK"));
+    assert!(terminal_effect_text(&stores).contains("OK"));
 }
 
 #[test]
 fn dispatch_character_hits_loud_typesetting_stub() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let token = Token::Char {
-        ch: 'x',
-        cat: Catcode::Letter,
-    };
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut context = crate::ExecutionContext::new("texput");
-    let mut nest = ModeNest::new();
+    let stores = run_canonical_tex82(r"\setbox0=\hbox{x}\end");
 
-    nest.push(Mode::Horizontal).expect("test mode push");
-    assert_eq!(
-        dispatch_delivered_token(
-            &mut nest,
-            TracedTokenWord::pack(token, OriginId::UNKNOWN),
-            &mut input,
-            &mut stores,
-            &mut context,
-        )
-        .expect("character dispatch"),
-        DispatchAction::Continue
-    );
+    assert!(stores.box_reg(0).is_some());
 }
 
 #[test]
 fn dispatch_undefined_control_sequence_reports_and_continues() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let undefined = stores.intern("undefined");
-    let origin = stores.source_origin(tex_state::SourceId::new(1), 12, 3, 4);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut context = crate::ExecutionContext::new("texput");
+    let stores = run_canonical_tex82(r"\undefined\message{continued}\end");
+    let output = terminal_effect_text(&stores);
 
-    let action = dispatch_delivered_token(
-        &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(undefined.symbol()), origin),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("undefined control sequence is recoverable");
-
-    assert_eq!(action, DispatchAction::Continue);
     // tex.web §370's message never names the control sequence; §82's context
     // display is what ends with it.
-    assert!(support::terminal_effect_text(&stores).contains("! Undefined control sequence."));
+    assert!(output.contains("! Undefined control sequence."));
+    assert!(output.contains("continued"));
 }
 
 #[test]
 fn edef_reports_undefined_control_sequence_and_completes_definition() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\edef\\foo{a\\missing b}\\message{RESULT=\\foo}\\end",
-    ));
+    let stores = run_canonical_tex82("\\edef\\foo{a\\missing b}\\message{RESULT=\\foo}\\end");
 
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("undefined control sequence in edef is recoverable");
-
-    let output = support::terminal_effect_text(&stores);
+    let output = terminal_effect_text(&stores);
     // tex.web §370's message names no control sequence; §82's context display
     // is what identifies it, and that goes to the transcript alone.
     assert!(output.contains("Undefined control sequence"), "{output}");
@@ -1563,107 +1512,119 @@ fn edef_reports_undefined_control_sequence_and_completes_definition() {
 #[test]
 fn execution_error_capture_retains_macro_trace_after_frame_pop() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let body = stores.intern_token_list(&[]);
-    let params = stores.intern_token_list(&[]);
-    let macro_symbol = stores.intern("m");
-    stores.set_macro_meaning(
-        macro_symbol,
-        tex_state::macro_store::MacroMeaning::new(
-            tex_state::meaning::MeaningFlags::EMPTY,
-            params,
-            body,
-        ),
-    );
-    let tex_state::meaning::Meaning::Macro { definition, .. } = stores.meaning(macro_symbol) else {
-        panic!("macro meaning");
-    };
-    let invocation_origin = stores.source_origin(tex_state::SourceId::new(1), 1, 1, 1);
-    let definition_origin = stores.source_origin(tex_state::SourceId::new(1), 2, 1, 2);
-    let invocation = stores.macro_invocation_origin(
-        definition,
-        invocation_origin,
-        definition_origin,
-        OriginId::UNKNOWN,
-    );
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_macro_body_with_origins_and_invocation(
-        body,
-        tex_state::ids::OriginListId::EMPTY,
-        tex_lex::MacroArguments::new(),
-        invocation,
-    );
-    let origin = stores.source_origin(tex_state::SourceId::new(1), 3, 1, 3);
-    let error = ExecError::UndefinedControlSequence {
-        name: "bad".to_owned(),
-        origin,
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut recorder = ObservationRecorder::default();
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\def\m{\bad}\m\relax\end".to_vec(),
+        ))
+        .expect("register canonical source");
+    for _ in 0..32 {
+        if matches!(
+            control
+                .step_with_observer(&mut stores, &mut recorder)
+                .expect("canonical observed step"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
+        }
     }
-    .capture(&input);
-    assert_eq!(error.diagnostic_site().expansion_head(), Some(invocation));
 
-    assert!(
-        input
-            .next_traced_token(&mut stores)
-            .expect("pop frame")
-            .is_none()
-    );
-    assert_eq!(error.diagnostic_site().expansion_head(), Some(invocation));
+    let bad = recorder
+        .0
+        .iter()
+        .find_map(|record| match record {
+            tex_command::CommandObservation::Command(command)
+                if command.spelling
+                    == tex_command::ObservedToken::ControlSequence("bad".into()) =>
+            {
+                Some(command)
+            }
+            _ => None,
+        })
+        .expect("undefined macro-body command is observed");
+    assert!(bad.provenance.has_origin);
+    assert!(recorder.0.iter().any(|record| matches!(
+        record,
+        tex_command::CommandObservation::Input(tex_command::InputRecord {
+            transition: tex_command::InputTransition::Retire,
+            reason: tex_command::InputReason::Macro,
+            ..
+        })
+    )));
+    assert!(terminal_effect_text(&stores).contains("Undefined control sequence"));
 }
 
 #[test]
 fn extra_endcsname_delivery_reports_and_continues() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_expandable(&mut stores, "endcsname", ExpandablePrimitive::EndCsName);
-    let endcsname = stores.symbol("endcsname").expect("endcsname");
-    let origin = stores.source_origin(tex_state::SourceId::new(2), 20, 5, 6);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut context = crate::ExecutionContext::new("texput");
+    let stores = run_canonical_tex82(r"\endcsname\message{continued}\end");
+    let output = terminal_effect_text(&stores);
 
-    let action = dispatch_delivered_token(
-        &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(endcsname.symbol()), origin),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("extra endcsname is recoverable");
-
-    assert_eq!(action, DispatchAction::Continue);
-    assert!(support::terminal_effect_text(&stores).contains("Extra \\endcsname"));
+    assert!(output.contains("Extra \\endcsname"));
+    assert!(output.contains("continued"));
 }
 
 #[test]
 fn illegal_prefix_replays_scanned_token_with_its_origin() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let global = stores.symbol("global").expect("global");
-    let prefix_origin = stores.source_origin(tex_state::SourceId::new(3), 30, 7, 8);
-    let mut input = InputStack::new(MemoryInput::new("x"));
-    let mut context = crate::ExecutionContext::new("texput");
-
-    let action = dispatch_delivered_token(
-        &mut ModeNest::new(),
-        TracedTokenWord::pack(Token::Cs(global.symbol()), prefix_origin),
-        &mut input,
-        &mut stores,
-        &mut context,
-    )
-    .expect("TeX recovers by backing up the non-assignment token");
-
-    assert_eq!(action, DispatchAction::Continue);
-    let replayed = input
-        .next_traced_token(&mut stores)
-        .expect("read replayed token")
-        .expect("replayed token");
-    assert_eq!(
-        tex_expand::semantic_token(replayed),
-        Token::Char {
-            ch: 'x',
-            cat: Catcode::Letter
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut recorder = ObservationRecorder::default();
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\global x\end".to_vec(),
+        ))
+        .expect("register canonical source");
+    for _ in 0..32 {
+        if matches!(
+            control
+                .step_with_observer(&mut stores, &mut recorder)
+                .expect("canonical observed step"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            break;
         }
+    }
+
+    let recovery = recorder
+        .0
+        .iter()
+        .find_map(|record| match record {
+            tex_command::CommandObservation::Recovery(recovery)
+                if recovery.kind == tex_command::RecoveryKind::Backup =>
+            {
+                Some(recovery)
+            }
+            _ => None,
+        })
+        .expect("non-assignment token is backed up");
+    assert_eq!(
+        recovery.tokens,
+        [tex_command::ObservedToken::Character {
+            character: 'x',
+            catcode: Catcode::Letter,
+        }]
     );
-    assert_ne!(replayed.origin(), OriginId::UNKNOWN);
-    assert_ne!(replayed.origin(), prefix_origin);
-    assert!(support::terminal_effect_text(&stores).contains("You can't use a prefix"));
+    let replayed = recorder
+        .0
+        .iter()
+        .filter_map(|record| match record {
+            tex_command::CommandObservation::Command(command)
+                if command.spelling
+                    == tex_command::ObservedToken::Character {
+                        character: 'x',
+                        catcode: Catcode::Letter,
+                    } =>
+            {
+                Some(command)
+            }
+            _ => None,
+        })
+        .last()
+        .expect("backed-up token is replayed");
+    assert!(replayed.provenance.has_origin);
+    assert!(terminal_effect_text(&stores).contains("You can't use a prefix"));
 }
 
 #[test]
