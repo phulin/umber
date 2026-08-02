@@ -67,6 +67,41 @@ impl InputState {
         self.render_context_for_levels(&self.levels, stores, parameters)
     }
 
+    /// Whether §312's first displayed level enters §314's unconditional
+    /// `print_ln` arm rather than §313's/§314's conditional `print_nl` arm.
+    ///
+    /// Most callers append the rendered context while a diagnostic line is
+    /// open, where both arms contribute one newline. e-TeX's nesting warnings
+    /// first finish their own line, so the distinction becomes observable as
+    /// a blank separator before an ordinary token-list level.
+    pub(crate) fn open_context_starts_with_print_ln(
+        &self,
+        stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
+    ) -> bool {
+        for (index, level) in self.levels.iter().enumerate().rev() {
+            let current = index + 1 == self.levels.len();
+            match level {
+                InputLevel::Source(source) => {
+                    let bottom = index == 0
+                        || matches!(source.name_class, crate::input::SourceNameClass::File);
+                    if Self::source_context_level(source, index == 0).is_some() || bottom {
+                        return false;
+                    }
+                }
+                InputLevel::Tokens(tokens) => {
+                    if Self::token_context_level(stores, tokens, current, parameters).is_some() {
+                        // §314's backed-up family uses `print_nl` for both
+                        // `<recently read>` and `<to be read again>`; every
+                        // other token-list kind begins with `print_ln`.
+                        return !matches!(tokens.trace, ReplayTrace::BackedUp);
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// `show_context` projection for e-TeX `file_warning`, whose retiring
     /// source has completed its last line but has not yet left `input_stack`.
     pub(crate) fn output_retiring_source_context(

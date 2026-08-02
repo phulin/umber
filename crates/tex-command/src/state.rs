@@ -205,6 +205,14 @@ impl CommandState {
         self.input.output_open_context(stores, &self.parameters)
     }
 
+    pub(crate) fn open_context_starts_with_print_ln(
+        &self,
+        stores: &tex_state::CommandContext<'_>,
+    ) -> bool {
+        self.input
+            .open_context_starts_with_print_ln(stores, &self.parameters)
+    }
+
     pub(crate) fn output_retiring_source_context(
         &self,
         source: &crate::input::SourceLevel,

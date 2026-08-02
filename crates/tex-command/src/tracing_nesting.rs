@@ -14,8 +14,16 @@ impl CommandProcessor<'_> {
     /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
     fn finish_nesting_warning(&mut self, tracing_nesting: i32) {
         if tracing_nesting > 1 {
+            let starts_with_print_ln = self.command.open_context_starts_with_print_ln(&self.state);
             let context = self.error_context();
-            self.state.printer().print_rendered(&context);
+            let mut printer = self.state.printer();
+            if starts_with_print_ln {
+                // `group_warning`/`if_warning` have already finished their
+                // warning line. §314 nevertheless performs an unconditional
+                // `print_ln` before an ordinary token-list level.
+                printer.print_ln();
+            }
+            printer.print_rendered(&context);
         }
         self.state.record_warning_history();
     }
@@ -186,8 +194,14 @@ impl CommandProcessor<'_> {
         }
         if !group_lines.is_empty() || !condition_lines.is_empty() {
             if tracing_nesting > 1 {
+                let starts_with_print_ln = saved_context.is_none()
+                    && self.command.open_context_starts_with_print_ln(&self.state);
                 let context = saved_context.unwrap_or_else(|| self.error_context());
-                self.state.printer().print_rendered(&context);
+                let mut printer = self.state.printer();
+                if starts_with_print_ln {
+                    printer.print_ln();
+                }
+                printer.print_rendered(&context);
                 self.state.record_warning_history();
             } else {
                 self.state.printer().print_ln();

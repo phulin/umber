@@ -1399,6 +1399,44 @@ fn cross_file_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> S
     effect_text(&universe)
 }
 
+fn cross_file_nesting_warning_with_macro_context() -> String {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\m ".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let level = command
+        .top_input_level_identity()
+        .expect("source level is live");
+    command.record_source_open_depths(level, 1, None, 0, None);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_macro(
+        &mut universe,
+        "m",
+        Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        },
+    );
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 2);
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("macro expands")
+            .expect("replacement token is delivered");
+        processor.warn_cross_file_group_close(1, "simple group", 3);
+    }
+    effect_text(&universe)
+}
+
 fn file_boundary_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> String {
     let mut command = CommandState::default();
     let source = command
@@ -1459,6 +1497,15 @@ fn tracingnesting_two_shows_context_after_cross_file_warnings() {
             "{contextual:?}"
         );
     }
+}
+
+#[test]
+fn tracingnesting_two_preserves_macro_context_print_ln_separator() {
+    let contextual = cross_file_nesting_warning_with_macro_context();
+    assert!(
+        contextual.contains("of a different file\n\n\\m ->a"),
+        "{contextual:?}"
+    );
 }
 
 #[test]
