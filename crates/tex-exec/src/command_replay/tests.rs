@@ -12013,6 +12013,39 @@ fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
 }
 
 #[test]
+fn loaded_zero_parshape_stays_silent_when_early_restricted_hbox_closes() {
+    // TRIP's format setup has already run `normal_paragraph`, so schema 11
+    // carries a source-backed empty parshape cell. Its early loaded job then
+    // enables restore tracing and closes a restricted hbox before `\penalty`.
+    // TeX82 §1090 does not define an already-null `par_shape_loc`, hence
+    // §283 has no parshape save entry to report at that group boundary.
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingcommands=2\tracingrestores=2\moveright20pt\hbox{\vrule depth20pt height-19pt width1pt}\penalty-10000\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    assert!(
+        output.contains("{end-group character }}\n{vertical mode: \\penalty}"),
+        "focused loaded-format sequence did not reach the expected boundary: {output:?}"
+    );
+    assert!(
+        !output.contains("{restoring \\parshape=0}"),
+        "an already-zero §1090 parshape created a spurious §283 restore: {output:?}"
+    );
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main

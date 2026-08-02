@@ -5929,6 +5929,18 @@ impl Universe {
                     let Some(tokens) = restored_tok_param_tokens(self, record.old()) else {
                         continue;
                     };
+                    // A loaded schema-11 token-list handle and a newly
+                    // interned live handle can name the same payload while
+                    // having different raw words. Such a journal rewrite is
+                    // not TeX82 §283's saved eqtb value: §1090 observes a
+                    // null `par_shape_ptr` and performs no `eq_define`.
+                    // Compare payload identity, not the effective zero alone;
+                    // a real saved nonempty shape must still be traced.
+                    if restored_tok_param_tokens(self, record.assigned())
+                        .is_some_and(|assigned| assigned == tokens)
+                    {
+                        continue;
+                    }
                     assert_eq!(
                         tokens.len() % 8,
                         0,
