@@ -142,18 +142,13 @@ fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
 #[test]
 fn pdf_font_expand_materializes_scaled_line_fonts() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let primitive = stores.intern("pdffontexpand");
-    stores.set_meaning(
-        primitive,
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand),
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\base=cmr10 \pdffontexpand\base 100 50 10 autoexpand \end",
     );
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\base=cmr10 \\pdffontexpand\\base 100 50 10 autoexpand \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font expansion configuration executes");
+    run_canonical_to_end(&mut control, &mut stores);
 
     let base = font_meaning(&stores, "base");
     stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, base, b'A', 1000);
@@ -208,12 +203,10 @@ fn pdf_font_expand_materializes_scaled_line_fonts() {
 #[test]
 fn pdftex_hz_modes_materialize_exact_selected_line_nodes() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\font\\base=cmr10 \\end"));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font definition executes");
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(&mut control, br"\font\base=cmr10 \end");
+    run_canonical_to_end(&mut control, &mut stores);
     let font = font_meaning(&stores, "base");
     stores
         .configure_font_expansion(
@@ -328,18 +321,13 @@ fn pdftex_hz_modes_materialize_exact_selected_line_nodes() {
 #[test]
 fn line_expansion_materializes_discrete_glyphs_kerns_and_reuses_fonts() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let primitive = stores.intern("pdffontexpand");
-    stores.set_meaning(
-        primitive,
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand),
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\base=cmr10 \pdffontexpand\base 100 50 10 autoexpand \end",
     );
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\base=cmr10 \\pdffontexpand\\base 100 50 10 autoexpand \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font expansion configuration executes");
+    run_canonical_to_end(&mut control, &mut stores);
     let base = font_meaning(&stores, "base");
     for (code, efcode) in [(b'A', 1000), (b'V', 1000), (b'B', 500), (b'C', 0)] {
         stores.set_pdf_font_code(tex_state::PdfFontCode::Ef, base, code, efcode);
@@ -674,6 +662,7 @@ fn canonical_pdf_font_control(stores: &mut Universe) -> CanonicalMainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     for (name, primitive) in [
         ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
+        ("pdffontexpand", UnexpandablePrimitive::PdfFontExpand),
         ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
         ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
         ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
