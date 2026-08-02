@@ -747,6 +747,11 @@ impl CommandProcessor<'_> {
             // inserting a replacement token; §380 then restarts its one
             // expanded-fetch loop at the following input token.
             Meaning::Undefined => {
+                // §370 reports synchronously at this point. The executor
+                // owns the deferred report, so commit any earlier §537 open
+                // framing now; a later §362 close must remain queued behind
+                // this diagnostic instead of overtaking it.
+                self.command.render_file_framing_events(&mut self.state);
                 let context = self.command.output_open_context(&self.state);
                 self.command
                     .semantic_diagnostics

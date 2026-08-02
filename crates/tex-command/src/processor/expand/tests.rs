@@ -687,6 +687,7 @@ fn scantokens_everyeof_context_traverses_to_ordinary_file() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
     universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_SCAN_TOKENS, 1);
     let undefined = universe.intern("undefined").symbol();
     let every_eof = universe.intern_token_list(&[Token::Cs(undefined)]);
     universe.set_tok_param(tex_state::env::banks::TokParam::EVERY_EOF, every_eof);
@@ -729,6 +730,11 @@ fn scantokens_everyeof_context_traverses_to_ordinary_file() {
     assert_eq!(
         context,
         "\n<everyeof> \\undefined \n                      \nl.1 \\scantokens{A}\n                  Z"
+    );
+    assert_eq!(
+        command.take_file_framing_events(),
+        [crate::FileFramingEvent::Close],
+        "§370's pending error must precede §362's later pseudo-file close"
     );
 }
 

@@ -1547,7 +1547,9 @@ impl CommandProcessor<'_> {
                             // is `Incomplete \if...` or a runaway report,
                             // which tex.web puts outside the file it has
                             // already closed.
-                            self.command.render_file_framing_events(&mut self.state);
+                            if self.command.semantic_diagnostics.is_empty() {
+                                self.command.render_file_framing_events(&mut self.state);
+                            }
                             match restart {
                                 RetirementRestart::Stop => return Ok(None),
                                 RetirementRestart::Continue => {
