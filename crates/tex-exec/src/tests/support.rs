@@ -1,6 +1,4 @@
 use super::*;
-use tex_expand::ReadRecorder;
-use tex_state::interner::Symbol;
 
 pub(super) fn terminal_effect_text(stores: &Universe) -> String {
     // Shipout (and job completion) materializes prior terminal *and* log
@@ -81,16 +79,5 @@ pub(super) fn font_meaning(stores: &Universe, name: &str) -> tex_state::ids::Fon
     match stores.meaning(symbol) {
         Meaning::Font(id) => id,
         meaning => panic!("expected font meaning, got {meaning:?}"),
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct TestRecorder {
-    pub(crate) meanings: Vec<Meaning>,
-}
-
-impl ReadRecorder for TestRecorder {
-    fn record_meaning(&mut self, _symbol: Symbol, meaning: Meaning) {
-        self.meanings.push(meaning);
     }
 }

@@ -1,9 +1,10 @@
 use super::*;
 use crate::mode::PendingHChar;
-use crate::tests::support::TestRecorder;
 use crate::{CanonicalMainControl, MainControlStep};
 use std::sync::Arc;
-use tex_command::{FontResource, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandObservation, CommandObserver, FontResource, RegisteredSourceKind, SourceRegistration,
+};
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
 use tex_state::node::Node;
@@ -152,33 +153,74 @@ fn non_character_accent_lookahead_replays_the_original_traced_token() {
 #[test]
 fn accent_lookahead_runs_assignments_and_accepts_char_num() {
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\char65"));
-    let mut recorder = TestRecorder::default();
-    let mut execution = crate::ExecutionContext::new("texput").recording(&mut recorder);
+    let mut control = crate::CanonicalMainControl::tex82_initex(&mut stores);
+    let source = control
+        .command_mut()
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(br"\accent19 \count0=7 \char65\end".as_slice()),
+        ))
+        .expect("accent source registers");
+    control
+        .command_mut()
+        .open_registered_source(source)
+        .expect("accent source opens");
+    let mut recorder = AccentObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut recorder)
+            .expect("accent source executes")
+        {
+            crate::MainControlStep::End | crate::MainControlStep::EndOfInput => break,
+            crate::MainControlStep::Continue => {}
+        }
+    }
 
-    let base = scan_accent_base(
-        &mut ModeNest::new(),
-        &mut input,
-        &mut stores,
-        &mut execution,
-        TracedTokenWord::pack(
-            Token::Char {
-                ch: '^',
-                cat: Catcode::Other,
-            },
-            OriginId::UNKNOWN,
-        ),
-    )
-    .expect("accent base should scan");
-
-    assert_eq!(base, Some(b'A'));
     assert_eq!(stores.count(0), 7);
-    assert!(
-        recorder.meanings.len() >= 2,
-        "lookahead meanings should be recorded"
+    let meanings = recorder
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(command)
+                if matches!(command.command.as_str(), "accent" | "register" | "char_num") =>
+            {
+                Some(command.command.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        meanings,
+        [
+            "accent", "accent", "accent", "accent", "register", "register", "char_num", "char_num",
+        ],
+        "raw and expanded meaning observations retain their canonical count and order"
     );
+    assert!(
+        recorder.0.iter().any(|observation| matches!(
+            observation,
+            CommandObservation::Scanner(scanner)
+                if scanner.kind == "integer" && scanner.value == "65"
+        )),
+        "the accent base character scan is observed"
+    );
+    assert!(
+        recorder.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Mutation(mutation)
+            if mutation.target == "register" && mutation.value == "count:0=7"
+        )),
+        "the lookahead assignment is observed"
+    );
+}
+
+#[derive(Default)]
+struct AccentObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for AccentObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
 }
 
 #[test]

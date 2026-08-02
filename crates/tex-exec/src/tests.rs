@@ -1,5 +1,4 @@
 use super::*;
-use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::GlueSpec;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
