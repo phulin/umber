@@ -18,7 +18,7 @@ fn legacy_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
             stores.set_int_param(IntParam::TRACING_ONLINE, tracing_online);
 
             let nullfont = stores.current_font();
-            report_missing_character(&mut stores, nullfont, 'Z');
+            crate::diagnostics::report_missing_character_warning(&mut stores, nullfont, 'Z', false);
 
             let terminal: String = stores
                 .world()

@@ -50,6 +50,36 @@ pub(crate) fn report_bad_interaction_mode(
     Ok(())
 }
 
+/// TeX82 §581's missing-character warning, including e-TeX 2.6 change
+/// section 17.516's level-two terminal routing.
+pub(crate) fn report_missing_character_warning(
+    stores: &mut Universe,
+    font: tex_state::ids::FontId,
+    ch: char,
+    etex_extended: bool,
+) {
+    if stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) <= 0 {
+        return;
+    }
+    let font_name = stores.font_name(font).to_owned();
+    let old_tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
+    if etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1 {
+        stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
+    }
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("Missing character: There is no ")
+        .print_ascii(ch)
+        .print(" in font ")
+        .print(&font_name)
+        .print_char('!');
+    diagnostic.end(false);
+    stores.set_int_param(
+        tex_state::env::banks::IntParam::TRACING_ONLINE,
+        old_tracing_online,
+    );
+}
+
 /// [`report_illegal_case_with_context`] for a caller whose input stack is the
 /// gullet's rather than the canonical command core's.
 pub(crate) fn report_illegal_case(

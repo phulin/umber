@@ -33,7 +33,7 @@ pub(crate) fn try_append_character(
             if cat == Catcode::Space {
                 append_space(nest, stores, fuel)?;
             } else {
-                append_hchar_with_fuel(nest, stores, ch, traced.origin(), fuel)?;
+                append_hchar_with_fuel(nest, stores, ch, traced.origin(), false, fuel)?;
             }
             Ok(true)
         }
@@ -120,11 +120,11 @@ pub(crate) fn append_given_char(
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         Mode::RestrictedHorizontal | Mode::Horizontal => {
-            append_hchar_with_fuel(nest, stores, ch, origin, fuel)
+            append_hchar_with_fuel(nest, stores, ch, origin, false, fuel)
         }
         Mode::Vertical | Mode::InternalVertical => {
             ensure_horizontal_for_character(nest, input, stores, fuel)?;
-            append_hchar_with_fuel(nest, stores, ch, origin, fuel)
+            append_hchar_with_fuel(nest, stores, ch, origin, false, fuel)
         }
         mode => Err(ExecError::UnimplementedTypesetting {
             mode,
@@ -147,13 +147,14 @@ pub(crate) fn append_canonical_character_with_fuel(
     stores: &mut Universe,
     ch: char,
     origin: OriginId,
+    etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     debug_assert!(matches!(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ));
-    append_hchar_with_fuel(nest, stores, ch, origin, fuel)
+    append_hchar_with_fuel(nest, stores, ch, origin, etex_extended, fuel)
 }
 
 #[cfg(test)]
@@ -164,7 +165,7 @@ pub(crate) fn append_canonical_character(
     origin: OriginId,
 ) -> Result<(), ExecError> {
     let mut fuel = tex_command::CommandFuelLedger::default();
-    append_canonical_character_with_fuel(nest, stores, ch, origin, fuel.fuel_mut())
+    append_canonical_character_with_fuel(nest, stores, ch, origin, false, fuel.fuel_mut())
 }
 
 /// Appends an ordinary space from canonical main control after horizontal
@@ -737,6 +738,7 @@ fn append_hchar_with_fuel(
     stores: &mut Universe,
     ch: char,
     origin: OriginId,
+    etex_extended: bool,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let mode = nest.current_mode();
@@ -777,7 +779,7 @@ fn append_hchar_with_fuel(
         update_space_factor(&mut list, stores, ch);
         return Ok(());
     }
-    report_missing_character(stores, font, ch);
+    crate::diagnostics::report_missing_character_warning(stores, font, ch, etex_extended);
     Ok(())
 }
 
@@ -793,6 +795,7 @@ fn append_hchar(
         stores,
         ch,
         origin,
+        false,
         tex_command::CommandFuelLedger::default().fuel_mut(),
     )
 }
@@ -914,7 +917,7 @@ fn append_tfm_hchar(
             .ok()
             .is_none_or(|code| stores.font_false_boundary_char(font) != Some(code))
     {
-        report_missing_character(stores, font, ch);
+        crate::diagnostics::report_missing_character_warning(stores, font, ch, false);
         return false;
     }
     let Some(mut current_run) = pending.take() else {
@@ -1333,7 +1336,9 @@ fn run_tfm_ligature_machine(
             if let LigatureWorkItem::Glyph(right) = &right_item
                 && !stores.font(right.font).character_exists(right.ch)
             {
-                report_missing_character(stores, right.font, right.ch);
+                crate::diagnostics::report_missing_character_warning(
+                    stores, right.font, right.ch, false,
+                );
                 work.remove(right_index);
                 break;
             }
@@ -1435,7 +1440,9 @@ fn run_tfm_ligature_machine(
                 if work.nodes[current].discard_if_missing
                     && !stores.font(glyph.font).character_exists(glyph.ch)
                 {
-                    report_missing_character(stores, glyph.font, glyph.ch);
+                    crate::diagnostics::report_missing_character_warning(
+                        stores, glyph.font, glyph.ch, false,
+                    );
                     continue;
                 }
                 let disc = literal_hyphen_disc(stores, &glyph, insert_hyphen_discs);
@@ -1722,21 +1729,6 @@ pub(crate) fn fixed_infinite_glue(primitive: UnexpandablePrimitive) -> GlueSpec 
     }
 }
 
-fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {
-    if stores.int_param(IntParam::TRACING_LOST_CHARS) <= 0 {
-        return;
-    }
-    let font_name = stores.font_name(font).to_owned();
-    let mut diagnostic = stores.begin_diagnostic();
-    diagnostic
-        .print_nl("Missing character: There is no ")
-        .print_ascii(ch)
-        .print(" in font ")
-        .print(&font_name)
-        .print_char('!');
-    diagnostic.end(false);
-}
-
 fn execute_accent(
     nest: &mut ModeNest,
     input: &mut InputStack,
@@ -1752,7 +1744,12 @@ fn execute_accent(
     })?;
     let accent_font = stores.current_font();
     let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
-        report_missing_character(stores, accent_font, char::from(accent));
+        crate::diagnostics::report_missing_character_warning(
+            stores,
+            accent_font,
+            char::from(accent),
+            false,
+        );
         return Ok(());
     };
     let base = scan_accent_base(nest, input, stores, execution, context)?;
@@ -1766,7 +1763,12 @@ fn execute_accent(
     };
     let base_font = stores.current_font();
     let Some(base_metrics) = stores.font_char_metrics(base_font, base) else {
-        report_missing_character(stores, base_font, char::from(base));
+        crate::diagnostics::report_missing_character_warning(
+            stores,
+            base_font,
+            char::from(base),
+            false,
+        );
         nest.current_list_mutation().push(Node::Char {
             font: accent_font,
             ch: char::from(accent),

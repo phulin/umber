@@ -999,6 +999,31 @@ fn canonical_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
     }
 }
 
+/// e-TeX 2.6 change section 17.516 temporarily sets `tracing_online:=1`
+/// while reporting a missing character when `tracing_lost_chars>1`.
+#[test]
+fn canonical_etex_level_two_missing_character_reaches_the_terminal() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\tracingonline=0\tracinglostchars=2\setbox0=\hbox{Z}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let warning = "Missing character: There is no Z in font nullfont!\n";
+    let terminal = terminal_only_text(&universe);
+    assert_eq!(terminal.matches(warning).count(), 1, "{terminal:?}");
+    assert_eq!(transcript_text(&universe).matches(warning).count(), 1);
+    assert_eq!(universe.int_param(IntParam::TRACING_ONLINE), 0);
+}
+
 /// TeX.web §§581--582 route `char_warning` through the shared diagnostic
 /// selector. `print_ASCII` renders control character 127 as `^^?`, and
 /// `new_character` returns null so main control appends no character node.

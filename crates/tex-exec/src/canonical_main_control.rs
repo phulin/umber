@@ -2026,13 +2026,20 @@ impl CanonicalMainControl {
         // accent character skips `do_assignments` and the base lookahead
         // entirely, so nothing after this point runs.
         let Some(accent_metrics) = stores.font_char_metrics(accent_font, accent) else {
-            report_missing_character(stores, accent_font, char::from(accent));
+            crate::diagnostics::report_missing_character_warning(
+                stores,
+                accent_font,
+                char::from(accent),
+                self.command_profile() == CommandProfile::ETEX26,
+            );
             return Ok(ReplayStep::Continue);
         };
         let base = self.do_assignments_then_accent_base(stores)?;
+        let etex_extended = self.command_profile() == CommandProfile::ETEX26;
         apply_accent_nodes(
             &mut self.modes,
             stores,
+            etex_extended,
             AccentPlacement {
                 accent,
                 accent_font,
@@ -11522,6 +11529,7 @@ fn apply_scanned_step(
                 stores,
                 ch,
                 tex_state::token::OriginId::UNKNOWN,
+                command.state.profile() == CommandProfile::ETEX26,
                 command.fuel,
             )?;
             Ok(ReplayStep::Continue)
@@ -14065,6 +14073,7 @@ fn apply_scanned_step(
                         stores,
                         ch,
                         origin,
+                        command.state.profile() == CommandProfile::ETEX26,
                         command.fuel,
                     )?;
                 }
@@ -14939,6 +14948,7 @@ struct AccentPlacement {
 fn apply_accent_nodes(
     modes: &mut ModeNest,
     stores: &mut Universe,
+    etex_extended: bool,
     placement: AccentPlacement,
 ) -> Result<ReplayStep, ExecError> {
     let AccentPlacement {
@@ -14958,7 +14968,12 @@ fn apply_accent_nodes(
     let base_font = stores.current_font();
     let base = base.and_then(|(character, origin)| {
         let Some(metrics) = stores.font_char_metrics(base_font, character) else {
-            report_missing_character(stores, base_font, char::from(character));
+            crate::diagnostics::report_missing_character_warning(
+                stores,
+                base_font,
+                char::from(character),
+                etex_extended,
+            );
             return None;
         };
         Some((character, origin, metrics))
@@ -15081,21 +15096,6 @@ fn load_canonical_font(
             ))
         }
     }
-}
-
-fn report_missing_character(stores: &mut Universe, font: tex_state::ids::FontId, ch: char) {
-    if stores.int_param(IntParam::TRACING_LOST_CHARS) <= 0 {
-        return;
-    }
-    let font_name = stores.font_name(font).to_owned();
-    let mut diagnostic = stores.begin_diagnostic();
-    diagnostic
-        .print_nl("Missing character: There is no ")
-        .print_ascii(ch)
-        .print(" in font ")
-        .print(&font_name)
-        .print_char('!');
-    diagnostic.end(false);
 }
 
 /// TeX82 §1095 `new_graf`: command control has already made any required
