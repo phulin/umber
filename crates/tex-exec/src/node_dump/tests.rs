@@ -12,24 +12,33 @@ use tex_state::node::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token};
 
-/// TeX82 §697 prints fraction delimiter fields only when their numeric
-/// value differs from `null_delimiter`, which is zero. A scanned null
-/// delimiter remains represented as `Some(0)` and must therefore be as silent
-/// as an absent field; nonzero delimiters remain visible independently.
+/// TeX82 §§696--697 print and test the four packed delimiter quarters.
+/// The scanner's upper math-class bits are outside that field, so they neither
+/// make a null delimiter visible nor appear in a non-null diagnostic.
 #[test]
-fn fraction_dump_omits_numeric_null_delimiters() {
+fn fraction_dump_renders_the_packed_delimiter_field() {
     for (left, right, expected) in [
         (None, None, "\\fraction, thickness = default\n"),
         (Some(0), Some(0), "\\fraction, thickness = default\n"),
         (
-            Some(0x123),
+            Some(0x0400_0000),
+            Some(0x0700_0000),
+            "\\fraction, thickness = default\n",
+        ),
+        (
+            Some(0x0416_2362),
             Some(0),
-            "\\fraction, thickness = default, left-delimiter \"123\n",
+            "\\fraction, thickness = default, left-delimiter \"162362\n",
         ),
         (
             Some(0),
-            Some(0x456),
-            "\\fraction, thickness = default, right-delimiter \"456\n",
+            Some(0x0716_2362),
+            "\\fraction, thickness = default, right-delimiter \"162362\n",
+        ),
+        (
+            Some(0x04ab_cdef),
+            Some(0x0712_3456),
+            "\\fraction, thickness = default, left-delimiter \"ABCDEF, right-delimiter \"123456\n",
         ),
     ] {
         let mut out = String::new();

@@ -631,16 +631,34 @@ fn dump_fraction_header(
             let _ = write!(out, " {}", format_scaled_without_unit(value));
         }
     }
-    // TeX82 §697 prints these fields only when they differ from
-    // `null_delimiter` (zero). The scanner retains that numeric null value as
-    // `Some(0)`, so option presence alone is not the display predicate.
-    if let Some(left) = left_delimiter.filter(|delimiter| *delimiter != 0) {
+    // TeX82 §§696--697 inspect and print the four delimiter quarters,
+    // not the complete 27-bit scanner value. In particular, the math-class
+    // bits above `small_fam` neither make a delimiter non-null nor appear in
+    // its 24-bit diagnostic value.
+    if let Some(left) = left_delimiter
+        .map(delimiter_field)
+        .filter(|field| *field != 0)
+    {
         let _ = write!(out, ", left-delimiter \"{left:X}");
     }
-    if let Some(right) = right_delimiter.filter(|delimiter| *delimiter != 0) {
+    if let Some(right) = right_delimiter
+        .map(delimiter_field)
+        .filter(|field| *field != 0)
+    {
         let _ = write!(out, ", right-delimiter \"{right:X}");
     }
     out.push('\n');
+}
+
+/// Reconstruct TeX82 §696's 24-bit delimiter diagnostic from its four
+/// quarter fields: small family/character, then large family/character.
+fn delimiter_field(delimiter: u32) -> u32 {
+    let small_family = (delimiter >> 20) & 0xf;
+    let small_character = (delimiter >> 12) & 0xff;
+    let large_family = (delimiter >> 8) & 0xf;
+    let large_character = delimiter & 0xff;
+
+    (((small_family << 8) | small_character) << 12) | (large_family << 8) | large_character
 }
 
 fn dump_fraction_part(
