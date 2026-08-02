@@ -12331,6 +12331,67 @@ fn loaded_output_cycle_restores_ten_line_shape_to_resumed_paragraph() {
 }
 
 #[test]
+fn loaded_trip_display_alignment_history_restores_shape_before_resumed_paragraph() {
+    // TRIP lines 243--248 compose TeX82 §774's display-alignment entry,
+    // §1207's missing-display-closer recovery, and §1026's intervening output
+    // routine inside one ten-line shaped paragraph. None of those owners may
+    // consume the Output save level or the paragraph's enclosing group.
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    universe.enable_geometry_observation();
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingrestores=2\tracingcommands=2
+           \output={\tracingcommands=0\global\setbox9=\box255}
+           \vsize=1pt\hsize=100pt
+           \parshape=10 0pt11pt 0pt12pt 0pt13pt 0pt0pt 0pt0pt
+                         0pt15pt 0pt16pt 0pt17pt 0pt18pt 0pt19pt
+           \noindent
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\penalty-10000
+           $$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\par\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    let restore = output
+        .find("{restoring \\parshape=10}")
+        .unwrap_or_else(|| panic!("composed loaded restore trace: {output:?}"));
+    let retried_eqno = output
+        .find("{horizontal mode: \\eqno}")
+        .unwrap_or_else(|| panic!("composed eqno retry trace: {output:?}"));
+    assert!(
+        restore < retried_eqno,
+        "Output must unwind before eqno retry"
+    );
+    let widths: Vec<_> = universe
+        .geometry_observations_since(0)
+        .iter()
+        .filter_map(|event| match event {
+            tex_state::GeometryObservation::Hpack { width_sp, .. } => Some(*width_sp),
+            _ => None,
+        })
+        .collect();
+    let before_display = [11, 12, 13].map(|points| i64::from(points * Scaled::UNITY));
+    let after_display = [17, 18, 19].map(|points| i64::from(points * Scaled::UNITY));
+    assert!(
+        widths.starts_with(&before_display) && widths.ends_with(&after_display),
+        "§1200's three-line display offset must retain both shaped paragraph fragments: {widths:?}"
+    );
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main
@@ -12355,8 +12416,14 @@ fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
         }
     }
     let transcript = terminal_text(&universe);
-    assert!(transcript.contains("Missing $$ inserted"));
-    assert!(transcript.contains("You can't use `\\eqno' in horizontal mode"));
+    assert!(
+        transcript.contains("Missing $$ inserted"),
+        "display recovery transcript: {transcript:?}"
+    );
+    assert!(
+        transcript.contains("You can't use `\\eqno' in horizontal mode"),
+        "display recovery transcript: {transcript:?}"
+    );
 
     let artifact = universe
         .world()

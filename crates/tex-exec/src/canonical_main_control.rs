@@ -4841,11 +4841,6 @@ enum ScannedStep {
     IllegalMacroParameter {
         token: Token,
     },
-    /// TeX82 §§1046/1050's forbidden `mmode+halign` case. The command is
-    /// dropped without scanning an alignment specification or preamble.
-    IllegalAlignment {
-        token: Token,
-    },
     /// TeX82 §1135's `cs_error`: a stray `\endcsname` is diagnosed and
     /// ignored exactly once, without changing input or mode state.
     ExtraEndCsName,
@@ -8329,8 +8324,13 @@ fn scan_command(
                 if innermost_group != Some(GroupKind::MathShift) {
                     scan_off_save(processor, command, innermost_group)
                 } else {
-                    Ok(ScannedStep::IllegalAlignment {
-                        token: command.spelling().semantic_token(),
+                    // TeX82 §774's `init_align` admits a display alignment at
+                    // the display's own math-shift save level. The execute
+                    // phase below diagnoses and flushes any preceding formula
+                    // before it opens the alignment list.
+                    Ok(ScannedStep::BeginAlignment {
+                        vertical: false,
+                        owner: command.control_sequence(),
                     })
                 }
             } else {
@@ -10691,7 +10691,6 @@ fn applied_mutation_observation(
         | ScannedStep::End { .. }
         | ScannedStep::IllegalStop { .. }
         | ScannedStep::IllegalMacroParameter { .. }
-        | ScannedStep::IllegalAlignment { .. }
         | ScannedStep::ExtraEndCsName
         | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
@@ -12628,16 +12627,6 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalMacroParameter { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::report_illegal_case_with_context(
-                stores,
-                token,
-                modes.current_mode(),
-                Some(context),
-            )?;
-            Ok(ReplayStep::Continue)
-        }
-        ScannedStep::IllegalAlignment { token } => {
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
