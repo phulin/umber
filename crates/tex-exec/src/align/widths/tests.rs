@@ -112,6 +112,42 @@ fn pack_alignment_prototype_applies_spec_in_both_modes() {
     }
 }
 
+/// TeX82 §805 converts preamble column records to `unset_node` before the
+/// prototype pack.  §663's box diagnostic traverses that packed list, so the
+/// retained node identity must survive packing instead of being projected as
+/// an ordinary hbox/vbox.
+#[test]
+fn alignment_prototype_diagnostic_retains_unset_columns() {
+    for (kind, expected) in [
+        (AlignmentKind::HAlign, "\\unsetbox(0.0+0.0)x4.0"),
+        (AlignmentKind::VAlign, "\\unsetvbox(4.0+0.0)x0.0"),
+    ] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let resolved = ResolvedWidths {
+            columns: vec![sp(4)],
+            tabskips: vec![GlueId::ZERO, GlueId::ZERO],
+        };
+        let empty = stores.freeze_node_list(&[]);
+        let prototype = pack_prototype(
+            &state(kind, AlignmentPackSpec::Natural, resolved.tabskips.clone()),
+            &resolved,
+            empty,
+            &mut stores,
+        );
+
+        let dump = crate::node_dump::dump_node_list(
+            &stores,
+            prototype.box_node.children,
+            crate::node_dump::DumpConfig {
+                breadth: 10,
+                depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        );
+        assert!(dump.contains(expected), "prototype dump: {dump}");
+    }
+}
+
 #[test]
 fn fin_align_orders_groups_packing_pop_and_insertion() {
     let mut stores = Universe::new_with_plain_catcodes();

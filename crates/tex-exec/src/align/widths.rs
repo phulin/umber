@@ -7,7 +7,9 @@ mod tests;
 
 use tex_state::Universe;
 use tex_state::ids::{GlueId, NodeListId};
-use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetNode};
+use tex_state::node::{
+    BoxNode, BoxNodeFields, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields,
+};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{HpackParams, PackSpec};
 
@@ -80,7 +82,7 @@ fn prototype_nodes(kind: AlignmentKind, resolved: &ResolvedWidths, empty: NodeLi
     let mut nodes = Vec::with_capacity(capacity);
     nodes.push(tabskip_node(resolved.tabskips[0]));
     for (column, width) in resolved.columns.iter().copied().enumerate() {
-        nodes.push(empty_column_box(kind, width, empty));
+        nodes.push(prototype_column(kind, width, empty));
         nodes.push(tabskip_node(resolved.tabskips[column + 1]));
     }
     nodes
@@ -105,6 +107,29 @@ fn unset_axis_size(kind: AlignmentKind, unset: &UnsetNode) -> Result<Scaled, Exe
         AlignmentKind::HAlign => Ok(unset.width),
         AlignmentKind::VAlign => add_scaled(unset.height, unset.depth),
     }
+}
+
+/// TeX82 §805 changes every preamble column record to `unset_node` before
+/// packing the prototype.  The subtype is observable when §663 reports a
+/// loose prototype: `show_box` must therefore see the typed unset records,
+/// even though ordinary packing measures them like boxes.
+fn prototype_column(kind: AlignmentKind, size: Scaled, empty: NodeListId) -> Node {
+    let (unset_kind, width, height) = match kind {
+        AlignmentKind::HAlign => (UnsetKind::HBox, size, Scaled::from_raw(0)),
+        AlignmentKind::VAlign => (UnsetKind::VBox, Scaled::from_raw(0), size),
+    };
+    Node::Unset(UnsetNode::new(UnsetNodeFields {
+        kind: unset_kind,
+        width,
+        height,
+        depth: Scaled::from_raw(0),
+        span_count: 0,
+        stretch: Scaled::from_raw(0),
+        stretch_order: tex_state::glue::Order::Normal,
+        shrink: Scaled::from_raw(0),
+        shrink_order: tex_state::glue::Order::Normal,
+        children: empty,
+    }))
 }
 
 fn empty_column_box(kind: AlignmentKind, size: Scaled, empty: NodeListId) -> Node {
