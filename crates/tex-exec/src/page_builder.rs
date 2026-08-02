@@ -330,7 +330,7 @@ fn create_page_insertion(
     let shrink = add(stores.page_dimension(PageDimension::Shrink), skip.shrink)?;
     stores.set_page_dimension(PageDimension::Shrink, shrink);
     if skip.shrink_order != Order::Normal && skip.shrink.raw() != 0 {
-        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class)?;
+        diagnostics::report_insertion_skip_infinite_shrinkage(stores, class, error_context)?;
     }
     Ok(insertion)
 }

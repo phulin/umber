@@ -8729,6 +8729,38 @@ fn outer_insert_ensure_vbox_reports_context_before_help() {
 }
 
 #[test]
+fn outer_insert_infinite_skip_shrink_reports_context_before_help() {
+    // TeX82 §§1009/1100: the page builder diagnoses non-normal finite
+    // insertion correction shrink with `error`, so §82's display of the
+    // insertion's closing command precedes §90's transcript-only help.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\nonstopmode
+\skip1=0pt minus 1fil
+\insert1{}
+\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let transcript = transcript_text(&universe);
+    let message = transcript
+        .find("! Infinite glue shrinkage inserted from \\skip1.")
+        .expect("§1009 message");
+    let context = transcript[message..]
+        .find("l.3 \\insert1{}")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("§82 live closing-brace context: {transcript:?}"));
+    let help = transcript[message..]
+        .find("The correction glue for page breaking with insertions")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("§90 help: {transcript:?}"));
+    assert!(message < context && context < help, "{transcript:?}");
+}
+
+#[test]
 fn insert255_uses_canonical_error_reporting_in_every_interaction_mode() {
     // `\\errorstopmode` is covered by
     // `insert255_in_error_stop_mode_ends_the_job_at_section_83s_prompt`

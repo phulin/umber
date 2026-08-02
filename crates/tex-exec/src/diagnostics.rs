@@ -846,8 +846,12 @@ pub(crate) fn report_split_infinite_shrinkage(stores: &mut Universe) -> Result<(
 pub(crate) fn report_insertion_skip_infinite_shrinkage(
     stores: &mut Universe,
     class: u16,
+    error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    let context = show_context(stores, stores.input_summary());
+    let context = error_context.map_or_else(
+        || show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
     crate::error_report::report_error(
         stores,
         &format!("Infinite glue shrinkage inserted from \\skip{class}"),
