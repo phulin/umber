@@ -26,7 +26,7 @@ fn pure_memo_edit(c: &mut Criterion) {
 
 fn prepared_session(enabled: bool) -> (Session, Edit) {
     let mut template = Universe::new();
-    tex_expand::install_expandable_primitives(&mut template);
+    tex_command::install_tex82_expandable_primitives(&mut template);
     tex_exec::install_unexpandable_primitives(&mut template);
     if enabled {
         template.enable_pure_memo(PureMemoConfig::default());

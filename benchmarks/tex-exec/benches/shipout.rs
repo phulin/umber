@@ -47,7 +47,7 @@ fn deferred_math_shipout() -> (Universe, InputStack) {
 
 fn prepared_universe() -> Universe {
     let mut stores = Universe::new();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     tex_exec::install_unexpandable_primitives(&mut stores);
     stores
 }

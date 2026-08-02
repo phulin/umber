@@ -10,7 +10,7 @@ publish = false
 criterion = "0.5"
 stats_alloc = "0.1"
 tex-exec = { path = "../../crates/tex-exec" }
-tex-expand = { path = "../../crates/tex-expand" }
+tex-command = { path = "../../crates/tex-command" }
 tex-fonts = { path = "../../crates/tex-fonts" }
 tex-incr = { path = "../../crates/tex-incr" }
 tex-lex = { path = "../../crates/tex-lex" }

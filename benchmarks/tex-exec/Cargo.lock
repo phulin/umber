@@ -896,6 +896,8 @@ dependencies = [
 name = "tex-command"
 version = "0.1.0"
 dependencies = [
+ "md-5",
+ "posix-regex",
  "tex-fonts",
  "tex-state",
 ]
@@ -926,8 +928,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "stats_alloc",
+ "tex-command",
  "tex-exec",
- "tex-expand",
  "tex-fonts",
  "tex-incr",
  "tex-lex",
@@ -942,6 +944,7 @@ version = "0.1.0"
 dependencies = [
  "md-5",
  "posix-regex",
+ "tex-command",
  "tex-lex",
  "tex-state",
 ]
@@ -966,6 +969,7 @@ name = "tex-incr"
 version = "0.1.0"
 dependencies = [
  "getrandom",
+ "tex-command",
  "tex-exec",
  "tex-expand",
  "tex-lex",
