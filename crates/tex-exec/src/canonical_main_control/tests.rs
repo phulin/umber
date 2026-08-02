@@ -129,7 +129,6 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
 #[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
     let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
@@ -496,6 +495,28 @@ fn tracingrestores_reports_current_font_selector_restoration() {
     assert_eq!(
         pending_sink_text(&stores, true),
         "{restoring current font=\\f}\n"
+    );
+}
+
+#[test]
+fn tracingrestores_reports_math_family_font_restoration() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\small=cmr10 \scriptfont2=\small \tracingrestores=1\tracingonline=1{\scriptfont2=\small}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = "{restoring \\scriptfont2=\\small}\n";
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    assert!(
+        terminal.contains(expected) && log.contains(expected),
+        "terminal={terminal:?} log={log:?}"
     );
 }
 

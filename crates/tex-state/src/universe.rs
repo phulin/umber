@@ -5829,6 +5829,29 @@ impl Universe {
                     };
                     ("current font".to_owned(), value, false)
                 }
+                BankTag::MathFamilyFont if cell.index() < 48 => {
+                    // TeX82 §§252/283 print the selector name and family
+                    // number, followed by the restored font's identifier.
+                    let size = cell.index() / 16;
+                    let family = cell.index() % 16;
+                    let name = match size {
+                        0 => "textfont",
+                        1 => "scriptfont",
+                        2 => "scriptscriptfont",
+                        _ => unreachable!("guard restricts math-family font size"),
+                    };
+                    let font = self
+                        .stores
+                        .resolve_stored_font(FontId::new(record.old() as u32));
+                    let Some(symbol) = self.stores.font_identifier_symbol(font) else {
+                        continue;
+                    };
+                    (
+                        format!("{name}{family}"),
+                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol)),
+                        true,
+                    )
+                }
                 _ => continue,
             };
             let label = if record.is_retaining() {
