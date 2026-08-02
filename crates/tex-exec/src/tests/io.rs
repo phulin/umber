@@ -1,6 +1,10 @@
 use super::support::*;
 use super::*;
 use test_support::{corpus_root, read_fixture};
+use tex_command::{
+    CommandProfile, RegisteredSourceKind, SourceRegistration, install_etex_expandable_primitives,
+    install_tex82_expandable_primitives,
+};
 use tex_out::dvi::write_dvi;
 use tex_out::{
     DiscKind as PageDiscKind, EffectSink, PageArtifact, PageEffect, PageNode, PageToken,
@@ -18,22 +22,35 @@ fn read_macro_tokens(stores: &Universe, name: &str) -> Vec<Token> {
 
 fn run_file_reads(contents: &[u8], commands: &str, etex: bool) -> Universe {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    if etex {
+    let mut control = if etex {
+        install_tex82_expandable_primitives(&mut stores);
+        crate::install_unexpandable_primitives(&mut stores);
+        install_etex_expandable_primitives(&mut stores);
         crate::install_etex_unexpandable_primitives(&mut stores);
+        CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
+    } else {
+        CanonicalMainControl::tex82_initex(&mut stores)
+    };
+    control.capabilities_mut().register_input(
+        "stream.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, contents.to_vec()),
+    );
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            format!("\\openin1=stream.tex {commands}\\end").into_bytes(),
+        ))
+        .expect("register canonical file-read source");
+    for _ in 0..1024 {
+        if control
+            .step(&mut stores)
+            .expect("canonical paired file reads execute")
+            == MainControlStep::End
+        {
+            return stores;
+        }
     }
-    stores
-        .world_mut()
-        .set_memory_file("stream.tex", contents.to_vec())
-        .expect("seed read stream");
-    let mut input = InputStack::new(MemoryInput::new(format!(
-        "\\openin1=stream.tex {commands}\\end"
-    )));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("paired file reads execute");
-    stores
+    panic!("canonical paired file reads did not terminate");
 }
 
 #[test]
