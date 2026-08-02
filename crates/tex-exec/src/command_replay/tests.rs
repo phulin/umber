@@ -11974,19 +11974,30 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 
 #[test]
 fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
-    // TeX82 §§812 and 1206–1207 insert the missing `$$` before retrying
-    // `\eqno`; the completed alignment remains vertical display material.
+    // TeX82 §§283, 812, and 1206–1207 restore the display group's
+    // `par_shape_loc` before retrying `\eqno`; the completed alignment remains
+    // vertical display material.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
-        br"\setbox0=\vbox{\hsize=20pt\noindent x$$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno}\end",
+        br"\tracingcommands=1\tracingrestores=1\tracingonline=1\setbox0=\vbox{\hsize=20pt\noindent x$$\parshape=1 1pt 2pt\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno}\end",
     );
     run_to_end(&mut control, &mut universe);
 
     let output = terminal_text(&universe);
     assert!(output.contains("Missing $$ inserted"));
     assert!(output.contains("You can't use `\\eqno' in horizontal mode"));
+    let parshape_restore = output
+        .find("{restoring \\parshape=1}")
+        .expect("§252 parshape restoration trace");
+    let horizontal_eqno = output
+        .find("{horizontal mode: \\eqno}")
+        .expect("retried equation-number command trace");
+    assert!(
+        parshape_restore < horizontal_eqno,
+        "§283 unsave traces parshape before §1200 resumes horizontal mode: {output:?}"
+    );
     assert_eq!(control.current_mode(), crate::Mode::Vertical);
     let root = universe.box_reg(0).expect("vbox register");
     let Some(tex_state::node_arena::NodeRef::VList(vbox)) = universe.nodes(root).first() else {

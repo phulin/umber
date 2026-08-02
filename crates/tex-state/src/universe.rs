@@ -5904,6 +5904,23 @@ impl Universe {
                         true,
                     )
                 }
+                BankTag::TokParam
+                    if cell.index() == u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()) =>
+                {
+                    // TeX82 §252's region-four `show_eqtb` gives
+                    // `par_shape_loc` its own representation: the number of
+                    // indent/width pairs, rather than the backing token-list
+                    // payload used by Umber. Section 283 calls that renderer
+                    // immediately after restoring the saved eqtb entry.
+                    let id = TokenListId::new(record.old() as u32);
+                    let tokens = self.tokens(id);
+                    assert_eq!(
+                        tokens.len() % 8,
+                        0,
+                        "restored internal parshape payload is truncated"
+                    );
+                    ("parshape".to_owned(), (tokens.len() / 8).to_string(), true)
+                }
                 BankTag::TokParam if cell.index() < 128 => {
                     let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {
                         continue;
