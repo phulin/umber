@@ -304,6 +304,12 @@ fn output_routine_box255_error_reports_live_command_context() {
     );
     assert_eq!(output.matches(report).count(), 2, "{output:?}");
     assert!(!output.contains("<output>"), "{output:?}");
+    let deleted = "The following box has been deleted:\n\\vbox(0.0+0.0)x0.0 []\n\n";
+    let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+    assert_eq!(log.matches(deleted).count(), 2, "{log:?}");
+    let terminal =
+        String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default());
+    assert!(!terminal.contains("The following box"), "{terminal:?}");
 }
 
 #[test]

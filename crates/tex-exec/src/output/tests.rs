@@ -182,6 +182,8 @@ fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
         Some(tex_state::node_arena::NodeRef::VList(_))
     ));
     assert!(effects(&stores).contains("box255 is not void"));
+    assert!(effects(&stores).contains("The following box has been deleted:"));
+    assert!(effects(&stores).contains("\\hbox(0.00002+0.0)x0.00002\n\n"));
 }
 
 #[test]
@@ -494,4 +496,6 @@ fn output_resume_recovers_unbalanced_tokens_and_nonvoid_box255() {
     ));
     assert!(effects(&stores).contains("Output routine didn't use all of"));
     assert!(effects(&stores).contains("live output context"));
+    assert!(effects(&stores).contains("The following box has been deleted:"));
+    assert!(effects(&stores).contains("\\vbox(0.00002+0.0)x0.00002\n\n"));
 }

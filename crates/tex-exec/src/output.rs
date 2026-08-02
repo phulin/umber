@@ -70,9 +70,9 @@ pub(crate) fn resume_page_builder_after_output(
     output_nodes: Vec<Node>,
     error_context: String,
 ) -> Result<(), ExecError> {
-    if stores.box_reg(255).is_some() {
+    if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores, error_context)?;
+        report_box255_not_emptied(stores, box255, error_context)?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes);
@@ -153,9 +153,9 @@ fn fire_up_page(
 }
 
 fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), ExecError> {
-    if stores.box_reg(255).is_some() {
+    if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_void(stores)?;
+        report_box255_not_void(stores, box255)?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -543,10 +543,10 @@ fn run_output_routine_inner(
         crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     leave_group(input, stores, GroupKind::Output)?;
     stores.set_output_routine_active(false);
-    if stores.box_reg(255).is_some() {
+    if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
         let context = crate::diagnostics::show_context(stores, stores.input_summary());
-        report_box255_not_emptied(stores, context)?;
+        report_box255_not_emptied(stores, box255, context)?;
     }
     prepend_output_heldover(stores, output_level.list().nodes().to_vec());
     Ok(())
@@ -577,7 +577,10 @@ fn report_output_loop(
 }
 
 /// TeX.web §1015's `<Ensure that box 255 is empty before output>`.
-fn report_box255_not_void(stores: &mut Universe) -> Result<(), ExecError> {
+fn report_box255_not_void(
+    stores: &mut Universe,
+    deleted: tex_state::ids::NodeListId,
+) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("");
     report
@@ -589,11 +592,16 @@ fn report_box255_not_void(stores: &mut Universe) -> Result<(), ExecError> {
         ])
         .context(context);
     report.error().jump_out()?;
+    report_deleted_box(stores, deleted);
     Ok(())
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
-fn report_box255_not_emptied(stores: &mut Universe, context: String) -> Result<(), ExecError> {
+fn report_box255_not_emptied(
+    stores: &mut Universe,
+    deleted: tex_state::ids::NodeListId,
+    context: String,
+) -> Result<(), ExecError> {
     let mut report = stores.print_err("Output routine didn't use all of ");
     report
         .print_esc("box")
@@ -605,7 +613,23 @@ fn report_box255_not_emptied(stores: &mut Universe, context: String) -> Result<(
         ])
         .context(context);
     report.error().jump_out()?;
+    report_deleted_box(stores, deleted);
     Ok(())
+}
+
+/// TeX82 §199's `box_error` tail after the caller's recoverable error.
+fn report_deleted_box(stores: &mut Universe, deleted: tex_state::ids::NodeListId) {
+    let dump = crate::node_dump::dump_node_list(
+        stores,
+        deleted,
+        crate::node_dump::DumpConfig::read(stores),
+    );
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("The following box has been deleted:")
+        .print_ln()
+        .print_rendered(&dump);
+    diagnostic.end(true);
 }
 
 fn pop_finished_output_frame(

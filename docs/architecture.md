@@ -478,6 +478,10 @@ unchanged across an output-active build-page boundary.
 
 When the best break fires, execution packages the page into `\box255`, enters
 the output routine when configured, and resumes page building afterward.
+TeX.web §§199/1015/1028's shared `box_error` recovery displays an unexpected
+box's retained immutable contents through the diagnostic channel while
+voiding the register, both before page packaging and after a completed output
+routine.
 Outermost completed shipout is both an effect commit boundary and one of the
 named incremental checkpoint opportunities.
 
