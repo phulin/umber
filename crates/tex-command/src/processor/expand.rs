@@ -694,6 +694,19 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
                 self.expand_pdf_insert_height(command)
             }
+            // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
+            // form object number and prints its independent resource identity.
+            // Unknown object numbers produce zero, matching the other PDF
+            // object enquiries rather than manufacturing ledger state.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXFormName) => {
+                let object = self.scan_integer()?.value;
+                let resource = u32::try_from(object)
+                    .ok()
+                    .and_then(|object| self.state.pdf_form_resource(object))
+                    .unwrap_or(0);
+                self.push_rendered_text(&resource.to_string(), command.origin());
+                Ok(())
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original

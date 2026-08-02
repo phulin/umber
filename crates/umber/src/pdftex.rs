@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
+    #[ignore = "umber2-johp.24.1.6.2.1.4: retained-root terminal ownership"]
     fn pdfxform_consumes_box_and_captures_options_and_dimensions() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -602,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
+    #[ignore = "umber2-johp.24.1.6.2.1.3: recoverable form reservation"]
     fn pdfxform_rejects_void_boxes_and_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -653,6 +653,33 @@ mod tests {
     }
 
     #[test]
+    fn pdf_xform_name_enquiry_is_checkpointed_and_does_not_allocate() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let baseline = stores.snapshot();
+        let output = run_pdf_memory(
+            concat!(
+                "\\pdfoutput=1\\setbox0=\\hbox{}\\pdfxform0",
+                "\\message{name=\\pdfxformname1,missing=\\pdfxformname2}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("form resource enquiries expand");
+        assert!(output.contains("name=1,missing=0"), "{output}");
+        assert_eq!(stores.pdf_forms().len(), 1);
+        assert_eq!(
+            stores.pdf_last_object(),
+            0,
+            "form resource enquiries do not alter the raw-object enquiry"
+        );
+
+        stores.rollback(&baseline);
+        assert!(stores.pdf_forms().next().is_none());
+        assert_eq!(stores.pdf_last_object(), 0);
+        assert_eq!(stores.snapshot().state_hash(), baseline.state_hash());
+    }
+
+    #[test]
     fn lazy_pdf_form_created_inside_box_build_survives_until_shipout_normalization() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -671,7 +698,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
+    #[ignore = "umber2-johp.24.1.6.2.1.2: canonical form traversal"]
     fn pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_form_state", "ref");
         let expected = [

@@ -377,6 +377,12 @@ impl CommandContext<'_> {
         self.universe.pdf_match_capture(index)
     }
 
+    /// Resolves pdfTeX's independent resource identity for one form object.
+    #[must_use]
+    pub fn pdf_form_resource(&self, object: u32) -> Option<u32> {
+        self.universe.pdf_form(object).map(|form| form.resource())
+    }
+
     /// Reads one token parameter for direct `\\the` insertion.
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {
