@@ -574,6 +574,17 @@ impl RevisionCandidate {
                 CanonicalStepResult::Progress(step) => {
                     answered_needs.clear();
                     self.delivered_commands = self.delivered_commands.saturating_add(1);
+                    let attempted_steps =
+                        u64::try_from(self.delivered_commands).unwrap_or(u64::MAX);
+                    if attempted_steps > self.execution_budgets.steps {
+                        return Err(SessionError::Execute(
+                            tex_exec::ExecError::ResourceBudgetExceeded {
+                                resource: "steps",
+                                limit: self.execution_budgets.steps,
+                                attempted: attempted_steps,
+                            },
+                        ));
+                    }
                     let boundaries = self.control.take_completed_boundaries();
                     for boundary in boundaries {
                         let sink: &mut dyn CheckpointSink = match &mut self.sink {

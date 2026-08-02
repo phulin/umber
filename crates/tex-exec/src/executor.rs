@@ -1447,7 +1447,7 @@ impl ExecutionRun {
     ) -> Result<(), ExecError> {
         for (resource, limit, attempted) in [
             (
-                "execution steps",
+                "steps",
                 self.budgets.steps,
                 counters.committed_steps,
             ),
