@@ -113,6 +113,38 @@ fn ligature_dump_includes_original_character_list() {
 }
 
 #[test]
+fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
+    let mut stores = Universe::new();
+    let identifier = stores.intern_relaxed_control_sequence("f");
+    stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
+    let character = Node::Char {
+        font: tex_state::font::NULL_FONT,
+        ch: '\u{82}',
+        origin: OriginId::UNKNOWN,
+    };
+    let ligature = Node::Lig {
+        font: tex_state::font::NULL_FONT,
+        ch: '\u{82}',
+        orig: vec!['C', 'A'],
+        origins: vec![OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
+    };
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[character, ligature],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+            },
+        ),
+        "\\f ^^82\n\\f ^^82 (ligature CA)\n",
+    );
+}
+
+#[test]
 fn ligature_semantic_equality_ignores_original_character_provenance() {
     let with_unknown_origins = Node::Lig {
         font: tex_state::font::NULL_FONT,

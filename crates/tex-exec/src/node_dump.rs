@@ -794,11 +794,10 @@ pub(crate) fn printable_char(ch: char) -> String {
 }
 
 fn dump_char(ch: char) -> String {
-    if ch.is_ascii_graphic() {
-        ch.to_string()
-    } else if (0..=31).contains(&(ch as u32)) {
-        let marker = char::from_u32((ch as u32) + 64).expect("control marker is ASCII");
-        format!("^^{marker}")
+    if ch as u32 <= u32::from(u8::MAX) {
+        let mut rendered = String::new();
+        append_tex_print_char(ch, &mut rendered);
+        rendered
     } else {
         format!("\\char{}", ch as u32)
     }

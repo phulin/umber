@@ -196,6 +196,35 @@ fn short_display_renderer_retains_font_across_fragments_until_reset() {
 }
 
 #[test]
+fn short_display_uses_print_ascii_for_eight_bit_character_codes() {
+    let stores = Universe::new();
+    let font = tex_state::font::NULL_FONT;
+    let nodes = [
+        Node::Lig {
+            font,
+            ch: '\u{82}',
+            orig: vec!['C', 'A'],
+            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
+        },
+        Node::Char {
+            font,
+            ch: '\u{82}',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+    ];
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        format!(
+            "{} CA^^82",
+            crate::node_dump::font_identifier(&stores, font)
+        )
+    );
+}
+
+#[test]
 fn short_display_compares_restored_fonts_by_tex_number() {
     // TeX82 §174 retains an integer `font_in_short_display`. Restoring an
     // immutable format can change Umber's owner namespace without changing
