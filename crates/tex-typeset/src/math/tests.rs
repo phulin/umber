@@ -1014,6 +1014,33 @@ fn clean_math_character_observes_tex82_hpack_completion() {
 }
 
 #[test]
+fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
+    // TeX82 §754 measures a non-character nucleus through hpack(p, natural)
+    // before it constructs either script box. The call is still made for an
+    // empty nucleus and therefore completes as a zero-size Hpack.
+    let mut universe = setup_universe();
+    let mut scripted = MathNoad::new(NoadKind::Normal(NoadClass::Ord), MathField::Empty);
+    scripted.superscript = MathField::MathChar(math_char('a'));
+    let input = universe.freeze_node_list(&[Node::MathNoad(scripted)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(matches!(
+        layout.pack_observations(),
+        [
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width,
+                height,
+                depth,
+            },
+            ..
+        ] if (*width, *height, *depth) == (sc(0), sc(0), sc(0))
+    ));
+}
+
+#[test]
 fn make_fraction_uses_default_rule_and_delimiter_target() {
     let mut universe = setup_universe();
     let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);

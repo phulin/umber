@@ -5,8 +5,8 @@ use tex_state::scaled::Scaled;
 
 use super::style::Style;
 use super::{
-    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box,
-    hlist_extents, neg, node_is_char, sub,
+    Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, clean_box, neg,
+    node_is_char, sub,
 };
 
 pub fn make_scripts(
@@ -22,7 +22,12 @@ pub fn make_scripts(
     let (mut shift_up, mut shift_down) = if ctx.layout.first_node(*base).is_some_and(node_is_char) {
         (Scaled::from_raw(0), Scaled::from_raw(0))
     } else {
-        let (height, depth) = hlist_extents(*base);
+        // TeX82 §754 packages every non-character nucleus before deriving
+        // the script drops, even when the nucleus list is empty. Keep that
+        // completed `hpack(p, natural)` observable; its box is freed after
+        // the dimensions are read, so the semantic base remains unchanged.
+        let packed = ctx.layout.hpack(*base);
+        let (height, depth) = (packed.height, packed.depth);
         let t = if style.is_script_or_smaller() {
             tex_state::math::MathFontSize::ScriptScript
         } else {
