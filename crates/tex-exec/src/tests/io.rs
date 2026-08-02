@@ -1412,25 +1412,26 @@ fn copied_special_reuses_scan_time_expansion() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-7tsl canonical special scan leaves an open hbox group"]
 fn ordinary_and_shipout_specials_preserve_timing_order_copy_and_format() {
     let mut initex = crate::test_harness::universe_with_plain_catcodes();
-    run_canonical_source(
+    run_canonical_profile_source(
         &mut initex,
         b"\\def\\value{first}\\setbox0=\\hbox{\
           \\special{O-\\value-1}\\special shipout{L-\\value-2}} ",
         &[],
+        CommandProfile::PDFTEX14027,
     )
     .expect("special box builds");
 
     let format = initex.dump_format().expect("special box format dumps");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("special box format restores");
-    run_canonical_source(
+    run_canonical_profile_source(
         &mut stores,
         b"\\def\\value{second}\\shipout\\copy0\
           \\def\\value{third}\\shipout\\copy0\\end",
         &[],
+        CommandProfile::PDFTEX14027,
     )
     .expect("copied special boxes ship");
 
@@ -1462,6 +1463,27 @@ fn ordinary_and_shipout_specials_preserve_timing_order_copy_and_format() {
             vec![b"O-first-1".to_vec(), b"L-third-2".to_vec()],
         ]
     );
+}
+
+#[test]
+fn special_scan_at_generated_source_tail_preserves_box_closer() {
+    for (profile, source) in [
+        (
+            CommandProfile::TEX82,
+            b"\\setbox0=\\hbox{\\special{ordinary}}".as_slice(),
+        ),
+        (
+            CommandProfile::PDFTEX14027,
+            b"\\setbox0=\\hbox{\\special shipout{deferred}}".as_slice(),
+        ),
+    ] {
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
+        run_canonical_profile_source(&mut stores, source, &[], profile)
+            .expect("special box builds through generated-source EOF");
+
+        assert_eq!(stores.execution_group_depth(), 0, "profile {profile:?}");
+        assert!(stores.box_reg(0).is_some(), "profile {profile:?}");
+    }
 }
 
 #[test]
