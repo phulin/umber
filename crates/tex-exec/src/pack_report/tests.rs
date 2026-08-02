@@ -1,6 +1,7 @@
 //! TeX82 §§54/660/663 packed-box diagnostic routing regressions.
 
 use super::*;
+use tex_fonts::{FontMetrics, LoadedFont};
 use tex_state::EffectRecord;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{AdjustNode, BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Sign};
@@ -184,6 +185,49 @@ fn short_display_renderer_retains_font_across_fragments_until_reset() {
     assert_eq!(
         renderer.render_nodes(&stores, &fragment),
         format!("{identifier} A")
+    );
+}
+
+#[test]
+fn short_display_compares_restored_fonts_by_tex_number() {
+    // TeX82 §174 retains an integer `font_in_short_display`. Restoring an
+    // immutable format can change Umber's owner namespace without changing
+    // that dense TeX font number.
+    let size = Scaled::from_raw(10 * Scaled::UNITY);
+    let loaded = LoadedFont::new(
+        "fixture",
+        "fixture.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
+    );
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(loaded);
+    let identifier = stores.intern("fixturefont");
+    stores.set_font_identifier_symbol(font, identifier);
+    let mut restored = Universe::new_with_plain_catcodes();
+    let restored_font = restored.intern_font(stores.font(font).clone());
+    assert_ne!(font, restored_font, "the owner namespace is the challenge");
+    assert_eq!(font.raw(), restored_font.raw());
+    let nodes = [
+        Node::Char {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Char {
+            font: restored_font,
+            ch: 'B',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+    ];
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "\\fixturefont AB"
     );
 }
 

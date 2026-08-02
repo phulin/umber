@@ -194,7 +194,10 @@ fn short_display(stores: &Universe, list: NodeListId) -> String {
 /// renderer per §851 line-breaking pass; standalone packed-box diagnostics
 /// create a fresh renderer for each box, matching their explicit reset.
 pub(crate) struct ShortDisplayRenderer {
-    font: Option<tex_state::ids::FontId>,
+    // TeX82 §174 stores the internal font number. `FontId` additionally
+    // carries an arena-owner namespace, which can differ across restored
+    // format generations while its dense TeX font number remains the same.
+    font: Option<u32>,
 }
 
 impl ShortDisplayRenderer {
@@ -222,7 +225,7 @@ impl ShortDisplayRenderer {
 fn append_short_display(
     stores: &Universe,
     list: NodeListId,
-    font_in_short_display: &mut Option<tex_state::ids::FontId>,
+    font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
     let nodes = stores.nodes(list).to_vec();
@@ -232,7 +235,7 @@ fn append_short_display(
 fn append_short_display_nodes(
     stores: &Universe,
     nodes: &[Node],
-    font_in_short_display: &mut Option<tex_state::ids::FontId>,
+    font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
     for node in nodes {
@@ -284,13 +287,13 @@ fn append_short_char(
     stores: &Universe,
     font: tex_state::ids::FontId,
     ch: char,
-    font_in_short_display: &mut Option<tex_state::ids::FontId>,
+    font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
-    if *font_in_short_display != Some(font) {
+    if *font_in_short_display != Some(font.raw()) {
         out.push_str(&crate::node_dump::font_identifier(stores, font));
         out.push(' ');
-        *font_in_short_display = Some(font);
+        *font_in_short_display = Some(font.raw());
     }
     out.push_str(&crate::node_dump::printable_char(ch));
 }
