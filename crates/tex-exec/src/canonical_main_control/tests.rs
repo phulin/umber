@@ -424,6 +424,23 @@ fn tracingrestores_reports_restored_box_register_value() {
 }
 
 #[test]
+fn tracingrestores_prints_restored_void_box_inline() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\setbox254=\\hbox{}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\box254=void}\n"
+    );
+}
+
+#[test]
 fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

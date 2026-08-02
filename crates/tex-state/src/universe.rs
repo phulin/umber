@@ -5675,11 +5675,16 @@ impl Universe {
                 if let Ok(byte) = u8::try_from(record.escape_char()) {
                     diagnostic.print_ascii(char::from(byte));
                 }
-                diagnostic
-                    .print(&format!("box{}=", cell.index()))
-                    .print_ln()
-                    .print(value)
-                    .print_char('}');
+                diagnostic.print(&format!("box{}=", cell.index()));
+                // TeX82 §252 prints a null box's `void` directly after the
+                // equals sign. Only a non-null box enters `show_node_list`,
+                // whose first node display begins with `print_ln` (§174).
+                if value == "void" {
+                    diagnostic.print(value);
+                } else {
+                    diagnostic.print_ln().print(value);
+                }
+                diagnostic.print_char('}');
                 diagnostic.end(false);
                 continue;
             }
