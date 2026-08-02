@@ -771,6 +771,31 @@ fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
 }
 
 #[test]
+fn tracingcommands_two_prints_unless_with_its_boolean_operand() {
+    // e-TeX 2.6 merged §28.498 carries `unless_code` on the following
+    // boolean `if_test`, so §367 prints one combined command before §502's
+    // boolean result rather than tracing the prefix independently.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
+    let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
+    push(&mut command, vec![unless, if_false, other('y')]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'y');
+    drop(processor);
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains("{\\unless}\n{\\unless\\iffalse}\n{true}"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn malformed_unless_character_is_diagnosed_and_replayed_in_extended_profiles() {
     // e-TeX 2.6's merged change [28.498] accepts only a boolean `if_test`
     // after `\unless`. Its `back_error` path diagnoses the prefix itself,

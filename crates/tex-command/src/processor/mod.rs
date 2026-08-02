@@ -174,6 +174,18 @@ impl<'a> CommandProcessor<'a> {
         self.command.render_file_framing_events(&mut self.state);
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let command = print_cmd_chr_text(&self.state, command);
+        self.print_command_trace_text(command, conditional_suffix);
+    }
+
+    /// Prints e-TeX §28.498's merged `\unless` conditional command.
+    pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand) {
+        let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());
+        let command = crate::processor::expand::print_esc_text(&self.state, "unless")
+            + &print_cmd_chr_text(&self.state, operand);
+        self.print_command_trace_text(command, conditional_suffix);
+    }
+
+    fn print_command_trace_text(&mut self, command: String, conditional_suffix: String) {
         let mode_prefix = self.command_trace_mode_prefix.take();
         let mut text = String::from("{");
         if let Some(mode_prefix) = mode_prefix.as_deref() {

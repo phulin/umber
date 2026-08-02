@@ -522,6 +522,13 @@ impl CommandProcessor<'_> {
             )?;
             return Ok(());
         };
+        if self.state.int_param(IntParam::TRACING_COMMANDS) > 1
+            && self.state.int_param(IntParam::TRACING_IFS) <= 0
+        {
+            self.print_unless_command_trace(crate::processor::expand::PrintCommand::from_current(
+                &next,
+            ));
+        }
         self.expand_conditional(next, true)
     }
 
