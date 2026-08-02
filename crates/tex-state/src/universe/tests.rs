@@ -183,6 +183,80 @@ fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
     );
 }
 
+fn assert_parshape_restore_trace(mut universe: Universe) {
+    universe.set_int_param(IntParam::TRACING_RESTORES, 1);
+    universe.set_int_param(IntParam::TRACING_ONLINE, 1);
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'\\'));
+    assert_eq!(universe.paragraph_shape_len(), 2);
+
+    universe.enter_group();
+    universe.set_count(20, 5);
+    universe.set_paragraph_shape(&[], false);
+    let _ = universe.leave_group();
+
+    assert_eq!(universe.paragraph_shape_len(), 2);
+    let output: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let parshape_pos = output
+        .find("{restoring \\parshape=2}")
+        .unwrap_or_else(|| panic!("missing parshape restore in {output:?}"));
+    let count_pos = output
+        .find("{restoring \\count20=0}")
+        .unwrap_or_else(|| panic!("missing count restore in {output:?}"));
+    assert!(
+        parshape_pos < count_pos,
+        "restore order changed: {output:?}"
+    );
+}
+
+#[test]
+fn parshape_restore_trace_resolves_live_token_list_handle() {
+    let mut universe = Universe::new();
+    universe.set_paragraph_shape(
+        &[
+            super::ParagraphShapeLine {
+                indent: Scaled::from_raw(Scaled::UNITY),
+                width: Scaled::from_raw(10 * Scaled::UNITY),
+            },
+            super::ParagraphShapeLine {
+                indent: Scaled::from_raw(2 * Scaled::UNITY),
+                width: Scaled::from_raw(9 * Scaled::UNITY),
+            },
+        ],
+        true,
+    );
+    assert_parshape_restore_trace(universe);
+}
+
+#[test]
+fn parshape_restore_trace_resolves_loaded_format_token_list_handle() {
+    let mut initex = Universe::new();
+    initex.set_paragraph_shape(
+        &[
+            super::ParagraphShapeLine {
+                indent: Scaled::from_raw(Scaled::UNITY),
+                width: Scaled::from_raw(10 * Scaled::UNITY),
+            },
+            super::ParagraphShapeLine {
+                indent: Scaled::from_raw(2 * Scaled::UNITY),
+                width: Scaled::from_raw(9 * Scaled::UNITY),
+            },
+        ],
+        true,
+    );
+    let format = initex.dump_format().expect("parshape format serializes");
+    let loaded = Universe::from_format(World::memory(), &format).expect("parshape format loads");
+
+    assert_parshape_restore_trace(loaded);
+}
+
 #[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's

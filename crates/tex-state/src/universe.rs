@@ -1248,8 +1248,7 @@ fn format_restore_glue(spec: GlueSpec, normal_unit: &'static str) -> String {
 /// TeX82 §252's bounded token-list display used by §283 restore tracing.
 fn format_restore_tokens(universe: &Universe, stored: u64, escape_char: i32) -> String {
     let mut value = String::new();
-    if let Some(raw) = stored.checked_sub(1) {
-        let tokens = universe.tokens(TokenListId::new(raw as u32));
+    if let Some(tokens) = restored_tok_param_tokens(universe, stored) {
         let mut shown = 0;
         while shown < tokens.len() && value.chars().count() < 32 {
             crate::token_show::append_token_show_text(universe, tokens[shown], &mut value);
@@ -1260,6 +1259,14 @@ fn format_restore_tokens(universe: &Universe, stored: u64, escape_char: i32) -> 
         }
     }
     value
+}
+
+/// Decodes an environment token-parameter word and rebinds its stored handle
+/// to this Universe's live token store.
+fn restored_tok_param_tokens(universe: &Universe, stored: u64) -> Option<&[Token]> {
+    use crate::env::banks::{BankCodec, OptionalTokenListIdCodec};
+
+    OptionalTokenListIdCodec::decode(stored).map(|id| universe.tokens(id))
 }
 
 /// tex.web's `line`, `pack_begin_line`, and the `mode_line` stack §804 reads
@@ -5912,8 +5919,8 @@ impl Universe {
                     // indent/width pairs, rather than the backing token-list
                     // payload used by Umber. Section 283 calls that renderer
                     // immediately after restoring the saved eqtb entry.
-                    let id = TokenListId::new(record.old() as u32);
-                    let tokens = self.tokens(id);
+                    let tokens = restored_tok_param_tokens(self, record.old())
+                        .expect("restored internal parshape payload is absent");
                     assert_eq!(
                         tokens.len() % 8,
                         0,
