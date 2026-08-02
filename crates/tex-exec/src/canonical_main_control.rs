@@ -2920,7 +2920,22 @@ impl CanonicalMainControl {
             ],
             context,
         )?;
-        self.finish_canonical_display_alignment(
+        // §1200's optional-space probe now fetches the backed-up non-space
+        // command and backs it up again. Capture that exact delivery here so
+        // display resumption can build the page before ordinary main control
+        // redispatches it, without exposing an extra host step between the
+        // two halves of §1207's recovery transition.
+        let pending = {
+            let mut machine = self.command_machine();
+            let mut processor = machine.processor(stores);
+            processor
+                .get_x_token()
+                .map_err(command_error)?
+                .ok_or(ExecError::MissingToken {
+                    context: "display alignment recovery command",
+                })?
+        };
+        self.finish_canonical_display_alignment_with_pending_command(
             stores,
             crate::align::FinishedAlignment {
                 nodes,
@@ -2928,7 +2943,7 @@ impl CanonicalMainControl {
                 aux_space_factor: None,
             },
         )?;
-        Ok(ReplayStep::Continue)
+        self.nested_step_once(stores, Some(pending))
     }
 
     fn apply_canonical_math_shift(
@@ -3154,6 +3169,23 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
+        self.finish_canonical_display_alignment_inner(stores, finished, true)
+    }
+
+    fn finish_canonical_display_alignment_with_pending_command(
+        &mut self,
+        stores: &mut Universe,
+        finished: crate::align::FinishedAlignment,
+    ) -> Result<(), ExecError> {
+        self.finish_canonical_display_alignment_inner(stores, finished, false)
+    }
+
+    fn finish_canonical_display_alignment_inner(
+        &mut self,
+        stores: &mut Universe,
+        finished: crate::align::FinishedAlignment,
+        scan_optional_space: bool,
+    ) -> Result<(), ExecError> {
         let mut level =
             crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let interrupt =
@@ -3171,7 +3203,11 @@ impl CanonicalMainControl {
             })?;
         self.active_math_shifts.pop();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        self.resume_canonical_display(stores, interrupt.active_directions)
+        self.resume_canonical_display_inner(
+            stores,
+            interrupt.active_directions,
+            scan_optional_space,
+        )
     }
 
     fn finish_canonical_display_math_content(
@@ -3212,6 +3248,15 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         directions: Vec<tex_state::node::Direction>,
     ) -> Result<(), ExecError> {
+        self.resume_canonical_display_inner(stores, directions, true)
+    }
+
+    fn resume_canonical_display_inner(
+        &mut self,
+        stores: &mut Universe,
+        directions: Vec<tex_state::node::Direction>,
+        scan_optional_space: bool,
+    ) -> Result<(), ExecError> {
         let prev = self
             .modes
             .enclosing_vertical_prev_graf()
@@ -3235,7 +3280,9 @@ impl CanonicalMainControl {
         self.modes
             .current_list_mutation()
             .append(directions.into_iter().map(Node::Direction));
-        self.scan_canonical_optional_space(stores)?;
+        if scan_optional_space {
+            self.scan_canonical_optional_space(stores)?;
+        }
         crate::math::display::build_page_after_display_resume(&self.modes, stores)
     }
 

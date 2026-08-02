@@ -11995,6 +11995,41 @@ fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
 }
 
 #[test]
+fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
+    // TeX82 §§1200 and 1207 keep the rejected command pending while
+    // resume_after_display builds the page, then retry it in ordinary main
+    // control. An executor step inserted between those operations used to
+    // leak an overfull-rule node and changed the normalized TRIP DVI by 40
+    // bytes even though the command-event stream remained exact.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\overfullrule=5pt\setbox0=\vbox{\hsize=20pt\noindent x$$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno}\shipout\box0\end",
+    );
+    loop {
+        let step = control.step(&mut universe).expect("microfixture executes");
+        let transcript = terminal_text(&universe);
+        if transcript.contains("Missing $$ inserted") {
+            assert!(
+                transcript.contains("You can't use `\\eqno' in horizontal mode"),
+                "§1207 recovery must resume the display and retry the pending command atomically"
+            );
+            break;
+        }
+        assert!(!matches!(step, ReplayStep::End | ReplayStep::EndOfInput));
+    }
+    run_to_end(&mut control, &mut universe);
+
+    let artifact = universe
+        .world()
+        .committed_artifacts()
+        .first()
+        .expect("recovery microfixture ships one artifact");
+    assert_eq!(artifact.bytes().len(), 1276);
+}
+
+#[test]
 fn canonical_math_shift_closes_nested_math_groups_before_finishing_math() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
