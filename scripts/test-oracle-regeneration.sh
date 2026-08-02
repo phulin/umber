@@ -36,13 +36,14 @@ if scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
   exit 1
 fi
 
-printf '%s\n' 'oracle regeneration contract tests passed'
 assert_source_manifest_drift_is_actionable() {
   local engine="$1"
   local profile="$2"
   local manifest_name="$3"
-  local stale_digest="$4"
-  local generated_digest="$5"
+  local contract_row
+  local pinned_digest
+  local generated_digest
+  local stale_digest
   local tmp_root
   local output
   tmp_root="$(mktemp -d)"
@@ -53,7 +54,37 @@ assert_source_manifest_drift_is_actionable() {
     tests/etex26-oracle-manifest.txt \
     tests/pdftex14027-oracle-manifest.txt \
     "${tmp_root}/tests/"
-  sed -i "s/${generated_digest}/${stale_digest}/" \
+  contract_row="$(awk -v engine="$engine" \
+    '$1 == "engine" && $2 == engine { print }' \
+    "${tmp_root}/tests/oracle-regeneration-manifest.txt")"
+  read -r _ _ contract_profile _ manifest_path pinned_digest _ \
+    <<<"$contract_row"
+  if [[ "$contract_profile" != "$profile" || \
+        "$manifest_path" != "tests/${manifest_name}" ]]; then
+    printf 'oracle regeneration test selector disagrees with the %s contract row\n' \
+      "$engine" >&2
+    rm -rf "$tmp_root"
+    exit 1
+  fi
+  generated_digest="$(openssl dgst -sha256 -r \
+    "${tmp_root}/${manifest_path}" | awk '{ print $1 }')"
+  if [[ "$pinned_digest" != "$generated_digest" ]]; then
+    printf 'oracle regeneration test copied a stale %s source-manifest pin: expected %s, generated %s\n' \
+      "$engine" "$pinned_digest" "$generated_digest" >&2
+    rm -rf "$tmp_root"
+    exit 1
+  fi
+  if [[ "${generated_digest:0:1}" == 0 ]]; then
+    stale_digest="1${generated_digest:1}"
+  else
+    stale_digest="0${generated_digest:1}"
+  fi
+  awk -v engine="$engine" -v stale_digest="$stale_digest" '
+    $1 == "engine" && $2 == engine { $6 = stale_digest }
+    { print }
+  ' "${tmp_root}/tests/oracle-regeneration-manifest.txt" \
+    >"${tmp_root}/tests/oracle-regeneration-manifest.txt.tmp"
+  mv "${tmp_root}/tests/oracle-regeneration-manifest.txt.tmp" \
     "${tmp_root}/tests/oracle-regeneration-manifest.txt"
   if output="$(
     cd "$tmp_root"
@@ -78,18 +109,14 @@ assert_source_manifest_drift_is_actionable() {
 assert_source_manifest_drift_is_actionable \
   tex82 \
   initex-eight-bit \
-  tex82-oracle-manifest.txt \
-  d8bd0fa161d2fa1b0d9634198fff5b8f20c9e9986b7be363134686965751cff8 \
-  454d2078536ed714aa288ae46f12c0edd14b70649cab723788077cb06dcf32d9
+  tex82-oracle-manifest.txt
 assert_source_manifest_drift_is_actionable \
   etex26 \
   compatibility+extended-eight-bit \
-  etex26-oracle-manifest.txt \
-  abb05cc5bef25608574fc309a2f3253c19816c3ac8dfb4b3c94721479eb82a1e \
-  6fe33cb32ee042016c3bd1ac0076eb4752c769078ff0e09e9676ab37ff3b19a6
+  etex26-oracle-manifest.txt
 assert_source_manifest_drift_is_actionable \
   pdftex14027 \
   initex-etex-eight-bit \
-  pdftex14027-oracle-manifest.txt \
-  446cf937040f198f4c4c19d75a33685700d438c18f86f4d30c22a0b2b80bd139 \
-  9841528765723d64c32f9f6e7d59c64cf6029c9b90ef9e50e40c4e53d551ca58
+  pdftex14027-oracle-manifest.txt
+
+printf '%s\n' 'oracle regeneration contract tests passed'
