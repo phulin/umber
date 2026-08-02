@@ -488,11 +488,15 @@ fn finalization_retry_context_traverses_nested_sources_with_limit() {
         .stream_open_unavailable()
         .expect("typed unavailable open")
         .context();
-    let leaf = context.find("LEAF-CONTEXT").expect("current nested source");
-    let omitted = context[leaf..].find("\n...").expect("omission marker") + leaf;
-    let root = context.find("ROOT-CONTEXT").expect("bottom root source");
-    assert!(leaf < omitted && omitted < root, "{context:?}");
+    assert!(context.contains("LEAF-CONTEXT"), "{context:?}");
+    // tex.web §310's `bottom_line` stops at the first real-file level. The
+    // enclosing files therefore do not consume the `\errorcontextlines`
+    // budget and cannot cause an omission marker. This is the finalization
+    // counterpart of tex-exec's canonical
+    // `out_what_retry_show_context_stops_at_the_innermost_open_file` test.
     assert!(!context.contains("MIDDLE-CONTEXT"), "{context:?}");
+    assert!(!context.contains("ROOT-CONTEXT"), "{context:?}");
+    assert!(!context.contains("\n..."), "{context:?}");
 }
 
 #[test]
