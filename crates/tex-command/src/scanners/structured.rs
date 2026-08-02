@@ -2429,8 +2429,11 @@ impl CommandProcessor<'_> {
     }
 
     /// Scans TeX82 §1082's `\\vsplit <number> to <dimen>` prefix.
+    ///
+    /// e-TeX 2.6 [47.1082] widens the source box selector from
+    /// `scan_eight_bit_int` to `scan_register_num`.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
-        let index = self.scan_eight_bit_register_index()?;
+        let index = self.scan_profile_register_index()?;
         let missing_to = !self.scan_keyword("to")?.value;
         let height = self.scan_dimension()?.value;
         Ok(ScannedVSplit {

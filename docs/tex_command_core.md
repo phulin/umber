@@ -475,6 +475,12 @@ e-TeX [26.420] and [49.1247] replace both directions with
 scans therefore address one extended box register rather than independently
 recovering an out-of-range selector to box zero.
 
+Vertical splitting follows that boundary too. TeX82 §1082 scans `\\vsplit`'s
+source as an eight-bit box number, while e-TeX [47.1082] replaces that scan
+with `scan_register_num`; the sparse source is then fetched and updated by
+[44.977]. The target of an enclosing `\\setbox` and the source consumed by
+`\\vsplit` therefore share the same profile-sized register domain.
+
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
 delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`

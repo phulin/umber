@@ -9782,6 +9782,21 @@ fn canonical_vsplit_scans_operands_before_replaying_destructive_repack() {
 }
 
 #[test]
+fn canonical_etex_vsplit_reads_a_sparse_source_box() {
+    let universe = run_canonical_etex_saved_discards(
+        br"\setbox32105=\vbox{\hrule height 10pt}
+           \setbox32106=\vsplit32105 to 10pt\end",
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert!(
+        universe.box_reg(32106).is_some(),
+        "e-TeX [47.1082] scans the sparse source with scan_register_num"
+    );
+}
+
+#[test]
 fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
