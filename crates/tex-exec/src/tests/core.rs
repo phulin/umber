@@ -1005,9 +1005,9 @@ fn virtualized_execution_trace_is_opt_in_and_semantically_neutral() {
 fn engine_snapshot_queries_are_backed_by_current_nest_level() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    let vertical = control.engine_state_snapshot_for_test(&stores);
-    assert_eq!(vertical.mode, tex_expand::EngineMode::Vertical);
-    assert!(!vertical.is_inner_mode);
+    let vertical = control.current_mode_level_for_test();
+    assert_eq!(vertical.mode(), Mode::Vertical);
+    assert!(!vertical.mode().is_inner());
 
     control
         .register_root_source(SourceRegistration::new(
@@ -1019,16 +1019,16 @@ fn engine_snapshot_queries_are_backed_by_current_nest_level() {
         control.step(&mut stores).expect("enter hbox"),
         MainControlStep::Continue
     );
-    let horizontal = control.engine_state_snapshot_for_test(&stores);
-    assert_eq!(horizontal.mode, tex_expand::EngineMode::Horizontal);
-    assert!(horizontal.is_inner_mode);
+    let horizontal = control.current_mode_level_for_test();
+    assert_eq!(horizontal.mode(), Mode::RestrictedHorizontal);
+    assert!(horizontal.mode().is_inner());
     assert_eq!(
         control.step(&mut stores).expect("enter math"),
         MainControlStep::Continue
     );
-    let math = control.engine_state_snapshot_for_test(&stores);
-    assert_eq!(math.mode, tex_expand::EngineMode::Math);
-    assert!(math.is_inner_mode);
+    let math = control.current_mode_level_for_test();
+    assert_eq!(math.mode(), Mode::Math);
+    assert!(math.mode().is_inner());
 }
 
 #[test]

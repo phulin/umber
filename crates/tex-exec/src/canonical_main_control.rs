@@ -1569,6 +1569,18 @@ impl CanonicalMainControl {
         self.modes.current_mode()
     }
 
+    /// Returns a detached summary of the live current mode level for exact
+    /// crate-test assertions without exposing the canonical control's nest.
+    #[cfg(test)]
+    pub(crate) fn current_mode_level_for_test(&self) -> crate::ModeLevelSummary {
+        self.modes
+            .summary()
+            .levels()
+            .last()
+            .expect("canonical mode nest always has a current level")
+            .clone()
+    }
+
     /// Returns the enquiry projection derived from canonical main control's
     /// live mode nest.
     #[cfg(test)]
