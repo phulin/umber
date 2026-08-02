@@ -769,6 +769,8 @@ fn glue_code(v: GlueKind) -> u8 {
         GlueKind::ThickMuSkip => 19,
         GlueKind::NonScript => 20,
         GlueKind::ParSkip => 21,
+        GlueKind::SpaceSkip => 22,
+        GlueKind::XSpaceSkip => 23,
     }
 }
 
@@ -817,6 +819,8 @@ pub(super) fn decode_glue(value: u8) -> GlueKind {
         19 => GlueKind::ThickMuSkip,
         20 => GlueKind::NonScript,
         21 => GlueKind::ParSkip,
+        22 => GlueKind::SpaceSkip,
+        23 => GlueKind::XSpaceSkip,
         _ => unreachable!(),
     }
 }

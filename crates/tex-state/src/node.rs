@@ -521,6 +521,8 @@ pub enum MarginKernSide {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum GlueKind {
     Normal,
+    SpaceSkip,
+    XSpaceSkip,
     TabSkip,
     BaselineSkip,
     LineSkip,

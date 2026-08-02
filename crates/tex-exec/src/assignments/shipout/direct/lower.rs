@@ -141,9 +141,11 @@ pub(super) fn lower_disc_kind(kind: StateDiscKind) -> PageDiscKind {
 
 pub(super) fn lower_glue_kind(kind: StateGlueKind) -> PageGlueKind {
     match kind {
-        StateGlueKind::Normal | StateGlueKind::TabSkip | StateGlueKind::ParSkip => {
-            PageGlueKind::Normal
-        }
+        StateGlueKind::Normal
+        | StateGlueKind::SpaceSkip
+        | StateGlueKind::XSpaceSkip
+        | StateGlueKind::TabSkip
+        | StateGlueKind::ParSkip => PageGlueKind::Normal,
         StateGlueKind::BaselineSkip => PageGlueKind::BaselineSkip,
         StateGlueKind::LineSkip => PageGlueKind::LineSkip,
         StateGlueKind::TopSkip

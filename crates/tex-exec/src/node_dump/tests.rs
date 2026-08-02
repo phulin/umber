@@ -263,6 +263,8 @@ fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
     let leader = LeaderPayload::HList(zero_sized_hbox(empty));
     let cases = [
         (GlueKind::Normal, None, "\\glue 1.0\n"),
+        (GlueKind::SpaceSkip, None, "\\glue(\\spaceskip) 1.0\n"),
+        (GlueKind::XSpaceSkip, None, "\\glue(\\xspaceskip) 1.0\n"),
         (GlueKind::TabSkip, None, "\\glue(\\tabskip) 1.0\n"),
         (GlueKind::BaselineSkip, None, "\\glue(\\baselineskip) 1.0\n"),
         (GlueKind::LineSkip, None, "\\glue(\\lineskip) 1.0\n"),

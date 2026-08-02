@@ -2600,7 +2600,7 @@ fn control_space_uses_space_skip_without_space_factor_scaling() {
         children,
         [
             tex_state::node::Node::Char { ch: 'A', .. },
-            tex_state::node::Node::Glue { spec, kind: tex_state::node::GlueKind::Normal, leader: None },
+            tex_state::node::Node::Glue { spec, kind: tex_state::node::GlueKind::SpaceSkip, leader: None },
             tex_state::node::Node::Char { ch: 'B', .. },
         ] if stores.glue(*spec) == GlueSpec {
             width: Scaled::from_raw(20 * Scaled::UNITY),
@@ -2610,6 +2610,49 @@ fn control_space_uses_space_skip_without_space_factor_scaling() {
             shrink_order: tex_state::glue::Order::Normal,
         }
     ));
+}
+
+#[test]
+fn sentence_space_preserves_xspaceskip_and_spaceskip_node_subtypes() {
+    // TeX82 §§182/1042: a nonzero `\xspaceskip` has its own node subtype;
+    // when it is zero, sentence spacing falls back to scaled `\spaceskip`
+    // and retains that distinct subtype for `show_node_list`.
+    let mut stores = stores_with_fonts();
+    let mut input = InputStack::new(MemoryInput::new(
+        r"\font\f=cmr10 \relax \f\spaceskip=20pt plus 2pt minus 3pt
+          \xspaceskip=30pt \setbox0=\hbox{A\spacefactor=3000{} B}\xspaceskip=0pt
+          \setbox1=\hbox{A\spacefactor=3000{} B}",
+    ));
+
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("sentence spaces execute");
+
+    let glue = |stores: &Universe, register| {
+        let root = stores.box_reg(register).expect("box is assigned");
+        let [Node::HList(box_node)] = stores.nodes(root).testing_decoded() else {
+            panic!("register holds an hbox");
+        };
+        stores
+            .nodes(box_node.children)
+            .testing_decoded()
+            .iter()
+            .find_map(|node| match node {
+                Node::Glue { spec, kind, .. } => Some((*spec, *kind)),
+                _ => None,
+            })
+            .expect("sentence contains interword glue")
+    };
+    let (xspace_spec, xspace_kind) = glue(&stores, 0);
+    assert_eq!(xspace_kind, tex_state::node::GlueKind::XSpaceSkip);
+    assert_eq!(stores.glue(xspace_spec).width.raw(), 30 * Scaled::UNITY);
+
+    let (space_spec, space_kind) = glue(&stores, 1);
+    assert_eq!(space_kind, tex_state::node::GlueKind::SpaceSkip);
+    let space = stores.glue(space_spec);
+    assert_eq!(space.width.raw(), 20 * Scaled::UNITY);
+    assert_eq!(space.stretch.raw(), 6 * Scaled::UNITY);
+    assert_eq!(space.shrink.raw(), Scaled::UNITY);
 }
 
 #[test]

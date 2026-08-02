@@ -646,18 +646,14 @@ fn append_space_after_flush(nest: &mut ModeNest, stores: &mut Universe) -> Resul
     } else {
         nest.current_list().space_factor()
     };
-    let mut spec = if sf >= 2000 {
-        nonzero_glue_param_or_font_space(stores, GlueParam::XSPACE_SKIP, sf)
-    } else {
-        nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, sf)
-    };
+    let (mut spec, kind) = interword_glue(stores, sf);
     if configuration.adjusts_interword_glue() {
         adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
     }
     let id = stores.intern_glue(spec);
     nest.current_list_mutation().push(Node::Glue {
         spec: id,
-        kind: GlueKind::Normal,
+        kind,
         leader: None,
     });
     Ok(())
@@ -695,14 +691,14 @@ fn append_control_space_glue_after_flush(
     nest: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
-    let mut spec = nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000);
+    let (mut spec, kind) = space_skip_or_font_space(stores, 1000);
     if stores.pdf_font_configuration().adjusts_interword_glue() {
         adjust_interword_glue(stores, nest.current_list().nodes(), &mut spec);
     }
     let id = stores.intern_glue(spec);
     nest.current_list_mutation().push(Node::Glue {
         spec: id,
-        kind: GlueKind::Normal,
+        kind,
         leader: None,
     });
     Ok(())
@@ -730,7 +726,7 @@ pub(crate) fn append_canonical_control_space_with_fuel(
 /// exclusively horizontal-list concerns. Callers push the returned spec
 /// directly onto the current (math) list.
 pub(crate) fn control_space_glue_spec(stores: &Universe) -> GlueSpec {
-    nonzero_glue_param_or_font_space(stores, GlueParam::SPACE_SKIP, 1000)
+    space_skip_or_font_space(stores, 1000).0
 }
 
 fn append_hchar_with_fuel(
@@ -1647,26 +1643,25 @@ fn next_space_factor(current: i32, stores: &Universe, ch: char) -> i32 {
     }
 }
 
-fn nonzero_glue_param_or_font_space(
-    stores: &Universe,
-    override_param: GlueParam,
-    space_factor: i32,
-) -> GlueSpec {
-    let override_spec = stores.glue(stores.glue_param(override_param));
+fn interword_glue(stores: &Universe, space_factor: i32) -> (GlueSpec, GlueKind) {
+    let xspace = stores.glue(stores.glue_param(GlueParam::XSPACE_SKIP));
+    if space_factor >= 2000 && xspace != GlueSpec::ZERO {
+        // TeX82 §1042 appends a nonzero `\xspaceskip` verbatim.
+        return (xspace, GlueKind::XSpaceSkip);
+    }
+    space_skip_or_font_space(stores, space_factor)
+}
+
+fn space_skip_or_font_space(stores: &Universe, space_factor: i32) -> (GlueSpec, GlueKind) {
+    let override_spec = stores.glue(stores.glue_param(GlueParam::SPACE_SKIP));
     if override_spec != GlueSpec::ZERO {
-        // TeX82 §1042 uses a nonzero `\xspaceskip` verbatim, but a
-        // nonzero `\spaceskip` still passes through `app_space`'s
-        // space-factor scaling below. Only font glue receives the sentence
-        // extra-space component.
-        if override_param == GlueParam::XSPACE_SKIP {
-            return override_spec;
-        }
+        // TeX82 §1042 scales nonzero `\spaceskip` through `app_space`.
         let mut spec = override_spec;
         if space_factor != 1000 {
             spec.stretch = scale_by_factor(spec.stretch, space_factor, 1000);
             spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
         }
-        return spec;
+        return (spec, GlueKind::SpaceSkip);
     }
     let font = stores.current_font();
     let mut spec = GlueSpec {
@@ -1686,7 +1681,7 @@ fn nonzero_glue_param_or_font_space(
         spec.stretch = scale_by_factor(spec.stretch, space_factor, 1000);
         spec.shrink = scale_by_factor(spec.shrink, 1000, space_factor);
     }
-    spec
+    (spec, GlueKind::Normal)
 }
 
 fn scale_by_factor(value: Scaled, num: i32, den: i32) -> Scaled {

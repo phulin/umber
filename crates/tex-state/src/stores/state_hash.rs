@@ -1857,6 +1857,8 @@ pub(super) fn hash_glue_kind(kind: GlueKind, hasher: &mut StateHasher) {
         GlueKind::ThickMuSkip => 19,
         GlueKind::TabSkip => 20,
         GlueKind::ParSkip => 21,
+        GlueKind::SpaceSkip => 22,
+        GlueKind::XSpaceSkip => 23,
     });
 }
 
