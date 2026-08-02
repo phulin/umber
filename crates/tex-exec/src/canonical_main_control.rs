@@ -9297,6 +9297,8 @@ fn apply_pdf_object_request(
                 Some(id) => id,
                 None => {
                     if use_object.is_some() {
+                        // pdftex.web §1542 publishes the sticky recovery
+                        // sentinel before allocating the fallback object.
                         stores.set_pdf_return_value(-1);
                         stores.world_mut().write_text(
                             PrintSink::TerminalAndLog,

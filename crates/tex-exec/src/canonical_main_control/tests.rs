@@ -3111,8 +3111,9 @@ fn pdf_reference_object_rejects_dvi_before_scan_validation_or_list_mutation() {
             .expect("PDF retry preserves the integer operand"),
         MainControlStep::Continue
     );
+    assert!(control.modes.current_list().nodes().is_empty());
     assert!(matches!(
-        control.modes.current_list().nodes(),
+        stores.page_contributions().as_slices().0,
         [Node::Whatsit(Whatsit::PdfReferenceObject { object: 1 })]
     ));
 }

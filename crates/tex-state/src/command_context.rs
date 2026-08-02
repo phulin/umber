@@ -483,9 +483,9 @@ impl CommandContext<'_> {
             InternalInteger::PdfLastXImageColorDepth => {
                 i32::from(self.universe.pdf_last_ximage_color_depth())
             }
+            InternalInteger::PdfReturnValue => self.universe.pdf_return_value(),
             InternalInteger::LastNodeType => self.universe.page_last_node_type(),
             InternalInteger::InputLineNumber
-            | InternalInteger::PdfReturnValue
             | InternalInteger::CurrentGroupLevel
             | InternalInteger::CurrentGroupType
             | InternalInteger::CurrentIfLevel
@@ -972,7 +972,20 @@ impl Universe {
 #[cfg(test)]
 mod tests {
     use super::CommandLineSource;
-    use crate::{InteractionMode, Universe, world::StreamSlot};
+    use crate::{InteractionMode, Universe, meaning::InternalInteger, world::StreamSlot};
+
+    #[test]
+    fn command_context_publishes_the_live_pdf_return_value() {
+        let mut universe = Universe::new();
+        universe.set_pdf_return_value(-1);
+
+        assert_eq!(
+            universe
+                .command_context()
+                .internal_integer(InternalInteger::PdfReturnValue),
+            Some(-1)
+        );
+    }
 
     #[test]
     fn input_ln_removes_trailing_blanks_from_an_acquired_terminal_line() {

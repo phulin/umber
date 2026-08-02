@@ -8179,7 +8179,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn referenced_reserved_object_fails_before_pdf_writer_publication() {
         let (mut stores, run_result) = run("\\pdfoutput=1\\pdfobj reserveobjnum\\pdfrefobj 1\\end");
         let first = pdf_from_committed_artifacts(&mut stores, &run_result.committed_artifacts)

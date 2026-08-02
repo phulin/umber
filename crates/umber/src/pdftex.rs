@@ -869,7 +869,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_objects_reserve_initialize_reference_and_report_last_object() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1283,7 +1282,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_objects_match_reference_errors_and_useobjnum_recovery() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1302,7 +1300,7 @@ mod tests {
         assert_eq!(
             output,
             concat!(
-                "retval0=0\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
+                " retval0=0\npdfTeX warning (\\pdfobj): invalid object number being ignored\n",
                 "retval1=-1,last=1 retval2=-1",
             )
         );

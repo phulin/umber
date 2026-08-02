@@ -3841,6 +3841,7 @@ mod tests {
         state
             .initialize_raw_object(first, data, true)
             .expect("initialize reservation");
+        let initialized = state.snapshot();
         let record = state.raw_object(first).expect("initialized");
         assert_eq!(record.data(), Some(data));
         assert!(record.is_immediate());
@@ -3849,6 +3850,20 @@ mod tests {
             state.initialize_raw_object(first, data, false),
             Err(PdfRawObjectInitializeError::AlreadyInitialized(first))
         );
+        state
+            .reference_raw_object(first)
+            .expect("reference initialized object");
+        assert!(state.raw_object(first).expect("referenced").is_referenced());
+        let referenced_hash = state.hash_fragment();
+        state.rollback(initialized);
+        assert!(
+            !state
+                .raw_object(first)
+                .expect("rolled back")
+                .is_referenced()
+        );
+        state.reference_raw_object(first).expect("replay reference");
+        assert_eq!(state.hash_fragment(), referenced_hash);
         let allocated_hash = state.hash_fragment();
         assert_ne!(allocated_hash, initial_hash);
 
@@ -3861,6 +3876,9 @@ mod tests {
         state
             .initialize_raw_object(replay, data, true)
             .expect("replay initialization");
+        state
+            .reference_raw_object(replay)
+            .expect("replay reference after aggregate rollback");
         assert_eq!(replay, first);
         assert_eq!(state.hash_fragment(), allocated_hash);
     }

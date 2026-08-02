@@ -233,18 +233,21 @@ pub(crate) fn append_whatsit(
     whatsit: tex_state::node::Whatsit,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
-    let classic_extension = matches!(
+    let contributes_directly_in_outer_vertical = matches!(
         whatsit,
         tex_state::node::Whatsit::OpenOut { .. }
             | tex_state::node::Whatsit::CloseOut { .. }
             | tex_state::node::Whatsit::DeferredWrite { .. }
             | tex_state::node::Whatsit::Special { .. }
+            | tex_state::node::Whatsit::PdfReferenceObject { .. }
     );
     let node = Node::Whatsit(whatsit);
-    if classic_extension {
-        // TeX82 §1043 reaches these four extension subtypes through
+    if contributes_directly_in_outer_vertical {
+        // TeX82 §1043 reaches the classic four extension subtypes through
         // `append_to_vlist` in outer vertical mode, where `tail` is the page
         // contribution list rather than the otherwise-empty mode list.
+        // pdftex.web §1544's `pdf_ref_obj_node` has the same any-mode list
+        // ownership, allowing §1054's end-job ejection to ship the reference.
         crate::vertical::append_vertical_contribution(nest, stores, node);
     } else {
         nest.current_list_mutation().push(node);
