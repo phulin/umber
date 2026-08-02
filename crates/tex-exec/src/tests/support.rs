@@ -2,15 +2,6 @@ use super::*;
 use tex_expand::ReadRecorder;
 use tex_state::interner::Symbol;
 
-pub(super) fn install_expandable(
-    stores: &mut Universe,
-    name: &str,
-    primitive: ExpandablePrimitive,
-) {
-    let symbol = stores.intern(name);
-    stores.set_meaning(symbol, Meaning::ExpandablePrimitive(primitive));
-}
-
 pub(super) fn terminal_effect_text(stores: &Universe) -> String {
     // Shipout (and job completion) materializes prior terminal *and* log
     // effects in the memory backend and removes them from the
