@@ -653,6 +653,7 @@ pub(crate) struct FixedBank<C, const N: usize> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BoxWriteOutcome {
     Unchanged,
+    SameLevel,
     Journaled {
         rec: crate::journal::BoxUndoRec,
         pos: JournalPos,

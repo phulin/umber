@@ -498,9 +498,6 @@ impl Env {
         if owner_depth == 0 {
             return self.set_box_reg_global(index, value);
         }
-        if owner_depth == self.group_depth {
-            return self.set_box_reg(index, value);
-        }
         let outcome = self.boxes.write_same_level(index, value, &mut self.journal);
         #[cfg(feature = "shadow")]
         shadow_set(
@@ -524,8 +521,6 @@ impl Env {
         let owner_depth = self.boxes.get(index).owner_depth();
         let rec = if owner_depth == 0 {
             self.set_box_reg_global(index, None)
-        } else if owner_depth == self.group_depth {
-            self.set_box_reg_local(index, None, false)
         } else {
             self.set_box_reg_same_level(index, None)
         };

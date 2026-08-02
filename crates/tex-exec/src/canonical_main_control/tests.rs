@@ -468,6 +468,24 @@ fn tracingrestores_prints_restored_void_box_inline() {
 }
 
 #[test]
+fn consuming_current_group_box_preserves_original_void_restore() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingrestores=1\\tracingonline=1{\\setbox2=\\hbox to2pt{}\\setbox3=\\box2}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring \\box3=void}\n{restoring \\box2=void}\n"
+    );
+    assert!(stores.box_reg(2).is_none());
+}
+
+#[test]
 fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

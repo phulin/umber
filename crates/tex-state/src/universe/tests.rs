@@ -4636,6 +4636,10 @@ fn grouped_box_take_pins_nested_survivor_children_before_coalesced_release() {
         }]
     );
     let _ = universe.leave_group();
+    assert!(
+        universe.box_reg(0).is_none(),
+        "§1079's direct voiding preserves the original void restoration"
+    );
     assert_eq!(universe.testing_epoch_clone_counts(), before);
     assert_eq!(universe.testing_survivor_pin_count(), 1);
 }

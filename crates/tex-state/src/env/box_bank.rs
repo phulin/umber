@@ -169,18 +169,15 @@ impl BoxBank {
         if old.value == value {
             return BoxWriteOutcome::Unchanged;
         }
-        let pos = journal.pos();
-        let new = BoxSlot {
-            value,
-            owner_depth: old.owner_depth,
-            coalesce_epoch: Epoch::ZERO,
-            coalesce_pos: pos.raw(),
-        };
-        let (rec, actual_pos) =
-            journal.push_box_undo(BoxUndoRec::new_at_depth(index, old.owner_depth, old, new));
-        debug_assert_eq!(pos, actual_pos);
+        // TeX82 §§1079/1107 mutate `box(n)` directly while preserving its
+        // `eq_level`. The local assignment that established this owner also
+        // remains the lifetime owner of the displaced box until its group
+        // ends. Leave that undo's `new` slot intact and mutate only the live
+        // slot; group exit still restores its `old` slot.
+        let mut new = old;
+        new.value = value;
         *self.get_mut(index) = new;
-        BoxWriteOutcome::Journaled { rec, pos }
+        BoxWriteOutcome::SameLevel
     }
 
     pub(super) fn restore(&mut self, index: u16, slot: BoxSlot) {

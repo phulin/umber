@@ -594,6 +594,7 @@ impl Stores {
     ) {
         match outcome {
             crate::env::banks::BoxWriteOutcome::Unchanged => {}
+            crate::env::banks::BoxWriteOutcome::SameLevel => {}
             crate::env::banks::BoxWriteOutcome::Journaled { rec, .. } => {
                 if rec.old().value() == rec.new_value().value() {
                     self.inc_survivor_ref(NodeListId::decode_box_word(rec.old().value()));
