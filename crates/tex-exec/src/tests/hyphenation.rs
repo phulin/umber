@@ -17,16 +17,9 @@ use tex_state::scaled::Scaled;
 
 #[test]
 fn patterns_and_exceptions_drive_word_hyphenation() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = super::core::run_canonical_tex82(
         "\\patterns{a1ba t2e1st}\\hyphenation{tes-ting}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hyphenation primitives execute");
+    );
 
     assert_eq!(
         crate::assignments::test_hyphenated_word_text(&stores, "aba"),
@@ -46,16 +39,21 @@ fn patterns_and_exceptions_drive_word_hyphenation() {
 fn patterns_report_deterministic_pattern_memory_exhaustion() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_hyphenation_trie_capacity(3);
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\patterns{a1b a1c}\\end"));
-
-    let error = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("the second pattern exceeds the injected trie capacity");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(tex_command::SourceRegistration::new(
+            tex_command::RegisteredSourceKind::Generated,
+            b"\\patterns{a1b a1c}\\end".to_vec(),
+        ))
+        .expect("register pattern-memory source");
+    for _ in 0..16 {
+        if control.step(&mut stores).expect("canonical pattern step") == MainControlStep::End {
+            break;
+        }
+    }
 
     assert_eq!(
-        error.as_fatal(),
+        control.fatal_error(),
         Some(tex_command::FatalError::overflow("pattern memory", 3))
     );
     assert_eq!(
@@ -72,21 +70,13 @@ fn patterns_report_deterministic_pattern_memory_exhaustion() {
 
 #[test]
 fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_etex(
         "\\savinghyphcodes=1 \\language=1 \\lccode`A=`a \\patterns{a1ba} \
          \\lccode`A=`z \\lefthyphenmin=1 \\righthyphenmin=1 \
          \\language=2 \\lccode`A=`x \\patterns{x1ba} \\lccode`A=`z \
          \\hyphenation{Ab-a} \
          \\language=1 \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("saved hyphenation codes execute");
+    );
 
     // `\lccode`A` ends the run as `z`, so every mapping below comes from the
     // per-language codes e-TeX saved when each `\patterns` list was read.
@@ -108,22 +98,14 @@ fn etex_saved_hyphen_codes_are_language_specific_and_survive_lccode_changes() {
 
 #[test]
 fn etex_saved_hyphen_codes_distinguish_zero_from_absent_and_capture_grouped_values() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_etex(
         r"\savinghyphcodes=0 \language=1 \lccode`A=`a \patterns{a1b}
           \savinghyphcodes=1
           \language=2 {\lccode`A=`x \patterns{x1b}}
           \language=3 \global\lccode`A=`y {\lccode`A=0 \patterns{y1b}}
           \language=4 \lccode`A=0 \patterns{z1b}
           \end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("saved-code boundary setup executes");
+    );
 
     assert_eq!(stores.saved_hyphenation_code(1, 'A'), None);
     assert_eq!(stores.saved_hyphenation_code(2, 'A'), Some(Some('x')));
@@ -155,19 +137,11 @@ fn etex_saved_hyphen_codes_distinguish_zero_from_absent_and_capture_grouped_valu
 
 #[test]
 fn saved_zero_codes_do_not_consume_the_63_letter_exception_limit() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
     let source = format!(
         "\\savinghyphcodes=1 \\lccode`X=0 \\patterns{{a1b}} \\hyphenation{{{}X-a}}\\end",
         "a".repeat(62)
     );
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("saved zero at the eligibility boundary executes");
+    let stores = super::core::run_canonical_etex(&source);
 
     assert_eq!(
         stores.hyphenation_exception(&"a".repeat(63)),
@@ -178,16 +152,9 @@ fn saved_zero_codes_do_not_consume_the_63_letter_exception_limit() {
 
 #[test]
 fn word_hyphenation_honors_hyphen_minima() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82(
         "\\patterns{a1ba}\\righthyphenmin=1 \\lefthyphenmin=3 \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hyphen minima execute");
+    );
 
     assert_eq!(
         crate::assignments::test_hyphenated_word_text(&stores, "aba"),
