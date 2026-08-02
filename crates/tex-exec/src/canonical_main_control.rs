@@ -4561,6 +4561,17 @@ enum ScannedStep {
         value: i32,
         global: bool,
     },
+    /// pdftex.web §§468--470's globally owned per-font byte-code assignment.
+    PdfFontCode {
+        table: tex_state::PdfFontCode,
+        font: FontId,
+        character: u8,
+        value: i32,
+    },
+    /// pdftex.web §471 suppresses ligature construction for one live font.
+    PdfNoLigatures {
+        font: FontId,
+    },
     FontSelect {
         font: FontId,
         selector: Option<Symbol>,
@@ -5006,6 +5017,8 @@ impl ScannedStep {
                 | Self::TokParam { .. }
                 | Self::GlueParam { .. }
                 | Self::CodeTable { .. }
+                | Self::PdfFontCode { .. }
+                | Self::PdfNoLigatures { .. }
                 | Self::FontDimen { .. }
                 | Self::FontInteger { .. }
                 | Self::FontDefinition { .. }
@@ -7068,9 +7081,9 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfFontExpand) => {
-            if processor.int_param(IntParam::PDF_OUTPUT) <= 0 {
-                return Err(ExecError::PdfExtensionInDviMode("pdffontexpand"));
-            }
+            // pdftex.web §§1680--1682 configures font metrics independently
+            // of the selected output backend; generated fonts are valid in
+            // both DVI and PDF mode.
             let font = processor.scan_font_selector().map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let stretch = processor.scan_integer().map_err(command_error)?.value;
@@ -7196,6 +7209,37 @@ fn scan_command(
                 value,
                 global,
             })
+        }
+        Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfLpCode
+            | UnexpandablePrimitive::PdfRpCode
+            | UnexpandablePrimitive::PdfEfCode
+            | UnexpandablePrimitive::PdfTagCode
+            | UnexpandablePrimitive::PdfKnbsCode
+            | UnexpandablePrimitive::PdfStbsCode
+            | UnexpandablePrimitive::PdfShbsCode
+            | UnexpandablePrimitive::PdfKnbcCode
+            | UnexpandablePrimitive::PdfKnacCode),
+        ) => {
+            let font = processor.scan_font_selector().map_err(command_error)?;
+            let character = processor
+                .scan_restricted_integer(RestrictedIntegerClass::CharacterCode)
+                .map_err(command_error)?
+                .value;
+            let character =
+                u8::try_from(character).expect("pdfTeX character scanner is byte bounded");
+            let _ = processor.scan_optional_equals().map_err(command_error)?;
+            let value = processor.scan_integer().map_err(command_error)?.value;
+            Ok(ScannedStep::PdfFontCode {
+                table: pdf_font_code_table(primitive),
+                font,
+                character,
+                value,
+            })
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfNoLigatures) => {
+            let font = processor.scan_font_selector().map_err(command_error)?;
+            Ok(ScannedStep::PdfNoLigatures { font })
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::Advance
@@ -9769,6 +9813,25 @@ fn applied_mutation_observation(
                 global: *global,
             }
         }
+        ScannedStep::PdfFontCode {
+            table,
+            font,
+            character,
+            value,
+        } => MutationRecord {
+            target: "pdf_font_code",
+            value: format!("{table:?}:{}:{character}={value}", font.raw()),
+            key: None,
+            tokens: None,
+            global: true,
+        },
+        ScannedStep::PdfNoLigatures { font } => MutationRecord {
+            target: "pdf_no_ligatures",
+            value: font.raw().to_string(),
+            key: None,
+            tokens: None,
+            global: true,
+        },
         // -- Meanings: §1221's `let`, §1224's `shorthand_def`, and §1218's
         // macro `def`. §1224's provisional `define(p,relax,256)` is committed
         // and observed by the command-owned scanner that performs it, so only
@@ -12201,6 +12264,19 @@ fn apply_scanned_step(
                 old
             };
             crate::assignments::tracing::trace_glue_param(stores, index, global, old, new);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfFontCode {
+            table,
+            font,
+            character,
+            value,
+        } => {
+            stores.set_pdf_font_code(table, font, character, value);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::PdfNoLigatures { font } => {
+            stores.disable_pdf_font_ligatures(font);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::CodeTable {
@@ -14731,6 +14807,21 @@ fn checked_character_code(value: i32, context: &'static str) -> Result<u32, Exec
         .and_then(char::from_u32)
         .map(|character| character as u32)
         .ok_or(ExecError::InvalidCode { context, value })
+}
+
+fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCode {
+    match primitive {
+        UnexpandablePrimitive::PdfLpCode => tex_state::PdfFontCode::Lp,
+        UnexpandablePrimitive::PdfRpCode => tex_state::PdfFontCode::Rp,
+        UnexpandablePrimitive::PdfEfCode => tex_state::PdfFontCode::Ef,
+        UnexpandablePrimitive::PdfTagCode => tex_state::PdfFontCode::Tag,
+        UnexpandablePrimitive::PdfKnbsCode => tex_state::PdfFontCode::Knbs,
+        UnexpandablePrimitive::PdfStbsCode => tex_state::PdfFontCode::Stbs,
+        UnexpandablePrimitive::PdfShbsCode => tex_state::PdfFontCode::Shbs,
+        UnexpandablePrimitive::PdfKnbcCode => tex_state::PdfFontCode::Knbc,
+        UnexpandablePrimitive::PdfKnacCode => tex_state::PdfFontCode::Knac,
+        _ => unreachable!("caller restricts pdfTeX font-code primitives"),
+    }
 }
 
 fn apply_arithmetic(

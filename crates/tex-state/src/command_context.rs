@@ -678,6 +678,13 @@ impl CommandContext<'_> {
         self.universe.font(font).design_size()
     }
 
+    /// Reads one pdfTeX per-font byte-code table through the canonical
+    /// checkpointed font-state owner.
+    #[must_use]
+    pub fn pdf_font_code(&self, table: crate::PdfFontCode, font: FontId, code: u8) -> i32 {
+        self.universe.pdf_font_code(table, font, code)
+    }
+
     /// Reads one immutable TFM character metric for e-TeX font enquiries.
     #[must_use]
     pub fn font_char_metrics(&self, font: FontId, code: u8) -> Option<crate::font::CharMetrics> {

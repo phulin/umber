@@ -19,6 +19,21 @@ use crate::{
 };
 use crate::{CommandObservation, ScannerRecord};
 
+fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCode {
+    match primitive {
+        UnexpandablePrimitive::PdfLpCode => tex_state::PdfFontCode::Lp,
+        UnexpandablePrimitive::PdfRpCode => tex_state::PdfFontCode::Rp,
+        UnexpandablePrimitive::PdfEfCode => tex_state::PdfFontCode::Ef,
+        UnexpandablePrimitive::PdfTagCode => tex_state::PdfFontCode::Tag,
+        UnexpandablePrimitive::PdfKnbsCode => tex_state::PdfFontCode::Knbs,
+        UnexpandablePrimitive::PdfStbsCode => tex_state::PdfFontCode::Stbs,
+        UnexpandablePrimitive::PdfShbsCode => tex_state::PdfFontCode::Shbs,
+        UnexpandablePrimitive::PdfKnbcCode => tex_state::PdfFontCode::Knbc,
+        UnexpandablePrimitive::PdfKnacCode => tex_state::PdfFontCode::Knac,
+        _ => unreachable!("caller restricts pdfTeX font-code primitives"),
+    }
+}
+
 /// Recovery performed by a canonical scalar scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScalarRecovery {
@@ -2074,6 +2089,31 @@ impl CommandProcessor<'_> {
                     _ => unreachable!("outer match restricts primitive to the font integers"),
                 };
                 InternalValue::Integer(value)
+            }
+            // pdftex.web §§468--470 extends `scan_something_internal` with
+            // nine per-font byte-code tables. The font identifier precedes
+            // the bounded character selector, and the live checkpointed
+            // table supplies the integer result (including TFM defaults).
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::PdfLpCode
+                | UnexpandablePrimitive::PdfRpCode
+                | UnexpandablePrimitive::PdfEfCode
+                | UnexpandablePrimitive::PdfTagCode
+                | UnexpandablePrimitive::PdfKnbsCode
+                | UnexpandablePrimitive::PdfStbsCode
+                | UnexpandablePrimitive::PdfShbsCode
+                | UnexpandablePrimitive::PdfKnbcCode
+                | UnexpandablePrimitive::PdfKnacCode),
+            ) => {
+                let font = self.scan_font_selector()?;
+                let character = self.scan_character_number()?;
+                let code = u8::try_from(u32::from(character))
+                    .expect("pdfTeX character scanner is byte bounded");
+                InternalValue::Integer(self.state.pdf_font_code(
+                    pdf_font_code_table(primitive),
+                    font,
+                    code,
+                ))
             }
             // TeX82 §414's "Fetch a character code from some table":
             // `scan_char_num` selects the entry and every code table reads at

@@ -2463,7 +2463,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_microtype_effects_match_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_microtype_effects", "ref");
         for expected in [
@@ -2514,7 +2513,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_font_codes_size_and_ligature_suppression_match_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_font_codes", "ref");
         const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

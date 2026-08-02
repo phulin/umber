@@ -2478,13 +2478,11 @@ fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
 
 #[test]
 fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
-    // pdftex.web §§1601--1607: these five extension codes require PDF mode;
+    // pdftex.web §§1601--1607: these four extension codes require PDF mode;
     // glyph and built-in ToUnicode definitions are deliberately exempt.
+    // §§1680--1682's font expansion configuration is likewise output-mode
+    // independent because it configures generated font metrics.
     for (name, source) in [
-        (
-            "pdffontexpand",
-            b"\\pdffontexpand\\nullfont 1 1 1".as_slice(),
-        ),
         ("pdffontattr", b"\\pdffontattr\\nullfont{}".as_slice()),
         (
             "pdfincludechars",
@@ -2501,6 +2499,23 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
             Err(ExecError::PdfExtensionInDviMode(actual)) if actual == name
         ));
     }
+
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = pdftex_font_action_control(&mut stores);
+    register_source(
+        &mut control,
+        b"\\pdffontexpand\\nullfont 10 5 1 autoexpand\\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(
+        stores.font_expansion(tex_state::font::NULL_FONT),
+        Some(tex_state::font::FontExpansion {
+            stretch: 10,
+            shrink: 5,
+            step: 1,
+            auto_expand: true,
+        })
+    );
 
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = pdftex_font_action_control(&mut stores);

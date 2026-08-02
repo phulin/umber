@@ -635,6 +635,16 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FontName) => {
                 self.expand_fontname(command)
             }
+            // pdftex.web §470's `pdf_font_size_code` conversion prints the
+            // selected font size as an ordinary scaled dimension.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFontSize) => {
+                let font = self.scan_font_selector()?;
+                self.push_rendered_text(
+                    &format_scaled(self.state.font_size(font)),
+                    command.origin(),
+                );
+                Ok(())
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => self.expand_input(command),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => self.expand_endinput(),
             Meaning::ExpandablePrimitive(ExpandablePrimitive::JobName) => {
