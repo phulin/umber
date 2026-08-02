@@ -6,22 +6,23 @@
 //! registrations and aggregate retry policy; it has no token-delivery API.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_command::{
     CommandDeliveryBoundary, CommandDialect, CommandObservation, CommandObserver, CommandProfile,
-    FontLoadRequest, FontResource, ObservedToken, PdfImageRequest, PdfImageResource,
-    RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    FontResource, ObservedToken, PdfImageResource, RegisteredSourceKind, SourceRegistration,
+    SourceRegistrationError,
 };
 use tex_exec::{
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
-    CanonicalResourceNeed, CanonicalStepResult, CheckpointSink, EngineBoundary,
-    ExecutionBudgetCounters, MainControlStep,
+    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
+    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult, CheckpointSink,
+    EngineBoundary, ExecutionBudgetCounters, MainControlStep,
 };
 use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
-use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
+use tex_state::{FileContent, Universe};
 
 use crate::RunResult;
 
@@ -146,55 +147,6 @@ pub trait CanonicalStartupInput {
     fn read_line(&mut self, prompt: &str) -> Option<String>;
 }
 
-/// An immutable answer to exactly one canonical resource suspension.
-#[derive(Clone, Debug)]
-pub enum CanonicalResourceFulfillment {
-    Input {
-        name: String,
-        source: SourceRegistration,
-    },
-    Font {
-        request: FontLoadRequest,
-        resource: Box<FontResource>,
-    },
-    PdfImage {
-        request: PdfImageRequest,
-        resource: Box<PdfImageResource>,
-    },
-}
-
-/// One host decision for a canonical resource suspension.
-#[derive(Clone, Debug)]
-pub enum CanonicalResourceOutcome {
-    /// The host selected immutable backing for the exact request.
-    Fulfilled(CanonicalResourceFulfillment),
-    /// The host completed its search and proved that the resource is absent.
-    Unavailable,
-    /// The host made no final decision, so the same suspension may be retried.
-    Declined,
-}
-
-impl CanonicalResourceFulfillment {
-    /// Creates the exact retained input answer for a suspended `\\input`.
-    #[must_use]
-    pub fn input(name: impl Into<String>, kind: RegisteredSourceKind, bytes: Arc<[u8]>) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::new(kind, bytes),
-        }
-    }
-
-    /// Creates an input answer whose selected bytes and provenance are pinned
-    /// by a successful read from the active World.
-    #[must_use]
-    pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
-        Self::Input {
-            name: name.into(),
-            source: SourceRegistration::world(content),
-        }
-    }
-}
-
 fn same_run_input_fulfillment(name: &str, content: FileContent) -> CanonicalResourceFulfillment {
     CanonicalResourceFulfillment::Input {
         name: name.to_owned(),
@@ -205,49 +157,6 @@ fn same_run_input_fulfillment(name: &str, content: FileContent) -> CanonicalReso
         // files beside the job.
         source: SourceRegistration::world(content).with_name(format!("./{name}")),
     }
-}
-
-/// Borrow-scoped access to the active aggregate World at one declared
-/// canonical resource suspension.
-///
-/// This capability has no command, input-frame, executor, or semantic-dispatch
-/// API and cannot outlive the host fulfillment call.
-pub struct CanonicalResourceWorld<'a> {
-    stores: &'a mut Universe,
-}
-
-impl<'a> CanonicalResourceWorld<'a> {
-    fn new(stores: &'a mut Universe) -> Self {
-        Self { stores }
-    }
-
-    /// Resolves a selected path through World, retaining generated-output
-    /// precedence and recording the selected immutable input once.
-    pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
-        self.stores.world_mut().read_file(path)
-    }
-
-    /// Registers bytes selected by host policy outside World storage while
-    /// preserving same-run generated-output precedence and input accounting.
-    pub fn register_selected_file(
-        &mut self,
-        path: impl AsRef<Path>,
-        bytes: Arc<[u8]>,
-    ) -> Result<FileContent, WorldError> {
-        self.stores
-            .input_open_context()
-            .read_supplied_input_file(path.as_ref(), bytes)
-    }
-}
-
-/// Host-side acquisition policy. It may only return immutable bytes or a
-/// final typed absence; it cannot observe input delivery or execute commands.
-pub trait CanonicalResourceHost {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome;
 }
 
 /// Result of driving the retained engine until it either completes or awaits

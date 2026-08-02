@@ -49,9 +49,8 @@ mod virtual_compile;
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use canonical_session::{
-    CanonicalEngineSession, CanonicalExpansionStats, CanonicalResourceFulfillment,
-    CanonicalResourceHost, CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError,
-    CanonicalSessionState, CanonicalStartupInput, DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+    CanonicalEngineSession, CanonicalExpansionStats, CanonicalSessionError, CanonicalSessionState,
+    CanonicalStartupInput, DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
 };
 pub use editor_session::{
     EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
@@ -86,6 +85,10 @@ pub use pdf_output::{
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
+pub use tex_exec::{
+    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
+    CanonicalResourceWorld,
+};
 pub use tex_fixed_point::{
     TexFixedPointAttempt, TexFixedPointError, TexFixedPointOptions, TexFixedPointOutput,
     TexFixedPointSession,

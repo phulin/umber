@@ -25,6 +25,7 @@ mod pack_report;
 mod packing_params;
 mod page_builder;
 mod paragraph_memo;
+mod retained_resource;
 mod splitting;
 mod timing;
 mod transaction;
@@ -62,6 +63,10 @@ pub use job::{
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
+};
+pub use retained_resource::{
+    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
+    CanonicalResourceWorld,
 };
 pub use tex_expand::{ResourceLookup, ResourceNeed, ResourceResult};
 
