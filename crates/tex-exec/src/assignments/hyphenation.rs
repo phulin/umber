@@ -603,7 +603,7 @@ fn parse_pattern_word(stores: &Universe, word: &[char]) -> (PatternSpec, usize) 
             } else {
                 normalized_lccode(stores, ch).unwrap_or_else(|| {
                     nonletters += 1;
-                    '\0'
+                    '.'
                 })
             };
             if letters.len() < 63 {

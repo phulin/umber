@@ -26,7 +26,9 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-const PRODUCER_CONTRACT_VERSION: u32 = 2;
+// Version 3 includes TeX82 §962's zero/nonletter edge-of-word pattern
+// semantics in generated hyphenation tries.
+const PRODUCER_CONTRACT_VERSION: u32 = 3;
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 1;
 
 /// Positive cumulative limits for one format construction or loaded job.

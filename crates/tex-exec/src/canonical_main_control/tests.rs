@@ -7471,6 +7471,30 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
 }
 
 #[test]
+fn nonletter_zero_pattern_uses_the_edge_sentinel() {
+    // TeX82 §962 retains `cur_chr=0` after diagnosing the `0` whose lccode is
+    // zero. It therefore anchors AA1b3 at the word edge. The duplicate bb/bb1
+    // and overlapping 0B2B0 patterns are negative controls for max-level
+    // resolution: only the maximal odd positions survive.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\nonstopmode \\lccode`A=1 \\chardef\\?=`b \\patterns{\\?50AA1b3 bb bb1 0B2B0 b1c}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let word = "\u{1}\u{1}bbbbc\u{1}c\u{1}";
+    assert_eq!(
+        stores.hyphen_positions(word, 2, 3),
+        [2, 3, 6],
+        "{}",
+        terminal_text(&stores)
+    );
+}
+
+#[test]
 fn bad_patterns_reports_the_live_section_961_source_context() {
     // TeX82 §961 calls §82's `error` immediately after `get_x_token`
     // classifies the offending command. The context cursor is therefore

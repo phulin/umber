@@ -105,7 +105,11 @@ impl CommandProcessor<'_> {
                                 if normalized.is_none_or(|normalized| normalized == '\0') {
                                     self.report_pattern_nonletter()?;
                                 }
-                                normalized.unwrap_or('\0')
+                                // TeX82 §962 leaves `cur_chr=0` after the
+                                // Nonletter diagnostic and inserts it into
+                                // the trie. This is the same edge character
+                                // that a literal period selects above.
+                                normalized.filter(|&mapped| mapped != '\0').unwrap_or('.')
                             };
                             // §962 changes `k` and `digit_sensed` only while
                             // `k<63`; characters beyond the bound are still
