@@ -1054,13 +1054,13 @@ fn short_tfm_keeps_fontdimen_seven_writable_after_a_later_font_load() {
 #[test]
 fn scanner_em_ex_units_use_current_font_parameters() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\f\\dimen0=1em \\dimen1=1ex \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("em/ex assignments execute");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\f=cmr10 \relax \f\dimen0=1em \dimen1=1ex \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let font = font_meaning(&stores, "f");
     assert_eq!(stores.dimen(0), stores.font_parameter(font, 6));
@@ -1070,11 +1070,9 @@ fn scanner_em_ex_units_use_current_font_parameters() {
 #[test]
 fn scanner_em_ex_units_are_zero_for_nullfont() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new("\\dimen0=1em \\dimen1=1ex \\end"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("nullfont em/ex assignments execute");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_source(&mut control, br"\dimen0=1em \dimen1=1ex \end");
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.dimen(0).raw(), 0);
     assert_eq!(stores.dimen(1).raw(), 0);
@@ -1084,7 +1082,10 @@ fn scanner_em_ex_units_are_zero_for_nullfont() {
 /// two mutable character codes that do not come from later font defaults.
 #[test]
 fn nullfont_has_all_canonical_defaults() {
-    let stores = stores_with_fonts();
+    let mut stores = stores_with_fonts();
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_source(&mut control, br"\end");
+    run_canonical_to_end(&mut control, &mut stores);
     let null = stores.font(tex_state::font::NULL_FONT);
     assert_eq!(null.name(), "nullfont");
     assert_eq!(null.path(), std::path::Path::new("nullfont"));
@@ -1112,12 +1113,13 @@ fn nullfont_has_all_canonical_defaults() {
 #[test]
 fn loaded_tfm_font_survives_format_round_trip() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\fixture=cmr10 at 12pt \\fontdimen2\\fixture=7pt \\hyphenchar\\fixture=99 \\skewchar\\fixture=98 \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("loaded font state executes");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\fixture=cmr10 at 12pt \fontdimen2\fixture=7pt \hyphenchar\fixture=99 \skewchar\fixture=98 \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
     let original = font_meaning(&stores, "fixture");
     let expected = stores.font(original).clone();
     stores.set_input_summary(tex_state::InputSummary::default());
@@ -1147,13 +1149,13 @@ fn loaded_tfm_font_survives_format_round_trip() {
 #[test]
 fn scanner_em_unit_observes_runtime_fontdimen_write() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\f\\fontdimen6\\f=12pt \\dimen0=1em \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("fontdimen write affects em");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\f=cmr10 \relax \f\fontdimen6\f=12pt \dimen0=1em \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.dimen(0).raw(), 12 * tex_state::scaled::Scaled::UNITY);
 }
@@ -1161,14 +1163,13 @@ fn scanner_em_unit_observes_runtime_fontdimen_write() {
 #[test]
 fn nullfont_the_font_and_fontname_render_from_font_state() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\message{A=\\the\\font|N=\\fontname\\nullfont}\\font\\foo=cmr10 \\relax \\foo\\message{B=\\the\\font|F=\\fontname\\foo}\\font\\bar=cmr10 at 12pt \\message{C=\\fontname\\bar}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font rendering execute");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\message{A=\the\font|N=\fontname\nullfont}\font\foo=cmr10 \relax \foo\message{B=\the\font|F=\fontname\foo}\font\bar=cmr10 at 12pt \message{C=\fontname\bar}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("A=\\nullfont |N=nullfont"));
