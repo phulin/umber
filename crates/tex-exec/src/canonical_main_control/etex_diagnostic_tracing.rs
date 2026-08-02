@@ -109,6 +109,25 @@ fn middle_restores_the_preceding_math_left_group() {
 }
 
 #[test]
+fn showgroups_names_a_math_left_group_reopened_by_middle() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\n$\\left.x\\middle.y\\showgroups\\right.$\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // e-TeX 2.6 [49.1292] examines the delimiter noad retained by
+    // [48.1191], even after more material has followed the `\middle`.
+    assert!(
+        log.contains("math left group (level 2) entered at line 2 (\\middle)"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
     let (mut stores, mut control) = etex_control();
     register_source(

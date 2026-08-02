@@ -2260,7 +2260,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         leader_kind: None,
         shift: None,
     });
-    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[]);
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[], &[]);
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
@@ -2268,14 +2268,14 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     modes.push(Mode::Math).expect("test mode push");
     stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
     modes.push(Mode::Math).expect("test mode push");
-    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[]);
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[], &[]);
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
-    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[]);
+    let diagnostic = detached_showgroups(&stores, &modes, &None, &boxes, &[], &[], &[]);
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 

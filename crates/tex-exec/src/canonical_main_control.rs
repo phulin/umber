@@ -80,6 +80,9 @@ pub struct CanonicalMainControl {
     /// TeX82 §1174's `saved(-2)` branch count for each live `\mathchoice`,
     /// outermost first. e-TeX [49.1292] observes it through `\showgroups`.
     active_math_choices: Vec<usize>,
+    /// e-TeX [48.1191]'s saved delimiter identity for each live
+    /// `math_left_group`, outermost first. `true` denotes `\middle`.
+    active_math_left_boundaries: Vec<bool>,
     /// Physical glue-store identity plus the canonical pointer source of the
     /// last skip-register definition. The second component is `None` when
     /// scanning allocated a fresh TeX glue node that Umber subsequently
@@ -347,6 +350,7 @@ struct CanonicalStepSnapshot {
     boxes: ReplayBoxes,
     active_discretionaries: Vec<ActiveDiscretionary>,
     active_math_choices: Vec<usize>,
+    active_math_left_boundaries: Vec<bool>,
     main_loop_active: bool,
     shown_mode: Option<Mode>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
@@ -371,6 +375,7 @@ impl CanonicalStepSnapshot {
             boxes: control.boxes.clone(),
             active_discretionaries: control.active_discretionaries.clone(),
             active_math_choices: control.active_math_choices.clone(),
+            active_math_left_boundaries: control.active_math_left_boundaries.clone(),
             main_loop_active: control.main_loop_active,
             shown_mode: control.shown_mode,
             completed_replay_episode: control.completed_replay_episode,
@@ -404,6 +409,7 @@ impl CanonicalStepSnapshot {
         control.boxes = self.boxes;
         control.active_discretionaries = self.active_discretionaries;
         control.active_math_choices = self.active_math_choices;
+        control.active_math_left_boundaries = self.active_math_left_boundaries;
         control.main_loop_active = self.main_loop_active;
         control.shown_mode = self.shown_mode;
         control.completed_replay_episode = self.completed_replay_episode;
@@ -1429,6 +1435,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &self.active_discretionaries,
             &self.active_math_choices,
+            &self.active_math_left_boundaries,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -1948,6 +1955,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &self.active_discretionaries,
             &self.active_math_choices,
+            &self.active_math_left_boundaries,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -2907,6 +2915,7 @@ impl CanonicalMainControl {
                         .try_into()
                         .unwrap_or(i32::MAX),
                 )?;
+                self.active_math_left_boundaries.push(false);
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -2936,6 +2945,7 @@ impl CanonicalMainControl {
                             .map_err(|_| ExecError::MissingToken {
                                 context: "math left group",
                             })?;
+                    self.active_math_left_boundaries.pop();
                     schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
 
                     stores.enter_group_with_kind_at_line(
@@ -2949,6 +2959,7 @@ impl CanonicalMainControl {
                             .try_into()
                             .unwrap_or(i32::MAX),
                     )?;
+                    self.active_math_left_boundaries.push(true);
                     let segment = stores
                         .nodes(content)
                         .into_iter()
@@ -3001,6 +3012,7 @@ impl CanonicalMainControl {
                         .map_err(|_| ExecError::MissingToken {
                             context: "math left group",
                         })?;
+                self.active_math_left_boundaries.pop();
                 schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
                 let mut nodes: Vec<_> = stores
                     .nodes(content)
@@ -3320,6 +3332,7 @@ impl CanonicalMainControl {
                     &self.boxes,
                     &self.active_discretionaries,
                     &self.active_math_choices,
+                    &self.active_math_left_boundaries,
                 )),
             },
             scanned => scanned,
@@ -3388,6 +3401,7 @@ impl CanonicalMainControl {
             &mut self.boxes,
             &self.active_discretionaries,
             &self.active_math_choices,
+            &self.active_math_left_boundaries,
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok()
@@ -11124,6 +11138,7 @@ fn detached_showgroups(
     boxes: &ReplayBoxes,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
+    active_math_left_boundaries: &[bool],
 ) -> crate::diagnostics::ShowGroupsDiagnostic {
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
@@ -11139,6 +11154,7 @@ fn detached_showgroups(
     let mut box_index = 0usize;
     let mut discretionary_index = 0usize;
     let mut math_choice_index = 0usize;
+    let mut math_left_index = 0usize;
     let align_kind = active_alignment.as_ref().map(|active| active.kind);
     let mut rendered = Vec::with_capacity(frames.len());
     for (index, frame) in frames.into_iter().enumerate() {
@@ -11185,7 +11201,22 @@ fn detached_showgroups(
                 Some(Mode::DisplayMath) => "$$".to_owned(),
                 _ => "$".to_owned(),
             },
-            GroupKind::MathLeft => "\\left".to_owned(),
+            GroupKind::MathLeft => {
+                // e-TeX 2.6 [49.1292] distinguishes the consecutive
+                // `math_left_group` segments opened by `\left` and `\middle`
+                // using the delimiter identity [48.1191] retains in the mode
+                // level's `eTeX_aux_field`.
+                let opened_by_middle = active_math_left_boundaries
+                    .get(math_left_index)
+                    .copied()
+                    .unwrap_or(false);
+                math_left_index = math_left_index.saturating_add(1);
+                if opened_by_middle {
+                    "\\middle".to_owned()
+                } else {
+                    "\\left".to_owned()
+                }
+            }
             GroupKind::NoAlign => "\\noalign{".to_owned(),
             GroupKind::Align => {
                 let context = if align_level == 0 {
@@ -11302,6 +11333,7 @@ fn apply_scanned_step(
     boxes: &mut ReplayBoxes,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
+    active_math_left_boundaries: &[bool],
     prepared_dvi_pages: &mut PreparedDviPages,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
@@ -13060,6 +13092,7 @@ fn apply_scanned_step(
                 boxes,
                 active_discretionaries,
                 active_math_choices,
+                active_math_left_boundaries,
             );
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
