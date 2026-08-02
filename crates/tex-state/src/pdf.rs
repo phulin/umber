@@ -4244,6 +4244,40 @@ mod tests {
     }
 
     #[test]
+    fn thread_beads_are_typed_hashed_and_rollback_owned() {
+        let mut state = PdfState::default();
+        state.enable();
+        let checkpoint = state.snapshot();
+        let initial_hash = state.hash_fragment();
+        let identity = PdfDestinationIdentity::Name(b"running".to_vec());
+
+        let (thread, bead) = state
+            .append_thread_bead(identity.clone())
+            .expect("append first thread bead");
+        assert_eq!(thread.identity(), &identity);
+        assert_eq!(thread.object(), 1);
+        assert_eq!(bead.bead_object(), 2);
+        assert_eq!(bead.rectangle_object(), 3);
+        assert_eq!(thread.beads(), &[bead]);
+        assert_eq!(state.next_object(), 4);
+        let appended_hash = state.hash_fragment();
+        assert_ne!(appended_hash, initial_hash);
+
+        state.rollback(checkpoint.clone());
+        assert!(state.threads().is_empty());
+        assert_eq!(state.next_object(), 1);
+        assert_eq!(state.hash_fragment(), initial_hash);
+
+        let replay = state
+            .append_thread_bead(identity)
+            .expect("replay first thread bead");
+        assert_eq!(replay, (thread, bead));
+        assert_eq!(state.hash_fragment(), appended_hash);
+        state.rollback(checkpoint);
+        assert_eq!(state.hash_fragment(), initial_hash);
+    }
+
+    #[test]
     fn color_stacks_are_checkpointed_and_page_and_form_state_stay_independent() {
         let mut state = PdfState::default();
         let before_hash = state.hash_fragment();

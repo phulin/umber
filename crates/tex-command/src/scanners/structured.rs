@@ -1294,9 +1294,10 @@ impl CommandProcessor<'_> {
                 self.scan_pdf_positive(kind, bounded_by_halfword)?,
             ))
         } else {
-            Err(CommandError::PdfNavigation(
-                "pdfTeX error (ext1): identifier type missing",
-            ))
+            Err(CommandError::PdfNavigation(match kind {
+                "thread identifier" => "pdfTeX error (ext4): thread identifier type missing",
+                _ => "pdfTeX error (ext1): identifier type missing",
+            }))
         }
     }
 

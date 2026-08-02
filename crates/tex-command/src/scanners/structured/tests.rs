@@ -2846,11 +2846,11 @@ fn malformed_pdf_navigation_keeps_the_nonoperand_token() {
         ),
         (
             UnexpandablePrimitive::PdfThread,
-            "pdfTeX error (ext1): identifier type missing",
+            "pdfTeX error (ext4): thread identifier type missing",
         ),
         (
             UnexpandablePrimitive::PdfStartThread,
-            "pdfTeX error (ext1): identifier type missing",
+            "pdfTeX error (ext4): thread identifier type missing",
         ),
     ] {
         let mut command = CommandState::default();

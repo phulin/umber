@@ -1236,7 +1236,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn running_thread_lifecycle_reports_hlist_and_nesting_errors() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1245,6 +1244,7 @@ mod tests {
             &mut stores,
         )
         .expect("thread lifecycle diagnostics recover");
+        let output = complete_memory_terminal(&output, &stores);
         assert!(
             output.contains("\\pdfstartthread ended up in hlist"),
             "{output}"
@@ -1253,6 +1253,7 @@ mod tests {
             output.contains("\\pdfendthread ended up in hlist"),
             "{output}"
         );
+        assert!(stores.pdf_threads().is_empty());
 
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1261,16 +1262,28 @@ mod tests {
             &mut stores,
         )
         .expect("misnested thread diagnostic recovers");
+        let output = complete_memory_terminal(&output, &stores);
         assert!(
             tex_state::print::without_line_breaks(&output).contains(
                 "\\pdfendthread ended up in different nesting level than \\pdfstartthread"
             ),
             "{output}"
         );
+        assert_eq!(stores.pdf_threads().len(), 1);
+        assert_eq!(stores.pdf_threads()[0].beads().len(), 1);
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        run_pdf_memory(
+            "\\pdfoutput=1\\shipout\\vbox{\\pdfstartthread name{complete}\\pdfendthread}\\end",
+            &mut stores,
+        )
+        .expect("same-level running thread lifecycle completes");
+        assert_eq!(stores.pdf_threads().len(), 1);
+        assert_eq!(stores.pdf_threads()[0].beads().len(), 1);
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn thread_identifier_is_required_before_any_ledger_or_artifact_publication() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
