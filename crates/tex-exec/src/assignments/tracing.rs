@@ -187,20 +187,19 @@ fn dimen_text(value: Scaled) -> String {
     format!("{}pt", format_scaled_for_diagnostics(value))
 }
 
-/// Note: this compares interned glue-spec identity, so two separately
-/// scanned but value-equal *nonzero* glue literals are treated as
-/// "changing" here even though Umber's hash-consing gives them the same
-/// [`GlueId`]. TeX82 §1237's `trap_zero_glue` (the special case
-/// `etex_redundant_local_zero_glue_assignment` guards at the call site) is
-/// the only real "reassigning"-equivalent identity for glue parameters, and
-/// zero glue always interns to the same [`GlueId`] either way, so this
-/// approximation only over-reports "changing" for the narrower nonzero case.
+/// Traces an `eq_define` glue write using the caller's TeX pointer decision.
+///
+/// `changed` cannot be reconstructed from [`GlueId`]: Umber hash-conses
+/// equal immutable specs, while TeX allocates a fresh node for every nonzero
+/// scanned specification. The assignment owner therefore supplies whether
+/// e-TeX [19.277] took the same-pointer `reassigning` return.
 pub(crate) fn trace_glue_param(
     stores: &mut Universe,
     index: u16,
     global: bool,
     old: GlueId,
     new: GlueId,
+    changed: bool,
 ) {
     let (raw_name, unit) = glue_param_name(index);
     let name = escaped(stores, &raw_name);
@@ -211,19 +210,21 @@ pub(crate) fn trace_glue_param(
         stores,
         tracing_before,
         global,
-        old != new,
+        changed,
         &name,
         &old_text,
         &new_text,
     );
 }
 
+/// Register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_glue_register(
     stores: &mut Universe,
     index: u16,
     global: bool,
     old: GlueId,
     new: GlueId,
+    changed: bool,
 ) {
     let name = escaped(stores, &format!("skip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
@@ -233,19 +234,21 @@ pub(crate) fn trace_glue_register(
         stores,
         tracing_before,
         global,
-        old != new,
+        changed,
         &name,
         &old_text,
         &new_text,
     );
 }
 
+/// Mu-glue register counterpart of [`trace_glue_param`].
 pub(crate) fn trace_muglue_register(
     stores: &mut Universe,
     index: u16,
     global: bool,
     old: GlueId,
     new: GlueId,
+    changed: bool,
 ) {
     let name = escaped(stores, &format!("muskip{index}"));
     let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
@@ -255,7 +258,7 @@ pub(crate) fn trace_muglue_register(
         stores,
         tracing_before,
         global,
-        old != new,
+        changed,
         &name,
         &old_text,
         &new_text,

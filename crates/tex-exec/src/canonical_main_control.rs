@@ -580,14 +580,11 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
-    fn etex_redundant_local_skip_assignment(
-        &self,
-        stores: &Universe,
-        scanned: &ScannedStep,
-    ) -> bool {
+    fn local_skip_pointer_reassigned(&self, stores: &Universe, scanned: &ScannedStep) -> bool {
         let ScannedStep::Skip {
             index,
-            source_identity: Some(source_identity),
+            value,
+            source_identity,
             source_skip_index,
             global: false,
             ..
@@ -595,13 +592,18 @@ impl CanonicalMainControl {
         else {
             return false;
         };
-        if stores.int_param(IntParam::ETEX_EXTENDED_MODE) <= 0 {
-            return false;
+        let physical = stores.skip(*index);
+        if stores.glue(physical) == GlueSpec::ZERO && *value == GlueSpec::ZERO {
+            // TeX82 §1237's `trap_zero_glue` canonicalizes every scanned
+            // zero specification before e-TeX [19.277] compares pointers.
+            return true;
         }
+        let Some(source_identity) = source_identity else {
+            return false;
+        };
         if *source_skip_index == Some(*index) {
             return true;
         }
-        let physical = stores.skip(*index);
         let canonical_source = self
             .skip_pointer_sources
             .get(usize::from(*index))
@@ -609,6 +611,15 @@ impl CanonicalMainControl {
             .filter(|(recorded_physical, _)| *recorded_physical == physical)
             .map_or(Some(physical), |(_, source)| source);
         canonical_source == Some(*source_identity)
+    }
+
+    fn etex_redundant_local_skip_assignment(
+        &self,
+        stores: &Universe,
+        scanned: &ScannedStep,
+    ) -> bool {
+        stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
+            && self.local_skip_pointer_reassigned(stores, scanned)
     }
 
     pub const DEFAULT_FUEL_LIMIT: u64 = tex_command::DEFAULT_COMMAND_FUEL_LIMIT;
@@ -3517,9 +3528,16 @@ impl CanonicalMainControl {
             },
             scanned => scanned,
         };
+        let reassigning_skip = self.local_skip_pointer_reassigned(stores, &scanned);
         let redundant_skip = self.etex_redundant_local_skip_assignment(stores, &scanned);
-        if let ScannedStep::Skip { redundant, .. } = &mut scanned {
+        if let ScannedStep::Skip {
+            redundant,
+            reassigning,
+            ..
+        } = &mut scanned
+        {
             *redundant = redundant_skip;
+            *reassigning = reassigning_skip;
         }
         let mutation = applied_mutation_observation(&scanned, stores, self.command_profile());
         let begins_alignment = matches!(&scanned, ScannedStep::BeginAlignment { .. });
@@ -4523,6 +4541,7 @@ enum ScannedStep {
         source_identity: Option<tex_state::ids::GlueId>,
         source_skip_index: Option<u16>,
         redundant: bool,
+        reassigning: bool,
         global: bool,
     },
     Muskip {
@@ -6591,6 +6610,7 @@ fn scan_command(
                 source_identity,
                 source_skip_index,
                 redundant: false,
+                reassigning: false,
                 global,
             })
         }
@@ -6605,6 +6625,7 @@ fn scan_command(
                 source_identity,
                 source_skip_index,
                 redundant: false,
+                reassigning: false,
                 global,
             })
         }
@@ -11894,16 +11915,26 @@ fn apply_scanned_step(
             value,
             global,
             redundant,
+            reassigning,
             ..
         } => {
             let old = stores.skip(index);
             let value = stores.intern_glue(value);
+            let reassigning = reassigning
+                || (stores.glue(old) == GlueSpec::ZERO && stores.glue(value) == GlueSpec::ZERO);
             if global {
                 stores.set_skip_global(index, value);
             } else if !redundant {
                 stores.set_skip(index, value);
             }
-            crate::assignments::tracing::trace_glue_register(stores, index, global, old, value);
+            crate::assignments::tracing::trace_glue_register(
+                stores,
+                index,
+                global,
+                old,
+                value,
+                !reassigning,
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Muskip {
@@ -11918,7 +11949,14 @@ fn apply_scanned_step(
             } else {
                 stores.set_muskip(index, value);
             }
-            crate::assignments::tracing::trace_muglue_register(stores, index, global, old, value);
+            crate::assignments::tracing::trace_muglue_register(
+                stores,
+                index,
+                global,
+                old,
+                value,
+                old != value,
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::HorizontalSkip { value } => {
@@ -12429,18 +12467,22 @@ fn apply_scanned_step(
         } => {
             let parameter = GlueParam::new(index);
             let old = stores.glue_param(parameter);
+            let redundant =
+                !global && etex_redundant_local_zero_glue_assignment(stores, old, &value);
             let new = if global {
                 let new = stores.intern_glue(value);
                 stores.set_glue_param_global(parameter, new);
                 new
-            } else if !etex_redundant_local_zero_glue_assignment(stores, old, &value) {
+            } else if !redundant {
                 let new = stores.intern_glue(value);
                 stores.set_glue_param(parameter, new);
                 new
             } else {
                 old
             };
-            crate::assignments::tracing::trace_glue_param(stores, index, global, old, new);
+            crate::assignments::tracing::trace_glue_param(
+                stores, index, global, old, new, !redundant,
+            );
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfFontCode {
@@ -15182,11 +15224,21 @@ fn apply_arithmetic(
             }
             if mu {
                 crate::assignments::tracing::trace_muglue_register(
-                    stores, index, global, old_id, value,
+                    stores,
+                    index,
+                    global,
+                    old_id,
+                    value,
+                    old_id != GlueId::ZERO || value != GlueId::ZERO,
                 );
             } else {
                 crate::assignments::tracing::trace_glue_register(
-                    stores, index, global, old_id, value,
+                    stores,
+                    index,
+                    global,
+                    old_id,
+                    value,
+                    old_id != GlueId::ZERO || value != GlueId::ZERO,
                 );
             }
         }
@@ -15200,7 +15252,14 @@ fn apply_arithmetic(
             } else {
                 stores.set_glue_param(parameter, value);
             }
-            crate::assignments::tracing::trace_glue_param(stores, index, global, old_id, value);
+            crate::assignments::tracing::trace_glue_param(
+                stores,
+                index,
+                global,
+                old_id,
+                value,
+                old_id != GlueId::ZERO || value != GlueId::ZERO,
+            );
         }
         _ => return Err(ExecError::UnsupportedAssignmentTarget),
     }

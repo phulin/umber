@@ -77,13 +77,13 @@ pub(super) fn execute_assignment_to_target(
             let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, false, context)?;
             set_glue_register(stores, index, value, global);
-            tracing::trace_glue_register(stores, index, global, old, value);
+            tracing::trace_glue_register(stores, index, global, old, value, old != value);
         }
         Variable::MuGlueRegister(index) => {
             let old = stores.muskip(index);
             let value = scan_glue_id(input, stores, execution, true, context)?;
             set_muglue_register(stores, index, value, global);
-            tracing::trace_muglue_register(stores, index, global, old, value);
+            tracing::trace_muglue_register(stores, index, global, old, value, old != value);
         }
         Variable::ToksRegister(index) => {
             let old = stores.toks(index);
@@ -122,13 +122,13 @@ pub(super) fn execute_assignment_to_target(
             let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, false, context)?;
             set_glue_param(stores, index, value, global);
-            tracing::trace_glue_param(stores, index, global, old, value);
+            tracing::trace_glue_param(stores, index, global, old, value, old != value);
         }
         Variable::MuGlueParam(index) => {
             let old = read_glue_variable(stores, target);
             let value = scan_glue_id(input, stores, execution, true, context)?;
             set_glue_param(stores, index, value, global);
-            tracing::trace_glue_param(stores, index, global, old, value);
+            tracing::trace_glue_param(stores, index, global, old, value, old != value);
         }
         Variable::TokParam(index) => {
             let old = stores.tok_param(TokParam::new(index));

@@ -324,6 +324,42 @@ fn tracingassigns_reports_glue_arithmetic_across_dimension_bounds() {
 }
 
 #[test]
+fn tracingassigns_uses_storage_identity_for_repeated_assignment_families() {
+    // e-TeX [19.277--279] tests the eqtb representation, not rendered value
+    // equality. `eq_word_define` scalars and a reused token-list pointer take
+    // the reassigning return; a nonzero `\glueexpr` result is a fresh TeX
+    // glue node and therefore takes changing/into even when its components
+    // equal the old specification.
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingonline=1\tracingassigns=1
+\skip16=0pt
+\skip17=1pt \skip17=\glueexpr\skip17+0pt\relax
+\dimen18=1pt \dimen18=1pt
+\count19=1 \count19=1
+\toks20={A} \toks20=\toks20
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(log.contains("{reassigning \\skip16=0.0pt}"), "{log:?}");
+    assert!(
+        log.contains("{changing \\skip17=1.0pt}\n{into \\skip17=1.0pt}"),
+        "{log:?}"
+    );
+    for repeated in [
+        "{reassigning \\dimen18=1.0pt}",
+        "{reassigning \\count19=1}",
+        "{reassigning \\toks20=A}",
+    ] {
+        assert!(log.contains(repeated), "missing {repeated:?}: {log:?}");
+    }
+}
+
+#[test]
 fn tracingrestores_names_the_restored_etex_tracingassigns_parameter() {
     let (mut stores, mut control) = etex_control();
     register_source(
