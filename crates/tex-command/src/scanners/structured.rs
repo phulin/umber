@@ -816,7 +816,10 @@ pub enum CanonicalMathRequest {
     Choice,
     Delimiter(ScannedMathDelimiter),
     Radical(ScannedMathDelimiter),
-    Accent(ScannedMathCharacter),
+    Accent {
+        character: ScannedMathCharacter,
+        text_command: bool,
+    },
     MuMaterial(ScannedMathMuMaterial),
     EquationNumber(ScannedEquationNumber),
 }
@@ -1922,9 +1925,10 @@ impl CommandProcessor<'_> {
                 Request::Fraction(self.scan_math_fraction(MathFractionKind::Above, true)?)
             }
             UnexpandablePrimitive::Radical => Request::Radical(self.scan_delimiter(true)?),
-            UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => {
-                Request::Accent(self.scan_math_character()?)
-            }
+            UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => Request::Accent {
+                character: self.scan_math_character()?,
+                text_command: primitive == UnexpandablePrimitive::Accent,
+            },
             UnexpandablePrimitive::MSkip => Request::MuMaterial(self.scan_math_mu_material(true)?),
             UnexpandablePrimitive::MKern => Request::MuMaterial(self.scan_math_mu_material(false)?),
             UnexpandablePrimitive::MathChoice => Request::Choice,

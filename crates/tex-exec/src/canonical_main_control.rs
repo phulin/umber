@@ -2786,7 +2786,17 @@ impl CanonicalMainControl {
                 }
             }
             CanonicalMathRequest::Fraction(fraction) => {
-                start_canonical_fraction(self.modes.current_list_mutation(), stores, fraction)
+                if !start_canonical_fraction(self.modes.current_list_mutation(), stores, fraction) {
+                    let context = self.command.output_open_context(&stores.command_context());
+                    let mut report = stores.print_err("Ambiguous; you need another { and }");
+                    report.help(&[
+                        "I'm ignoring this fraction specification, since I don't",
+                        "know whether a construction like `x \\over y \\over z'",
+                        "means `{x \\over y} \\over z' or `x \\over {y \\over z}'.",
+                    ]);
+                    report.context(context);
+                    report.error().jump_out()?;
+                }
             }
             CanonicalMathRequest::Style(style) => {
                 self.modes
@@ -2851,7 +2861,21 @@ impl CanonicalMainControl {
                         field,
                     )));
             }
-            CanonicalMathRequest::Accent(accent) => {
+            CanonicalMathRequest::Accent {
+                character: accent,
+                text_command,
+            } => {
+                if text_command {
+                    let context = self.command.output_open_context(&stores.command_context());
+                    let mut report =
+                        stores.print_err("Please use \\mathaccent for accents in math mode");
+                    report.help(&[
+                        "I'm changing \\accent to \\mathaccent here; wish me luck.",
+                        "(Accents are not the same in formulas as they are in text.)",
+                    ]);
+                    report.context(context);
+                    report.error().jump_out()?;
+                }
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 let accent =
@@ -4397,9 +4421,9 @@ fn start_canonical_fraction(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     fraction: tex_command::ScannedMathFraction,
-) {
+) -> bool {
     if list.incomplete_fraction().is_some() {
-        return;
+        return false;
     }
     let numerator = stores.freeze_node_list(&list.take_nodes());
     list.set_incomplete_fraction(crate::mode::IncompleteFraction {
@@ -4411,6 +4435,7 @@ fn start_canonical_fraction(
         left_delimiter: fraction.left_delimiter.map(|value| value.code),
         right_delimiter: fraction.right_delimiter.map(|value| value.code),
     });
+    true
 }
 
 fn finish_canonical_math_list(
@@ -4794,6 +4819,11 @@ enum ScannedStep {
     /// parameter command is diagnosed and discarded in every mode; it does
     /// not terminate main control.
     IllegalMacroParameter {
+        token: Token,
+    },
+    /// TeX82 §§1046/1050's forbidden `mmode+halign` case. The command is
+    /// dropped without scanning an alignment specification or preamble.
+    IllegalAlignment {
         token: Token,
     },
     /// TeX82 §1135's `cs_error`: a stray `\endcsname` is diagnosed and
@@ -8264,10 +8294,14 @@ fn scan_command(
         // `\halign` is legal directly in vertical mode (TeX82's
         // `vmode+halign:init_align`).
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
-            if matches!(mode, Mode::Math | Mode::DisplayMath)
-                && innermost_group != Some(GroupKind::MathShift)
-            {
-                scan_off_save(processor, command, innermost_group)
+            if matches!(mode, Mode::Math | Mode::DisplayMath) {
+                if innermost_group != Some(GroupKind::MathShift) {
+                    scan_off_save(processor, command, innermost_group)
+                } else {
+                    Ok(ScannedStep::IllegalAlignment {
+                        token: command.spelling().semantic_token(),
+                    })
+                }
             } else {
                 Ok(ScannedStep::BeginAlignment {
                     vertical: false,
@@ -10626,6 +10660,7 @@ fn applied_mutation_observation(
         | ScannedStep::End { .. }
         | ScannedStep::IllegalStop { .. }
         | ScannedStep::IllegalMacroParameter { .. }
+        | ScannedStep::IllegalAlignment { .. }
         | ScannedStep::ExtraEndCsName
         | ScannedStep::EjectResidualPage
         | ScannedStep::HorizontalSkip { .. }
@@ -12562,6 +12597,16 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalMacroParameter { token } => {
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalAlignment { token } => {
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::report_illegal_case_with_context(
                 stores,

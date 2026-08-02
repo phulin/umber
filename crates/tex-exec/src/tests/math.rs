@@ -129,7 +129,6 @@ fn indent_in_math_appends_an_ord_sub_box() {
 }
 
 #[test]
-#[ignore = "umber2-i49v: canonical text-accent recovery is incomplete"]
 fn text_accent_in_math_uses_mathaccent_semantics() {
     let (stores, executor) = run_math_source(r"\chardef\x=65 $\accent\x a");
     let nodes = math_nodes(&stores, &executor);
@@ -149,7 +148,6 @@ fn moveleft_in_math_is_ignored_without_consuming_lastbox() {
 }
 
 #[test]
-#[ignore = "umber2-i49v: canonical illegal-halign recovery consumes following input"]
 fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
     let (stores, executor) = run_math_source(r"$\halign a");
     let nodes = math_nodes(&stores, &executor);
@@ -405,7 +403,6 @@ fn limit_switch_applies_to_mathchardef_operator() {
 }
 
 #[test]
-#[ignore = "umber2-i49v: canonical doubled-fraction recovery omits the ambiguity diagnostic"]
 fn generalized_fraction_absorbs_prior_list_and_reports_doubled_fraction() {
     let (mut stores, mut executor) = run_math_source(r"$a\over b\over c");
     let content = executor.finish_current_math_list_for_test(&mut stores);
