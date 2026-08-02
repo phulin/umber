@@ -276,32 +276,70 @@ fn macro_argument_opened_in_a_u_template_closes_on_the_v_template() {
     );
 }
 
-fn nested_shipout_checkpoints(source: &str) -> Vec<EngineCheckpoint> {
+struct NestedShipoutObservation {
+    checkpoints: Vec<EngineCheckpoint>,
+    artifact_hashes: Vec<tex_state::ContentHash>,
+}
+
+fn nested_shipout_checkpoints(source: &str) -> NestedShipoutObservation {
     let mut stores = support::stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(format!(
-        "\\font\\f=cmr10 \\relax \\f {source}"
-    )));
-    let mut checkpoints = Vec::new();
-    let stats = Executor::new()
-        .run_with_context_and_checkpoints(
-            &mut input,
-            &mut stores,
-            &mut crate::ExecutionContext::new("texput"),
-            &mut checkpoints,
-        )
-        .expect("nested shipout source executes");
+    let mut control = alignment_control(&mut stores, source);
+    let mut checkpoints = vec![
+        control
+            .capture_checkpoint(
+                EngineBoundary::JobStart,
+                &mut stores,
+                ExecutionBudgetCounters::default(),
+            )
+            .expect("nested shipout job-start checkpoint"),
+    ];
+    let mut pending_boundaries = Vec::new();
+    loop {
+        let step = control
+            .step(&mut stores)
+            .expect("nested shipout source executes");
+        pending_boundaries.extend(control.take_completed_boundaries());
+        while let Some(&boundary) = pending_boundaries.first() {
+            let Ok(checkpoint) = control.capture_checkpoint(
+                boundary,
+                &mut stores,
+                ExecutionBudgetCounters::default(),
+            ) else {
+                break;
+            };
+            checkpoints.push(checkpoint);
+            pending_boundaries.remove(0);
+        }
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            break;
+        }
+    }
+    assert!(
+        pending_boundaries.is_empty(),
+        "every completed boundary becomes publishable after outer work unwinds: {pending_boundaries:?}"
+    );
+    let artifact_hashes = stores.world().artifact_commits().to_vec();
     assert_eq!(
-        stats.shipped_artifacts.len(),
+        artifact_hashes.len(),
         1,
         "every committed nested shipout is surfaced to the output driver"
     );
-    checkpoints
+    assert_eq!(
+        stores.world().committed_artifacts()[0].hash(),
+        artifact_hashes[0],
+        "the committed artifact receipt identifies the published artifact"
+    );
+    NestedShipoutObservation {
+        checkpoints,
+        artifact_hashes,
+    }
 }
 
 fn assert_nested_shipout_publishes_deterministic_outer_boundary(source: &str) {
     let first = nested_shipout_checkpoints(source);
     let second = nested_shipout_checkpoints(source);
     let boundaries = first
+        .checkpoints
         .iter()
         .map(EngineCheckpoint::boundary)
         .collect::<Vec<_>>();
@@ -309,14 +347,17 @@ fn assert_nested_shipout_publishes_deterministic_outer_boundary(source: &str) {
     assert_eq!(boundaries.last(), Some(&EngineBoundary::ShipoutComplete));
     assert_eq!(
         first
+            .checkpoints
             .iter()
             .map(EngineCheckpoint::state_hash)
             .collect::<Vec<_>>(),
         second
+            .checkpoints
             .iter()
             .map(EngineCheckpoint::state_hash)
             .collect::<Vec<_>>()
     );
+    assert_eq!(first.artifact_hashes, second.artifact_hashes);
 }
 
 fn box_zero_vlist(stores: &Universe) -> BoxNode {
