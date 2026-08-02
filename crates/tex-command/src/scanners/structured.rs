@@ -2502,13 +2502,13 @@ impl CommandProcessor<'_> {
             // control-sequence token, then `token_show` uses `print_cs`.
             // Its control-word delimiter therefore precedes §1293's period.
             InternalValue::Font(symbol) => print_cs_text(&mut self.state, symbol),
-            InternalValue::Tokens { tokens, .. } => self
-                .state
-                .tokens(tokens)
-                .iter()
-                .copied()
-                .map(|token| string_text(&self.state, token))
-                .collect(),
+            InternalValue::Tokens { tokens, .. } => {
+                let mut text = String::new();
+                for &token in self.state.tokens(tokens) {
+                    self.state.append_token_selector_text(token, &mut text);
+                }
+                text
+            }
         };
         Ok(ScannedDisplayDiagnostic {
             content: format!("> {text}"),

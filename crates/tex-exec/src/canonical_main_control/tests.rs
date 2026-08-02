@@ -6270,6 +6270,27 @@ fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
 }
 
 #[test]
+fn showthe_token_lists_use_print_cs_separator_rules() {
+    // TeX82 §§262/1297: `\showthe` applies `token_show`, not `\string`, to
+    // token-list values. Hash-table control words always gain a separator;
+    // direct-address control symbols and active characters do not.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\catcode`\~=13 \toks0={A\count1\!B\?C~D\relax\!}\showthe\toks0\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert!(
+        terminal_text(&stores).contains("> A\\count 1\\!B\\?C~D\\relax \\!."),
+        "{}",
+        terminal_text(&stores)
+    );
+}
+
+#[test]
 fn show_completion_routes_transcript_and_adjusts_error_count_by_interaction() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);

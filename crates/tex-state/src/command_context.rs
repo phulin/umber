@@ -31,6 +31,16 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Appends one token using TeX82 §262's active-selector `show_token_list`
+    /// spelling, including `print_cs` separators and `\newlinechar` handling.
+    pub fn append_token_selector_text(&self, token: Token, text: &mut String) {
+        let newlinechar = u32::try_from(self.universe.int_param(IntParam::NEWLINE_CHAR))
+            .ok()
+            .filter(|&code| code <= u8::MAX.into())
+            .and_then(char::from_u32);
+        crate::token_show::append_token_selector_text(self.universe, token, newlinechar, text);
+    }
+
     /// Reads the process-selected TeX82 §79 pseudoprint widths.
     #[must_use]
     pub fn error_context_widths(&self) -> crate::print::ErrorContextWidths {
