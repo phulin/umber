@@ -13773,15 +13773,13 @@ fn canonical_discretionary_flushes_forbidden_part_nodes_and_keeps_following_inpu
 
     let transcript = transcript_text(&universe);
     let expected = r"! Improper discretionary list.
+l.1 ...r10\f\setbox0=\hbox{\discretionary{}{A\hss}
+                                                  {}Z}\end
+Discretionary lists must contain only boxes and kerns.
 
 The following discretionary sublist has been deleted:
 \f A
 \glue 0.0 plus 1.0fil minus 1.0fil
-
-
-l.1 ...r10\f\setbox0=\hbox{\discretionary{}{A\hss}
-                                                  {}Z}\end
-Discretionary lists must contain only boxes and kerns.
 
 ";
     assert_eq!(transcript, expected);

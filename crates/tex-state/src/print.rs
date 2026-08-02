@@ -627,29 +627,13 @@ impl<'a> ErrorReport<'a> {
     }
 
     /// tex.web §82's `error`.
-    pub fn error(self) -> ErrorOutcome {
-        self.finish_error(true)
-    }
-
-    /// Completes §82's `error` after a caller has already printed the
-    /// message-ending period around an intervening diagnostic display.
-    ///
-    /// TeX82 §1121 is the unusual owner: it opens an error, displays the
-    /// discarded discretionary sublist, and only then enters the ordinary
-    /// context/help recovery path.
-    pub fn error_after_message_terminator(self) -> ErrorOutcome {
-        self.finish_error(false)
-    }
-
-    fn finish_error(mut self, terminate_message: bool) -> ErrorOutcome {
+    pub fn error(mut self) -> ErrorOutcome {
         self.printer
             .universe
             .world_mut()
             .error_channel_mut()
             .record_error_history();
-        if terminate_message {
-            self.printer.print_char('.');
-        }
+        self.printer.print_char('.');
         // §82 prints `show_context` once here, and §93's `succumb` prints it
         // again from the nested `error` of an `Emergency stop` raised inside
         // the dialog below, so the rendering outlives this display.

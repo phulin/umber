@@ -4316,29 +4316,25 @@ fn report_improper_discretionary(
     deleted: NodeListId,
     context: String,
 ) -> Result<(), ExecError> {
-    let mut report = stores.print_err("Improper discretionary list");
-    report.print_char('.');
-    let deferred = report.defer();
-
     let text = crate::node_dump::dump_node_list(
         stores,
         deleted,
         crate::node_dump::DumpConfig::read(stores),
     );
+
+    let mut report = stores.print_err("Improper discretionary list");
+    report
+        .help(&["Discretionary lists must contain only boxes and kerns."])
+        .context(context);
+    report.error().jump_out()?;
+
     let mut diagnostic = stores.begin_diagnostic();
     diagnostic
-        .print_nl("")
-        .print_ln()
         .print("The following discretionary sublist has been deleted:")
         .print_ln()
         .print_rendered(&text);
     diagnostic.end(true);
-
-    let mut report = stores.resume_error_report(deferred);
-    report
-        .help(&["Discretionary lists must contain only boxes and kerns."])
-        .context(context);
-    Ok(report.error_after_message_terminator().jump_out()?)
+    Ok(())
 }
 
 /// The structural outcome of one canonical main-control operation.
