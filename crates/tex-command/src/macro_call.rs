@@ -206,7 +206,8 @@ impl CommandProcessor<'_> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 1 {
             return;
         }
-        let mut text = format!("\\{name}->");
+        let mut text = crate::processor::expand::print_esc_text(&self.state, name);
+        text.push_str("->");
         for token in self.state.tokens(tokens).to_vec() {
             text.push_str(&crate::processor::expand::token_list_token_text(
                 &self.state,

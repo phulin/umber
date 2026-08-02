@@ -301,6 +301,26 @@ fn tracingmacros_two_traces_the_named_output_token_list() {
 }
 
 #[test]
+fn named_output_token_list_trace_uses_live_escape_character() {
+    // TeX82 §§63/323: `begin_token_list(output_routine,output_text)` names
+    // `output` through `print_esc`, so an out-of-range escape character emits
+    // no prefix.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\tracingmacros=2\\tracingonline=1\\maxdeadcycles=1\\output={\\dimen0=1pt}\\escapechar=256\\topskip=0pt\\setbox0=\\vbox to1pt{}\\copy0\\penalty-10000\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("output->{dimen 0=1pt}"), "{terminal:?}");
+    assert!(!terminal.contains("\\output->"), "{terminal:?}");
+}
+
+#[test]
 fn tracingcommands_does_not_trace_shipout_box_constructor() {
     // TeX82 §§1030/1075/1084: `\shipout` calls `scan_box` inside its already
     // traced main-control case. Its constructor is scanner-owned, while a
