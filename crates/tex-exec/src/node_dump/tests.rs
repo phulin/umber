@@ -12,6 +12,32 @@ use tex_state::node::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token};
 
+/// TeX82 §697 prints fraction delimiter fields only when their numeric
+/// value differs from `null_delimiter`, which is zero. A scanned null
+/// delimiter remains represented as `Some(0)` and must therefore be as silent
+/// as an absent field; nonzero delimiters remain visible independently.
+#[test]
+fn fraction_dump_omits_numeric_null_delimiters() {
+    for (left, right, expected) in [
+        (None, None, "\\fraction, thickness = default\n"),
+        (Some(0), Some(0), "\\fraction, thickness = default\n"),
+        (
+            Some(0x123),
+            Some(0),
+            "\\fraction, thickness = default, left-delimiter \"123\n",
+        ),
+        (
+            Some(0),
+            Some(0x456),
+            "\\fraction, thickness = default, right-delimiter \"456\n",
+        ),
+    ] {
+        let mut out = String::new();
+        dump_fraction_header(FractionThickness::Default, left, right, &mut out);
+        assert_eq!(out, expected);
+    }
+}
+
 #[test]
 fn deferred_write_dump_uses_show_token_list_control_word_separator() {
     let mut stores = Universe::new();

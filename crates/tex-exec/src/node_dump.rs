@@ -631,10 +631,13 @@ fn dump_fraction_header(
             let _ = write!(out, " {}", format_scaled_without_unit(value));
         }
     }
-    if let Some(left) = left_delimiter {
+    // TeX82 §697 prints these fields only when they differ from
+    // `null_delimiter` (zero). The scanner retains that numeric null value as
+    // `Some(0)`, so option presence alone is not the display predicate.
+    if let Some(left) = left_delimiter.filter(|delimiter| *delimiter != 0) {
         let _ = write!(out, ", left-delimiter \"{left:X}");
     }
-    if let Some(right) = right_delimiter {
+    if let Some(right) = right_delimiter.filter(|delimiter| *delimiter != 0) {
         let _ = write!(out, ", right-delimiter \"{right:X}");
     }
     out.push('\n');
