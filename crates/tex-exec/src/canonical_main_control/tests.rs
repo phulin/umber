@@ -2274,6 +2274,10 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
 
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
+    let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
+    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+        .expect("\\showgroups reports no fatal error");
+
     stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
     let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
     crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
@@ -2288,6 +2292,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         "### math shift group (level 2) entered at line 7 ($)",
         "### no align group (level 6) entered at line 8 (\\noalign{)",
         "### align group (level 5) entered at line 8 (align entry)",
+        "### align group (level 5) entered at line 8 (\\cr)",
         "### align group (level 4) entered at line 8 (\\halign{)",
     ] {
         assert!(

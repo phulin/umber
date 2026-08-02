@@ -151,6 +151,25 @@ fn showgroups_reconstructs_every_math_shift_opener() {
 }
 
 #[test]
+fn showgroups_names_the_alignment_entry_enclosing_noalign_as_cr() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\n\\setbox0=\\vbox{\\halign{#\\cr\\noalign{\\showgroups}\\cr}}\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // e-TeX [49.1292] lets the inner no_align_group set `a := -1`, so the
+    // immediately enclosing align_group is reconstructed as `\cr`.
+    assert!(
+        log.contains("align group") && log.contains("(\\cr)"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
     let (mut stores, mut control) = etex_control();
     register_source(

@@ -11163,13 +11163,12 @@ fn detached_showgroups(
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
     let frames = stores.group_frames().collect::<Vec<_>>();
-    let mut align_level = 0usize;
+    let mut alignment_contexts = alignment_group_contexts(&frames, active_alignment, boxes);
     let mut box_index = 0usize;
     let mut discretionary_index = 0usize;
     let mut math_choice_index = 0usize;
     let mut math_left_index = 0usize;
     let mut math_shift_index = 0usize;
-    let align_kind = active_alignment.as_ref().map(|active| active.kind);
     let mut rendered = Vec::with_capacity(frames.len());
     for (index, frame) in frames.into_iter().enumerate() {
         let kind = frame.kind();
@@ -11240,18 +11239,9 @@ fn detached_showgroups(
                 }
             }
             GroupKind::NoAlign => "\\noalign{".to_owned(),
-            GroupKind::Align => {
-                let context = if align_level == 0 {
-                    match align_kind {
-                        Some(AlignmentKind::VAlign) => "\\valign{",
-                        _ => "\\halign{",
-                    }
-                } else {
-                    "align entry"
-                };
-                align_level = align_level.saturating_add(1);
-                context.to_owned()
-            }
+            GroupKind::Align => alignment_contexts[index]
+                .take()
+                .unwrap_or_else(|| "align entry".to_owned()),
         };
         rendered.push(ShowGroupFrame {
             kind,
@@ -11261,6 +11251,46 @@ fn detached_showgroups(
         });
     }
     ShowGroupsDiagnostic { frames: rendered }
+}
+
+/// Replays e-TeX [49.1292]'s inward-to-outward alignment state (`a`) while
+/// retaining the outermost-first frame order used by the detached diagnostic.
+fn alignment_group_contexts(
+    frames: &[tex_state::GroupFrame],
+    active_alignment: &Option<ActiveReplayAlignment>,
+    boxes: &ReplayBoxes,
+) -> Vec<Option<String>> {
+    let mut kinds = boxes
+        .suspended_alignments
+        .iter()
+        .map(|alignment| alignment.kind)
+        .chain(active_alignment.iter().map(|alignment| alignment.kind))
+        .collect::<Vec<_>>();
+    let mut alignment_state = 1i8;
+    let mut contexts = vec![None; frames.len()];
+    for (index, frame) in frames.iter().enumerate().rev() {
+        match frame.kind() {
+            GroupKind::NoAlign => alignment_state = -1,
+            GroupKind::Align if alignment_state == 0 => {
+                let kind = kinds.pop().unwrap_or(AlignmentKind::HAlign);
+                contexts[index] = Some(match kind {
+                    AlignmentKind::HAlign => "\\halign{".to_owned(),
+                    AlignmentKind::VAlign => "\\valign{".to_owned(),
+                });
+                alignment_state = 1;
+            }
+            GroupKind::Align => {
+                contexts[index] = Some(if alignment_state == 1 {
+                    "align entry".to_owned()
+                } else {
+                    "\\cr".to_owned()
+                });
+                alignment_state = 0;
+            }
+            _ => {}
+        }
+    }
+    contexts
 }
 
 fn fallback_group_context(kind: GroupKind) -> &'static str {
