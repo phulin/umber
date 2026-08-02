@@ -4311,16 +4311,13 @@ fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
 #[test]
 fn show_macro_renders_parameter_tokens_and_replacement_exactly_without_mutation() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut definitions = InputStack::new(MemoryInput::new(
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    run_registered_canonical_tex82(
+        &mut control,
+        &mut stores,
         "\\def\\pair#1#2{#1 #2}\\def\\nine#1#2#3#4#5#6#7#8#9{#9}\
          \\def\\hash{##}\\def\\empty{}\\def\\prefix abc#1{[#1]}",
-    ));
-
-    Executor::new()
-        .run(&mut definitions, &mut stores)
-        .expect("macro definitions execute");
+    );
     let before: Vec<_> = ["pair", "nine", "hash", "empty", "prefix"]
         .into_iter()
         .map(|name| {
@@ -4332,12 +4329,11 @@ fn show_macro_renders_parameter_tokens_and_replacement_exactly_without_mutation(
         })
         .collect();
 
-    let mut shows = InputStack::new(MemoryInput::new(
+    run_registered_canonical_tex82(
+        &mut control,
+        &mut stores,
         "\\show\\pair\\show\\nine\\show\\hash\\show\\empty\\show\\prefix",
-    ));
-    Executor::new()
-        .run(&mut shows, &mut stores)
-        .expect("macro shows execute");
+    );
 
     let output = support::terminal_effect_text_unbroken(&stores);
     for exact in [
@@ -4390,21 +4386,14 @@ fn show_macro_renders_clobbered_token_list_marker() {
 
 #[test]
 fn insertion_page_goal_uses_skip_once_and_count_scaling() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\topskip=0pt \\vsize=100pt \
          \\count7=500 \\dimen7=100pt \\skip7=10pt \
          \\insert7{\\hrule height20pt depth0pt}\
          \\edef\\firstpenalties{\\the\\insertpenalties}\
          \\insert7{\\hrule height10pt depth0pt}\
          \\edef\\secondpenalties{\\the\\insertpenalties}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("insert page goal accounting executes");
+    );
 
     assert_eq!(macro_text(&stores, "firstpenalties"), "0");
     assert_eq!(macro_text(&stores, "secondpenalties"), "0");
@@ -4418,22 +4407,15 @@ fn insertion_page_goal_uses_skip_once_and_count_scaling() {
 
 #[test]
 fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\topskip=0pt \\vsize=20pt \\count7=1000 \\dimen7=12pt \
          \\output={\\xdef\\held{\\the\\insertpenalties}\\shipout\\box255}\
          \\insert7{\\hrule height8pt depth0pt\\penalty123\\hrule height8pt depth0pt}\
          \\edef\\main{\\the\\insertpenalties}\
          \\setbox0=\\hbox{}\\copy0\\penalty-10000",
-    ));
+    );
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("split insertion output executes");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(macro_text(&stores, "main"), "123");
     assert_eq!(macro_text(&stores, "held"), "1");
 
@@ -4453,17 +4435,9 @@ fn split_insertion_penalty_is_mainline_then_heldover_count_in_output() {
 
 #[test]
 fn forced_page_penalty_runs_default_output() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000",
-    ));
+    let stores = run_canonical_tex82("\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \\penalty-10000");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("forced penalty executes");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert!(stores.box_reg(255).is_none());
     assert!(stores.page_fire_up().is_none());
     assert!(stores.current_page_nodes().is_empty());
@@ -4476,18 +4450,12 @@ fn forced_page_penalty_runs_default_output() {
 
 #[test]
 fn page_output_promotes_nested_survivor_children_into_one_root() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\output={\\global\\setbox2=\\copy255 \\shipout\\box255}\
          \\topskip=0pt \\setbox0=\\hbox{X}\\copy0 \\penalty-10000",
-    ));
+    );
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("nested page output should promote without panicking");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     let root = stores
         .box_reg(2)
         .expect("output routine should retain page copy");
@@ -4516,35 +4484,21 @@ fn page_output_promotes_nested_survivor_children_into_one_root() {
 
 #[test]
 fn page_output_keeps_locally_moved_box_children_live() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\topskip=0pt {\\setbox0=\\hbox{X}\\box0} \\penalty-10000",
-    ));
+    let stores = run_canonical_tex82("\\topskip=0pt {\\setbox0=\\hbox{X}\\box0} \\penalty-10000");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("locally moved page box should remain live through output");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert!(stores.box_reg(0).is_none());
     assert!(stores.box_reg(255).is_none());
 }
 
 #[test]
 fn page_output_keeps_shifted_copy_children_live_after_source_replacement() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\topskip=0pt \\setbox0=\\hbox{X} \\raise1pt\\copy0 \
+    let stores = run_canonical_tex82(
+        "\\topskip=0pt \\setbox0=\\hbox{X} \\setbox1=\\hbox{\\raise1pt\\copy0} \\box1 \
          \\setbox0=\\hbox{Y} \\penalty-10000",
-    ));
+    );
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shifted shared box should own epoch children on the page");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert!(stores.box_reg(255).is_none());
 }
 
