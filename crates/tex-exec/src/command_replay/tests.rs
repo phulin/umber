@@ -13767,15 +13767,60 @@ fn canonical_discretionary_flushes_forbidden_part_nodes_and_keeps_following_inpu
     register_cmr10_font(&mut control, &mut universe);
     register_source(
         &mut control,
-        br"\font\f=cmr10\f\setbox0=\hbox{\discretionary{\hskip1pt}{}{}Z}\end",
+        br"\font\f=cmr10\f\setbox0=\hbox{\discretionary{}{A\hss}{}Z}\end",
     );
     run_to_end(&mut control, &mut universe);
 
-    assert!(terminal_text(&universe).contains("Improper discretionary list"));
+    let transcript = transcript_text(&universe);
+    let expected = r"! Improper discretionary list.
+
+The following discretionary sublist has been deleted:
+\f A
+\glue 0.0 plus 1.0fil minus 1.0fil
+
+
+l.1 ...r10\f\setbox0=\hbox{\discretionary{}{A\hss}
+                                                  {}Z}\end
+Discretionary lists must contain only boxes and kerns.
+
+";
+    assert_eq!(transcript, expected);
     assert!(matches!(
         box_children(&universe, 0).as_slice(),
         [Node::Char { ch: 'Z', .. }]
     ));
+}
+
+#[test]
+fn canonical_discretionary_rejects_forbidden_nodes_in_every_part() {
+    // TeX82 §1121 applies the same admissibility check to pre-break,
+    // post-break, and no-break replacement lists.
+    for parts in [
+        ("\\hss", "", ""),
+        ("", "\\hss", ""),
+        ("", "", "\\hss"),
+    ] {
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        register_cmr10_font(&mut control, &mut universe);
+        let source = format!(
+            "\\font\\f=cmr10\\f\\setbox0=\\hbox{{\\discretionary{{{}}}{{{}}}{{{}}}Z}}\\end",
+            parts.0, parts.1, parts.2
+        );
+        register_source(&mut control, source.as_bytes());
+        run_to_end(&mut control, &mut universe);
+
+        assert_eq!(
+            transcript_text(&universe)
+                .matches("The following discretionary sublist has been deleted:")
+                .count(),
+            1
+        );
+        assert!(matches!(
+            box_children(&universe, 0).as_slice(),
+            [Node::Char { ch: 'Z', .. }]
+        ));
+    }
 }
 
 #[test]

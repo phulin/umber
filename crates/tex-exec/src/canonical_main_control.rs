@@ -2069,15 +2069,7 @@ impl CanonicalMainControl {
         };
         if !part_is_admissible {
             let context = self.command.output_open_context(&stores.command_context());
-            crate::error_report::report_error(
-                stores,
-                "Improper discretionary list",
-                &[
-                    "Discretionary lists must contain only boxes and kerns",
-                    "besides characters. The offending list has been deleted.",
-                ],
-                context,
-            )?;
+            report_improper_discretionary(stores, nodes, context)?;
         }
         if replacement_too_long {
             let context = self.command.output_open_context(&stores.command_context());
@@ -4314,6 +4306,39 @@ impl CanonicalMainControl {
         self.startup_terminal_line.clone_from(&filename);
         Ok(filename)
     }
+}
+
+/// TeX82 §1121's improper-discretionary report. The completed part is
+/// frozen before validation so its detached node list remains available to
+/// `show_box` even though recovery rejects the enclosing discretionary.
+fn report_improper_discretionary(
+    stores: &mut Universe,
+    deleted: NodeListId,
+    context: String,
+) -> Result<(), ExecError> {
+    let mut report = stores.print_err("Improper discretionary list");
+    report.print_char('.');
+    let deferred = report.defer();
+
+    let text = crate::node_dump::dump_node_list(
+        stores,
+        deleted,
+        crate::node_dump::DumpConfig::read(stores),
+    );
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("")
+        .print_ln()
+        .print("The following discretionary sublist has been deleted:")
+        .print_ln()
+        .print_rendered(&text);
+    diagnostic.end(true);
+
+    let mut report = stores.resume_error_report(deferred);
+    report
+        .help(&["Discretionary lists must contain only boxes and kerns."])
+        .context(context);
+    Ok(report.error_after_message_terminator().jump_out()?)
 }
 
 /// The structural outcome of one canonical main-control operation.
