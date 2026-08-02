@@ -970,8 +970,9 @@ fn break_hlist_with_trace(
     if let Some(first) = first {
         Ok((tex_typeset::linebreak::plan_with_nodes(first, hlist), trace))
     } else {
-        let mut hyphenated = super::hyphenation::hyphenated_hlist_with_fuel(stores, hlist, fuel)?;
-        let physical_nodes = hyphenated.clone();
+        let sequence =
+            super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
+        let (mut hyphenated, physical_nodes) = sequence.take();
         super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let (plan, trace) = if tracing {
             line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)

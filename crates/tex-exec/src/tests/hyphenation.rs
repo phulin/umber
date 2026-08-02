@@ -815,6 +815,67 @@ fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
 }
 
 #[test]
+fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
+    let mut stores = stores_with_fonts();
+    tex_expand::install_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
+    let mut input = InputStack::new(MemoryInput::new(
+        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
+    ));
+    Executor::new()
+        .run(&mut input, &mut stores)
+        .expect("font setup executes");
+    let font = stores.current_font();
+    stores.set_font_hyphen_char(font, i32::from(b'-'));
+    let empty = stores.freeze_node_list(&[]);
+    let semantic_pre = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: '-',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let replacement = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(3 * Scaled::UNITY),
+        kind: KernKind::Font,
+    }]);
+    let nodes = vec![
+        Node::Lig {
+            font,
+            ch: 'A',
+            orig: vec!['A', 'A'],
+            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
+        },
+        Node::Disc {
+            kind: tex_state::node::DiscKind::AutomaticHyphen,
+            pre: semantic_pre,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 2,
+        },
+    ];
+
+    let physical = crate::assignments::test_physical_pre_break_projection(&mut stores, &nodes);
+    let Node::Disc { pre, .. } = physical[1] else {
+        unreachable!()
+    };
+    let projected_chars = stores
+        .nodes(pre)
+        .iter()
+        .flat_map(|node| match node {
+            tex_state::node_arena::NodeRef::Char { ch, .. } => vec![ch],
+            tex_state::node_arena::NodeRef::Lig { orig, .. } => orig.to_vec(),
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(projected_chars, ['A', 'A', '-']);
+    assert!(matches!(
+        stores.nodes(semantic_pre).first(),
+        Some(tex_state::node_arena::NodeRef::Char { ch: '-', .. })
+    ));
+}
+
+#[test]
 fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);

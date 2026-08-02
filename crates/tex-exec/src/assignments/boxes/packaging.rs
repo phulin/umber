@@ -422,6 +422,30 @@ pub(crate) fn hpack_owned_with_overfull_rule(
             });
         }
     }
+    let short_diagnostic_nodes = diagnostic_nodes.as_deref().map(|physical| {
+        physical
+            .iter()
+            .zip(nodes.iter())
+            .map(|(physical, semantic)| match (physical, semantic) {
+                (
+                    Node::Disc {
+                        kind,
+                        replace,
+                        physical_replace_count,
+                        ..
+                    },
+                    Node::Disc { pre, post, .. },
+                ) => Node::Disc {
+                    kind: *kind,
+                    pre: *pre,
+                    post: *post,
+                    replace: *replace,
+                    physical_replace_count: *physical_replace_count,
+                },
+                _ => physical.clone(),
+            })
+            .collect::<Vec<_>>()
+    });
     let children = stores.freeze_node_list_owned(nodes);
     let mut packed = plan.finish(children);
     stores.set_last_badness(packed.badness);
@@ -431,8 +455,13 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         depth_sp: i64::from(packed.node.depth.raw()),
     });
     let diagnostic_box = diagnostic_nodes.map_or(packed.node, |nodes| {
-        let children = stores.freeze_node_list(nodes);
-        packed.node.diagnostic_children = Some(children);
+        let diagnostic_children = stores.freeze_node_list(nodes);
+        let children = stores.freeze_node_list(
+            short_diagnostic_nodes
+                .as_deref()
+                .expect("physical diagnostics have a short-display projection"),
+        );
+        packed.node.diagnostic_children = Some(diagnostic_children);
         tex_state::node::BoxNode {
             children,
             ..packed.node

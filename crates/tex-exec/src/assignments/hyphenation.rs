@@ -203,6 +203,102 @@ pub(crate) fn hyphenated_hlist_with_fuel(
     Ok(out.unwrap_or(nodes))
 }
 
+/// Builds the semantic hyphenated list together with TeX82's physical
+/// diagnostic projection. A boundary discretionary keeps the compact
+/// semantic pre-break list used by line breaking, while TeX's linked-list
+/// representation exposes the preceding reconstituted character span in the
+/// discretionary's diagnostic pre-break branch.
+pub(crate) fn hyphenated_hlist_sequence_with_fuel(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<tex_state::node_sequence::NodeSequence, ExecError> {
+    let semantic = hyphenated_hlist_with_fuel(stores, nodes, fuel)?;
+    let mut physical = semantic.clone();
+    project_physical_pre_break_spans(stores, &mut physical, fuel)?;
+    Ok(tex_state::node_sequence::NodeSequence::from_channels(
+        semantic, physical,
+    ))
+}
+
+fn project_physical_pre_break_spans(
+    stores: &mut Universe,
+    nodes: &mut [Node],
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    for index in 1..nodes.len() {
+        let Node::Disc {
+            kind: DiscKind::AutomaticHyphen,
+            replace,
+            physical_replace_count: 2,
+            ..
+        } = &nodes[index]
+        else {
+            continue;
+        };
+        let replacement = stores.nodes(*replace);
+        if replacement.len() != 1
+            || !matches!(
+                replacement.first(),
+                Some(tex_state::node_arena::NodeRef::Kern {
+                    kind: KernKind::Font,
+                    ..
+                })
+            )
+        {
+            continue;
+        }
+
+        let (font, chars, origins) = match &nodes[index - 1] {
+            Node::Char { font, ch, origin } => (*font, vec![*ch], vec![*origin]),
+            Node::Lig {
+                font,
+                orig,
+                origins,
+                ..
+            } => (*font, orig.clone(), origins.clone()),
+            _ => continue,
+        };
+        let Some(hyphen) = usable_hyphen_char(stores, font) else {
+            continue;
+        };
+        let last_origin = origins.last().copied().unwrap_or(OriginId::UNKNOWN);
+        let mut pending = chars
+            .into_iter()
+            .zip(origins)
+            .map(|(ch, origin)| PendingHChar { font, ch, origin })
+            .collect::<Vec<_>>();
+        pending.push(PendingHChar {
+            font,
+            ch: hyphen,
+            origin: last_origin,
+        });
+        let pre = super::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
+            .map_err(ExecError::Command)?;
+        let pre = stores.freeze_node_list(&pre);
+        let Node::Disc {
+            pre: physical_pre, ..
+        } = &mut nodes[index]
+        else {
+            unreachable!()
+        };
+        *physical_pre = pre;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn test_physical_pre_break_projection(
+    stores: &mut Universe,
+    nodes: &[Node],
+) -> Vec<Node> {
+    let mut projected = nodes.to_vec();
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    project_physical_pre_break_spans(stores, &mut projected, fuel.fuel_mut())
+        .expect("test diagnostic projection fuel");
+    projected
+}
+
 #[cfg(test)]
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
     let mut fuel = tex_command::CommandFuelLedger::default();

@@ -100,6 +100,8 @@ pub(crate) use hyphenation::test_automatic_discretionary;
 pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
 #[cfg(test)]
 pub(crate) use hyphenation::test_hyphenated_word_text;
+#[cfg(test)]
+pub(crate) use hyphenation::test_physical_pre_break_projection;
 use hyphenation::*;
 pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
 use macros::*;
