@@ -15329,14 +15329,9 @@ fn apply_scanned_step(
         }
         ScannedStep::AlignmentCellFinish { alignment } => {
             let finished = command
-                .state
-                .apply_alignment_request(AlignmentRequest::FinishCell(alignment))
-                .map_err(|_| ExecError::MissingToken {
-                    context: "alignment end-v lifecycle",
-                })?;
-            let AlignmentRequestResult::FinishedCell(finished) = finished else {
-                unreachable!("FinishCell returns its saved delimiter");
-            };
+                .processor(stores)
+                .finish_alignment_cell(alignment)
+                .map_err(command_error)?;
             begin_next_replay_alignment_cell(
                 alignment,
                 finished.delimiter,

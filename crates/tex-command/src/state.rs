@@ -866,11 +866,10 @@ impl CommandState {
     /// Performs TeX82 §1131 `do_endv`'s input-stack walk.
     ///
     /// The optional upper level is the exhausted one-token `back_input`
-    /// replay produced by a scanner: §1131 skips exactly such frames
-    /// (`loc_field=null`, `state_field=token_list`) on its way down. It
-    /// remains command-core state rather than becoming executor-visible
-    /// input, and it is retired by the same §357 pop that retires the
-    /// v-template beneath it.
+    /// replay produced by a scanner. The full store-aware §1131 walk is
+    /// owned by `CommandProcessor::finish_alignment_cell`; this state-only
+    /// proof remains for direct structural request tests that have no token
+    /// store capability.
     fn prove_endv_input_shape(&self, v_level: InputLevelId) -> Result<(), AlignmentLifecycleError> {
         let retained_v_template = |level: &InputLevel| {
             matches!(level,
@@ -902,6 +901,14 @@ impl CommandState {
         } else {
             Err(AlignmentLifecycleError::VTemplateNotExhausted)
         }
+    }
+
+    pub(crate) fn finish_alignment_cell_after_input_proof(
+        &mut self,
+        alignment: AlignmentIdentity,
+    ) -> Result<crate::FinishedAlignmentCell, AlignmentLifecycleError> {
+        let level = self.alignment.active_v_template_level(alignment)?;
+        self.alignment.finish_cell(alignment, level)
     }
 
     /// Returns TeX82 §791 `fin_col`'s `align_state:=1000000`, published after

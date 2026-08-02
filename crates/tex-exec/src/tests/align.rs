@@ -1457,13 +1457,14 @@ fn v_template_ending_in_macro_delivers_frozen_endv_after_frame_retirement() {
 #[test]
 fn let_aliased_frozen_endv_finishes_cell_through_do_endv() {
     let stores = run_boxed_alignment_source(
-        "\\def\\capture{\\afterassignment\\execute\\let\\endt=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}",
+        "\\def\\capture{\\afterassignment\\execute\\let\\endt=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}\\global\\count0=37",
     );
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);
 
     assert_eq!(rows.len(), 1);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
+    assert_eq!(stores.count(0), 37, "execution continued after the alignment");
 }
 
 #[test]

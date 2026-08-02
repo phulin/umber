@@ -307,6 +307,47 @@ impl CommandProcessor<'_> {
         self.start_alignment_v_template(alignment, saved_delimiter)
     }
 
+    /// Completes TeX82 §1131's `do_endv` input-stack proof and cell
+    /// transition. The processor performs the proof because `loc_field=null`
+    /// for stored token lists can only be decided while the immutable token
+    /// store is borrowed; the persistent command state deliberately owns no
+    /// such store capability.
+    pub fn finish_alignment_cell(
+        &mut self,
+        alignment: crate::AlignmentIdentity,
+    ) -> Result<crate::FinishedAlignmentCell, CommandError> {
+        let v_level = self
+            .command
+            .alignment
+            .active_v_template_level(alignment)
+            .map_err(|_| CommandError::input_invariant())?;
+        let mut found = false;
+        for level in self.command.input.levels.iter().rev() {
+            let InputLevel::Tokens(cursor) = level else {
+                break;
+            };
+            if cursor.identity == v_level
+                && matches!(cursor.behavior, TokenBehavior::VTemplate)
+                && matches!(
+                    cursor.retirement,
+                    RetirementBehavior::AwaitingVTemplateRetirement
+                )
+            {
+                found = true;
+                break;
+            }
+            if self.next_stored_token(cursor).is_some() {
+                break;
+            }
+        }
+        if !found {
+            return Err(CommandError::input_invariant());
+        }
+        self.command
+            .finish_alignment_cell_after_input_proof(alignment)
+            .map_err(|_| CommandError::input_invariant())
+    }
+
     /// Performs TeX82 §1127's `align_error`, the whole of §1126's
     /// `any_mode(car_ret), any_mode(tab_mark)` action.
     ///
