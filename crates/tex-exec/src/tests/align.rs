@@ -1830,6 +1830,7 @@ fn fin_align_restores_saved_aux_instead_of_recomputing_it_from_set_nodes() {
                 depth: Some(Scaled::from_raw(0)),
             }],
             aux_prev_depth: Some(sp(7)),
+            aux_space_factor: None,
         },
     );
 

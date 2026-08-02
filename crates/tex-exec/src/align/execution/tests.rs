@@ -380,6 +380,7 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
                     depth: Some(Scaled::from_raw(1)),
                 }],
                 aux_prev_depth: Some(Scaled::from_raw(11)),
+                aux_space_factor: Some(1234),
             },
         );
 
@@ -388,6 +389,7 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
             assert_eq!(nest.current_list().prev_depth(), Some(Scaled::from_raw(11)));
         } else {
             assert_eq!(nest.current_list().prev_depth(), Some(Scaled::from_raw(7)));
+            assert_eq!(nest.current_list().space_factor(), 1234);
         }
     }
 
@@ -403,6 +405,7 @@ fn insert_finished_alignment_list_dispatches_by_enclosing_mode() {
                 depth: Some(Scaled::from_raw(1)),
             }],
             aux_prev_depth: None,
+            aux_space_factor: None,
         },
     );
     build_page_if_outer_vertical(&outer, &mut stores)

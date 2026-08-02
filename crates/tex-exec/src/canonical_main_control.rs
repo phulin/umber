@@ -2471,6 +2471,7 @@ impl CanonicalMainControl {
                         crate::align::FinishedAlignment {
                             nodes,
                             aux_prev_depth,
+                            aux_space_factor: None,
                         },
                     )?;
                     // The retry §1207 arranges lands in the paragraph the
@@ -2717,6 +2718,7 @@ impl CanonicalMainControl {
                 crate::align::FinishedAlignment {
                     nodes,
                     aux_prev_depth,
+                    aux_space_factor: None,
                 },
             );
         }
@@ -10956,6 +10958,11 @@ fn finish_replay_alignment(
     };
     let finished = crate::align::widths::finish_alignment(&state, &rows, offset, stores)?;
     let aux_prev_depth = alignment.list().prev_depth();
+    let aux_space_factor = matches!(
+        alignment.mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    )
+    .then(|| alignment.list().space_factor());
     if modes.current_mode() == Mode::DisplayMath {
         // Preserve §812's `(p,q,aux_save)` handoff until the closing `$$`
         // has run §§1206–1207's assignment and delimiter scan.
@@ -10969,6 +10976,7 @@ fn finish_replay_alignment(
             crate::align::FinishedAlignment {
                 nodes: finished,
                 aux_prev_depth,
+                aux_space_factor,
             },
         );
     }

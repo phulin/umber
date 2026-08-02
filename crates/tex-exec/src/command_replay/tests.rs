@@ -10270,6 +10270,27 @@ fn canonical_spacefactor_targets_only_the_current_list_and_is_always_global() {
 }
 
 #[test]
+fn canonical_valign_restores_its_aux_spacefactor_to_the_enclosing_list() {
+    // TeX82 §800 saves the alignment level's whole `aux_field` before
+    // `pop_nest` and installs it in the enclosing list. For `\valign`, that
+    // field is `space_factor`, and a `\noalign` assignment updates it.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("test mode push");
+    register_source(
+        &mut control,
+        br"\valign{#\cr a\cr\noalign{\spacefactor=1}}\count0=\spacefactor ",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    assert_eq!(universe.count(0), 1);
+    assert_eq!(control.modes.current_list().space_factor(), 1);
+}
+
+#[test]
 fn canonical_prevgraf_assignment_sets_the_enclosing_vertical_level() {
     // TeX82 §1244's `alter_prev_graf`: `\prevgraf` is `any_mode` and writes
     // the nearest enclosing vertical level's paragraph count, even from

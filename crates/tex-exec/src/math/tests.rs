@@ -118,6 +118,7 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         crate::align::FinishedAlignment {
             nodes: vec![alignment, second_alignment],
             aux_prev_depth: Some(sp(7)),
+            aux_space_factor: None,
         },
     )
     .expect("display list material inserts");

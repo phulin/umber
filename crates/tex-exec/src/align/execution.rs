@@ -102,6 +102,7 @@ pub(crate) fn execute_alignment(
 pub(crate) struct FinishedAlignment {
     pub(crate) nodes: Vec<Node>,
     pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
+    pub(crate) aux_space_factor: Option<i32>,
 }
 
 pub(crate) fn append_finished_alignment(
@@ -115,6 +116,16 @@ pub(crate) fn append_finished_alignment(
         // TeX.web fin_align restores the alignment level's aux wholesale
         // before splicing nodes whose dimensions may have been transformed.
         nest.current_list_mutation().set_prev_depth(prev_depth);
+    }
+    if matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) && let Some(space_factor) = finished.aux_space_factor
+    {
+        // TeX82 §800 restores the alignment level's `aux_field` into the
+        // enclosing list after `pop_nest`; for a `\valign` this is the
+        // alignment's live space factor, including `\noalign` assignments.
+        nest.current_list_mutation().set_space_factor(space_factor);
     }
     for node in finished.nodes {
         if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
@@ -179,6 +190,8 @@ fn finish_alignment_level(
     let mut level =
         crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let aux_prev_depth = level.list().prev_depth();
+    let aux_space_factor = matches!(level.mode(), Mode::Horizontal | Mode::RestrictedHorizontal)
+        .then(|| level.list().space_factor());
     let state = level
         .list_mutation()
         .take_align_state()
@@ -198,6 +211,7 @@ fn finish_alignment_level(
     Ok(FinishedAlignment {
         nodes: finished,
         aux_prev_depth,
+        aux_space_factor,
     })
 }
 
