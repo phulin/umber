@@ -116,7 +116,7 @@ pub(crate) use paragraph::test_materialize_pdf_line;
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    ParagraphBreakResult, display_line_dimensions, end_paragraph_with_consumer_and_fuel,
+    ParagraphBreakResult, display_line_dimensions, end_canonical_paragraph_with_fuel,
     end_paragraph_with_fuel, ensure_horizontal_for_character, indent_in_hmode,
     interrupt_canonical_paragraph_for_display, interrupt_paragraph_for_display, make_indent_box,
     normal_paragraph, start_canonical_paragraph,

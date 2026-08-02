@@ -13794,7 +13794,12 @@ fn apply_scanned_step(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
-            crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
+            crate::assignments::end_canonical_paragraph_with_fuel(
+                modes,
+                stores,
+                command.state,
+                command.fuel,
+            )?;
             let output_level =
                 crate::assignments::commit_current_list(modes, stores, command.fuel)?;
             stores
@@ -13970,7 +13975,12 @@ fn apply_scanned_step(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
-                crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
+                crate::assignments::end_canonical_paragraph_with_fuel(
+                    modes,
+                    stores,
+                    command.state,
+                    command.fuel,
+                )?;
             }
             // TeX82's main-control loop appends every character (and its
             // resolved ligature/kern chain) to the current list synchronously
@@ -14384,7 +14394,12 @@ fn apply_scanned_step(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
-            crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
+            crate::assignments::end_canonical_paragraph_with_fuel(
+                modes,
+                stores,
+                command.state,
+                command.fuel,
+            )?;
             stores
                 .leave_group_with_kind(GroupKind::NoAlign)
                 .map_err(|_| ExecError::MissingToken {
@@ -14478,11 +14493,10 @@ fn apply_scanned_step(
                 crate::assignments::normal_paragraph(modes, stores);
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
-                let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
-                crate::assignments::end_paragraph_with_consumer_and_fuel(
+                crate::assignments::end_canonical_paragraph_with_fuel(
                     modes,
                     stores,
-                    &mut memo,
+                    command.state,
                     command.fuel,
                 )?;
             }
@@ -15386,11 +15400,10 @@ fn apply_scanned_rule(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
-                let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
-                crate::assignments::end_paragraph_with_consumer_and_fuel(
+                crate::assignments::end_canonical_paragraph_with_fuel(
                     modes,
                     stores,
-                    &mut memo,
+                    command.state,
                     command.fuel,
                 )?;
             }
@@ -15684,7 +15697,12 @@ fn finish_insert_or_adjust_group(
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(&stores.command_context());
-    crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
+    crate::assignments::end_canonical_paragraph_with_fuel(
+        modes,
+        stores,
+        command.state,
+        command.fuel,
+    )?;
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);

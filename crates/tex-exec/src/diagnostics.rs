@@ -844,8 +844,11 @@ pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) -> Result<()
 }
 
 /// TeX82 §825's once-per-paragraph infinite-shrink recovery.
-pub(crate) fn report_paragraph_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
-    let context = show_context(stores, stores.input_summary());
+pub(crate) fn report_paragraph_infinite_shrinkage(
+    stores: &mut Universe,
+    context: Option<String>,
+) -> Result<(), ExecError> {
+    let context = context.unwrap_or_else(|| show_context(stores, stores.input_summary()));
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found in a paragraph",

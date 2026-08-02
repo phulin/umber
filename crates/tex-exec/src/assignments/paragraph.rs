@@ -274,6 +274,38 @@ pub(crate) fn end_paragraph_with_fuel(
         tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         None,
+        None,
+        fuel,
+    )?;
+    Ok(())
+}
+
+/// Canonical TeX82 §1096 `end_graf`, retaining the command-owned §82 input
+/// context until stomach-side paragraph diagnostics have completed.
+pub(crate) fn end_canonical_paragraph_with_fuel(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    command: &tex_command::CommandState,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    if nest.current_mode() != Mode::Horizontal {
+        return Ok(());
+    }
+    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    if nest.current_list().is_empty() {
+        let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
+        normal_paragraph(nest, stores);
+        build_page_if_outer_vertical(nest, stores)?;
+        return Ok(());
+    }
+    let context = command.output_open_context(&stores.command_context());
+    let _ = break_current_paragraph(
+        nest,
+        stores,
+        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
+        true,
+        None,
+        Some(context),
         fuel,
     )?;
     Ok(())
@@ -316,6 +348,7 @@ fn end_paragraph_with_memo(
         tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         None,
+        None,
         execution.command_fuel(),
     )?;
     let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
@@ -325,40 +358,6 @@ fn end_paragraph_with_memo(
         result.line_count,
         &result.active_directions,
     );
-    Ok(())
-}
-
-pub(crate) fn end_paragraph_with_consumer_and_fuel(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    memo: &mut dyn crate::paragraph_memo::ParagraphMemoConsumer,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    if nest.current_mode() == Mode::Horizontal {
-        flush_pending_hchars_with_fuel(nest, stores, fuel)?;
-        memo.prepare_hlist(
-            stores,
-            nest.current_list().nodes(),
-            nest.enclosing_vertical_prev_graf(),
-            crate::executor::ParagraphContinuation::End,
-        );
-    }
-    if nest.current_mode() != Mode::Horizontal {
-        memo.abandon();
-        return end_paragraph_with_fuel(nest, stores, fuel);
-    }
-    if nest.current_list().is_empty() {
-        memo.abandon();
-        return end_paragraph_with_fuel(nest, stores, fuel);
-    }
-    let _ = break_current_paragraph(
-        nest,
-        stores,
-        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
-        true,
-        Some(memo),
-        fuel,
-    )?;
     Ok(())
 }
 
@@ -392,6 +391,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
             stores,
             tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
             true,
+            None,
             None,
             execution.command_fuel(),
         )?;
@@ -462,6 +462,7 @@ pub(crate) fn interrupt_paragraph_for_display(
         tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
         false,
         None,
+        None,
         execution.command_fuel(),
     )?;
     let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
@@ -499,6 +500,7 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
         tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
         false,
         Some(&mut memo),
+        None,
         fuel,
     )
 }
@@ -543,6 +545,7 @@ fn break_current_paragraph(
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
     mut memo: Option<&mut dyn crate::paragraph_memo::ParagraphMemoConsumer>,
+    error_context: Option<String>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
@@ -564,7 +567,7 @@ fn break_current_paragraph(
     let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
-    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist, tracing)?;
+    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist, tracing, error_context)?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps =
@@ -724,6 +727,7 @@ fn normalize_paragraph_infinite_shrink(
     params: &mut ParagraphParams,
     nodes: &mut [Node],
     tracing: bool,
+    mut error_context: Option<String>,
 ) -> Result<(), ExecError> {
     let mut reported = false;
     let mut normalize = |spec: &mut tex_state::ids::GlueId| -> Result<(), ExecError> {
@@ -739,7 +743,7 @@ fn normalize_paragraph_infinite_shrink(
                 // this print-channel boundary at the recovery point.
                 stores.begin_diagnostic().end(true);
             }
-            crate::diagnostics::report_paragraph_infinite_shrinkage(stores)?;
+            crate::diagnostics::report_paragraph_infinite_shrinkage(stores, error_context.take())?;
             reported = true;
         }
         glue.shrink_order = Order::Normal;

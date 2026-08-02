@@ -744,6 +744,34 @@ fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
 }
 
 #[test]
+fn paragraph_shrink_error_uses_the_live_canonical_input_context() {
+    // TeX82 §§82/825 reports the `\par` source line before the paragraph
+    // recovery help, while canonical command state still owns that cursor.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingparagraphs=1\tracingonline=1{\rightskip0pt plus 104pt minus 100fil \looseness5 \spaceskip4pt plus 2pt minus 1fil A B\par}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = String::from_utf8_lossy(stores.world().memory_log_output().unwrap_or_default());
+    let error = log
+        .find("! Infinite glue shrinkage found in a paragraph.")
+        .expect("paragraph shrink recovery reports");
+    let context = log[error..]
+        .find("l.1 ")
+        .expect("the report includes the live source line");
+    let help = log[error..]
+        .find("The paragraph just ended includes")
+        .unwrap_or_else(|| panic!("the report includes TeX's recovery help: {log:?}"));
+    assert!(context < help, "{log:?}");
+    assert!(log[error..].contains("\\par"), "{log:?}");
+}
+
+#[test]
 fn etex_direction_meanings_share_valigns_vertical_mode_paragraph_entry() {
     // TeX82 §1090 keys this transition by the `valign` command code, and
     // e-TeX 2.6 [53a.3826--3883] assigns that code to all four directions.
