@@ -802,19 +802,15 @@ fn finalized_shipout_artifact_reuses_while_output_routine_still_executes() {
         \\copy0\\penalty-10000 \\copy0\\penalty-10000\\end";
     let run = |memoized: bool| {
         let mut stores = crate::test_harness::universe_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
-        install_unexpandable_primitives(&mut stores);
         if memoized {
             stores.enable_pure_memo(tex_state::PureMemoConfig::default());
             stores.enable_shipout_memo();
         }
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let stats = Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("repeated output routine");
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        run_registered_canonical_tex82(&mut control, &mut stores, source);
         let mut writer = tex_out::dvi::DviStreamWriter::new(Vec::new());
-        for page in &stats.dvi_pages {
-            writer.write_page_plan(page).expect("DVI page");
+        for page in control.take_prepared_dvi_pages() {
+            writer.write_page_plan(&page.into_plan()).expect("DVI page");
         }
         (
             writer.finish().expect("DVI finish"),
@@ -834,19 +830,16 @@ fn finalized_shipout_artifact_reuses_while_output_routine_still_executes() {
 #[test]
 fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.enable_shipout_memo();
     let source = "\\setbox0=\\hbox{\\write16{p:\\the\\count1}} \
         \\count1=1\\shipout\\copy0 \\count1=2\\shipout\\copy0\\end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("deferred writes execute");
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    run_registered_canonical_tex82(&mut control, &mut stores, source);
 
-    assert_eq!(stats.shipped_artifacts.len(), 2);
-    assert_ne!(stats.shipped_artifacts[0], stats.shipped_artifacts[1]);
+    let pages = control.take_prepared_dvi_pages();
+    assert_eq!(pages.len(), 2);
+    assert_ne!(pages[0].hash(), pages[1].hash());
     let memo = stores.pure_memo_stats();
     assert!(memo.shipout_barriers >= 2, "{memo:?}");
     assert_eq!(memo.shipout_hits, 0, "{memo:?}");
@@ -854,23 +847,13 @@ fn deferred_write_shipouts_are_counted_barriers_and_expand_each_time() {
 
 #[test]
 fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    tex_expand::install_latex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
     let source = r"\long\def\useii#1#2{#2}
 \long\def\usenone#1{}
 \long\def\primitive#1#2{\ifdefined#1\expandafter\useii\fi\usenone{\global\let#2#1}}
 \primitive\expanded\alias
 \primitive\missing\missingalias
 \end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("expl3 primitive aliases execute");
+    let mut stores = run_canonical_etex(source);
 
     let alias = stores.symbol("alias").expect("defined primitive alias");
     let expanded = stores.intern("expanded");
@@ -882,11 +865,6 @@ fn expl3_primitive_alias_pattern_consumes_its_conditional_terminator() {
 
 #[test]
 fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
     let source = r"\def\space{ }
 \def\nil{\nil}\def\nnil{\nil}
 \long\def\fornoop#1\stop#2#3{}
@@ -898,46 +876,25 @@ fn latex_token_loop_preserves_an_enclosing_conditional_frame() {
   \tfor\item:=ABC\do{\ifx\item\missing\fi}
 \fi
 \end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("LaTeX token loop executes");
+    let stores = run_canonical_etex(source);
 
     assert!(!terminal_effect_text(&stores).contains("Extra \\fi"));
 }
 
 #[test]
 fn deferred_write_preserves_unexpanded_tokens_through_shipout_collection() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
     let source = r"\def\payload{\endgroup \fi \bgroup \iffalse \else}
 \setbox0=\hbox{\write16{\unexpanded\expandafter{\payload}}}
 \shipout\box0\end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("deferred write expands without executing unexpanded conditionals");
+    let stores = run_canonical_etex(source);
 
     assert!(!terminal_effect_text(&stores).contains("Extra \\fi"));
 }
 
 #[test]
 fn trailing_hash_brace_is_appended_to_the_macro_replacement() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
     let source = r"\def\grab#1#{\message{ARG=[\detokenize{#1}]}}\grab #1 {closed}\end";
-    let mut input = InputStack::new(MemoryInput::new(source));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("trailing hash-brace macro executes");
+    let stores = run_canonical_etex(source);
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("ARG=[##1 ]"), "{output}");
