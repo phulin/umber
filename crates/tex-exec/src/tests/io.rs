@@ -1194,7 +1194,6 @@ fn rollback_after_shipout_does_not_replay_committed_effects() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.47 canonical deferred write omits active observations"]
 fn shipout_write_expansion_uses_active_read_recorder() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     #[derive(Default)]
@@ -1214,15 +1213,37 @@ fn shipout_write_expansion_uses_active_read_recorder() {
     )
     .expect("shipout succeeds");
 
-    assert!(
-        recorder.0.iter().any(|observation| matches!(
-            observation,
-            tex_command::CommandObservation::Command(command)
-                if command.command == "the"
-                    && command.boundary == tex_command::CommandDeliveryBoundary::Expanded
-        )),
-        "shipout-time deferred write expansion should use the active recorder"
+    let expanded_the: Vec<_> = recorder
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, observation)| {
+            matches!(
+                observation,
+                tex_command::CommandObservation::Command(command)
+                    if command.command == "the"
+                        && command.boundary == tex_command::CommandDeliveryBoundary::Expanded
+            )
+        })
+        .collect();
+    assert_eq!(
+        expanded_the.len(),
+        1,
+        "shipout-time deferred write expansion uses the active recorder exactly once"
     );
+    let expanded_the = expanded_the[0].0;
+    let splice = recorder
+        .0
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                tex_command::CommandObservation::TokenList(record)
+                    if record.transition == "splice" && record.purpose == "the_toks"
+            )
+        })
+        .expect("shipout-time the expansion publishes its splice");
+    assert!(expanded_the < splice, "the delivery precedes its splice");
 }
 
 #[test]

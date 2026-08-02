@@ -479,9 +479,17 @@ impl CommandProcessor<'_> {
                     if matches!(
                         command.meaning(),
                         Meaning::ExpandablePrimitive(ExpandablePrimitive::The)
-                    ) && self.append_direct_the_toks(&mut output)?
-                    {
-                        continue;
+                    ) {
+                        // TeX82 §478 handles `\the` directly in `scan_toks`
+                        // instead of routing it through §380's ordinary
+                        // expanded-fetch loop. Publish the delivery here,
+                        // before §465 scans its operand, so this shortcut has
+                        // the same observer identity and ordering as every
+                        // other command delivered at an expanded boundary.
+                        self.observe_expanded_delivery(&command);
+                        if self.append_direct_the_toks(&mut output)? {
+                            continue;
+                        }
                     }
                     if matches!(
                         command.meaning(),
