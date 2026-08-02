@@ -1241,7 +1241,9 @@ fn shipout_copy_expands_deferred_write_each_time() {
     // shipped box. The deferred `\write16` therefore prints between that
     // page's counter and its closing bracket, and `\count0` is expanded
     // afresh for each copy.
-    assert_eq!(memory_terminal_text(&stores), "[1\np:1\n] [2\np:2\n]");
+    let expected_progress = "[1\np:1\n] [2\np:2\n]";
+    assert_eq!(memory_terminal_text(&stores), expected_progress);
+    assert_eq!(memory_log_text(&stores), expected_progress);
 }
 
 #[test]
