@@ -244,13 +244,7 @@ fn parshape_is_an_internal_integer_equal_to_its_line_count() {
 
 #[test]
 fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\count0=7 \\count1=9"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("TeX backs up a non-box command after scan_box recovery");
+    let stores = super::core::run_canonical_tex82("\\setbox0=\\count0=7 \\count1=9 \\end");
 
     assert!(stores.box_reg(0).is_none());
     assert_eq!(stores.count(0), 7);
@@ -260,15 +254,9 @@ fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
 
 #[test]
 fn setbox_skips_relax_before_the_box_command() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\relax\\relax\\hbox{A}\\count0=7",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("TeX skips relax commands while demanding a box");
+    let stores = super::core::run_canonical_tex82(
+        "\\setbox0=\\relax\\relax\\hbox{A}\\count0=7 \\end",
+    );
 
     assert!(stores.box_reg(0).is_some());
     assert_eq!(stores.count(0), 7);
@@ -277,13 +265,7 @@ fn setbox_skips_relax_before_the_box_command() {
 
 #[test]
 fn extra_endgroup_is_recoverable() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\endgroup \\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("TeX reports and ignores an unmatched endgroup");
+    let stores = super::core::run_canonical_tex82("\\endgroup \\count0=7 \\end");
 
     assert_eq!(stores.count(0), 7);
     assert!(terminal_effect_text(&stores).contains("Extra \\endgroup"));
@@ -291,13 +273,7 @@ fn extra_endgroup_is_recoverable() {
 
 #[test]
 fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\mathchardef A=7 \\count0=9"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("get_r_token recovery should complete the definition and continue");
+    let mut stores = super::core::run_canonical_tex82("\\mathchardef A=7 \\count0=9 \\end");
 
     let inaccessible = stores.intern("inaccessible");
     assert_eq!(stores.meaning(inaccessible), Meaning::MathCharGiven(0));
@@ -307,13 +283,7 @@ fn character_definition_substitutes_inaccessible_target_and_replays_bad_token() 
 
 #[test]
 fn macro_definition_substitutes_inaccessible_target_and_replays_body_start() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\outer\\def{}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("get_r_token recovery should complete the macro definition");
+    let mut stores = super::core::run_canonical_tex82("\\outer\\def{}\\end");
 
     let inaccessible = stores.intern("inaccessible");
     let meaning = stores
@@ -325,21 +295,14 @@ fn macro_definition_substitutes_inaccessible_target_and_replays_body_start() {
 
 #[test]
 fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = super::core::run_canonical_tex82(
         "\\mathchardef\\M=10000 \
          \\def\\wrapped{\\M} \
          \\penalty\\M \\penalty-\\wrapped \
          \\count0=\\M \\count1=-\\wrapped \
          \\ifnum\\M=10000 \\count2=1 \\fi \
-         \\ifnum-\\wrapped=-10000 \\count3=1 \\fi",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("mathchardef constants scan through all integer consumers");
+         \\ifnum-\\wrapped=-10000 \\count3=1 \\fi \\end",
+    );
 
     assert_eq!(stores.count(0), 10_000);
     assert_eq!(stores.count(1), -10_000);
@@ -351,29 +314,16 @@ fn mathchardef_constants_scan_for_penalty_count_ifnum_and_signed_macro_replay() 
 fn mathchardef_meaning_restores_and_replays_with_identical_state_hash() {
     let source = "\\mathchardef\\M=10000 \
                   {\\mathchardef\\M=20000 \\global\\count0=\\M} \
-                  \\count1=\\M";
-    let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let checkpoint = stores.snapshot();
+                  \\count1=\\M \\end";
+    let mut first = super::core::run_canonical_tex82(source);
+    assert_eq!(first.count(0), 20_000);
+    assert_eq!(first.count(1), 10_000);
+    let first_hash = first.snapshot().state_hash();
 
-    let mut first_input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut first_input, &mut stores)
-        .expect("first mathchardef replay succeeds");
-    assert_eq!(stores.count(0), 20_000);
-    assert_eq!(stores.count(1), 10_000);
-    let first_hash = stores.snapshot().state_hash();
-
-    stores.rollback(&checkpoint);
-    let mut second_input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut second_input, &mut stores)
-        .expect("second mathchardef replay succeeds");
-
-    assert_eq!(stores.count(0), 20_000);
-    assert_eq!(stores.count(1), 10_000);
-    assert_eq!(stores.snapshot().state_hash(), first_hash);
+    let mut replay = super::core::run_canonical_tex82(source);
+    assert_eq!(replay.count(0), 20_000);
+    assert_eq!(replay.count(1), 10_000);
+    assert_eq!(replay.snapshot().state_hash(), first_hash);
 }
 
 #[test]
