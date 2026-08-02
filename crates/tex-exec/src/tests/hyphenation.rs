@@ -1081,22 +1081,59 @@ fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
     assert_eq!(malformed, 1);
 }
 
+fn run_canonical_paragraph_program(
+    source: &str,
+    configure: impl FnOnce(&mut Universe),
+) -> (Universe, Vec<u8>, usize) {
+    let mut stores = stores_with_fonts();
+    configure(&mut stores);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut tex_state::InputOpenState::input_open_context(&mut stores),
+        std::path::Path::new("cmr10.tfm"),
+    )
+    .expect("seeded cmr10 fixture reads");
+    control.capabilities_mut().register_font(
+        "cmr10.tfm",
+        tex_command::FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+    control
+        .register_root_source(tex_command::SourceRegistration::new(
+            tex_command::RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register paragraph source");
+
+    let mut steps = 0;
+    loop {
+        steps += 1;
+        if control.step(&mut stores).expect("canonical paragraph step") == MainControlStep::End {
+            break;
+        }
+        assert!(steps < 4096, "canonical paragraph source did not terminate");
+    }
+
+    let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
+    for page in control.take_prepared_dvi_pages() {
+        dvi.write_page_plan(&page.into_plan()).expect("DVI page");
+    }
+    (stores, dvi.finish().expect("DVI finish"), steps)
+}
+
 #[test]
 fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
     fn run(
         enabled: bool,
     ) -> (
-        ExecutionStats,
+        usize,
+        Vec<u8>,
         u64,
         Vec<EffectRecord>,
         tex_state::PureMemoStats,
     ) {
-        let mut stores = stores_with_fonts();
-        tex_expand::install_expandable_primitives(&mut stores);
-        install_unexpandable_primitives(&mut stores);
-        if enabled {
-            stores.enable_pure_memo(pretolerance_memo_config());
-        }
         let source = r"\hsize=20pt \pretolerance=10000
             identical paragraph text\par
             \prevgraf=0 \interlinepenalty=111 \clubpenalty=222 \widowpenalty=333
@@ -1105,19 +1142,21 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
             \prevgraf=0 \language=7 \lefthyphenmin=1 \righthyphenmin=1
             identical paragraph text\par
             \vfill\eject\end";
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let stats = Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("memo parity program");
+        let (mut stores, dvi, steps) = run_canonical_paragraph_program(source, |stores| {
+            if enabled {
+                stores.enable_pure_memo(pretolerance_memo_config());
+            }
+        });
         let hash = stores.snapshot().state_hash();
         let effects = stores.world().effect_records().to_vec();
         let memo = stores.pure_memo_stats();
-        (stats, hash, effects, memo)
+        (steps, dvi, hash, effects, memo)
     }
 
-    let (cold_stats, cold_hash, cold_effects, _) = run(false);
-    let (memo_stats, memo_hash, memo_effects, memo) = run(true);
-    assert_eq!(memo_stats, cold_stats);
+    let (cold_steps, cold_dvi, cold_hash, cold_effects, _) = run(false);
+    let (memo_steps, memo_dvi, memo_hash, memo_effects, memo) = run(true);
+    assert_eq!(memo_steps, cold_steps);
+    assert_eq!(memo_dvi, cold_dvi);
     assert_eq!(memo_hash, cold_hash);
     assert_eq!(memo_effects, cold_effects);
     assert!(memo.hits >= 1, "expected the repeated paragraph to hit");
@@ -1130,23 +1169,13 @@ fn enabled_pretolerance_memo_preserves_end_to_end_state_effects_and_dvi() {
 #[test]
 fn direct_batch_paragraphs_do_not_build_incremental_history() {
     fn run(enabled: bool) -> (Vec<u8>, u64, tex_state::PureMemoStats) {
-        let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
-        install_unexpandable_primitives(&mut stores);
-        if enabled {
-            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-            stores.enable_paragraph_memo();
-        }
         let source = "\\font\\tenrm=cmr10 \\tenrm repeated literal paragraph text\\par\nrepeated literal paragraph text\\par\nrepeated literal paragraph text\\par\n\\vfill\\eject\\end";
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let stats = Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("literal paragraph program");
-        let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
-        for plan in &stats.dvi_pages {
-            dvi.write_page_plan(plan).expect("DVI page");
-        }
-        let bytes = dvi.finish().expect("DVI finish");
+        let (mut stores, bytes, _) = run_canonical_paragraph_program(source, |stores| {
+            if enabled {
+                stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+                stores.enable_paragraph_memo();
+            }
+        });
         let hash = stores.snapshot().state_hash();
         (bytes, hash, stores.pure_memo_stats())
     }
@@ -1168,28 +1197,19 @@ fn direct_batch_paragraphs_do_not_build_incremental_history() {
 #[test]
 fn paragraph_front_end_replays_validated_count_mutations() {
     fn run(enabled: bool) -> (i32, i32, Vec<u8>, tex_state::PureMemoStats) {
-        let mut stores = crate::test_harness::memory_universe_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
-        install_unexpandable_primitives(&mut stores);
-        if enabled {
-            stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-            stores.enable_paragraph_memo();
-        }
         let paragraph =
             "\\count5=41 \\global\\count6=9 \\language=7 stateful paragraph text\\par\n";
         let source = format!("{paragraph}{paragraph}{paragraph}{paragraph}\\vfill\\eject\\end");
-        let mut input = InputStack::new(MemoryInput::new(source));
-        let stats = Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("stateful paragraph program");
-        let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
-        for plan in &stats.dvi_pages {
-            dvi.write_page_plan(plan).expect("DVI page");
-        }
+        let (stores, dvi, _) = run_canonical_paragraph_program(&source, |stores| {
+            if enabled {
+                stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+                stores.enable_paragraph_memo();
+            }
+        });
         (
             stores.count(5),
             stores.count(6),
-            dvi.finish().expect("DVI finish"),
+            dvi,
             stores.pure_memo_stats(),
         )
     }
