@@ -1758,36 +1758,21 @@ fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() 
 
 #[test]
 fn main_control_recovers_from_undefined_control_sequence() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\missing\\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("undefined command is diagnosed and consumed");
+    let stores = run_canonical_tex82("\\missing\\count0=7\\end");
 
     assert_eq!(stores.count(0), 7);
     // §370 reports the message alone; §82's context is what shows `\missing`.
-    let output = support::terminal_effect_text(&stores);
+    let output = terminal_effect_text(&stores);
     assert!(output.contains("! Undefined control sequence."), "{output}");
     assert!(output.contains("\\missing"), "{output}");
 }
 
 #[test]
 fn register_index_scanner_recovers_from_undefined_control_sequence() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox\\missing\\hbox{x}\\global\\count2=7\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("undefined register index is diagnosed like frozen relax");
+    let stores = run_canonical_tex82("\\setbox\\missing\\hbox{x}\\global\\count2=7\\end");
 
     assert_eq!(stores.count(2), 7);
-    let output = support::terminal_effect_text(&stores);
+    let output = terminal_effect_text(&stores);
     assert!(output.contains("! Undefined control sequence."), "{output}");
     assert!(output.contains("\\missing"), "{output}");
     assert!(output.contains("Missing number, treated as zero"));
@@ -1795,35 +1780,17 @@ fn register_index_scanner_recovers_from_undefined_control_sequence() {
 
 #[test]
 fn recursively_expanded_dimension_scanner_recovers_from_undefined_control_sequence() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\ifdim\\dimen\\missing=0pt \\global\\count2=7\\fi\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("nested dimension scanner uses driver recovery");
+    let stores = run_canonical_tex82("\\ifdim\\dimen\\missing=0pt \\global\\count2=7\\fi\\end");
 
     assert_eq!(stores.count(2), 7);
-    let output = support::terminal_effect_text(&stores);
+    let output = terminal_effect_text(&stores);
     assert!(output.contains("! Undefined control sequence."), "{output}");
     assert!(output.contains("\\missing"), "{output}");
 }
 
 #[test]
 fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\resume{\\missing\\let\\x\\relax}\\resume",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("undefined command inside macro is diagnosed and consumed");
+    let stores = run_canonical_tex82("\\def\\resume{\\missing\\let\\x\\relax}\\resume\\end");
 
     let x = stores.symbol("x").expect("let target exists");
     assert_eq!(stores.meaning(x), Meaning::Relax);
@@ -1832,45 +1799,26 @@ fn main_control_keeps_replaying_macro_after_undefined_control_sequence() {
 #[test]
 fn main_control_consumes_invalid_category_character() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
     stores.set_catcode('@', Catcode::Invalid);
-    let mut input = InputStack::new(MemoryInput::new("@\\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("invalid input character is diagnosed and consumed");
+    let stores = run_canonical_tex82_with_universe(stores, "@\\count0=7\\end");
 
     assert_eq!(stores.count(0), 7);
 }
 
 #[test]
 fn main_control_aborts_nonlong_macro_argument_at_par_and_replays_par() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\def\\b#1\\par{}\\b{x\\par\\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("runaway macro argument is aborted recoverably");
+    let stores = run_canonical_tex82("\\def\\b#1\\par{}\\b{x\\par\\count0=7\\end");
 
     assert_eq!(stores.count(0), 7);
-    assert!(support::terminal_effect_text(&stores).contains("Runaway argument"));
+    assert!(terminal_effect_text(&stores).contains("Runaway argument"));
 }
 
 #[test]
 fn main_control_ignores_extra_conditional_terminator() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\else\\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("extra conditional command is recoverable");
+    let stores = run_canonical_tex82("\\else\\count0=7\\end");
 
     assert_eq!(stores.count(0), 7);
-    assert!(support::terminal_effect_text(&stores).contains("Extra \\else"));
+    assert!(terminal_effect_text(&stores).contains("Extra \\else"));
 }
 
 #[test]
