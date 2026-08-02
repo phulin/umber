@@ -1,11 +1,12 @@
 use super::*;
-use tex_state::ExpansionState;
+use tex_command::{FontResource, RegisteredSourceKind, SourceRegistration};
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::{BoxNode, GlueKind, Node, Sign, UnsetKind, UnsetNode, UnsetNodeFields};
 use tex_state::scaled::Scaled;
+use tex_state::{ExpansionState, InputOpenState};
 
 fn scan_halign_preamble(source: &str) -> (Universe, AlignState) {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
@@ -82,32 +83,71 @@ fn run_alignment_source(source: &str) -> Universe {
 }
 
 fn run_alignment_source_in(stores: &mut Universe, source: &str) {
-    let mut input = InputStack::new(MemoryInput::new(format!(
-        "\\font\\f=cmr10 \\relax \\f {source}"
-    )));
-    Executor::new()
-        .run(&mut input, stores)
-        .expect("alignment source executes");
+    let mut control = alignment_control(stores, source);
+    loop {
+        match control.step(stores).expect("alignment source executes") {
+            MainControlStep::End | MainControlStep::EndOfInput => return,
+            MainControlStep::Continue => {}
+        }
+    }
 }
 
-fn run_alignment_source_err(source: &str) -> ExecError {
+fn run_alignment_source_err(source: &str) -> String {
     let mut stores = support::stores_with_fonts();
-    // The one helper here whose subject *is* the interactive path: §1129's
-    // `\omit` diagnosis surfaces as an `ExecError` only under
-    // `error_stop_mode`, which is what the sibling
-    // `misplaced_omit_in_nonstop_alignment_reports_and_continues` contrasts
-    // it against.
+    // The one helper here whose subject *is* the interactive path: extract
+    // §1129's primary `\omit` diagnostic from canonical error reporting,
+    // which the sibling nonstop-mode test contrasts with continued state.
     stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
-    let mut input = InputStack::new(MemoryInput::new(format!(
-        "\\font\\f=cmr10 \\relax \\f {source}"
-    )));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("alignment source should fail")
+    let mut control = alignment_control(&mut stores, source);
+    loop {
+        match control.step(&mut stores) {
+            Err(error) => return error.to_string(),
+            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
+                let output = support::terminal_effect_text(&stores);
+                return output
+                    .lines()
+                    .find_map(|line| line.strip_prefix("! "))
+                    .expect("alignment source should report an error")
+                    .to_owned();
+            }
+            Ok(MainControlStep::Continue) => {}
+        }
+    }
 }
 
 fn run_boxed_alignment_source(source: &str) -> Universe {
     run_alignment_source(&format!("\\setbox0=\\vbox{{{source}}}"))
+}
+
+fn alignment_control(stores: &mut Universe, source: &str) -> CanonicalMainControl {
+    let mut control = CanonicalMainControl::tex82_initex(stores);
+    for name in [
+        "cmr10.tfm",
+        "cmmi10.tfm",
+        "cmtt10.tfm",
+        "cmsy10.tfm",
+        "cmex10.tfm",
+    ] {
+        let metrics = tex_state::InputReadState::read_input_file(
+            &mut stores.input_open_context(),
+            std::path::Path::new(name),
+        )
+        .expect("seeded alignment font fixture reads through the world");
+        control.capabilities_mut().register_font(
+            name,
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
+        );
+    }
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            format!("\\font\\f=cmr10 \\relax \\f {source}").into_bytes(),
+        ))
+        .expect("register alignment source");
+    control
 }
 
 #[test]
