@@ -5116,6 +5116,45 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
 }
 
 #[test]
+fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
+    // e-TeX 2.6 [17.230] inserts these eqtb entries after the 256 dense token
+    // registers, and [49.1248] assigns each with `define`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\interlinepenalties=1 10
+           \global\clubpenalties=1 20
+           \widowpenalties=1 30
+           \global\displaywidowpenalties=1 40 \end",
+    );
+    let mut observations = ObservationRecorder::default();
+    run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+    let mutations = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Mutation(record) if record.target == "register" => Some((
+                record.key.as_deref(),
+                record.tokens.as_deref(),
+                record.global,
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        mutations,
+        [
+            (Some("toks:256"), Some([].as_slice()), false),
+            (Some("toks:257"), Some([].as_slice()), true),
+            (Some("toks:258"), Some([].as_slice()), false),
+            (Some("toks:259"), Some([].as_slice()), true),
+        ]
+    );
+}
+
+#[test]
 fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_tokens() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = canonical_etex_initex(&mut stores);

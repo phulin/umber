@@ -9365,6 +9365,27 @@ fn applied_mutation_observation(
             ),
             global: *global,
         },
+        // e-TeX 2.6 [17.230] places its four penalty-array eqtb entries
+        // immediately after the 256 dense token registers. [49.1248]
+        // commits each through `define(q,shape_ref,p)`, so the reference
+        // mutation classifier observes the raw eqtb region as token
+        // registers 256..259. The shape node is not a token list; its
+        // canonical token projection is therefore empty.
+        ScannedStep::PenaltyArray { kind, global, .. } => MutationRecord {
+            target: "register",
+            value: "tokens".into(),
+            key: Some(format!(
+                "toks:{}",
+                match kind {
+                    PenaltyArrayKind::InterLine => 256,
+                    PenaltyArrayKind::Club => 257,
+                    PenaltyArrayKind::Widow => 258,
+                    PenaltyArrayKind::DisplayWidow => 259,
+                }
+            )),
+            tokens: Some(Vec::new()),
+            global: *global,
+        },
         // -- Parameters: §1226/§1227's token-list parameters and §1228's
         // `assign_int`/`assign_dimen`/`assign_glue`/`assign_mu_glue` cases.
         ScannedStep::IntParam {
@@ -9604,8 +9625,7 @@ fn applied_mutation_observation(
         ScannedStep::SetBox { .. }
         | ScannedStep::FontSelect { .. }
         | ScannedStep::MathFamily { .. }
-        | ScannedStep::ParagraphShape { .. }
-        | ScannedStep::PenaltyArray { .. } => return None,
+        | ScannedStep::ParagraphShape { .. } => return None,
         // -- Assignments whose committed state lives outside `eqtb` entirely,
         // so no `eq_define`/`eq_word_define` runs and no mutation is observed
         // on either side: §1247's `alter_box_dimen` (a box node's `mem`

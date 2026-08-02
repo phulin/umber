@@ -47,7 +47,7 @@
         "count:3=14"
       ],
       "channels": {
-        "events": 154,
+        "events": 158,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },
