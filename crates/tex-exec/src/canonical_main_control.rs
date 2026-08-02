@@ -12517,6 +12517,24 @@ fn apply_scanned_step(
             let resource =
                 (*resource).expect("font resource is resolved after the processor borrow");
             if matches!(resource, FontResource::Unavailable) {
+                // TeX.web §§1257/561 diagnose the failed TFM open before
+                // continuing with the selector bound to `null_font`. The
+                // scanner has already backed up the delimiter token, so the
+                // live input context also shows the command that follows the
+                // font specification.
+                let selector = stores.resolve(request.target).to_owned();
+                crate::assignments::fonts::report_font_not_loadable_with_context(
+                    stores,
+                    &selector,
+                    &request.name,
+                    request.size,
+                    if request.name.starts_with("opentype:") {
+                        crate::assignments::fonts::FontLoadFailure::MissingOpenType
+                    } else {
+                        crate::assignments::fonts::FontLoadFailure::MissingTfm
+                    },
+                    request.error_context.clone(),
+                )?;
                 if global {
                     stores.set_meaning_global(
                         request.target,

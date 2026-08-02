@@ -132,6 +132,12 @@ pub struct FontLoadRequest {
     /// is the scanner's, the report the stomach's, because the command core
     /// owns no text sink.
     pub size_recovery: Option<FontSizeRecovery>,
+    /// TeX.web §561's error context after the size clause has been
+    /// scanned and its delimiter backed up. Host resource failure is known
+    /// only after the command processor borrow ends, so the canonical apply
+    /// seam must carry this detached snapshot to report at the original
+    /// semantic point.
+    pub error_context: String,
 }
 
 /// tex.web §1258's and §1259's illegal-size recoveries.
@@ -2030,6 +2036,7 @@ impl CommandProcessor<'_> {
             name: file_name.packed(),
             size,
             size_recovery,
+            error_context: self.command.output_open_context(&self.state),
         })
     }
 

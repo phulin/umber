@@ -63,7 +63,7 @@ fn fin_align_pack_diagnostic_uses_alignment_entry_line() {
 
     run_to_end(&mut control, &mut universe);
 
-    let output = transcript_text(&universe);
+    let output = terminal_text(&universe);
     assert!(
         output.contains("in alignment at lines 2--2"),
         "alignment pack diagnostic must retain its entry line: {output}"
@@ -382,7 +382,7 @@ fn canonical_character_definitions_scan_scope_and_recovery() {
         universe.meaning(universe.symbol("self").expect("self-referential character")),
         Meaning::CharGiven('E')
     );
-    let output = terminal_text(&universe);
+    let output = transcript_text(&universe);
     assert!(output.contains("Bad character code (256)"));
     assert!(output.contains("Bad mathchar (32768)"));
 }
@@ -2132,11 +2132,22 @@ fn canonical_font_definition_observations_are_profile_exact_across_resource_retr
 #[test]
 fn canonical_unavailable_font_recovers_to_nullfont() {
     let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control
         .capabilities_mut()
         .register_font("missing.tfm", FontResource::Unavailable);
-    register_source(&mut control, br"\font\missing=missing\end");
+    let source = control
+        .command_mut()
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&br"\font\missing=missing\relax\end"[..]),
+        ))
+        .expect("source registers");
+    control
+        .command_mut()
+        .open_registered_source(source)
+        .expect("source opens");
 
     run_to_end(&mut control, &mut universe);
 
@@ -2144,6 +2155,15 @@ fn canonical_unavailable_font_recovers_to_nullfont() {
     assert_eq!(
         universe.meaning(missing),
         Meaning::Font(tex_state::font::NULL_FONT)
+    );
+    let output = transcript_text(&universe);
+    assert!(
+        output.contains("! Font \\missing=missing not loadable: Metric (TFM) file not found."),
+        "{output}"
+    );
+    assert!(
+        output.contains("<to be read again> \n                   \\relax"),
+        "the backed-up delimiter must remain visible in the detached error context: {output}"
     );
 }
 

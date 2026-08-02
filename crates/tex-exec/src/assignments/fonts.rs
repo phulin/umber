@@ -432,18 +432,30 @@ fn report_missing_font_identifier(
 /// request prints neither. Umber's OpenType lookup has no TeX82 counterpart,
 /// so it keeps its own reason and first help line and shares the rest.
 #[derive(Clone, Copy)]
-enum FontLoadFailure {
+pub(crate) enum FontLoadFailure {
     MissingTfm,
     MissingOpenType,
     MalformedTfm,
 }
 
-fn report_font_not_loadable(
+pub(crate) fn report_font_not_loadable(
     stores: &mut Universe,
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
     failure: FontLoadFailure,
+) -> Result<(), ExecError> {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    report_font_not_loadable_with_context(stores, selector, font_name, size_spec, failure, context)
+}
+
+pub(crate) fn report_font_not_loadable_with_context(
+    stores: &mut Universe,
+    selector: &str,
+    font_name: &str,
+    size_spec: FontSizeSpec,
+    failure: FontLoadFailure,
+    context: String,
 ) -> Result<(), ExecError> {
     let (reason, detail) = match failure {
         FontLoadFailure::MissingOpenType => (
@@ -459,7 +471,6 @@ fn report_font_not_loadable(
             "I wasn't able to read the size data for this font,",
         ),
     };
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Font ");
     report.print_esc(selector).print("=").print(font_name);
     match size_spec {
