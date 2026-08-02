@@ -49,7 +49,7 @@ impl Stores {
         }
     }
 
-    fn box_restore_trace_text(&self, id: NodeListId) -> String {
+    pub(crate) fn box_restore_trace_text(&self, id: NodeListId) -> String {
         let Some(node) = self.nodes(id).first() else {
             return "void".to_owned();
         };
@@ -304,7 +304,7 @@ impl Stores {
             .expect("stored font slot is not live")
     }
 
-    pub(super) fn resolve_stored_meaning(&self, meaning: Meaning) -> Meaning {
+    pub(crate) fn resolve_stored_meaning(&self, meaning: Meaning) -> Meaning {
         match meaning {
             Meaning::Macro { definition, flags } => Meaning::Macro {
                 definition: self

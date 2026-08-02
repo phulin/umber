@@ -72,11 +72,13 @@ pub(crate) fn report_missing_character_warning(
         return;
     }
     let font_name = stores.font_name(font).to_owned();
-    let old_tracing_online = stores.int_param(tex_state::env::banks::IntParam::TRACING_ONLINE);
-    if etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1 {
-        stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
-    }
-    let mut diagnostic = stores.begin_diagnostic();
+    let force_online =
+        etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1;
+    let mut diagnostic = if force_online {
+        stores.begin_online_diagnostic()
+    } else {
+        stores.begin_diagnostic()
+    };
     diagnostic
         .print_nl("Missing character: There is no ")
         .print_ascii(ch)
@@ -84,10 +86,6 @@ pub(crate) fn report_missing_character_warning(
         .print(&font_name)
         .print_char('!');
     diagnostic.end(false);
-    stores.set_int_param(
-        tex_state::env::banks::IntParam::TRACING_ONLINE,
-        old_tracing_online,
-    );
 }
 
 /// [`report_illegal_case_with_context`] for a caller whose input stack is the

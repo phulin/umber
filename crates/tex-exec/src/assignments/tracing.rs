@@ -12,9 +12,10 @@
 //! centralizes the scalar register/parameter families in
 //! `execute_assignment_to_target`, and code-table writes centralize
 //! similarly in `execute_code_table_assignment`, so this module is called
-//! from both. Box-register (`\setbox`) and font-selection (`\font`,
-//! `\textfont`, ...) assignments are also eqtb-resident in real TeX and are
-//! not yet traced here; see `docs/etex_primitives.md`.
+//! from both. Box-register `\setbox` writes join that path at `box_end`;
+//! font-selection (`\font`, `\textfont`, ...) assignments are also
+//! eqtb-resident in real TeX and are not yet traced here; see
+//! `docs/etex_primitives.md`.
 //!
 //! `\tracingrestores`'s own `unsave`-time "restoring"/"retaining" lines are a
 //! distinct TeX82 (not e-TeX) primitive. They are produced at Universe's
@@ -303,6 +304,59 @@ pub(crate) fn trace_toks_register(
         &old_text,
         &new_text,
     );
+}
+
+/// Traces TeX82 §1077's box-register `eq_define` through e-TeX's generic
+/// assignment hook. The non-void value begins on the newline introduced by
+/// `show_node_list`, exactly as §252's `show_eqtb` does.
+pub(crate) fn trace_box_write(
+    stores: &mut Universe,
+    index: u16,
+    global: bool,
+    new: Option<tex_state::ids::NodeListId>,
+    write: impl FnOnce(&mut Universe),
+) {
+    fn print_box_trace(stores: &mut Universe, label: &str, name: &str, value: &str) {
+        let mut diagnostic = stores.begin_diagnostic();
+        diagnostic
+            .print_char('{')
+            .print(label)
+            .print_char(' ')
+            .print(name)
+            .print_char('=');
+        if value == "void" {
+            diagnostic.print(value);
+        } else {
+            diagnostic.print_ln().print(value);
+        }
+        diagnostic.print_char('}');
+        diagnostic.end(false);
+    }
+
+    let tracing_before = stores.int_param(IntParam::TRACING_ASSIGNS) > 0;
+    let old = stores.box_reg(index);
+    let name = escaped(stores, &format!("box{index}"));
+    let old_text = stores.box_assignment_trace_text(old);
+    write(stores);
+    let new_text = stores.box_assignment_trace_text(new);
+    let changed = old != new;
+    if global {
+        if tracing_before {
+            print_box_trace(stores, "globally changing", &name, &old_text);
+        }
+        if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
+            print_box_trace(stores, "into", &name, &new_text);
+        }
+    } else if changed {
+        if tracing_before {
+            print_box_trace(stores, "changing", &name, &old_text);
+        }
+        if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
+            print_box_trace(stores, "into", &name, &new_text);
+        }
+    } else if stores.int_param(IntParam::TRACING_ASSIGNS) > 0 {
+        print_box_trace(stores, "reassigning", &name, &new_text);
+    }
 }
 
 /// Renders one of e-TeX's four penalty arrays as merged `etex.web` §17

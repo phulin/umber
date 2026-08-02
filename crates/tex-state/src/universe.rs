@@ -5724,7 +5724,9 @@ impl Universe {
                     let Some(symbol) = self.stores.symbol_at_slot(cell.index()) else {
                         continue;
                     };
-                    let meaning = self.stores.meaning(symbol);
+                    let meaning = self
+                        .stores
+                        .resolve_stored_meaning(Meaning::decode_stored(record.old()));
                     let value = match meaning {
                         // TeX82 §§252 and 283 render an undefined control
                         // sequence explicitly; it is not an absent restore
@@ -5742,6 +5744,34 @@ impl Universe {
                                 record.escape_char(),
                                 self.stores.resolve(canonical),
                             )
+                        }
+                        Meaning::Macro { flags, definition } => {
+                            let macro_meaning = self.stores.macro_definition(definition);
+                            let mut value = String::new();
+                            for (flag, name) in [
+                                (crate::meaning::MeaningFlags::PROTECTED, "protected"),
+                                (crate::meaning::MeaningFlags::LONG, "long"),
+                                (crate::meaning::MeaningFlags::OUTER, "outer"),
+                            ] {
+                                if flags.contains(flag) {
+                                    value.push_str(&escaped_restore_name(
+                                        record.escape_char(),
+                                        name,
+                                    ));
+                                }
+                            }
+                            if !value.is_empty() {
+                                value.push(' ');
+                            }
+                            value.push_str("macro:");
+                            append_bounded_macro_body(
+                                self,
+                                macro_meaning.parameter_text(),
+                                macro_meaning.replacement_text(),
+                                record.escape_char(),
+                                &mut value,
+                            );
+                            value
                         }
                         _ => continue,
                     };
@@ -6147,6 +6177,16 @@ impl Universe {
     #[must_use]
     pub fn box_reg(&self, index: u16) -> Option<NodeListId> {
         self.stores.box_reg(index)
+    }
+
+    /// Formats a box register value through TeX82 §§174/252's compact
+    /// `show_eqtb` representation used by assignment diagnostics.
+    #[must_use]
+    pub fn box_assignment_trace_text(&self, value: Option<NodeListId>) -> String {
+        value.map_or_else(
+            || "void".to_owned(),
+            |id| self.stores.box_restore_trace_text(id),
+        )
     }
 
     #[must_use]
@@ -7174,6 +7214,46 @@ fn escaped_restore_name(escape_char: i32, name: &str) -> String {
     }
     escaped.push_str(name);
     escaped
+}
+
+/// TeX82 §§252/262's bounded macro half of `show_eqtb`.
+fn append_bounded_macro_body(
+    universe: &Universe,
+    parameter_text: TokenListId,
+    replacement_text: TokenListId,
+    escape_char: i32,
+    text: &mut String,
+) {
+    let mut tally = 0;
+    let mut parameter = universe.tokens(parameter_text).iter();
+    while tally < 32
+        && let Some(&token) = parameter.next()
+    {
+        let before = text.chars().count();
+        crate::token_show::append_token_show_text(universe, token, text);
+        tally += text.chars().count() - before;
+    }
+    let mut remaining = parameter.next().is_some();
+    if !remaining {
+        if tally < 32 {
+            text.push_str("->");
+            tally += 2;
+            let mut replacement = universe.tokens(replacement_text).iter();
+            while tally < 32
+                && let Some(&token) = replacement.next()
+            {
+                let before = text.chars().count();
+                crate::token_show::append_token_show_text(universe, token, text);
+                tally += text.chars().count() - before;
+            }
+            remaining = replacement.next().is_some();
+        } else {
+            remaining = true;
+        }
+    }
+    if remaining {
+        text.push_str(&escaped_restore_name(escape_char, "ETC."));
+    }
 }
 
 /// A mutable dimension field of a box register's top-level box.

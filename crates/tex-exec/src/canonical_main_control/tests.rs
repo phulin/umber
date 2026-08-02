@@ -726,6 +726,49 @@ fn tracingrestores_reports_primitive_meaning_through_an_alias() {
 }
 
 #[test]
+fn tracingrestores_reports_macro_old_value() {
+    // TeX82 §§252/283 show the restored macro's saved body after copying the
+    // saved eqtb word back, with §262's breadth bound.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\foo{abcdefghijklmnopqrstuvwx}\tracingrestores=1\tracingonline=1{\def\foo{X}}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = "{restoring \\foo=macro:->abcdefghijklmnopqrstuvwx}\n";
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+}
+
+#[test]
+fn tracingassigns_reports_setbox_change_and_committed_box() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingassigns=1\setbox25=\hbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let trace = concat!(
+        "{changing \\box25=void}\n",
+        "{into \\box25=\n",
+        "\\hbox(0.0+0.0)x0.0}\n",
+    );
+    let terminal = pending_sink_text(&stores, true);
+    let log = pending_sink_text(&stores, false);
+    assert!(terminal.contains(trace), "{terminal:?}");
+    assert!(log.contains(trace), "{log:?}");
+}
+
+#[test]
 fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

@@ -15415,12 +15415,18 @@ fn commit_set_box_target(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) {
-    match (target.global, boxed) {
-        (false, Some(boxed)) => stores.set_box_reg(target.index, boxed),
-        (true, Some(boxed)) => stores.set_box_reg_global(target.index, boxed),
-        (false, None) => stores.clear_box_reg(target.index),
-        (true, None) => stores.clear_box_reg_global(target.index),
-    }
+    crate::assignments::tracing::trace_box_write(
+        stores,
+        target.index,
+        target.global,
+        boxed,
+        |stores| match (target.global, boxed) {
+            (false, Some(boxed)) => stores.set_box_reg(target.index, boxed),
+            (true, Some(boxed)) => stores.set_box_reg_global(target.index, boxed),
+            (false, None) => stores.clear_box_reg(target.index),
+            (true, None) => stores.clear_box_reg_global(target.index),
+        },
+    );
     if target.index > 255
         && let Some(observations) = command.observations.as_mut()
     {

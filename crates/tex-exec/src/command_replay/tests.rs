@@ -1035,7 +1035,7 @@ fn canonical_etex_level_two_missing_character_reaches_the_terminal() {
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
-        br"\tracingonline=0\tracinglostchars=2\setbox0=\hbox{Z}\end",
+        br"\tracingonline=0\tracinglostchars=2\tracingrestores=1{\setbox0=\hbox{Z}}\end",
     );
 
     run_to_end(&mut control, &mut universe);
@@ -1043,6 +1043,11 @@ fn canonical_etex_level_two_missing_character_reaches_the_terminal() {
     let warning = "Missing character: There is no Z in font nullfont!\n";
     let terminal = terminal_only_text(&universe);
     assert_eq!(terminal.matches(warning).count(), 1, "{terminal:?}");
+    let transcript = transcript_text(&universe);
+    assert!(
+        !transcript.contains("{restoring \\tracingonline="),
+        "{transcript:?}"
+    );
     assert_eq!(transcript_text(&universe).matches(warning).count(), 1);
     assert_eq!(universe.int_param(IntParam::TRACING_ONLINE), 0);
 }
