@@ -1115,6 +1115,7 @@ fn startup_file_name(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::path::Path;
 
     use super::*;
     use tex_command::{CommandObservation, CommandObserver};

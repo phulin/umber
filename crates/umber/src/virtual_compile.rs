@@ -1861,6 +1861,7 @@ impl VirtualCompileSession {
                     self.limits.cached_file_bytes,
                 )
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
+                session.set_command_profile(self.engine.command_profile(), self.format.is_none());
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
                 session
@@ -1928,16 +1929,12 @@ impl VirtualCompileSession {
                 .vfs_stage_time
                 .saturating_add(vfs_stage_started.elapsed());
         }
-        let (input_resolver, font_resolver, image_resolver) = resolvers.resolvers();
         let cancellation = tex_exec::Cancellation::new();
         let drive = match &mut retained.execution {
             RetainedExecution::Initial { candidate, .. }
-            | RetainedExecution::Pending(candidate) => candidate.drive_with_resource_resolvers(
-                input_resolver,
-                font_resolver,
-                image_resolver,
-                &cancellation,
-            ),
+            | RetainedExecution::Pending(candidate) => {
+                candidate.drive_with_resource_resolvers(&mut resolvers, &cancellation)
+            }
         };
         self.execution_telemetry = match &retained.execution {
             RetainedExecution::Initial { candidate, .. }
@@ -1948,7 +1945,7 @@ impl VirtualCompileSession {
         let (file_misses, file_probes, font_misses, fatal) = resolvers.finish();
 
         if !file_misses.is_empty() || !file_probes.is_empty() || !font_misses.is_empty() {
-            let suspension = match &drive {
+            let _suspension = match &drive {
                 Ok(tex_incr::RevisionCandidateResult::AwaitingResources(suspension)) => suspension,
                 Ok(tex_incr::RevisionCandidateResult::Complete) => {
                     return Err(CompileError::NoProgress);
@@ -2125,7 +2122,10 @@ impl VirtualCompileSession {
             ));
             retained.files = pending_files;
             retained.response_generation = self.response_generation;
-            retained.suspension_serial = suspension.serial;
+            retained.suspension_serial = match &retained.execution {
+                RetainedExecution::Initial { candidate, .. }
+                | RetainedExecution::Pending(candidate) => candidate.suspension_serial(),
+            };
             self.candidate = Some(retained);
             self.start_resource_wait();
             #[cfg(not(target_arch = "wasm32"))]

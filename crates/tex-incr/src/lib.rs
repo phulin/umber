@@ -11,10 +11,14 @@ use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+use tex_command::{
+    CommandProfile, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+};
 use tex_exec::{
-    Cancellation, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
-    ExecutionContext, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStats,
-    ExecutionStepResult, Executor, ResourceSuspension,
+    Cancellation, CanonicalMainControl, CanonicalResourceFulfillment, CanonicalResourceHost,
+    CanonicalResourceNeed, CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult,
+    CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionBudgetCounters,
+    ExecutionContext, ExecutionStats, Executor, MainControlStep,
 };
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
@@ -32,6 +36,34 @@ mod trace;
 
 pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
+
+fn canonical_font_path(name: &str) -> PathBuf {
+    let path = PathBuf::from(name);
+    if path.extension().is_none() {
+        path.with_extension("tfm")
+    } else {
+        path
+    }
+}
+
+fn canonical_candidate_control(
+    job_name: &str,
+    source_path: &str,
+    bytes: Vec<u8>,
+    profile: CommandProfile,
+    initex: bool,
+) -> Result<CanonicalMainControl, SessionError> {
+    let mut control = if initex {
+        CanonicalMainControl::prepared_initex(profile)
+    } else {
+        CanonicalMainControl::with_profile(profile)
+    };
+    control.register_root_source(
+        SourceRegistration::new(RegisteredSourceKind::Generated, bytes).with_name(source_path),
+    )?;
+    control.capabilities_mut().set_startup_job_name(job_name);
+    Ok(control)
+}
 
 /// Monotonic identity of an immutable editor buffer.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -267,14 +299,23 @@ pub struct PendingRevision {
 /// sink. Callers supply a fresh resolver view to each [`Self::drive`] call;
 /// no host capability is retained between calls.
 pub struct RevisionCandidate {
-    input: InputStack,
     universe: Universe,
-    run: ExecutionRun,
+    control: CanonicalMainControl,
     sink: CandidateSink,
     memo: tex_state::PureMemoRuntime,
-    completed: Option<ExecutionStats>,
+    completed: Option<CanonicalCandidateCompletion>,
     suspension_serial: u64,
+    delivered_commands: usize,
+    execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
+}
+
+struct CanonicalCandidateCompletion {
+    dvi_pages: Vec<DviPagePlan>,
+    dumped_format: bool,
+    format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
+    delivered_tokens: usize,
+    main_control_dispatches: usize,
 }
 
 enum CandidateSink {
@@ -300,7 +341,7 @@ enum RevisionCandidateKind {
 /// reaches a terminal executor state.
 #[derive(Clone, Debug)]
 pub enum RevisionCandidateResult {
-    AwaitingResources(ResourceSuspension),
+    AwaitingResources(CanonicalResourceNeed),
     Complete,
 }
 
@@ -420,45 +461,121 @@ impl RevisionCandidate {
     /// provisioned immutable generation is observed only by the replayed step.
     pub fn drive_with_resource_resolvers(
         &mut self,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
-        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+        host: &mut dyn CanonicalResourceHost,
         cancellation: &Cancellation,
     ) -> Result<RevisionCandidateResult, SessionError> {
         if self.completed.is_some() {
             return Ok(RevisionCandidateResult::Complete);
         }
         loop {
-            let sink: &mut dyn CheckpointSink = match &mut self.sink {
-                CandidateSink::Cold(sink) => sink,
-                CandidateSink::Advance(sink) => sink,
-            };
-            let mut services = ExecutionServices::new(&mut self.input, &mut self.universe)
-                .with_input_resolver(input_resolver)
-                .with_font_resolver(font_resolver)
-                .with_image_resolver(image_resolver)
-                .with_checkpoints(sink);
-            match self.run.step(&mut services, cancellation) {
-                ExecutionStepResult::Progress(progress) => {
-                    if progress.stop_requested {
-                        self.run.finish_after_checkpoint();
+            if cancellation.is_cancelled() {
+                return Err(SessionError::Execute(
+                    tex_exec::ExecError::ExecutionCancelled,
+                ));
+            }
+            match self.control.advance(&mut self.universe)? {
+                CanonicalStepResult::Progress(step) => {
+                    self.delivered_commands = self.delivered_commands.saturating_add(1);
+                    let boundaries = self.control.take_completed_boundaries();
+                    for boundary in boundaries {
+                        let sink: &mut dyn CheckpointSink = match &mut self.sink {
+                            CandidateSink::Cold(sink) => sink,
+                            CandidateSink::Advance(sink) => sink,
+                        };
+                        if sink.wants_checkpoint(boundary) {
+                            let checkpoint = self.control.capture_checkpoint(
+                                boundary,
+                                &mut self.universe,
+                                ExecutionBudgetCounters::default(),
+                            )?;
+                            sink.checkpoint(checkpoint);
+                        }
+                    }
+                    let stop = match &self.sink {
+                        CandidateSink::Cold(sink) => sink.stop_requested(),
+                        CandidateSink::Advance(sink) => sink.stop_requested(),
+                    };
+                    if stop || matches!(step, MainControlStep::End) {
+                        let dvi_pages = self
+                            .control
+                            .take_prepared_dvi_pages()
+                            .into_iter()
+                            .map(tex_exec::PreparedDviPage::into_plan)
+                            .collect();
+                        self.completed = Some(CanonicalCandidateCompletion {
+                            dvi_pages,
+                            dumped_format: self.control.dumped_format(),
+                            format_dump_receipt: self.control.format_dump_receipt().cloned(),
+                            delivered_tokens: self.delivered_commands,
+                            main_control_dispatches: self.delivered_commands,
+                        });
+                        return Ok(RevisionCandidateResult::Complete);
                     }
                 }
-                ExecutionStepResult::AwaitingResources(suspension) => {
-                    self.suspension_serial = suspension.serial;
-                    return Ok(RevisionCandidateResult::AwaitingResources(suspension));
-                }
-                ExecutionStepResult::Complete(stats) => {
-                    self.completed = Some(stats);
-                    return Ok(RevisionCandidateResult::Complete);
-                }
-                ExecutionStepResult::Failed(error) => return Err(error.into()),
-                ExecutionStepResult::Cancelled => {
-                    return Err(SessionError::Execute(
-                        tex_exec::ExecError::ExecutionCancelled,
-                    ));
+                CanonicalStepResult::Suspended(need) => {
+                    let outcome = {
+                        let mut world = CanonicalResourceWorld::new(&mut self.universe);
+                        host.fulfill(&mut world, &need)
+                    };
+                    match outcome {
+                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                            self.fulfill_resource(&need, fulfillment)?;
+                        }
+                        CanonicalResourceOutcome::Unavailable => self.mark_unavailable(&need),
+                        CanonicalResourceOutcome::Declined => {
+                            self.suspension_serial = self.suspension_serial.saturating_add(1);
+                            return Ok(RevisionCandidateResult::AwaitingResources(need));
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    fn fulfill_resource(
+        &mut self,
+        need: &CanonicalResourceNeed,
+        fulfillment: CanonicalResourceFulfillment,
+    ) -> Result<(), SessionError> {
+        match (need, fulfillment) {
+            (
+                CanonicalResourceNeed::Input { name: expected },
+                CanonicalResourceFulfillment::Input { name, source },
+            ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
+            (
+                CanonicalResourceNeed::Font { request: expected },
+                CanonicalResourceFulfillment::Font { request, resource },
+            ) if expected == &request => self
+                .control
+                .capabilities_mut()
+                .register_font(canonical_font_path(&request.name), *resource),
+            (
+                CanonicalResourceNeed::PdfImage { request: expected },
+                CanonicalResourceFulfillment::PdfImage { request, resource },
+            ) if expected == &request => self
+                .control
+                .capabilities_mut()
+                .register_pdf_image(request, *resource),
+            _ => return Err(SessionError::UnexpectedCanonicalResource),
+        }
+        Ok(())
+    }
+
+    fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
+        match need {
+            CanonicalResourceNeed::Input { name } => {
+                self.control.capabilities_mut().mark_input_unavailable(name)
+            }
+            CanonicalResourceNeed::Font { request } => {
+                self.control.capabilities_mut().register_font(
+                    canonical_font_path(&request.name),
+                    tex_command::FontResource::Unavailable,
+                )
+            }
+            CanonicalResourceNeed::PdfImage { request } => self
+                .control
+                .capabilities_mut()
+                .register_pdf_image(request.clone(), tex_command::PdfImageResource::Unavailable),
         }
     }
 
@@ -468,16 +585,29 @@ impl RevisionCandidate {
     }
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
-        self.run.set_cumulative_fuel_limit(limit);
+        self.control
+            .set_fuel_limit(limit)
+            .expect("positive session fuel limit");
     }
 
     pub fn set_execution_budgets(&mut self, budgets: tex_exec::ExecutionBudgets) {
-        self.run.set_budgets(budgets);
+        self.execution_budgets = budgets;
     }
 
     #[must_use]
     pub const fn execution_telemetry(&self) -> tex_exec::ExecutionTelemetry {
-        self.run.telemetry()
+        tex_exec::ExecutionTelemetry {
+            cold_starts: 0,
+            advance_calls: self.delivered_commands as u64,
+            suspensions: self.suspension_serial,
+            local_step_retries: 0,
+            replayed_delivered_tokens: 0,
+            replayed_dispatches: 0,
+            cumulative_fuel: self.control.fuel_burned(),
+            engine_time: Duration::ZERO,
+            savepoint_capture_time: Duration::ZERO,
+            savepoint_restore_time: Duration::ZERO,
+        }
     }
 
     /// Charges the private execution roots retained while this candidate is
@@ -499,8 +629,7 @@ impl RevisionCandidate {
             checkpoint_root_bytes: self
                 .universe
                 .live_generation_charged_bytes()
-                .saturating_add(std::mem::size_of::<ExecutionRun>())
-                .saturating_add(std::mem::size_of::<InputStack>()),
+                .saturating_add(std::mem::size_of::<CanonicalMainControl>()),
             memo_result_bytes: self.universe.pure_memo_stats().retained_bytes,
             diagnostic_bytes,
             output_bytes,
@@ -613,6 +742,8 @@ pub struct Session {
     utf8_input_as_bytes: bool,
     dvi_output: bool,
     root_source_is_byte_projection: bool,
+    command_profile: CommandProfile,
+    initex: bool,
     expansion_stats: tex_lex::ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
 }
@@ -748,6 +879,8 @@ impl Session {
             utf8_input_as_bytes: false,
             dvi_output: true,
             root_source_is_byte_projection,
+            command_profile: CommandProfile::TEX82,
+            initex: true,
             expansion_stats: tex_lex::ExpansionStats::default(),
             render_maps: RefCell::default(),
         })
@@ -778,6 +911,17 @@ impl Session {
             "input decoding mode cannot change after execution starts"
         );
         self.utf8_input_as_bytes = enabled;
+    }
+
+    /// Selects the canonical command profile and whether the session starts
+    /// in INITEX mode. This must be configured before candidate execution.
+    pub fn set_command_profile(&mut self, profile: CommandProfile, initex: bool) {
+        assert!(
+            self.history.is_empty(),
+            "command profile cannot change after execution starts"
+        );
+        self.command_profile = profile;
+        self.initex = initex;
     }
 
     /// Selects whether candidates prepare classic TeX82 DVI page plans.
@@ -884,30 +1028,27 @@ impl Session {
     pub fn start_cold_candidate(&self) -> Result<RevisionCandidate, SessionError> {
         let mut universe = self.template.clone();
         universe.begin_retained_session()?;
-        let root = if self.root_source_is_byte_projection {
-            MemoryInput::byte_projection(&self.source)
-        } else {
-            MemoryInput::new(&self.source)
-        }
-        .with_logical_path(self.source_path.clone());
-        let mut input = InputStack::new(root);
-        input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
-        input
-            .install_root_layout_cursor(LayoutCursor::new(&self.layout, &self.fragments)?)
-            .expect("new editor input has a root source");
+        let control = canonical_candidate_control(
+            &self.job_name,
+            &self.source_path,
+            self.source_file_bytes(&self.source),
+            self.command_profile,
+            self.initex,
+        )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
         Ok(RevisionCandidate {
-            input,
             universe,
-            run: ExecutionRun::new(&self.job_name).with_dvi_output(self.dvi_output),
+            control,
             sink: CandidateSink::Cold(HistorySink::default()),
             memo,
             completed: None,
             suspension_serial: 0,
+            delivered_commands: 0,
+            execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Initial {
                 source_len: self.source.len(),
             },
@@ -963,11 +1104,6 @@ impl Session {
     /// Dropping the candidate leaves all accepted state untouched.
     pub fn start_external_input_delta_candidate(&self) -> Result<RevisionCandidate, SessionError> {
         let revision_setup_started = Timer::start();
-        let restart = self
-            .history
-            .iter()
-            .position(|record| record.key.boundary == EngineBoundary::JobStart)
-            .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let fragments = self.fragments.clone();
         let next_layout = EditorLayout::new(
             self.layout.path(),
@@ -989,7 +1125,7 @@ impl Session {
             map: EditMap::new(0..0, 0),
             revision_setup_latency: revision_setup_started.elapsed(),
         });
-        self.start_restored_candidate(setup, restart, false)
+        self.start_replacement_candidate(setup)
     }
 
     fn start_advance_candidate_with_policy(
@@ -1018,11 +1154,6 @@ impl Session {
             expanded_replacement.len(),
             LayoutGeneration::new(next_revision.raw()),
         )?;
-        let restart = if force_job_start {
-            None
-        } else {
-            select_restart(&old_history, &old_source, &next, &edit)
-        };
         let map = EditMap::new(edit.range.clone(), edit.replacement.len());
         if !force_job_start {
             self.substrate
@@ -1050,95 +1181,37 @@ impl Session {
             revision_setup_latency: revision_setup_started.elapsed(),
         });
 
-        match restart {
-            None => {
-                let mut memo = self.pure_memo.clone();
-                let mut universe = self.template.clone();
-                universe.begin_retained_session()?;
-                let root = if self.root_source_is_byte_projection {
-                    MemoryInput::byte_projection(&setup.next)
-                } else {
-                    MemoryInput::new(&setup.next)
-                }
-                .with_logical_path(setup.next_layout.path());
-                let mut input = InputStack::new(root);
-                input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
-                universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
-                universe
-                    .set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
-                input
-                    .install_root_layout_cursor(LayoutCursor::new(
-                        &setup.next_layout,
-                        &setup.fragments,
-                    )?)
-                    .expect("new editor input has a root source");
-                memo.begin_paragraph_history(false);
-                universe.install_pure_memo_runtime(std::mem::take(&mut memo));
-                Ok(RevisionCandidate {
-                    input,
-                    universe,
-                    run: ExecutionRun::new(&self.job_name).with_dvi_output(self.dvi_output),
-                    sink: CandidateSink::Cold(HistorySink::default()),
-                    memo,
-                    completed: None,
-                    suspension_serial: 0,
-                    kind: RevisionCandidateKind::Replacement { setup },
-                })
-            }
-            Some(restart) => self.start_restored_candidate(setup, restart, true),
-        }
+        self.start_replacement_candidate(setup)
     }
 
-    fn start_restored_candidate(
+    fn start_replacement_candidate(
         &self,
         setup: Box<AdvanceSetup>,
-        restart: usize,
-        allow_convergence: bool,
     ) -> Result<RevisionCandidate, SessionError> {
-        let substrate = self
-            .substrate
-            .as_ref()
-            .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        let anchor = &setup.old_history[restart];
-        let mut universe = self.template.clone();
-        let mut input = InputStack::new(MemoryInput::new(String::new()));
-        let mut executor = Executor::new();
-        let restart_fork_latency = executor.restore_editor_checkpoint(
-            &mut input,
-            &mut universe,
-            substrate,
-            anchor.checkpoint(),
-            &setup.old_source,
-            &setup.next,
-            &setup.fragments,
-            &setup.next_layout,
-            LayoutCursor::new(&setup.next_layout, &setup.fragments)?,
-        )?;
-        input.set_utf8_input_as_bytes(self.utf8_input_as_bytes);
-        for (path, bytes) in &self.registered_inputs {
-            universe.world_mut().set_memory_file(path, bytes.clone())?;
-        }
         let mut memo = self.pure_memo.clone();
-        memo.begin_paragraph_history(true);
+        let mut universe = self.template.clone();
+        universe.begin_retained_session()?;
+        universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
+        universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
+        let control = canonical_candidate_control(
+            &self.job_name,
+            setup.next_layout.path(),
+            self.source_file_bytes(&setup.next),
+            self.command_profile,
+            self.initex,
+        )?;
+        memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
-        let counters = executor.budget_counters();
-        let nest = std::mem::take(executor.nest_mut());
-        let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
         Ok(RevisionCandidate {
-            input,
             universe,
-            run: ExecutionRun::from_parts(&self.job_name, nest, ExecutionState::default(), false)
-                .with_budget_counters(counters)
-                .with_dvi_output(self.dvi_output),
-            sink: CandidateSink::Advance(sink),
+            control,
+            sink: CandidateSink::Cold(HistorySink::default()),
             memo,
             completed: None,
             suspension_serial: 0,
-            kind: RevisionCandidateKind::Incremental {
-                setup,
-                restart,
-                restart_fork_latency,
-            },
+            delivered_commands: 0,
+            execution_budgets: tex_exec::ExecutionBudgets::default(),
+            kind: RevisionCandidateKind::Replacement { setup },
         })
     }
 
@@ -1181,16 +1254,13 @@ impl Session {
         }
         let effects = candidate.universe.world().effect_records().to_vec();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-        let expansion_stats = candidate.input.expansion_stats();
-        let ExecutionStats {
+        let expansion_stats = tex_lex::ExpansionStats::default();
+        let CanonicalCandidateCompletion {
             dvi_pages,
             dumped_format,
             format_dump_receipt,
             delivered_tokens,
             main_control_dispatches,
-            macro_text_span_tokens,
-            source_text_span_tokens,
-            ..
         } = stats;
         let substrate = candidate.universe.freeze_generation();
         let history = retain_restorable_history(sink.records, &substrate)?;
@@ -1200,8 +1270,8 @@ impl Session {
             reexecuted_bytes: setup.next.len(),
             reexecuted_tokens: delivered_tokens,
             reexecuted_commands: main_control_dispatches,
-            reexecuted_macro_text_span_tokens: macro_text_span_tokens,
-            reexecuted_source_text_span_tokens: source_text_span_tokens,
+            reexecuted_macro_text_span_tokens: 0,
+            reexecuted_source_text_span_tokens: 0,
             reexecuted_paragraphs: history
                 .iter()
                 .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
@@ -1257,14 +1327,12 @@ impl Session {
         let before_memo = self.pure_memo.stats();
         let mut memo = candidate.universe.take_pure_memo_runtime();
         let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
-        let ExecutionStats {
+        let CanonicalCandidateCompletion {
             dvi_pages,
             dumped_format,
+            format_dump_receipt: _,
             delivered_tokens,
             main_control_dispatches,
-            macro_text_span_tokens,
-            source_text_span_tokens,
-            ..
         } = stats;
         let reexecuted_paragraphs = sink
             .records
@@ -1286,7 +1354,7 @@ impl Session {
         } else {
             SameHistoryStop::NoComparableBoundary
         };
-        let expansion_stats = candidate.input.expansion_stats();
+        let expansion_stats = tex_lex::ExpansionStats::default();
         let effects = candidate.universe.world().effect_records().to_vec();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let mut pages_through_stop =
@@ -1389,8 +1457,8 @@ impl Session {
                         reexecuted_bytes: reexecuted_through.saturating_sub(anchor.key.position),
                         reexecuted_tokens: delivered_tokens,
                         reexecuted_commands: main_control_dispatches,
-                        reexecuted_macro_text_span_tokens: macro_text_span_tokens,
-                        reexecuted_source_text_span_tokens: source_text_span_tokens,
+                        reexecuted_macro_text_span_tokens: 0,
+                        reexecuted_source_text_span_tokens: 0,
                         reexecuted_paragraphs,
                         paragraph_replay_lookups: paragraph_replay.lookups,
                         paragraph_replay_hits: paragraph_replay.hits,
@@ -1440,8 +1508,8 @@ impl Session {
                         reexecuted_bytes: reexecuted_through.saturating_sub(anchor.key.position),
                         reexecuted_tokens: delivered_tokens,
                         reexecuted_commands: main_control_dispatches,
-                        reexecuted_macro_text_span_tokens: macro_text_span_tokens,
-                        reexecuted_source_text_span_tokens: source_text_span_tokens,
+                        reexecuted_macro_text_span_tokens: 0,
+                        reexecuted_source_text_span_tokens: 0,
                         reexecuted_paragraphs,
                         paragraph_replay_lookups: paragraph_replay.lookups,
                         paragraph_replay_hits: paragraph_replay.hits,
@@ -2460,21 +2528,18 @@ fn finish_cold_candidate(
     let effects = candidate.universe.world().effect_records().to_vec();
     let artifacts = candidate.universe.world().committed_artifacts().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
-    let expansion_stats = candidate.input.expansion_stats();
+    let expansion_stats = tex_lex::ExpansionStats::default();
     let executed_paragraphs = sink
         .records
         .iter()
         .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
         .count();
-    let ExecutionStats {
+    let CanonicalCandidateCompletion {
         dvi_pages,
         dumped_format,
         format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
-        macro_text_span_tokens,
-        source_text_span_tokens,
-        ..
     } = stats;
     Ok(FinishedColdCandidate {
         run: RevisionRun {
@@ -2490,8 +2555,8 @@ fn finish_cold_candidate(
             executed_bytes: source_len,
             executed_tokens: delivered_tokens,
             executed_commands: main_control_dispatches,
-            executed_macro_text_span_tokens: macro_text_span_tokens,
-            executed_source_text_span_tokens: source_text_span_tokens,
+            executed_macro_text_span_tokens: 0,
+            executed_source_text_span_tokens: 0,
             executed_paragraphs,
         },
         memo: candidate.memo,
@@ -3240,6 +3305,9 @@ pub enum SessionError {
     InvalidEditRange,
     CandidateKindMismatch,
     CandidateNotComplete,
+    UnexpectedCanonicalResource,
+    SourceRegistration(SourceRegistrationError),
+    CommandSummary(tex_command::CommandSummaryError),
     MissingAcceptedSubstrate,
     Execute(tex_exec::ExecError),
     World(WorldError),
@@ -3278,6 +3346,13 @@ impl fmt::Display for SessionError {
             Self::CandidateNotComplete => {
                 f.write_str("revision candidate is still executing or suspended")
             }
+            Self::UnexpectedCanonicalResource => {
+                f.write_str("canonical resource fulfillment does not match the pending need")
+            }
+            Self::SourceRegistration(error) => {
+                write!(f, "canonical source registration failed: {error}")
+            }
+            Self::CommandSummary(error) => write!(f, "canonical checkpoint failed: {error}"),
             Self::MissingAcceptedSubstrate => {
                 f.write_str("session has no accepted cold generation")
             }
@@ -3310,6 +3385,18 @@ impl SessionError {
 impl From<tex_exec::ExecError> for SessionError {
     fn from(value: tex_exec::ExecError) -> Self {
         Self::Execute(value)
+    }
+}
+
+impl From<tex_command::CommandSummaryError> for SessionError {
+    fn from(value: tex_command::CommandSummaryError) -> Self {
+        Self::CommandSummary(value)
+    }
+}
+
+impl From<SourceRegistrationError> for SessionError {
+    fn from(value: SourceRegistrationError) -> Self {
+        Self::SourceRegistration(value)
     }
 }
 

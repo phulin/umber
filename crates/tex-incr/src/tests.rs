@@ -535,15 +535,10 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     new_inputs
         .files
         .insert("refs".to_owned(), "\\def\\refwidth{2pt}".to_owned());
-    let mut images = UnavailableImageResolver;
+    let mut host = StagedCanonicalHost::new(&mut new_inputs);
     assert!(matches!(
         candidate
-            .drive_with_resource_resolvers(
-                &mut new_inputs,
-                &mut fonts,
-                &mut images,
-                &Cancellation::new(),
-            )
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
             .expect("delta execution"),
         RevisionCandidateResult::Complete
     ));
@@ -684,14 +679,10 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     newest_inputs
         .files
         .insert("refs".to_owned(), "\\def\\refwidth{3pt}".to_owned());
+    let mut host = StagedCanonicalHost::new(&mut newest_inputs);
     assert!(matches!(
         second_candidate
-            .drive_with_resource_resolvers(
-                &mut newest_inputs,
-                &mut fonts,
-                &mut images,
-                &Cancellation::new(),
-            )
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
             .expect("second delta execution"),
         RevisionCandidateResult::Complete
     ));
@@ -775,14 +766,10 @@ fn forced_job_start_fallback_is_private_and_attributed() {
         .start_advance_candidate_from_job_start(RevisionId::new(2), edit.clone())
         .expect("private fallback candidate");
     failed.set_cumulative_fuel_limit(0);
+    let mut host = StagedCanonicalHost::default();
     assert!(
         failed
-            .drive_with_resource_resolvers(
-                &mut DirectInputResolver,
-                &mut DirectFontResolver,
-                &mut UnavailableImageResolver,
-                &Cancellation::new(),
-            )
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
             .is_err(),
         "forced fallback fixture must fail before acceptance",
     );
@@ -802,14 +789,10 @@ fn forced_job_start_fallback_is_private_and_attributed() {
     let mut completed = session
         .start_advance_candidate_from_job_start(RevisionId::new(2), edit)
         .expect("retry fallback candidate");
+    let mut host = StagedCanonicalHost::default();
     assert!(matches!(
         completed
-            .drive_with_resource_resolvers(
-                &mut DirectInputResolver,
-                &mut DirectFontResolver,
-                &mut UnavailableImageResolver,
-                &Cancellation::new(),
-            )
+            .drive_with_resource_resolvers(&mut host, &Cancellation::new())
             .expect("fallback retry"),
         RevisionCandidateResult::Complete,
     ));
@@ -4579,6 +4562,44 @@ fn nonconvergent_advance_prunes_fully_replaced_fragment_bytes() {
 #[derive(Default)]
 struct StagedInputResolver {
     files: BTreeMap<String, String>,
+}
+
+#[derive(Default)]
+struct StagedCanonicalHost<'a> {
+    files: Option<&'a mut BTreeMap<String, String>>,
+}
+
+impl<'a> StagedCanonicalHost<'a> {
+    fn new(inputs: &'a mut StagedInputResolver) -> Self {
+        Self {
+            files: Some(&mut inputs.files),
+        }
+    }
+}
+
+impl CanonicalResourceHost for StagedCanonicalHost<'_> {
+    fn fulfill(
+        &mut self,
+        _world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        match need {
+            CanonicalResourceNeed::Input { name } => self
+                .files
+                .as_deref()
+                .and_then(|files| files.get(name))
+                .map_or(CanonicalResourceOutcome::Unavailable, |source| {
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                        name,
+                        RegisteredSourceKind::Generated,
+                        Arc::from(source.as_bytes()),
+                    ))
+                }),
+            CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
+                CanonicalResourceOutcome::Unavailable
+            }
+        }
+    }
 }
 
 impl InputResolver for StagedInputResolver {

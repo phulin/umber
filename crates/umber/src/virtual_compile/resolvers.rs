@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-use tex_exec::{FontResolver, PdfImageRequest, PdfImageResolver};
+use tex_exec::{
+    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
+    CanonicalResourceOutcome, CanonicalResourceWorld, FontResolver, PdfImageRequest,
+    PdfImageResolver,
+};
 use tex_expand::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
@@ -24,6 +28,7 @@ pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
     image: VirtualImageResolver<'a>,
+    request_index: u64,
 }
 
 pub(super) struct FontResolutionPolicy<'a> {
@@ -72,17 +77,8 @@ impl<'a> VirtualRunResolvers<'a> {
                 files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
                 cache: HashMap::new(),
             },
+            request_index: 0,
         }
-    }
-
-    pub(super) fn resolvers(
-        &mut self,
-    ) -> (
-        &mut dyn InputResolver,
-        &mut dyn FontResolver,
-        &mut dyn PdfImageResolver,
-    ) {
-        (&mut self.input, &mut self.font, &mut self.image)
     }
 
     pub(super) fn finish(
@@ -123,6 +119,98 @@ impl<'a> VirtualRunResolvers<'a> {
                 .or(self.font.files.fatal)
                 .or(self.image.files.fatal),
         )
+    }
+}
+
+impl CanonicalResourceHost for VirtualRunResolvers<'_> {
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        let request_index = self.request_index;
+        self.request_index = self.request_index.saturating_add(1);
+        let result = match need {
+            CanonicalResourceNeed::Input { name } => world
+                .with_input_read_state(|input| {
+                    self.input
+                        .open(input, FileKind::TexInput, name, request_index)
+                })
+                .map(|lookup| {
+                    lookup.map(|content| CanonicalResourceFulfillment::world_input(name, content))
+                }),
+            CanonicalResourceNeed::Font { request } => world
+                .with_input_read_state(|input| {
+                    self.font
+                        .open_font(input, Path::new(&request.name), request_index)
+                })
+                .map(|lookup| {
+                    lookup.map(|source| CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(match source {
+                            tex_exec::FontSource::Tfm { metrics, opentype } => {
+                                tex_command::FontResource::Tfm { metrics, opentype }
+                            }
+                            tex_exec::FontSource::MappedTfm {
+                                metrics,
+                                opentype,
+                                encoding_map,
+                            } => tex_command::FontResource::MappedTfm {
+                                metrics,
+                                opentype,
+                                encoding_map,
+                            },
+                            tex_exec::FontSource::ClassicTfmFallback { metrics } => {
+                                tex_command::FontResource::ClassicTfmFallback { metrics }
+                            }
+                            tex_exec::FontSource::OpenType(selection) => {
+                                tex_command::FontResource::OpenType(selection)
+                            }
+                        }),
+                    })
+                }),
+            CanonicalResourceNeed::PdfImage { request } => world
+                .with_input_read_state(|input| {
+                    self.image
+                        .open_image(input, &legacy_image_request(request), request_index)
+                })
+                .map(|lookup| {
+                    lookup.map(|source| CanonicalResourceFulfillment::PdfImage {
+                        request: request.clone(),
+                        resource: Box::new(tex_command::PdfImageResource::Available(source)),
+                    })
+                }),
+        };
+        match result {
+            Ok(ResourceLookup::Available(fulfillment)) => {
+                CanonicalResourceOutcome::Fulfilled(fulfillment)
+            }
+            Ok(ResourceLookup::Unavailable) => CanonicalResourceOutcome::Unavailable,
+            Ok(ResourceLookup::NeedResource(_)) | Err(_) => CanonicalResourceOutcome::Declined,
+        }
+    }
+}
+
+fn legacy_image_request(request: &tex_command::PdfImageRequest) -> PdfImageRequest {
+    PdfImageRequest {
+        name: request.name.clone(),
+        page: match &request.page {
+            tex_command::PdfImagePageSelection::Number(page) => {
+                tex_exec::PdfImagePageSelection::Number(u32::try_from(*page).unwrap_or_default())
+            }
+            tex_command::PdfImagePageSelection::Named(name) => {
+                tex_exec::PdfImagePageSelection::Named(name.clone())
+            }
+        },
+        color_space_object: request.color_space_object,
+        page_box: match request.page_box {
+            tex_command::PdfImagePageBox::Crop => tex_exec::PdfImagePageBox::Crop,
+            tex_command::PdfImagePageBox::Media => tex_exec::PdfImagePageBox::Media,
+            tex_command::PdfImagePageBox::Bleed => tex_exec::PdfImagePageBox::Bleed,
+            tex_command::PdfImagePageBox::Trim => tex_exec::PdfImagePageBox::Trim,
+            tex_command::PdfImagePageBox::Art => tex_exec::PdfImagePageBox::Art,
+        },
+        resolution: 0,
     }
 }
 

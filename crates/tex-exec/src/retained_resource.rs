@@ -62,6 +62,14 @@ impl<'a> CanonicalResourceWorld<'a> {
         Self { stores }
     }
 
+    /// Borrows the candidate's private world for resource bookkeeping.
+    pub fn with_input_read_state<T>(
+        &mut self,
+        operation: impl FnOnce(&mut dyn InputReadState) -> T,
+    ) -> T {
+        operation(&mut self.stores.input_open_context())
+    }
+
     pub fn read_file(&mut self, path: impl AsRef<Path>) -> Result<FileContent, WorldError> {
         self.stores.world_mut().read_file(path)
     }
