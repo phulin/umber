@@ -107,6 +107,7 @@ impl LineMaterializer {
             self.position += 1;
         }
         Some(BrokenLine {
+            physical_nodes: line.clone(),
             nodes: line,
             penalty_after,
             hyphenated: decision.hyphenated,
