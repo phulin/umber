@@ -1,6 +1,6 @@
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
-use tex_expand::EngineMode;
+use tex_expand::{EngineMode, EngineStateSnapshot};
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
@@ -97,6 +97,59 @@ impl Mode {
 }
 
 impl ModeNest {
+    /// Projects the current nest and list tail into the values exposed by
+    /// TeX's mode- and last-item enquiries.
+    pub(crate) fn engine_state_snapshot(&self, stores: &Universe) -> EngineStateSnapshot {
+        let list = self.current_list();
+        let mut state = EngineStateSnapshot {
+            mode: self.current_mode().engine_mode(),
+            is_inner_mode: self.current_mode().is_inner(),
+            space_factor: list.space_factor(),
+            prev_depth: list.prev_depth().unwrap_or_else(|| ignored_depth(stores)),
+            prev_graf: self.enclosing_vertical_prev_graf(),
+            par_shape_len: stores.paragraph_shape_len().min(i32::MAX as usize) as i32,
+            ..EngineStateSnapshot::default()
+        };
+        if crate::vertical::is_outer_vertical(self) {
+            match stores.page_contribution_tail() {
+                Some(Node::Penalty(value)) => state.last_penalty = *value,
+                Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
+                Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
+                Some(_) => {}
+                None => {
+                    state.last_penalty = stores.page_last_penalty();
+                    state.last_kern = stores.page_last_kern();
+                    state.last_skip = stores.page_last_skip();
+                }
+            }
+        } else {
+            match list.nodes().last() {
+                Some(Node::Penalty(value)) => state.last_penalty = *value,
+                Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
+                Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
+                _ => {}
+            }
+        }
+        let effective_tail = if crate::vertical::is_outer_vertical(self) {
+            stores
+                .page_contribution_tail()
+                .or_else(|| stores.current_page_tail())
+        } else {
+            list.nodes().last()
+        };
+        state.last_node_type = effective_tail.map_or_else(
+            || {
+                if crate::vertical::is_outer_vertical(self) {
+                    stores.page_last_node_type()
+                } else {
+                    -1
+                }
+            },
+            Node::etex_type,
+        );
+        state
+    }
+
     /// Projects the live executor-owned mode nest for command conditionals.
     #[must_use]
     pub fn conditional_state(&self) -> tex_command::ConditionalState {

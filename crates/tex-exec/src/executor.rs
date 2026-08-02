@@ -6,13 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tex_expand::{
-    EngineStateSnapshot, InputResolver, ReadRecorder, ResourceLookup, ResourceResult,
-    get_x_token_with_context,
+    InputResolver, ReadRecorder, ResourceLookup, ResourceResult, get_x_token_with_context,
 };
 use tex_lex::{InputStack, InputStackSnapshot};
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
-use tex_state::node::Node;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
     FileContent, InputReadState, InputSummary, ParagraphBarrierReason, TokenListReplayKind,
@@ -22,10 +20,8 @@ use tex_state::{
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
 use crate::error_report::{back_error, report_input_error};
-use crate::mode::ignored_depth;
 use crate::output;
 use crate::timing::TelemetryTimer;
-use crate::vertical::is_outer_vertical;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 
 fn report_recoverable_expansion_diagnostics(
@@ -2577,56 +2573,5 @@ pub(crate) fn sync_engine_state(
     nest: &ModeNest,
     stores: &Universe,
 ) {
-    execution.engine = engine_state_snapshot(nest, stores);
-}
-
-fn engine_state_snapshot(nest: &ModeNest, stores: &Universe) -> EngineStateSnapshot {
-    let list = nest.current_list();
-    let mut state = EngineStateSnapshot {
-        mode: nest.current_mode().engine_mode(),
-        is_inner_mode: nest.current_mode().is_inner(),
-        space_factor: list.space_factor(),
-        prev_depth: list.prev_depth().unwrap_or_else(|| ignored_depth(stores)),
-        prev_graf: nest.enclosing_vertical_prev_graf(),
-        par_shape_len: stores.paragraph_shape_len().min(i32::MAX as usize) as i32,
-        ..EngineStateSnapshot::default()
-    };
-    if is_outer_vertical(nest) {
-        match stores.page_contribution_tail() {
-            Some(Node::Penalty(value)) => state.last_penalty = *value,
-            Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
-            Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
-            Some(_) => {}
-            None => {
-                state.last_penalty = stores.page_last_penalty();
-                state.last_kern = stores.page_last_kern();
-                state.last_skip = stores.page_last_skip();
-            }
-        }
-    } else {
-        match list.nodes().last() {
-            Some(Node::Penalty(value)) => state.last_penalty = *value,
-            Some(Node::Kern { amount, .. }) => state.last_kern = *amount,
-            Some(Node::Glue { spec, .. }) => state.last_skip = stores.glue(*spec),
-            _ => {}
-        }
-    }
-    let effective_tail = if is_outer_vertical(nest) {
-        stores
-            .page_contribution_tail()
-            .or_else(|| stores.current_page_tail())
-    } else {
-        list.nodes().last()
-    };
-    state.last_node_type = effective_tail.map_or_else(
-        || {
-            if is_outer_vertical(nest) {
-                stores.page_last_node_type()
-            } else {
-                -1
-            }
-        },
-        Node::etex_type,
-    );
-    state
+    execution.engine = nest.engine_state_snapshot(stores);
 }

@@ -1536,6 +1536,16 @@ impl CanonicalMainControl {
         self.modes.current_mode()
     }
 
+    /// Returns the enquiry projection derived from canonical main control's
+    /// live mode nest.
+    #[cfg(test)]
+    pub(crate) fn engine_state_snapshot_for_test(
+        &self,
+        stores: &Universe,
+    ) -> tex_expand::EngineStateSnapshot {
+        self.modes.engine_state_snapshot(stores)
+    }
+
     /// Returns the mode nest's current list, so a crate test can assert on the
     /// material main control has built without shipping a page first.
     #[cfg(test)]
