@@ -602,7 +602,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6.2.1.3: recoverable form reservation"]
     fn pdfxform_rejects_void_boxes_and_dvi_mode() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -627,6 +626,33 @@ mod tests {
             error.to_string(),
             "pdfTeX error (\\pdfxform): not allowed in DVI mode (\\pdfoutput <= 0)."
         );
+    }
+
+    #[test]
+    fn void_form_error_commits_reservation_but_checkpoint_rollback_reclaims_it() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let baseline = stores.snapshot();
+
+        let error = run_pdf_memory("\\pdfoutput=1\\pdfxform0\\end", &mut stores)
+            .expect_err("void form reports ext1");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (ext1): \\pdfxform cannot be used with a void box"
+        );
+        assert_eq!(stores.pdf_next_object_id(), 3);
+        assert_eq!(stores.pdf_last_form(), 0);
+
+        stores.rollback(&baseline);
+        assert_eq!(stores.pdf_next_object_id(), 1);
+        assert_eq!(stores.snapshot().state_hash(), baseline.state_hash());
+
+        run_pdf_memory("\\pdfoutput=1\\pdfxform0\\end", &mut stores)
+            .expect_err("replayed void form reserves the same identities");
+        run_pdf_memory("\\setbox0=\\hbox{}\\pdfxform0\\end", &mut stores)
+            .expect("recovery allocates after the retained reservation");
+        let form = stores.pdf_form(3).expect("recovered form uses object 3");
+        assert_eq!(form.resource(), 2);
     }
 
     #[test]

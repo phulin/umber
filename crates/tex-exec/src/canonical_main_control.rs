@@ -1253,6 +1253,15 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         error: ExecError,
     ) -> Result<CanonicalStepResult, ExecError> {
+        // pdftex.web §1549 reserves both the form object and its resource
+        // object before it fetches the box register. Its ext1 void-box error
+        // leaves those identities consumed even though the command reports
+        // failure. Preserve that canonical ledger mutation; resource
+        // suspensions and all other failed operations retain atomic rollback.
+        if matches!(error, ExecError::PdfXFormVoidBox) {
+            self.commit_step(snapshot);
+            return Err(error);
+        }
         if !snapshot.can_rollback(stores) {
             self.commit_step(snapshot);
             return Err(error);
