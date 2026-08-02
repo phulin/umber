@@ -4360,11 +4360,37 @@ mod tests {
         assert_eq!(state.hash_fragment(), initial_hash);
         assert_eq!(
             state
-                .reserve_destination(identity, false)
-                .expect("replay")
+                .reserve_destination(identity.clone(), false)
+                .expect("replay regular reservation")
                 .object(),
-            1
+            regular.object()
         );
+        assert_eq!(
+            state
+                .reserve_destination(identity.clone(), true)
+                .expect("replay structure reservation")
+                .object(),
+            structure.object()
+        );
+        assert!(
+            !state
+                .define_destination(identity.clone(), None)
+                .expect("replay regular definition")
+                .duplicate
+        );
+        assert!(
+            state
+                .define_destination(identity.clone(), None)
+                .expect("replay regular duplicate")
+                .duplicate
+        );
+        assert!(
+            !state
+                .define_destination(identity, Some(99))
+                .expect("replay structure definition")
+                .duplicate
+        );
+        assert_eq!(state.hash_fragment(), completed_hash);
         state.rollback(checkpoint);
         assert_ne!(completed_hash, initial_hash);
     }

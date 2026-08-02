@@ -707,6 +707,25 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&resource.to_string(), command.origin());
                 Ok(())
             }
+            // pdftex.web §470's `pdf_page_ref_code` conversion scans a one-based
+            // shipped-page number and prints its page-object identity. Pages
+            // that do not exist yet expand to zero without reserving
+            // speculative writer state; nonpositive operands are rejected by
+            // the conversion's `pdf_error` guard.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPageRef) => {
+                let page = self.scan_integer()?.value;
+                if page <= 0 {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (pageref): invalid page number",
+                    ));
+                }
+                let object = u32::try_from(page)
+                    .ok()
+                    .and_then(|page| self.state.pdf_page_object(page))
+                    .unwrap_or(0);
+                self.push_rendered_text(&object.to_string(), command.origin());
+                Ok(())
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original

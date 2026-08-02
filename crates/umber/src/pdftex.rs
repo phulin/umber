@@ -506,6 +506,14 @@ mod tests {
         )
     }
 
+    fn complete_memory_terminal(returned: &str, stores: &Universe) -> String {
+        let mut terminal =
+            String::from_utf8_lossy(stores.world().memory_terminal_output().unwrap_or_default())
+                .into_owned();
+        terminal.push_str(returned);
+        terminal
+    }
+
     /// The engine state these oracle comparisons run against.
     ///
     /// The pinned pdfTeX references are captured with
@@ -1020,7 +1028,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_destinations_claim_on_ship_and_use_positive_only_duplicate_suppression() {
         const WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (name{same}) has been already used, duplicate ignored\n";
         for (suppression, warns) in [(-1, true), (0, true), (1, false)] {
@@ -1033,13 +1040,14 @@ mod tests {
                 &mut stores,
             )
             .expect("destination duplicate is recoverable");
-            assert_eq!(
-                tex_state::print::without_line_breaks(&output)
-                    .matches(WARNING)
-                    .count(),
-                usize::from(warns),
-                "{output}"
-            );
+            let terminal =
+                tex_state::print::without_line_breaks(&complete_memory_terminal(&output, &stores));
+            let expected = if warns {
+                format!("(texput [0{WARNING}]")
+            } else {
+                "(texput [0]".to_owned()
+            };
+            assert_eq!(terminal, expected);
             assert_eq!(stores.pdf_destinations(false).len(), 1);
             assert!(stores.pdf_destinations(false)[0].defined());
             let bytes = stores
@@ -1060,13 +1068,12 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_destination_duplicates_keep_identity_order_grouping_and_output_routing() {
         const NAME_WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (name{7}) has been already used, duplicate ignored\n";
         const NUMBER_WARNING: &str = "\npdfTeX warning (ext4): destination with the same identifier (num7) has been already used, duplicate ignored\n";
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        run_pdf_memory(
+        let output = run_pdf_memory(
             concat!(
                 "\\pdfoutput=1",
                 "\\shipout\\hbox{\\pdfdest name{7} fit\\pdfdest num 7 fit}",
@@ -1079,11 +1086,9 @@ mod tests {
         )
         .expect("destination duplicates are recoverable");
 
-        let expected = format!("{NUMBER_WARNING}{NAME_WARNING}");
+        let expected = format!("(texput [0] [0]{NUMBER_WARNING}[0]{NAME_WARNING}[0]");
         assert_eq!(
-            tex_state::print::without_line_breaks(&String::from_utf8_lossy(
-                stores.world().memory_terminal_output().unwrap_or_default(),
-            )),
+            tex_state::print::without_line_breaks(&complete_memory_terminal(&output, &stores)),
             expected
         );
         assert_eq!(
@@ -1091,6 +1096,8 @@ mod tests {
                 stores.world().memory_log_output().unwrap_or_default(),
             )),
             expected
+                .strip_prefix("(texput")
+                .expect("terminal-only startup framing")
         );
 
         assert_eq!(stores.pdf_destinations(false).len(), 2);
@@ -1124,20 +1131,45 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdfpageref_expands_to_shipped_page_object_and_zero_for_missing_pages() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
-        let output = run_pdf_memory(
-            "\\pdfoutput=1\\shipout\\hbox{}\\message{page=\\pdfpageref1,missing=\\pdfpageref2}\\end",
-            &mut stores,
-        )
-        .expect("pdfpageref run");
+        let source = "\\pdfoutput=1\\shipout\\hbox{}\\message{page=\\pdfpageref1,missing=\\pdfpageref2}\\end";
+        let output = run_pdf_memory(source, &mut stores).expect("pdfpageref run");
         let page_object = stores.pdf_pages()[0].page_object();
         assert!(
             output.contains(&format!("page={page_object},missing=0")),
             "{output}"
         );
+
+        let mut missing_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut missing_stores);
+        let missing = run_pdf_memory(
+            "\\pdfoutput=1\\message{rolledback=\\pdfpageref1}\\end",
+            &mut missing_stores,
+        )
+        .expect("absent page enquiry");
+        assert!(missing.contains("rolledback=0"), "{missing}");
+
+        let mut replay_stores = Universe::default();
+        prepare_pdftex_run_stores(&mut replay_stores);
+        let replay =
+            run_pdf_memory(source, &mut replay_stores).expect("replay shipped page enquiry");
+        assert_eq!(replay_stores.pdf_pages()[0].page_object(), page_object);
+        assert_eq!(replay, output);
+
+        let mut invalid = Universe::default();
+        prepare_pdftex_run_stores(&mut invalid);
+        let error = run_pdf_memory(
+            "\\pdfoutput=1\\message{invalid=\\pdfpageref0}\\end",
+            &mut invalid,
+        )
+        .expect_err("nonpositive page references are fatal");
+        assert_eq!(
+            error.to_string(),
+            "pdfTeX error (pageref): invalid page number"
+        );
+        assert!(invalid.pdf_pages().is_empty());
     }
 
     #[test]

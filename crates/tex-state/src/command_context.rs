@@ -495,6 +495,16 @@ impl CommandContext<'_> {
         Some(value)
     }
 
+    /// Returns the indirect object of a one-based page that has already
+    /// shipped. Future and absent pages deliberately have no speculative
+    /// identity at the command boundary.
+    #[must_use]
+    pub fn pdf_page_object(&self, page: u32) -> Option<u32> {
+        page.checked_sub(1)
+            .and_then(|index| self.universe.pdf_pages().get(index as usize))
+            .map(|record| record.page_object())
+    }
+
     /// Reads e-TeX's live group enquiries without exposing group ownership.
     #[must_use]
     pub fn current_group_values(&self) -> (i32, i32) {
