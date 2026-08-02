@@ -1999,11 +1999,10 @@ fn edef_expandafter_expands_a_target_preserved_by_prior_unexpanded() {
 }
 
 #[test]
-#[ignore = "xfail umber2-alfh.4.64: canonical nested input expansion loses edef continuation"]
 fn edef_expansion_uses_active_input_resolver() {
     let stores = run_canonical_tex82_with_inputs(
-        r"\endlinechar=-1 \edef\e{\input{inc}}\end",
-        &[("inc", b"OK")],
+        r"\endlinechar=-1 \edef\e{A\input{outer}E}\count0=9\end",
+        &[("outer", b"B\\input{inner}D"), ("inner", b"C")],
     );
     let e = stores.symbol("e").expect("e was interned");
     let meaning = stores.macro_meaning(e).expect("e is a macro");
@@ -2012,23 +2011,44 @@ fn edef_expansion_uses_active_input_resolver() {
         stores.tokens(meaning.replacement_text()),
         &[
             Token::Char {
-                ch: 'O',
+                ch: 'A',
                 cat: Catcode::Letter
             },
             Token::Char {
-                ch: 'K',
+                ch: 'B',
+                cat: Catcode::Letter
+            },
+            Token::Char {
+                ch: 'C',
+                cat: Catcode::Letter
+            },
+            Token::Char {
+                ch: 'D',
+                cat: Catcode::Letter
+            },
+            Token::Char {
+                ch: 'E',
                 cat: Catcode::Letter
             },
         ]
     );
+    assert_eq!(
+        stores.count(0),
+        9,
+        "the command after the edef remains unread"
+    );
 }
 
 #[test]
-#[ignore = "xfail umber2-alfh.4.64: canonical nested input expansion loses assignment scanner continuation"]
 fn input_expands_while_scanning_assignment_values() {
     let stores = run_canonical_tex82_with_inputs(
-        "\\endlinechar=-1 \\dimen0=\\input{dim}\\skip0=\\input{glue}\\end",
-        &[("dim", b"12pt"), ("glue", b"3pt plus 2pt")],
+        "\\endlinechar=-1 \\dimen0=\\input{dim}\\skip0=\\input{glue}\\count0=41\\end",
+        &[
+            ("dim", b"\\input{number}pt"),
+            ("number", b"12"),
+            ("glue", b"3pt plus \\input{stretch}pt"),
+            ("stretch", b"2"),
+        ],
     );
 
     assert_eq!(
@@ -2040,6 +2060,11 @@ fn input_expands_while_scanning_assignment_values() {
     assert_eq!(
         glue.stretch,
         tex_state::scaled::Scaled::from_raw(2 * 65_536)
+    );
+    assert_eq!(
+        stores.count(0),
+        41,
+        "the command after both scans remains unread"
     );
 }
 
@@ -6048,8 +6073,16 @@ fn run_canonical_tex82_with_inputs(source: &str, inputs: &[(&str, &[u8])]) -> Un
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     for (name, contents) in inputs {
+        // TeX82 §537 applies the default `.tex` extension before asking the
+        // host for a source. Register the exact request key while keeping the
+        // fixture table concise.
+        let requested_name = if name.ends_with(".tex") {
+            (*name).to_owned()
+        } else {
+            format!("{name}.tex")
+        };
         control.capabilities_mut().register_input(
-            *name,
+            requested_name,
             SourceRegistration::new(RegisteredSourceKind::World, contents.to_vec()),
         );
     }

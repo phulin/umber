@@ -1221,6 +1221,7 @@ impl CommandState {
             cursor: SourceCursor::new(registered),
             name_class,
             retirement,
+            scanner_at_open: self.scanner.clone(),
             every_eof,
             open_depths: None,
         }));

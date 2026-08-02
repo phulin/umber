@@ -1553,7 +1553,7 @@ impl CommandProcessor<'_> {
                             match restart {
                                 RetirementRestart::Stop => return Ok(None),
                                 RetirementRestart::Continue => {
-                                    if self.recover_runaway_eof()? {
+                                    if self.recover_runaway_eof_since(&source.scanner_at_open)? {
                                         continue;
                                     }
                                 }
@@ -1951,6 +1951,20 @@ impl CommandProcessor<'_> {
         self.observe_outer_validity_diagnostic(&recovery.status, true);
         self.install_outer_recovery(recovery, true)?;
         Ok(true)
+    }
+
+    /// Applies §343 only to a scanner episode entered by the source that just
+    /// ended. A source opened while an outer scanner is already active
+    /// suspends that exact typed episode; exhausting the nested source resumes
+    /// it instead of diagnosing and clearing it as a runaway.
+    fn recover_runaway_eof_since(
+        &mut self,
+        scanner_at_open: &crate::processor::status::ScannerState,
+    ) -> Result<bool, CommandError> {
+        if &self.command.scanner == scanner_at_open {
+            return Ok(false);
+        }
+        self.recover_runaway_eof()
     }
 
     /// TeX.web's `check_outer_validity` recovery table. Primitive insertions
