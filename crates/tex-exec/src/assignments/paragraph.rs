@@ -563,13 +563,13 @@ fn break_current_paragraph(
     let mut level = crate::assignments::commit_current_list(nest, stores, fuel)?;
     let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
-    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist)?;
+    let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
+    normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist, tracing)?;
     let mut line_params = line_break_params(stores, &params);
     if line_params.pdf_adjust_spacing > 1 {
         line_params.expansion_steps =
             tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
     }
-    let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     let (mut decisions, trace) = break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
     if tracing {
         report_line_break_trace(stores, &decisions.nodes, &trace);
@@ -723,6 +723,7 @@ fn normalize_paragraph_infinite_shrink(
     stores: &mut Universe,
     params: &mut ParagraphParams,
     nodes: &mut [Node],
+    tracing: bool,
 ) -> Result<(), ExecError> {
     let mut reported = false;
     let mut normalize = |spec: &mut tex_state::ids::GlueId| -> Result<(), ExecError> {
@@ -731,6 +732,13 @@ fn normalize_paragraph_infinite_shrink(
             return Ok(());
         }
         if !reported {
+            if tracing {
+                // TeX82 §825 temporarily closes the active paragraph
+                // diagnostic with `end_diagnostic(true)` before `print_err`.
+                // Umber materializes the detached trace later, but must keep
+                // this print-channel boundary at the recovery point.
+                stores.begin_diagnostic().end(true);
+            }
             crate::diagnostics::report_paragraph_infinite_shrinkage(stores)?;
             reported = true;
         }

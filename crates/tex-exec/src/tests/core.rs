@@ -4836,7 +4836,7 @@ fn paragraph_infinite_shrink_reports_once_per_paragraph_and_normalizes_glue() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
-        "\\hsize=100pt \\parindent=0pt \\noindent\\vrule width1pt\
+        "\\tracingparagraphs=1\\tracingonline=1 \\hsize=100pt \\parindent=0pt \\noindent\\vrule width1pt\
          \\hskip1pt minus 1fil\\vrule width1pt\
          \\hskip2pt minus 2fill\\vrule width1pt\\par",
     ));
@@ -4845,11 +4845,16 @@ fn paragraph_infinite_shrink_reports_once_per_paragraph_and_normalizes_glue() {
         .run(&mut input, &mut stores)
         .expect("paragraph infinite-shrink recovery executes");
 
+    let terminal = terminal_effect_text(&stores);
     assert_eq!(
-        terminal_effect_text(&stores)
+        terminal
             .matches("Infinite glue shrinkage found in a paragraph")
             .count(),
         1
+    );
+    assert!(
+        terminal.contains("\n! Infinite glue shrinkage found in a paragraph."),
+        "{terminal:?}"
     );
     let line_lists: Vec<_> = stores
         .current_page_nodes()
