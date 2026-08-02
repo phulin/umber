@@ -12061,6 +12061,7 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
         .expect("ten-line parshape format dumps");
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    universe.enable_geometry_observation();
     tex_expand::register_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
@@ -12088,6 +12089,18 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
         universe.count(1),
         10,
         "the output-group save entry must restore the effective job value before the next paragraph clears it"
+    );
+    let hpack_widths: Vec<_> = universe
+        .geometry_observations_since(0)
+        .iter()
+        .filter_map(|event| match event {
+            tex_state::GeometryObservation::Hpack { width_sp, .. } => Some(*width_sp),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        hpack_widths.is_empty(),
+        "§1026's state-only paragraph reset must not itself introduce packing geometry"
     );
 }
 
