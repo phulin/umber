@@ -136,7 +136,7 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     );
     assert_eq!(
         math_layout_digest(&web_layouts),
-        "87115432e19e60589aed30b5f9fee9b5126d99c1e75cd8c76cb0779c55dd02ef"
+        "b95211af3329fc6cfba5e959b6ec9d628f760c37dcd5b893bc0ad78bfe46cefa"
     );
 }
 
@@ -1617,6 +1617,13 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
         panic!("expected accent vbox")
     };
     let accented_nodes = list_nodes(&hlist, accented.list);
+    assert!(matches!(
+        accented_nodes.get(1),
+        Some(MathNode::Kern {
+            kind: KernKind::Font,
+            ..
+        })
+    ));
     let Some(MathNode::HList(accent)) = accented_nodes.first().copied() else {
         panic!("expected accent on top");
     };

@@ -247,7 +247,9 @@ pub(super) fn make_math_accent(
         MathNode::HList(accent_box),
         MathNode::Kern {
             amount: neg(delta),
-            kind: KernKind::Accent,
+            // TeX82 §738 uses `new_kern` here. The `acc_kern` subtype is
+            // reserved for §1124's text-accent recovery path.
+            kind: KernKind::Font,
         },
         boxed_node(accentee),
     ]);
@@ -257,7 +259,7 @@ pub(super) fn make_math_accent(
         packed.list = ctx.layout.hlist([
             MathNode::Kern {
                 amount: sub(accentee_height, packed.height),
-                kind: KernKind::Accent,
+                kind: KernKind::Font,
             },
             MathNode::Sequence(packed.list),
         ]);
