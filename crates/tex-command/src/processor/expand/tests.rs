@@ -7,6 +7,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{EffectRecord, PrintSink, Universe, World};
 
 use super::*;
+use crate::conditionals::{ConditionalKind, IfLimit};
 use crate::input::{ReplayTrace, RetirementBehavior};
 use crate::observation::{
     CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument,
@@ -1406,6 +1407,55 @@ fn tracingnesting_warns_when_a_file_ends_with_an_open_group() {
     assert!(
         reported.contains("Warning: end of file when simple group (level 1) is incomplete\n"),
         "{reported:?}"
+    );
+}
+
+#[test]
+fn tracingnesting_file_warning_renders_saved_conditional_branch_and_line() {
+    // e-TeX 2.6 [23.328]'s `file_warning` prints `\else` exactly for a
+    // live frame whose saved `if_limit` is `fi_code`, followed by the saved
+    // `if_line` through [49.3715]'s `print_if_line`.
+    let mut command = CommandState::default();
+    let parent = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\input{inc}z".as_slice()),
+        ))
+        .expect("parent registers");
+    command
+        .open_registered_source(parent)
+        .expect("parent opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 1);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.register_input(
+        "inc.tex",
+        SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(b"a".as_slice()),
+        ),
+    );
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("input expands")
+            .expect("child token is delivered");
+    }
+    let condition = command.conditions.push(ConditionalKind::IfFalse, 4);
+    assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        chars(&mut processor);
+    }
+    assert!(
+        effect_text(&universe).contains(
+            "Warning: end of file when \\iffalse\\else entered on line 4 is incomplete\n"
+        ),
+        "{:?}",
+        effect_text(&universe)
     );
 }
 

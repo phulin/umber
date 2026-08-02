@@ -6,7 +6,7 @@
 
 use tex_state::env::banks::IntParam;
 
-use crate::conditionals::ConditionFrame;
+use crate::conditionals::{ConditionFrame, IfLimit};
 use crate::input::SourceOpenDepths;
 use crate::processor::CommandProcessor;
 
@@ -123,10 +123,22 @@ impl CommandProcessor<'_> {
             .collect();
         let condition_frames =
             self.command.conditions.frames[condition_start..current_conditional_depth].to_vec();
-        let condition_lines: Vec<String> = condition_frames
+        let condition_lines: Vec<(String, u32)> = condition_frames
             .iter()
             .rev()
-            .map(|frame| self.conditional_kind_text(frame))
+            .map(|frame| {
+                let mut text = self.conditional_kind_text(frame);
+                // e-TeX 2.6 [23.328] renders the saved branch as `\else`
+                // precisely when `if_limit=fi_code`; the other limits add no
+                // delimiter to `print_cmd_chr(if_test,cur_if)`.
+                if frame.limit == IfLimit::Fi {
+                    text.push_str(&crate::processor::expand::print_esc_text(
+                        &self.state,
+                        "else",
+                    ));
+                }
+                (text, frame.source_line)
+            })
             .collect();
 
         for (level, kind_text, entered_line) in &group_lines {
@@ -142,10 +154,14 @@ impl CommandProcessor<'_> {
             }
             printer.print(" is incomplete");
         }
-        for name in &condition_lines {
+        for (name, entered_line) in &condition_lines {
             let mut printer = self.state.printer();
             printer.print_nl("Warning: end of file when ");
             printer.print(name);
+            if *entered_line != 0 {
+                printer.print(" entered on line ");
+                printer.print_int(i32::try_from(*entered_line).unwrap_or(i32::MAX));
+            }
             printer.print(" is incomplete");
         }
         if !group_lines.is_empty() || !condition_lines.is_empty() {
