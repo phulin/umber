@@ -6244,6 +6244,77 @@ fn canonical_etex_direction_in_vbox_starts_a_paragraph() {
 }
 
 #[test]
+fn canonical_texxet_hpack_reports_and_recovers_lr_anomalies() {
+    // e-TeX [33.649]: hpack converts unmatched closing LR nodes to explicit
+    // zero kerns, appends missing closers, and runs the ordinary hbox
+    // short-display diagnostic tail for both paragraph and direct boxes.
+    let stores = run_canonical_etex(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=20
+          \setbox0=\vbox{\hsize=10pt\parindent=0pt\TeXXeTstate=1
+            \beginL\beginR\kern1pt\endL\endR\endL\par
+            \endL\kern2pt\endR\par}
+          \setbox1=\hbox{\TeXXeTstate=1\beginL}\end",
+    );
+    let log = terminal_effect_text(&stores);
+    assert!(
+        log.contains("\\endL or \\endR problem (0 missing, 1 extra) in paragraph at lines"),
+        "{log}"
+    );
+    assert!(
+        log.contains("\\endL or \\endR problem (0 missing, 2 extra) in paragraph at lines"),
+        "{log}"
+    );
+    assert!(
+        log.contains("\\endL or \\endR problem (1 missing, 0 extra) detected at line"),
+        "{log}"
+    );
+
+    let box0 = stores.box_reg(0).expect("paragraph vbox");
+    let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
+        panic!("register 0 must contain the paragraph vbox");
+    };
+    let lines = stores
+        .nodes(vbox.children)
+        .testing_decoded()
+        .iter()
+        .filter_map(|node| match node {
+            Node::HList(line) => Some(*line),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines.len(), 2);
+    for (line, expected) in lines.iter().zip([1, 2]) {
+        let recovered = stores
+            .nodes(line.children)
+            .testing_decoded()
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node,
+                    Node::Kern {
+                        amount,
+                        kind: tex_state::node::KernKind::Explicit,
+                    } if amount.raw() == 0
+                )
+            })
+            .count();
+        assert_eq!(recovered, expected);
+    }
+
+    let box1 = stores.box_reg(1).expect("direct hbox");
+    let [Node::HList(hbox)] = stores.nodes(box1).testing_decoded() else {
+        panic!("register 1 must contain the direct hbox");
+    };
+    assert!(matches!(
+        stores.nodes(hbox.children).testing_decoded(),
+        [
+            Node::Direction(tex_state::node::Direction::BeginL),
+            Node::Direction(tex_state::node::Direction::EndL)
+        ]
+    ));
+}
+
+#[test]
 fn canonical_showtokens_scans_unexpanded_balanced_general_text() {
     // e-TeX 2.6 etex.ch [17.3623--3671] uses scan_general_text, then the
     // TeX82 §1297 token_show/common-ending diagnostic path.

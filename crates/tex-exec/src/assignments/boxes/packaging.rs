@@ -8,7 +8,9 @@ use tex_state::token::{Catcode, TracedTokenWord};
 use tex_state::{ExpansionState, GeometryObservation, GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
-use crate::packing_params::{hpack, hpack_params, vpack, vpack_params, vtop};
+use crate::packing_params::{
+    hpack, hpack_params, recover_texxet_directions, vpack, vpack_params, vtop,
+};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
 use super::super::{
@@ -395,6 +397,10 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
+    let lr_problems = recover_texxet_directions(stores, nodes);
+    if let Some(diagnostic_nodes) = diagnostic_nodes.as_deref_mut() {
+        let _ = recover_texxet_directions(stores, diagnostic_nodes);
+    }
     let plan = plan_hpack_nodes(stores, nodes, spec, params);
     if !nodes.is_empty()
         && params.overfull_rule.raw() > 0
@@ -434,6 +440,14 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         &packed.diagnostics,
         &tex_state::node::Node::HList(diagnostic_box),
     );
+    if let Some((missing, extra)) = lr_problems {
+        crate::pack_report::report_lr_problems(
+            stores,
+            missing,
+            extra,
+            &tex_state::node::Node::HList(diagnostic_box),
+        );
+    }
     packed.node
 }
 

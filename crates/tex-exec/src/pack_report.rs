@@ -78,6 +78,34 @@ pub(crate) fn report_pack_diagnostics(
     }
 }
 
+/// e-TeX [33.649]'s LR anomaly report followed by TeX82 §663's common
+/// horizontal-box diagnostic tail.
+pub(crate) fn report_lr_problems(
+    stores: &mut Universe,
+    missing: usize,
+    extra: usize,
+    packed: &Node,
+) {
+    let Node::HList(boxed) = packed else {
+        unreachable!("LR recovery belongs to hpack")
+    };
+    let mut headline = format!("\n\\endL or \\endR problem ({missing} missing, {extra} extra");
+    headline.push_str(&origin_text(stores));
+    headline.push('\n');
+    headline.push_str(&short_display(stores, boxed.children));
+    headline.push('\n');
+    stores.printer().print_rendered(&headline);
+
+    let dump = dump_node_slice(
+        stores,
+        std::slice::from_ref(packed),
+        DumpConfig::read(stores),
+    );
+    let mut scope = stores.begin_diagnostic();
+    scope.print_ln().print_rendered(&dump);
+    scope.end(true);
+}
+
 fn report_one(
     stores: &mut Universe,
     direction: PackedDirection,

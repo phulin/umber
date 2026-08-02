@@ -2,6 +2,8 @@
 
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::ids::NodeListId;
+use tex_state::node::{Direction, KernKind, Node};
+use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
@@ -31,6 +33,13 @@ pub(crate) fn hpack(
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
+    let mut recovered = stores.nodes(list).to_vec();
+    let lr_problems = recover_texxet_directions(stores, &mut recovered);
+    let list = if lr_problems.is_some() {
+        stores.freeze_node_list(&recovered)
+    } else {
+        list
+    };
     let packed = tex_typeset::hpack(&*stores, list, spec, params);
     stores.set_last_badness(packed.badness);
     stores.record_geometry_observation(GeometryObservation::Hpack {
@@ -44,7 +53,46 @@ pub(crate) fn hpack(
         &packed.diagnostics,
         &tex_state::node::Node::HList(packed.node),
     );
+    if let Some((missing, extra)) = lr_problems {
+        crate::pack_report::report_lr_problems(stores, missing, extra, &Node::HList(packed.node));
+    }
     packed
+}
+
+pub(crate) fn recover_texxet_directions(
+    stores: &Universe,
+    nodes: &mut Vec<Node>,
+) -> Option<(usize, usize)> {
+    if stores.int_param(IntParam::TEX_XET_STATE) <= 0 {
+        return None;
+    }
+    let mut expected = Vec::new();
+    let mut extra = 0usize;
+    for node in nodes.iter_mut() {
+        let Node::Direction(direction) = node else {
+            continue;
+        };
+        let closes = match direction {
+            Direction::BeginM => Some(Direction::EndM),
+            Direction::BeginL => Some(Direction::EndL),
+            Direction::BeginR => Some(Direction::EndR),
+            Direction::EndM | Direction::EndL | Direction::EndR => None,
+        };
+        if let Some(closes) = closes {
+            expected.push(closes);
+        } else if expected.last() == Some(direction) {
+            let _ = expected.pop();
+        } else {
+            *node = Node::Kern {
+                amount: Scaled::from_raw(0),
+                kind: KernKind::Explicit,
+            };
+            extra += 1;
+        }
+    }
+    let missing = expected.len();
+    nodes.extend(expected.into_iter().rev().map(Node::Direction));
+    (missing != 0 || extra != 0).then_some((missing, extra))
 }
 
 pub(crate) fn vpack(
