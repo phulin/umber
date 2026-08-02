@@ -890,7 +890,7 @@ fn mu_glue_kern_signed_rounding_and_rebox_boundaries() {
         ),
     ] {
         let (layout, boxed) =
-            fractions::test_rebox(&universe, &params, sc(source), sc(target), empty);
+            fractions::test_rebox(&universe, &params, sc(source), sc(target), empty, false);
         assert_eq!(boxed.width, sc(target));
         assert_eq!(boxed.glue_sign, expected_sign);
         assert_eq!(boxed.glue_set, expected_ratio);
@@ -907,6 +907,48 @@ fn mu_glue_kern_signed_rounding_and_rebox_boundaries() {
             );
         }
     }
+}
+
+#[test]
+fn rebox_observes_each_tex82_packaging_call() {
+    // TeX82 §715: a nonempty horizontal box has one exact hpack, while a
+    // vertical box first has one natural hpack and then the exact hpack.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let (layout, _) = fractions::test_rebox(&universe, &params, sc(11), sc(18), false, false);
+
+    assert_eq!(
+        layout.pack_observations(),
+        &[
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: sc(11),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+            },
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: sc(18),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+            },
+        ]
+    );
+
+    let (layout, _) = fractions::test_rebox(&universe, &params, sc(11), sc(18), false, true);
+    assert_eq!(
+        layout
+            .pack_observations()
+            .iter()
+            .map(|packed| (packed.axis, packed.width))
+            .collect::<Vec<_>>(),
+        vec![
+            (BoxAxis::Horizontal, sc(11)),
+            (BoxAxis::Horizontal, sc(11)),
+            (BoxAxis::Horizontal, sc(18)),
+        ],
+        "§715 naturally hpacks the vertical box before the exact-width hpack"
+    );
 }
 
 #[test]

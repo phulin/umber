@@ -58,6 +58,59 @@ fn nested_sub_mlist_publishes_structural_hpack_geometry() {
 }
 
 #[test]
+fn unequal_fraction_fields_publish_rebox_completion_geometry() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.enable_geometry_observation();
+    let payload = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(0),
+        kind: KernKind::Explicit,
+    }]);
+    let field = |width| {
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width,
+            height: sp(3),
+            depth: sp(1),
+            shift: Scaled::from_raw(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: payload,
+        }))
+    };
+    let numerator = stores.freeze_node_list(&[field(sp(1))]);
+    let denominator = stores.freeze_node_list(&[field(sp(2))]);
+    let formula = stores.freeze_node_list(&[Node::FractionNoad(tex_state::math::MathFraction {
+        numerator,
+        denominator,
+        thickness: tex_state::math::FractionThickness::Default,
+        left_delimiter: None,
+        right_delimiter: None,
+    })]);
+
+    let _ = finish_math_list_node(
+        &mut stores,
+        tex_state::math::MathListNode {
+            display: false,
+            content: formula,
+        },
+        false,
+    );
+
+    assert!(
+        stores.geometry_observations_since(0).iter().any(|event| matches!(
+            event,
+            tex_state::GeometryObservation::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+            } if (*width_sp, *height_sp, *depth_sp) == (i64::from(sp(2).raw()), i64::from(sp(3).raw()), i64::from(sp(1).raw()))
+        )),
+        "TeX82 §715's exact-width fraction rebox must cross the execution geometry seam"
+    );
+}
+
+#[test]
 fn directed_display_packages_dlist_without_rewriting_its_semantic_children() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let formula_children = stores.freeze_node_list(&[Node::Kern {

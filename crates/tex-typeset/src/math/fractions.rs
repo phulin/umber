@@ -232,7 +232,14 @@ fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, widt
         // glue-set metadata semantic: shipout may resolve their movement, but
         // `\showlists` must still see the canonical nodes.
         let payload = if matches!(boxed.axis, super::BoxAxis::Vertical) {
-            ctx.layout.hlist([MathNode::VList(boxed.clone())])
+            // §715 first naturally hpacks a vertical source box before the
+            // common exact-width package below. Both completed calls cross
+            // §651's packaging return seam.
+            let list = ctx.layout.hlist([MathNode::VList(boxed.clone())]);
+            let natural = ctx.layout.hpack(list);
+            boxed.height = natural.height;
+            boxed.depth = natural.depth;
+            natural.list
         } else {
             boxed.list
         };
@@ -263,6 +270,12 @@ fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, widt
         boxed.glue_order = Order::Fil;
     }
     boxed.width = width;
+    if slack.raw() != 0 && !boxed.list.is_empty() {
+        // The node and glue setting above are §715's `hpack(..., exactly)`;
+        // record its finalized dimensions at the same seam as every other
+        // Appendix G package.
+        ctx.layout.observe_completed_pack(boxed);
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +285,7 @@ pub(crate) fn test_rebox(
     source_width: Scaled,
     target_width: Scaled,
     empty: bool,
+    vertical: bool,
 ) -> (super::MathLayout, MathBox) {
     let mut ctx = Context {
         state,
@@ -293,6 +307,9 @@ pub(crate) fn test_rebox(
         }])
     };
     let mut boxed = ctx.layout.hpack(list);
+    if vertical {
+        boxed.axis = super::BoxAxis::Vertical;
+    }
     assert_eq!(boxed.width, source_width);
     rebox(&mut ctx, &mut boxed, target_width);
     let layout = ctx.layout.finish(boxed.list);

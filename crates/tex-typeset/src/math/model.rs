@@ -286,6 +286,16 @@ impl MathLayoutBuilder {
         });
     }
 
+    /// Records one completed TeX packaging call at its common return seam.
+    pub(crate) fn observe_completed_pack(&mut self, boxed: &MathBox) {
+        self.pack_observations.push(MathPackObservation {
+            axis: boxed.axis,
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+        });
+    }
+
     pub(crate) fn take_pack_observations_since(
         &mut self,
         start: usize,
@@ -352,12 +362,7 @@ impl MathLayoutBuilder {
         // reaches it for every structural clean/sub-mlist box, not only for
         // source boxes that arrived already packaged. Retain the finalized
         // dimensions here so execution can publish every such transition.
-        self.pack_observations.push(MathPackObservation {
-            axis: BoxAxis::Horizontal,
-            width: boxed.width,
-            height: boxed.height,
-            depth: boxed.depth,
-        });
+        self.observe_completed_pack(&boxed);
         boxed
     }
 
@@ -378,12 +383,7 @@ impl MathLayoutBuilder {
         };
         // TeX82 §668's vertical package is complete and observable here,
         // independently of how Appendix G later consumes its box.
-        self.pack_observations.push(MathPackObservation {
-            axis: BoxAxis::Vertical,
-            width: boxed.width,
-            height: boxed.height,
-            depth: boxed.depth,
-        });
+        self.observe_completed_pack(&boxed);
         boxed
     }
 
