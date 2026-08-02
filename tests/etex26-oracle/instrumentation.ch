@@ -668,6 +668,13 @@ if old_state<>align_state then
 write_ln(umber_trace_file,'}}}');
 end;
 
+procedure umber_set_align_state(@!new_state:integer);
+var old_state:integer;
+begin
+old_state:=align_state; align_state:=new_state;
+umber_trace_alignment(6,old_state,0);
+end;
+
 procedure umber_trace_alignment_delimiter(@!command_code,
   @!character_code:integer);
 begin
@@ -1060,7 +1067,7 @@ else if token_type=u_template then
 @y
 else if token_type=u_template then
   if align_state>500000 then
-    begin align_state:=0; umber_trace_alignment(6,1000000,0); end
+    umber_set_align_state(0)
   else fatal_error("(interwoven alignment preambles are not allowed)");
 @z
 

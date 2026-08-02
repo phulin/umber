@@ -62,6 +62,12 @@ e-TeX's canonical seams, including changed assignment, pseudo-file,
 protected-alignment-lookahead, and conditional-unwind paths. Canonical and
 generated upstream files are never edited in place.
 
+Alignment state-change observations capture the live predecessor before each
+assignment. In particular, TeX82 §323 brace accounting may move a u-template
+from `1000000` to `1000001` before §324 retires it and resets the state to
+zero; the observer must report that actual predecessor rather than a nominal
+template sentinel.
+
 Every run rewrites `target/etex26-oracle/build-record.txt` with engine,
 character, and INITEX profile identities; archive and manifest hashes; ordered
 WEB and change hashes; generated final-change hashes; translator, host
