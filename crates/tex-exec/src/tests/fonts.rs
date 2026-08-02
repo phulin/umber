@@ -1180,13 +1180,14 @@ fn nullfont_the_font_and_fontname_render_from_font_state() {
 #[test]
 fn math_family_font_selectors_are_grouping_aware() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\a=cmr10 \\font\\b=cmtt10 \\textfont2=\\a {\\textfont2=\\b \\scriptfont2=\\b}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("math family font assignments execute");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_font(&mut control, &mut stores, "cmtt10.tfm", "cmtt10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\a=cmr10 \font\b=cmtt10 \textfont2=\a {\textfont2=\b \scriptfont2=\b}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let a = font_meaning(&stores, "a");
     assert_eq!(
@@ -1207,13 +1208,13 @@ fn canonical_font_defaults_and_family_selector_recovery() {
     let mut stores = stores_with_fonts();
     stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_HYPHEN_CHAR, 99);
     stores.set_int_param_global(tex_state::env::banks::IntParam::DEFAULT_SKEW_CHAR, 98);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\fixture=cmmi10 \\textfont16=\\relax \\textfont1==",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("bounded family and missing font recover like TeX");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmmi10.tfm", "cmmi10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\fixture=cmmi10 \textfont16=\relax \textfont1==\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let fixture = font_meaning(&stores, "fixture");
     assert_eq!(stores.font_parameter_count(fixture), 7);
