@@ -639,9 +639,9 @@ fn canonical_font_control(stores: &mut Universe, profile: CommandProfile) -> Can
         CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(stores),
         CommandProfile::ETEX26 => {
             let control = CanonicalMainControl::prepared_initex(profile);
-            tex_expand::install_expandable_primitives(stores);
+            tex_command::install_tex82_expandable_primitives(stores);
             crate::install_unexpandable_primitives(stores);
-            tex_expand::install_etex_expandable_primitives(stores);
+            tex_command::install_etex_expandable_primitives(stores);
             crate::install_etex_unexpandable_primitives(stores);
             control
         }
