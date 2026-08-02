@@ -4243,6 +4243,7 @@ fn pdfsetrandomseed_is_an_ungrouped_signed_job_state_replacement() {
 #[test]
 fn pdfsetrandomseed_uses_the_ordinary_integer_scanner_and_preserves_lookahead() {
     let mut stores = Universe::default();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let mut control = pdftex_random_control(&mut stores);
     register_source(
         &mut control,

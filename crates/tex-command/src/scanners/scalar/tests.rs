@@ -5575,6 +5575,25 @@ fn integer_all_radices_invalid_digits_missing_number_and_overflow_boundaries() {
         );
     }
 
+    for source in ["2147483648", "'20000000000", "\"80000000"] {
+        let mut universe = crate::test_harness::universe();
+        assert_eq!(
+            scan_with(
+                &mut universe,
+                source.chars().map(char_token).collect(),
+                |processor| processor.scan_integer().expect("overflow recovers").value
+            ),
+            i32::MAX,
+            "source {source}"
+        );
+        let text = diagnostic_text(&universe);
+        assert_eq!(text.matches("! Number too big.").count(), 1, "{text}");
+        assert!(
+            text.contains("so I'm using that number instead of yours."),
+            "{text}"
+        );
+    }
+
     let mut universe = crate::test_harness::universe();
     let (value, following) = scan_with(
         &mut universe,

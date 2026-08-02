@@ -1205,6 +1205,7 @@ impl CommandProcessor<'_> {
     ) -> Result<(i32, bool), CommandError> {
         let mut value = i32::from(first.unwrap_or(0));
         let mut vacuous = first.is_none();
+        let mut overflowed = false;
         loop {
             let Some(command) = self.get_x_token()? else {
                 break;
@@ -1212,9 +1213,16 @@ impl CommandProcessor<'_> {
             match Self::radix_digit(&command) {
                 Some(digit) if digit < radix => {
                     vacuous = false;
-                    value = value
-                        .saturating_mul(i32::from(radix))
-                        .saturating_add(i32::from(digit))
+                    let next = value
+                        .checked_mul(i32::from(radix))
+                        .and_then(|value| value.checked_add(i32::from(digit)));
+                    match next {
+                        Some(next) => value = next,
+                        None => {
+                            value = i32::MAX;
+                            overflowed = true;
+                        }
+                    }
                 }
                 _ => {
                     let terminator = command.copy_for_backup();
@@ -1232,6 +1240,9 @@ impl CommandProcessor<'_> {
                     break;
                 }
             }
+        }
+        if overflowed {
+            self.number_too_big_error()?;
         }
         Ok((value, vacuous))
     }
@@ -1728,6 +1739,20 @@ impl CommandProcessor<'_> {
                 "A number should have been here; I inserted `0'.",
                 "(If you can't figure out why I needed to see a number,",
                 "look up `weird error' in the index to The TeXbook.)",
+            ])
+            .context(context);
+        report.error().jump_out()?;
+        Ok(())
+    }
+
+    /// TeX82 §445's capped integer recovery.
+    fn number_too_big_error(&mut self) -> Result<(), CommandError> {
+        let context = self.command.output_open_context(&self.state);
+        let mut report = self.state.print_err("Number too big");
+        report
+            .help(&[
+                "I can only go up to 2147483647='17777777777=\"7FFFFFFF,",
+                "so I'm using that number instead of yours.",
             ])
             .context(context);
         report.error().jump_out()?;

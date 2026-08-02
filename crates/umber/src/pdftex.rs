@@ -493,6 +493,11 @@ mod tests {
         source: &str,
         stores: &mut Universe,
     ) -> Result<String, crate::CanonicalSessionError> {
+        // Every pinned oracle consumed by this module was generated with
+        // `-interaction=nonstopmode`. Own that harness fact here instead of
+        // weakening TeX82 §82's ErrorStop dialog or changing the production
+        // retained-root runner, both of which must preserve caller policy.
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         crate::run_memory_with_stores_and_profile(
             source,
             stores,
@@ -2041,7 +2046,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdftex_random_scanners_report_and_recover_bounds() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -2064,6 +2068,33 @@ mod tests {
         assert!(output.contains("negative=-1516446631"), "{output}");
         assert!(output.contains("Missing number"), "{output}");
         assert!(output.contains("missing=0"), "{output}");
+    }
+
+    #[test]
+    fn pdftex_oracle_runner_recovery_and_interaction_are_checkpointed() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let baseline = stores.snapshot();
+        let output = run_pdf_memory(
+            "\\message{missing=\\pdfuniformdeviate\\relax}\\end",
+            &mut stores,
+        )
+        .expect("nonstop oracle runner recovers missing number");
+        assert!(
+            output.contains("Missing number, treated as zero"),
+            "{output}"
+        );
+        assert!(output.contains("missing=0"), "{output}");
+        assert_eq!(
+            stores.interaction_mode(),
+            tex_state::InteractionMode::Nonstop
+        );
+        stores.rollback(&baseline);
+        assert_eq!(
+            stores.interaction_mode(),
+            tex_state::InteractionMode::ErrorStop
+        );
+        assert_eq!(stores.snapshot().state_hash(), baseline.state_hash());
     }
 
     #[test]
