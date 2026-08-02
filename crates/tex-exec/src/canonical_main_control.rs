@@ -1227,6 +1227,35 @@ impl CanonicalMainControl {
         snapshot.rollback(self, stores);
     }
 
+    /// Restores a failed operation when its savepoint is still owned by the
+    /// live group timeline. TeX's `unsave` (§283) consumes save levels, so an
+    /// error discovered after an enclosing group exits must retain that
+    /// committed state instead of attempting an invalid rollback.
+    fn finish_failed_step(
+        &mut self,
+        snapshot: CanonicalStepSnapshot,
+        stores: &mut Universe,
+        error: ExecError,
+    ) -> Result<CanonicalStepResult, ExecError> {
+        if !snapshot.can_rollback(stores) {
+            self.commit_step(snapshot);
+            return Err(error);
+        }
+        self.rollback_step(snapshot, stores);
+        match error {
+            ExecError::MissingCanonicalInput { name } => Ok(CanonicalStepResult::Suspended(
+                CanonicalResourceNeed::Input { name },
+            )),
+            ExecError::MissingCanonicalFont { request } => Ok(CanonicalStepResult::Suspended(
+                CanonicalResourceNeed::Font { request },
+            )),
+            ExecError::MissingCanonicalPdfImage { request } => Ok(CanonicalStepResult::Suspended(
+                CanonicalResourceNeed::PdfImage { request },
+            )),
+            error => Err(error),
+        }
+    }
+
     /// Drains committed canonical shipout receipts in artifact order.
     ///
     /// Each plan was prepared during shipout and is retained only after the
@@ -1367,8 +1396,10 @@ impl CanonicalMainControl {
             Err(error) => {
                 if error.as_fatal().is_some() {
                     self.commit_step(snapshot);
-                } else {
+                } else if snapshot.can_rollback(stores) {
                     self.rollback_step(snapshot, stores);
+                } else {
+                    self.commit_step(snapshot);
                 }
                 Err(error)
             }
@@ -1828,19 +1859,7 @@ impl CanonicalMainControl {
                     self.commit_step(snapshot);
                     return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
                 }
-                self.rollback_step(snapshot, stores);
-                match error {
-                    ExecError::MissingCanonicalInput { name } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }),
-                    ),
-                    ExecError::MissingCanonicalFont { request } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
-                    ),
-                    ExecError::MissingCanonicalPdfImage { request } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }),
-                    ),
-                    error => Err(error),
-                }
+                self.finish_failed_step(snapshot, stores, error)
             }
         }
     }
@@ -3174,27 +3193,7 @@ impl CanonicalMainControl {
                     observer.committed(CommandObservation::Effect(engine_termination_effect()));
                     return Ok(CanonicalStepResult::Progress(step));
                 }
-                if !snapshot.can_rollback(stores) {
-                    // tex.web §283's `unsave` consumes the enclosing save
-                    // level. An error reached after that exit cannot restore
-                    // the pre-operation group timeline; preserve the state
-                    // TeX has already committed and report the real error.
-                    self.commit_step(snapshot);
-                    return Err(error);
-                }
-                self.rollback_step(snapshot, stores);
-                match error {
-                    ExecError::MissingCanonicalInput { name } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }),
-                    ),
-                    ExecError::MissingCanonicalFont { request } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }),
-                    ),
-                    ExecError::MissingCanonicalPdfImage { request } => Ok(
-                        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }),
-                    ),
-                    error => Err(error),
-                }
+                self.finish_failed_step(snapshot, stores, error)
             }
         }
     }

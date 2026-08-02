@@ -2183,7 +2183,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.4: canonical grouped DVI-error rollback"]
     fn deferred_pdf_nodes_follow_the_explicit_session_profile() {
         let source = "\\pdfoutput=1\\shipout\\hbox{\\pdfliteral{q}}\\end";
         for profile in [CommandProfile::TEX82, CommandProfile::ETEX26] {
@@ -2660,15 +2659,20 @@ mod tests {
             retry.advance_canonical().expect("immediate write"),
             CanonicalStepResult::Progress(MainControlStep::Continue)
         ));
-        let request = loop {
+        let mut request = None;
+        for _ in 0..64 {
             match retry.advance_canonical().expect("image suspension") {
                 CanonicalStepResult::Progress(MainControlStep::Continue) => {}
-                CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => {
-                    break request;
+                CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage {
+                    request: requested,
+                }) => {
+                    request = Some(requested);
+                    break;
                 }
                 other => panic!("expected image suspension, got {other:?}"),
             }
-        };
+        }
+        let request = request.expect("image request appears within the bounded retry window");
         assert_eq!(retry.stores().world().effect_records().len(), 1);
         assert!(retry.stores().world().artifact_commits().is_empty());
         retry.provide_canonical_pdf_image(
