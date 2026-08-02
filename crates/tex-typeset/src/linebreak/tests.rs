@@ -128,6 +128,25 @@ fn tracing_reports_a_line_class_champion_before_the_next_class_feasible_route() 
     );
 }
 
+#[test]
+fn tracing_active_lines_include_the_previous_paragraph_offset() {
+    // TeX82 §§816/854 initializes active-node line numbers at `prev_graf+1`.
+    let universe = Universe::new();
+    let nodes = vec![rule(100), Node::Penalty(EJECT_PENALTY)];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+    parameters.shape.line_offset = 3;
+
+    let (_, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
+
+    assert!(
+        trace
+            .iter()
+            .any(|event| matches!(event, LineBreakTrace::Active { line: 4, .. })),
+        "{trace:?}"
+    );
+}
+
 /// tex.web §828: positive `emergency_stretch` keeps the tolerance threshold
 /// and obtains a real feasible route instead of the final-pass artificial one.
 #[test]

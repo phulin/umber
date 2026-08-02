@@ -757,7 +757,15 @@ fn run_pass<S: TypesetState>(
                     line_number_class(candidate.line, easy_line),
                     LineBreakTrace::Active {
                         serial: candidate.serial,
-                        line: candidate.line,
+                        // TeX82 §§816/854 stores absolute `line_number` on
+                        // active nodes, initialized from `prev_graf+1`.
+                        // The pure breaker keeps relative candidates and
+                        // carries `prev_graf` as the shape's line offset, so
+                        // restore that offset in detached trace evidence.
+                        line: candidate
+                            .line
+                            .checked_add(params.shape.line_offset)
+                            .expect("line number exceeds usize"),
                         fitness: trace_fitness(candidate.fitness),
                         hyphenated: candidate.hyphenated
                             || (candidate.penalty <= EJECT_PENALTY
