@@ -377,6 +377,33 @@ fn tracingrestores_reports_dimension_register_restoration() {
 }
 
 #[test]
+fn tracingrestores_reports_current_font_selector_restoration() {
+    // TeX82 §§252/283: `cur_font_loc` has the unescaped label `current font`,
+    // followed by the restored font's control-sequence identifier. Loading a
+    // format proves that the saved packed selector is resolved through the
+    // format-backed interner instead of being mistaken for a live symbol id.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let mut initex = CanonicalMainControl::tex82_initex(&mut initialized);
+    register_cmr10_as(&mut initex, &mut initialized, "cmr10.tfm");
+    register_source(&mut initex, br"\font\f=cmr10 \font\g=cmr10 at 9pt \f\end");
+    run_to_end(&mut initex, &mut initialized);
+    let format = initialized
+        .dump_format()
+        .expect("dump font selector format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore font selector format");
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(&mut control, br"\tracingrestores=1\tracingonline=1{\g}\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring current font=\\f}\n"
+    );
+}
+
+#[test]
 fn output_routine_box255_error_reports_live_command_context() {
     // TeX82 §§1026/1028 reach §82's error after retiring the output token
     // list, while the command-owned source level beneath it remains live.

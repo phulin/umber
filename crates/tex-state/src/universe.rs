@@ -5688,7 +5688,7 @@ impl Universe {
                 diagnostic.end(false);
                 continue;
             }
-            let (name, value) = match cell.bank() {
+            let (name, value, escape_name) = match cell.bank() {
                 BankTag::Meaning => {
                     let Some(symbol) = self.stores.symbol_at_slot(cell.index()) else {
                         continue;
@@ -5709,11 +5709,12 @@ impl Universe {
                         }
                         _ => continue,
                     };
-                    (self.stores.resolve(symbol).to_owned(), value)
+                    (self.stores.resolve(symbol).to_owned(), value, true)
                 }
                 BankTag::Count => (
                     format!("count{}", cell.index()),
                     (record.old() as u32 as i32).to_string(),
+                    true,
                 ),
                 BankTag::Dimen => (
                     format!("dimen{}", cell.index()),
@@ -5723,12 +5724,17 @@ impl Universe {
                             record.old() as u32 as i32,
                         ))
                     ),
+                    true,
                 ),
                 BankTag::IntParam if cell.index() < 128 => {
                     let Some(name) = IntParam::new(cell.index() as u16).tex82_name() else {
                         continue;
                     };
-                    (name.to_owned(), (record.old() as u32 as i32).to_string())
+                    (
+                        name.to_owned(),
+                        (record.old() as u32 as i32).to_string(),
+                        true,
+                    )
                 }
                 BankTag::DimenParam if cell.index() < 128 => {
                     let Some(name) = DimenParam::new(cell.index() as u16).tex82_name() else {
@@ -5742,6 +5748,7 @@ impl Universe {
                                 as u32
                                 as i32,))
                         ),
+                        true,
                     )
                 }
                 BankTag::GlueParam if cell.index() < 128 => {
@@ -5749,7 +5756,7 @@ impl Universe {
                         continue;
                     };
                     let id = GlueId::new(record.old() as u32);
-                    (name.to_owned(), format_restore_glue(self.glue(id)))
+                    (name.to_owned(), format_restore_glue(self.glue(id)), true)
                 }
                 BankTag::TokParam if cell.index() < 128 => {
                     let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {
@@ -5769,7 +5776,30 @@ impl Universe {
                             value.push_str(&escaped_restore_name(record.escape_char(), "ETC."));
                         }
                     }
-                    (name.to_owned(), value)
+                    (name.to_owned(), value, true)
+                }
+                BankTag::CurrentFont => {
+                    // TeX82 §252's `show_eqtb(cur_font_loc)` uses the literal
+                    // label `current font` (without `print_esc`) and prints
+                    // the selector stored beside the font id. Section 283
+                    // invokes that same renderer for restored and retained
+                    // save-stack entries.
+                    let raw_symbol = record.old() >> 32;
+                    let value = if raw_symbol == 0 {
+                        let font = self
+                            .stores
+                            .resolve_stored_font(FontId::new(record.old() as u32));
+                        let Some(symbol) = self.stores.font_identifier_symbol(font) else {
+                            continue;
+                        };
+                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol))
+                    } else {
+                        let symbol = self
+                            .stores
+                            .resolve_stored_symbol(Symbol::new((raw_symbol - 1) as u32));
+                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol))
+                    };
+                    ("current font".to_owned(), value, false)
                 }
                 _ => continue,
             };
@@ -5783,7 +5813,7 @@ impl Universe {
                 record.tracing_online(),
             );
             diagnostic.print_char('{').print(label).print_char(' ');
-            if let Ok(byte) = u8::try_from(record.escape_char()) {
+            if escape_name && let Ok(byte) = u8::try_from(record.escape_char()) {
                 diagnostic.print_ascii(char::from(byte));
             }
             diagnostic
