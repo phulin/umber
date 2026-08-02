@@ -1223,6 +1223,17 @@ impl CommandState {
         })
     }
 
+    pub(crate) fn current_source_open_depths(&self) -> Option<crate::input::SourceOpenDepths> {
+        self.input
+            .levels
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                InputLevel::Source(source) => source.open_depths,
+                _ => None,
+            })
+    }
+
     /// Applies TeX's `\endinput` retirement request to the active physical
     /// source.  The remainder of its current line is still tokenized; no
     /// later physical line may be loaded.

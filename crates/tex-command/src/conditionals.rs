@@ -943,6 +943,9 @@ impl CommandProcessor<'_> {
         delimiter: ConditionalDelimiter,
     ) -> Result<(), CommandError> {
         if delimiter == ConditionalDelimiter::Fi {
+            if let Some(frame) = self.command.conditions.current().cloned() {
+                self.warn_cross_file_conditional_close(&frame);
+            }
             let frame = self
                 .command
                 .conditions
@@ -1024,6 +1027,7 @@ impl CommandProcessor<'_> {
         while stopped != ConditionalDelimiter::Fi {
             stopped = self.pass_text(frame.identity, ScannerWarning(0))?.delimiter;
         }
+        self.warn_cross_file_conditional_close(&frame);
         let popped = self
             .command
             .conditions

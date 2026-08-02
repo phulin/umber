@@ -165,10 +165,10 @@ print channel of its own outside the borrowed
   through the ambient selector (`CommandContext::printer`), not
   `begin_diagnostic`'s `\tracingonline` redirect: unlike
   `\tracingassigns`/`\tracinggroups`/`\tracingifs`, `file_warning` is not
-  `stat`-gated in `etex.ch`. `group_warning`/`if_warning` (a group or
-  conditional closing inside a different file than it opened in, reported at
-  that close rather than at file end) are not implemented; see
-  `umber2-aqx9`.
+  `stat`-gated in `etex.ch`. The same module owns `if_warning` and the
+  ordinary/semi-simple `group_warning` close path. `\scantokens` pseudo-files
+  record the same opening depths as ordinary inputs. Remaining specialized
+  group-close sites are tracked by `umber2-aqx9`.
 - `src/scan_toks.rs`, `src/scan_toks/tests.rs`: private canonical token-list
   scanner and focused parameter, collection, expansion, scanner-status, and
   recovery tests. It also owns TeX82 §482's `read_toks`, which is deliberately

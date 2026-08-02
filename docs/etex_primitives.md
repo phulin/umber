@@ -112,14 +112,12 @@ that recording against the live depth, printing a "Warning: end of file when
 (`crates/tex-command/src/tracing_nesting.rs`). Unlike the other
 three parameters, this prints through the ambient selector rather than
 `begin_diagnostic`'s `\tracingonline` redirect, matching `etex.ch`'s own
-`file_warning`, which is not `stat`-gated. `group_warning`/`if_warning` (the
-sibling case: a group or conditional closes while nested inside a _different_
-file than the one it opened in, reported at that close rather than at the
-file's end) remain unimplemented (`umber2-aqx9`): unlike `file_warning`,
-which fires only where an input level is already being retired centrally,
-`group_warning`/`if_warning` need to run at every one of `canonical_main_control.rs`'s
-many scattered `leave_group_with_kind`/conditional-pop call sites, which have
-no single choke point analogous to `file_warning`'s.
+`file_warning`, which is not `stat`-gated. The sibling `if_warning` path and
+ordinary/semi-simple `group_warning` closes compare against the same source
+opening depths; `\scantokens` pseudo-files now record those depths too.
+Specialized group closures remain tracked by `umber2-aqx9`, since their
+`leave_group_with_kind` sites have no single choke point analogous to
+`file_warning`'s.
 
 ## Marks, lists, paragraph extensions, and math (manual sections 3.4, 3.7)
 

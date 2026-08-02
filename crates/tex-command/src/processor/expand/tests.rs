@@ -542,6 +542,64 @@ fn etex_scantokens_retokenizes_balanced_text_as_nested_lines() {
 }
 
 #[test]
+fn etex_scantokens_records_file_warning_open_depths() {
+    // e-TeX 2.6 [23.328] records `grp_stack`/`if_stack` for pseudo-files just
+    // as `begin_file_reading` does for ordinary `\input` levels.
+    let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
+    let scantokens =
+        install_expandable(&mut universe, "scantokens", ExpandablePrimitive::Scantokens);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![
+            traced(Token::Cs(scantokens)),
+            traced(Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            }),
+            traced(Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }),
+            traced(Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            }),
+        ])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(
+            processor
+                .get_x_token()
+                .expect("scantokens expands")
+                .expect("pseudo-source token")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'X',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+    let level = command
+        .top_input_level_identity()
+        .expect("pseudo-source remains live");
+    assert_eq!(
+        command.source_open_depths(level),
+        Some(crate::input::SourceOpenDepths {
+            group_depth: universe.group_depth(),
+            conditional_depth: 0,
+        })
+    );
+}
+
+#[test]
 fn etex_scantokens_pseudo_source_name_tracks_tracing() {
     assert_eq!(scantokens_source_name(0), "^^R");
     assert_eq!(scantokens_source_name(-1), "^^R");

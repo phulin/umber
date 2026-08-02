@@ -723,6 +723,12 @@ impl CommandProcessor<'_> {
                 scantokens_numeric_name(tracing_scantokens),
             )
             .map_err(|_| CommandError::input_invariant())?;
+        let (group_depth, _) = self.state.current_group_values();
+        self.command.record_source_open_depths(
+            level,
+            group_depth.max(0) as u32,
+            u32::try_from(self.command.conditions.frames.len()).unwrap_or(u32::MAX),
+        );
         let source = self
             .command
             .active_source_snapshot()

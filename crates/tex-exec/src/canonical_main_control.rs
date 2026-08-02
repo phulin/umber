@@ -13722,6 +13722,7 @@ fn apply_scanned_step(
         }
         ScannedStep::EndSemiSimpleGroup => {
             crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::SemiSimple)
                 .map_err(|_| ExecError::MissingToken {
@@ -13793,6 +13794,7 @@ fn apply_scanned_step(
         }
         ScannedStep::EndOrdinaryGroup => {
             crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
                 .map_err(|_| ExecError::MissingToken {
@@ -14477,6 +14479,18 @@ fn schedule_aftergroup(
         .processor(stores)
         .back_input_aftergroup_tokens(traced)
         .map_err(command_error)
+}
+
+fn warn_cross_file_group_close(stores: &mut Universe, command: &mut CommandMachine<'_>) {
+    let level = stores.group_depth() as usize;
+    let Some(frame) = stores.group_frames().next_back() else {
+        return;
+    };
+    command.processor(stores).warn_cross_file_group_close(
+        level,
+        frame.kind().group_text(),
+        frame.entered_line(),
+    );
 }
 
 /// Releases the single pending after-assignment token only after the typed
