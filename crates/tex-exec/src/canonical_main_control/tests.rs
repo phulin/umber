@@ -5805,6 +5805,37 @@ fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
 /// which names the opener the brace was standing in for. Only the remaining
 /// `bottom_level` case is "Too many }'s".
 #[test]
+fn readline_assignment_trace_precedes_the_next_command_trace() {
+    // TeX82 §1225 calls `define(p,call,cur_val)` as soon as `read_toks`
+    // returns. e-TeX [17.687-750] therefore renders both halves of that eqtb
+    // write before §299 can trace the following command.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores
+        .world_mut()
+        .push_memory_terminal_line("replacement")
+        .expect("terminal line queues");
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\line{old}\tracingassigns=1\tracingcommands=2\readline16to\line\endlinechar=-1\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = pending_sink_text(&stores, false);
+    let changing = log
+        .find("{changing \\line =macro:->old}")
+        .unwrap_or_else(|| panic!("missing read target pre-image: {log:?}"));
+    let into = log
+        .find("{into \\line =macro:->replacement")
+        .unwrap_or_else(|| panic!("missing read target post-image: {log:?}"));
+    let next = log
+        .find("{\\endlinechar}")
+        .unwrap_or_else(|| panic!("missing following command trace: {log:?}"));
+    assert!(changing < into && into < next, "{log:?}");
+}
+
+#[test]
 fn a_stray_right_brace_names_the_group_opener_it_replaced() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

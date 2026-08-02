@@ -12641,11 +12641,24 @@ fn apply_scanned_step(
                     let parameters = stores.intern_token_list(&[]);
                     let meaning =
                         MacroMeaning::new(MeaningFlags::EMPTY, parameters, tokens.token_list());
-                    if global {
-                        stores.set_macro_meaning_global(target, meaning);
-                    } else {
-                        stores.set_macro_meaning(target, meaning);
-                    }
+                    // TeX82 §1225 installs `read_toks`'s freshly allocated
+                    // macro through `define(p,call,cur_val)`, so e-TeX
+                    // [17.687-750] traces the same pre/post eqtb write as a
+                    // `\def`, immediately after collection and before the
+                    // next command is fetched.
+                    crate::assignments::tracing::trace_meaning_write(
+                        stores,
+                        Token::Cs(target),
+                        true,
+                        global,
+                        |stores| {
+                            if global {
+                                stores.set_macro_meaning_global(target, meaning);
+                            } else {
+                                stores.set_macro_meaning(target, meaning);
+                            }
+                        },
+                    );
                 }
             }
             Ok(ReplayStep::Continue)
