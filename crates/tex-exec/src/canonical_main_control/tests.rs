@@ -818,6 +818,48 @@ fn tracingrestores_reports_primitive_meaning_through_an_alias() {
 }
 
 #[test]
+fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
+    // TeX82 §§252/283 restore the saved typed eqtb word before `show_eqtb`
+    // renders it. A genuine format boundary proves the saved shorthand
+    // operands and frozen symbol identities survive serialization; the three
+    // target spellings prove this is the region-one meaning path, while
+    // `\fam` pins reverse save-stack publication order from the TRIP case.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let mut initex = CanonicalMainControl::tex82_initex(&mut initialized);
+    register_source(
+        &mut initex,
+        br#"\mathchardef\minus="232D \mathchardef\+="1234
+            \catcode`\?=13 \mathchardef?="4567 \end"#,
+    );
+    run_to_end(&mut initex, &mut initialized);
+    let format = initialized.dump_format().expect("dump mathchar format");
+    let mut stores = Universe::from_format(tex_state::World::memory(), &format)
+        .expect("restore mathchar format");
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br#"\tracingrestores=1\tracingonline=1
+            {\fam=7 \mathchardef\minus="322D \mathchardef\+="2345
+             \mathchardef?="5670}\end"#,
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let expected = concat!(
+        "{restoring ?=\\mathchar\"4567}\n",
+        "{restoring \\+=\\mathchar\"1234}\n",
+        "{restoring \\minus=\\mathchar\"232D}\n",
+        "{restoring \\fam=0}\n",
+    );
+    assert_eq!(pending_sink_text(&stores, true), expected);
+    assert_eq!(pending_sink_text(&stores, false), expected);
+    for (name, code) in [("minus", 0x232D), ("+", 0x1234)] {
+        let symbol = stores.intern(name).symbol();
+        assert_eq!(stores.meaning(symbol), Meaning::MathCharGiven(code));
+    }
+}
+
+#[test]
 fn tracingrestores_reports_macro_old_value() {
     // TeX82 §§252/283 show the restored macro's saved body after copying the
     // saved eqtb word back, with §262's breadth bound.

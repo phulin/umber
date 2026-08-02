@@ -5806,6 +5806,21 @@ impl Universe {
                                 self.stores.resolve(canonical),
                             )
                         }
+                        // TeX82 §§252/283 print the command class and its
+                        // saved operand after `unsave` has restored a
+                        // shorthand definition. Keep this keyed on the typed
+                        // meaning so every `\chardef`/`\mathchardef` target
+                        // (named, control-symbol, or active) follows the same
+                        // path.
+                        Meaning::CharGiven(character) => format!(
+                            "{}\"{:X}",
+                            escaped_restore_name(record.escape_char(), "char"),
+                            u32::from(character)
+                        ),
+                        Meaning::MathCharGiven(code) => format!(
+                            "{}\"{code:X}",
+                            escaped_restore_name(record.escape_char(), "mathchar")
+                        ),
                         Meaning::Macro { flags, definition } => {
                             let macro_meaning = self.stores.macro_definition(definition);
                             let mut value = String::new();
