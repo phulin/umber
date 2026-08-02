@@ -241,10 +241,15 @@ impl SourceCursor {
             let Some(character) =
                 self.next_reduced_character(&bytes, mode, superscript, &mut catcode)
             else {
-                self.finish_line();
-                if self.end_after_line || force_eof {
+                if force_eof || (self.end_after_line && !self.pending_acquired_line) {
+                    // TeX82 §362 reaches `end_file_reading` with the final
+                    // line's `buffer`, `loc`, and `limit` still installed. In
+                    // e-TeX, §24.362 may first put `\everyeof` above this
+                    // still-live source, so error context from that token list
+                    // must still be able to pseudoprint the exhausted line.
                     return SourceTokenizationStep::End;
                 }
+                self.finish_line();
                 continue;
             };
             let scalar_range = self.spelling_scalar_range(character);

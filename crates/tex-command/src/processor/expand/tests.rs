@@ -729,7 +729,7 @@ fn scantokens_everyeof_context_traverses_to_ordinary_file() {
     };
     assert_eq!(
         context,
-        "\n<everyeof> \\undefined \n                      \nl.1 \\scantokens{A}\n                  Z"
+        "\n<everyeof> \\undefined \n                      \nl.2 \n    \nl.1 \\scantokens{A}\n                  Z"
     );
     assert_eq!(
         command.take_file_framing_events(),

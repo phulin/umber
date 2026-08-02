@@ -507,6 +507,35 @@ impl SourceCursor {
         self.line = None;
         self.line_backing = None;
     }
+
+    /// Installs e-TeX §53a's context-only sentinel record at pseudo EOF.
+    ///
+    /// `pseudo_input` has advanced `line` past the generated text when
+    /// §24.362 inserts `\everyeof`, but it does not tokenize another
+    /// `\endlinechar`. The empty record is therefore visible to §313 without
+    /// delivering a `\par` command.
+    pub(crate) fn install_scantokens_eof_context_line(&mut self) {
+        let end = u64::try_from(self.backing.bytes.len()).expect("registration checked length");
+        let physical = PhysicalLine {
+            source: self.backing.id,
+            number: self.next_line_number,
+            content: SourceRange::new(self.backing.id, end, end),
+            terminator: SourceRange::new(self.backing.id, end, end),
+            terminator_kind: LineTerminator::Missing,
+        };
+        self.next_line_number += 1;
+        self.line = Some(SourceLineState {
+            physical,
+            retained_end: end,
+            byte_cursor: end,
+            scalar_cursor: 0,
+            endline: None,
+            endline_delivered: true,
+        });
+        self.line_backing = None;
+        self.lexer_state = super::tokenizer::LexerState::NewLine;
+        self.end_after_line = true;
+    }
 }
 
 /// Start offset of the character that ends at `end`, or `end` itself when the

@@ -1163,6 +1163,9 @@ impl CommandState {
             return None;
         }
         let every_eof = level.every_eof.take()?;
+        if matches!(level.name_class, SourceNameClass::Scantokens(_)) {
+            level.cursor.install_scantokens_eof_context_line();
+        }
         Some(self.push_token_level(
             TokenPayload::Stored {
                 tokens: every_eof.token_list(),
