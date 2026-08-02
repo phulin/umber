@@ -4466,6 +4466,20 @@ fn showlists_reports_source_entry_line_and_hyphenation_context() {
 }
 
 #[test]
+fn showlists_omits_zero_hyphenation_context() {
+    // TeX82 §218's mode-entry line has no parenthetical suffix when the
+    // horizontal list carries only the zero language/minima defaults.
+    let stores = run_canonical_tex82("\\nonstopmode\\setbox0=\\hbox{\\showlists}\\end");
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains("### restricted horizontal mode entered at line 1\n"),
+        "{log}"
+    );
+    assert!(!log.contains("(language0:hyphenmin0,0)"), "{log}");
+}
+
+#[test]
 fn showlists_marks_only_the_active_output_routine_context() {
     let stores = run_canonical_tex82(
         "\\nonstopmode\\output={\\showlists\\shipout\\box255}\n\\topskip=0pt\\vsize=1pt\\setbox0=\\hbox{}\\ht0=2pt\\copy0\\penalty-10000\n\\showlists\\end",

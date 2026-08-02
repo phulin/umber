@@ -614,7 +614,11 @@ pub(crate) fn execute_showlists(
         text.push_str(&level.entry_line().unsigned_abs().to_string());
         if level.entry_line() < 0 {
             text.push_str(" (\\output routine)");
-        } else if matches!(level.mode(), Mode::Horizontal | Mode::RestrictedHorizontal) {
+        } else if matches!(level.mode(), Mode::Horizontal | Mode::RestrictedHorizontal)
+            && (level.list().hyphen_language() != 0
+                || level.list().left_hyphen_min() != 0
+                || level.list().right_hyphen_min() != 0)
+        {
             text.push_str(" (language");
             text.push_str(&level.list().hyphen_language().to_string());
             text.push_str(":hyphenmin");
