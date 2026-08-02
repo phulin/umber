@@ -955,6 +955,45 @@ fn breaks_at_legal_glue() {
 }
 
 #[test]
+fn tracing_display_includes_the_feasible_glue_breakpoint() {
+    // TeX82 §851's temporary `link(cur_p):=null` includes `cur_p` in
+    // `short_display`; for a glue breakpoint, §175 renders that node as a
+    // trailing space. Width measurement still ends before the glue.
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec {
+        width: sp(10),
+        stretch: sp(10),
+        ..GlueSpec::ZERO
+    });
+    let nodes = vec![
+        rule(20),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(20),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+
+    let mut parameters = params(30);
+    parameters.left_skip.stretch = sp(10);
+    let (_, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
+
+    assert!(
+        trace.iter().any(|event| matches!(
+            event,
+            LineBreakTrace::Feasible {
+                display,
+                breakpoint: TraceBreakpoint::Glue,
+                ..
+            } if display == &(0..2)
+        )),
+        "{trace:?}"
+    );
+}
+
+#[test]
 fn paragraph_prefix_widths_remain_exact_past_i32_max() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);

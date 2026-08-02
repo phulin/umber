@@ -636,7 +636,13 @@ fn run_pass<S: TypesetState>(
                 };
                 if let Some(events) = trace.as_deref_mut() {
                     events.push(LineBreakTrace::Feasible {
-                        display: displayed_through..bp.width_position,
+                        // TeX82 §851 temporarily terminates the list at
+                        // `cur_p` and calls `short_display`, so the displayed
+                        // range includes the breakpoint node itself. This is
+                        // visible for glue (a trailing space) and
+                        // discretionaries (their pre/post lists), even though
+                        // width accounting stops before those nodes.
+                        display: displayed_through..bp.position,
                         breakpoint: trace_breakpoint(nodes, bp),
                         via: active_candidate.passive.map_or(0, |id| passive[id].serial),
                         badness: (b <= INF_BAD).then_some(b),
