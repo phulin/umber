@@ -5492,13 +5492,18 @@ fn report_command_trace(
 
 /// Applies TeX82's §1030 main-control trace boundary to a fetched command.
 ///
-/// A constructed leader payload is the exception: after its box closes,
+/// A constructed leader payload is one exception: after its box closes,
 /// §1078's `box_end` fetches the following glue inside the leader case and
 /// never returns to `big_switch`. The split replay lifecycle leaves that
 /// internal fetch to the next processor episode, so `pending_leader` retains
 /// the canonical boundary distinction and suppresses only §1030's settled
 /// unexpandable-command trace. Expansion tracing performed by `get_x_token`
 /// remains unchanged.
+///
+/// The opening brace of an output routine is the other exception. TeX82
+/// §1025 consumes it with `scan_left_brace` before entering §1030, whereas
+/// split replay delivers it as an explicit step. Suppressing that delivery
+/// also leaves the mode prefix pending for the first command in the routine.
 fn report_main_control_command_trace(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
@@ -5506,7 +5511,15 @@ fn report_main_control_command_trace(
     boxes: &ReplayBoxes,
     shown_mode: &mut Option<Mode>,
 ) {
-    if boxes.pending_leader.is_none() {
+    let output_routine_opening = boxes.output_routine_opening_pending
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::BeginGroup,
+                ..
+            }
+        );
+    if boxes.pending_leader.is_none() && !output_routine_opening {
         report_command_trace(processor, mode, command, shown_mode);
     }
 }

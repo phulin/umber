@@ -223,6 +223,31 @@ fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
 }
 
 #[test]
+fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
+    // TeX82 §§1025/1030: `scan_left_brace` consumes the output routine's
+    // opening brace before `big_switch`. The first body command therefore
+    // receives the internal-vertical-mode prefix instead of the brace.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingcommands=1\tracingonline=1
+\maxdeadcycles=1\output={\dimen0=1pt}
+\topskip=0pt\setbox0=\vbox to1pt{}\copy0\penalty-10000\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("{internal vertical mode: \\dimen}"),
+        "{terminal:?}"
+    );
+    assert!(!terminal.contains("begin-group character"), "{terminal:?}");
+}
+
+#[test]
 fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
