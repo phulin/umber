@@ -170,6 +170,30 @@ fn showgroups_names_the_alignment_entry_enclosing_noalign_as_cr() {
 }
 
 #[test]
+fn showgroups_reconstructs_box_shift_axis_sign_and_magnitude() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\n\\setbox0=\\hbox{\\raise1pt\\hbox{\\showgroups}\\lower2pt\\vbox{\\showgroups}}\n\\setbox0=\\vbox{\\moveleft3pt\\hbox{\\showgroups}\\moveright4pt\\vbox{\\showgroups}}\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // TeX82 §1073's signed box_context and e-TeX [49.1292]'s enclosing-mode
+    // test jointly reconstruct the prefix; neither the box kind nor sign is
+    // sufficient by itself.
+    for expected in [
+        "(\\raise1.0pt\\hbox{)",
+        "(\\lower2.0pt\\vbox{)",
+        "(\\moveleft3.0pt\\hbox{)",
+        "(\\moveright4.0pt\\vbox{)",
+    ] {
+        assert!(log.contains(expected), "missing {expected:?} from {log:?}");
+    }
+}
+
+#[test]
 fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
     let (mut stores, mut control) = etex_control();
     register_source(

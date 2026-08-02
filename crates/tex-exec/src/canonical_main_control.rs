@@ -217,7 +217,19 @@ struct ActiveReplayBox {
     /// bodies, since none of those box-openers can themselves be wrapped by
     /// a shift (`scan_box`'s `cur_cmd=make_box` requirement excludes `vmove`
     /// and `hmove`).
-    shift: Option<Scaled>,
+    shift: Option<ReplayBoxShift>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReplayBoxShift {
+    delta: Scaled,
+    axis: BoxShiftAxis,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BoxShiftAxis {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -11306,7 +11318,23 @@ fn fallback_group_context(kind: GroupKind) -> &'static str {
 
 fn show_box_context(active: &ActiveReplayBox) -> String {
     let mut context = String::new();
-    if let Some(target) = active.target {
+    if let Some(shift) = active.shift
+        && shift.delta.raw() != 0
+    {
+        context.push_str(match (shift.axis, shift.delta.raw().is_negative()) {
+            (BoxShiftAxis::Horizontal, true) => "\\moveleft",
+            (BoxShiftAxis::Horizontal, false) => "\\moveright",
+            (BoxShiftAxis::Vertical, true) => "\\raise",
+            (BoxShiftAxis::Vertical, false) => "\\lower",
+        });
+        let magnitude = if shift.delta.raw().is_negative() {
+            -shift.delta
+        } else {
+            shift.delta
+        };
+        context.push_str(&crate::node_dump::format_scaled_for_diagnostics(magnitude));
+        context.push_str("pt");
+    } else if let Some(target) = active.target {
         if target.global {
             context.push_str("\\global");
         }
@@ -13909,8 +13937,8 @@ fn apply_scanned_step(
                 // `vmove`/`hmove`), so `box_state.shift` is only ever set
                 // here.
                 let mut node = node;
-                if let Some(delta) = box_state.shift {
-                    crate::assignments::apply_box_shift_delta(&mut node, delta)?;
+                if let Some(shift) = box_state.shift {
+                    crate::assignments::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
                 crate::assignments::append_box_node_to_current_list(
                     modes,
@@ -14944,6 +14972,14 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::Construction(construction) => {
+            let axis = if matches!(
+                modes.current_mode(),
+                Mode::Vertical | Mode::InternalVertical
+            ) {
+                BoxShiftAxis::Horizontal
+            } else {
+                BoxShiftAxis::Vertical
+            };
             let kind = ReplayBoxKind::from_scanned(construction.kind);
             let packing = match construction.packing {
                 ScannedPackingSpec::Natural => PackSpec::Natural,
@@ -14984,7 +15020,10 @@ fn apply_box_shift(
                 group_kind,
                 packing,
                 leader_kind: None,
-                shift: Some(shift.delta),
+                shift: Some(ReplayBoxShift {
+                    delta: shift.delta,
+                    axis,
+                }),
             });
             schedule_everybox(command, stores, kind.horizontal());
             Ok(ReplayStep::Continue)
