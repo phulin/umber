@@ -47,14 +47,16 @@ pub(crate) struct SourceLevel {
     /// `end_file_reading` to drive `\tracingnesting`'s `file_warning`.
     /// `None` until the opener records it (this crate has no `Universe`
     /// access at construction time; see `CommandState::record_source_open_depths`).
-    pub(crate) open_depths: Option<SourceOpenDepths>,
+    pub(crate) open_depths: Option<Box<SourceOpenDepths>>,
 }
 
 /// e-TeX 2.6's `grp_stack`/`if_stack` entry for one open source level.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SourceOpenDepths {
     pub(crate) group_depth: u32,
+    pub(crate) group_lineage: Option<u64>,
     pub(crate) conditional_depth: u32,
+    pub(crate) conditional_identity: Option<u64>,
 }
 
 /// What exhausting a source level does, per tex.web §360.

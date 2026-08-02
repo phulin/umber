@@ -727,7 +727,12 @@ impl CommandProcessor<'_> {
         self.command.record_source_open_depths(
             level,
             group_depth.max(0) as u32,
+            self.state.current_group_lineage(),
             u32::try_from(self.command.conditions.frames.len()).unwrap_or(u32::MAX),
+            self.command
+                .conditions
+                .current()
+                .map(|frame| frame.identity.0),
         );
         let source = self
             .command

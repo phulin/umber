@@ -594,7 +594,12 @@ fn etex_scantokens_records_file_warning_open_depths() {
         command.source_open_depths(level),
         Some(crate::input::SourceOpenDepths {
             group_depth: universe.group_depth(),
+            group_lineage: universe
+                .group_frames()
+                .next_back()
+                .map(|frame| frame.lineage()),
             conditional_depth: 0,
+            conditional_identity: None,
         })
     );
 }

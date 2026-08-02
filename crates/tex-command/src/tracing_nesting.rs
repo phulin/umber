@@ -87,9 +87,29 @@ impl CommandProcessor<'_> {
         let conditional_depth = open_depths.conditional_depth as usize;
         let current_group_depth = self.state.current_group_values().0.max(0) as usize;
         let current_conditional_depth = self.command.conditions.frames.len();
-        if group_depth >= current_group_depth && conditional_depth >= current_conditional_depth {
-            return;
-        }
+        let group_start = if current_group_depth > group_depth {
+            group_depth
+        } else if current_group_depth == group_depth
+            && self.state.current_group_lineage() != open_depths.group_lineage
+        {
+            group_depth.saturating_sub(1)
+        } else {
+            current_group_depth
+        };
+        let condition_start = if current_conditional_depth > conditional_depth {
+            conditional_depth
+        } else if current_conditional_depth == conditional_depth
+            && self
+                .command
+                .conditions
+                .current()
+                .map(|frame| frame.identity.0)
+                != open_depths.conditional_identity
+        {
+            conditional_depth.saturating_sub(1)
+        } else {
+            current_conditional_depth
+        };
 
         // Pre-render every line's text before opening any print scope: the
         // group text needs no borrow, but the conditional text borrows
@@ -97,13 +117,12 @@ impl CommandProcessor<'_> {
         // overlap the printer's mutable borrow below.
         let group_lines: Vec<(usize, &'static str, u32)> = self
             .state
-            .group_frames_from(group_depth)
+            .group_frames_from(group_start)
             .into_iter()
             .rev()
             .collect();
-        let condition_frames = self.command.conditions.frames
-            [conditional_depth.min(current_conditional_depth)..]
-            .to_vec();
+        let condition_frames =
+            self.command.conditions.frames[condition_start..current_conditional_depth].to_vec();
         let condition_lines: Vec<String> = condition_frames
             .iter()
             .rev()

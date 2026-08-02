@@ -463,6 +463,14 @@ impl CommandContext<'_> {
         )
     }
 
+    #[must_use]
+    pub fn current_group_lineage(&self) -> Option<u64> {
+        self.universe
+            .group_frames()
+            .next_back()
+            .map(|frame| frame.lineage())
+    }
+
     /// Every open group at or above `min_depth` (1-based group level),
     /// outermost first, as `(level, group_text, entered_line)`: e-TeX 2.6
     /// [49.1293]'s `print_group` fields for `\tracingnesting`'s

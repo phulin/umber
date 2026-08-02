@@ -146,6 +146,7 @@ pub enum GroupKind {
 pub struct GroupFrame {
     kind: GroupKind,
     entered_line: u32,
+    lineage: u64,
 }
 
 impl GroupFrame {
@@ -157,6 +158,11 @@ impl GroupFrame {
     #[must_use]
     pub const fn entered_line(self) -> u32 {
         self.entered_line
+    }
+
+    #[must_use]
+    pub const fn lineage(self) -> u64 {
+        self.lineage
     }
 }
 
@@ -422,6 +428,7 @@ impl Env {
         self.group_boundaries.iter().map(|boundary| GroupFrame {
             kind: boundary.kind,
             entered_line: boundary.entered_line,
+            lineage: boundary.lineage,
         })
     }
 

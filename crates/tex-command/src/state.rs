@@ -1154,13 +1154,11 @@ impl CommandState {
         ))
     }
 
-    /// Pushes one source level and, for a named text file, queues its §537
-    /// open for [`Self::take_file_framing_events`].
+    /// Pushes one source level and queues any canonical file-like opening.
     ///
     /// This is the one place a source level enters the input stack, so
-    /// gating the open event here on [`SourceNameClass::File`] -- rather than
-    /// at each of this method's callers -- is what keeps every future opener
-    /// correct by construction instead of by remembering to check.
+    /// Ordinary files use their resolved name. e-TeX's traced `\scantokens`
+    /// pseudo-file uses one space as its name; numeric name 18 remains silent.
     fn push_source_level(
         &mut self,
         registered: RegisteredSource,
@@ -1170,9 +1168,14 @@ impl CommandState {
     ) -> InputLevelId {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
-        if matches!(name_class, SourceNameClass::File)
-            && let Some(name) = registered.name.clone()
-        {
+        let framing_name = match name_class {
+            SourceNameClass::File => registered.name.clone(),
+            SourceNameClass::Scantokens(19) => Some(" ".into()),
+            SourceNameClass::Terminal
+            | SourceNameClass::ReadStream(_)
+            | SourceNameClass::Scantokens(_) => None,
+        };
+        if let Some(name) = framing_name {
             self.file_framing_events
                 .push(FileFramingEvent::Open { name });
         }
@@ -1196,16 +1199,20 @@ impl CommandState {
         &mut self,
         level: InputLevelId,
         group_depth: u32,
+        group_lineage: Option<u64>,
         conditional_depth: u32,
+        conditional_identity: Option<u64>,
     ) {
         for entry in &mut self.input.levels {
             if let InputLevel::Source(source) = entry
                 && source.identity == level
             {
-                source.open_depths = Some(crate::input::SourceOpenDepths {
+                source.open_depths = Some(Box::new(crate::input::SourceOpenDepths {
                     group_depth,
+                    group_lineage,
                     conditional_depth,
-                });
+                    conditional_identity,
+                }));
                 return;
             }
         }
@@ -1218,7 +1225,9 @@ impl CommandState {
         level: InputLevelId,
     ) -> Option<crate::input::SourceOpenDepths> {
         self.input.levels.iter().find_map(|entry| match entry {
-            InputLevel::Source(source) if source.identity == level => source.open_depths,
+            InputLevel::Source(source) if source.identity == level => {
+                source.open_depths.as_deref().copied()
+            }
             _ => None,
         })
     }
@@ -1229,7 +1238,7 @@ impl CommandState {
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => source.open_depths,
+                InputLevel::Source(source) => source.open_depths.as_deref().copied(),
                 _ => None,
             })
     }

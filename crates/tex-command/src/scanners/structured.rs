@@ -3536,7 +3536,12 @@ impl CommandProcessor<'_> {
                 self.command.record_source_open_depths(
                     level,
                     group_depth.max(0) as u32,
+                    self.state.current_group_lineage(),
                     u32::try_from(conditional_depth).unwrap_or(u32::MAX),
+                    self.command
+                        .conditions
+                        .current()
+                        .map(|frame| frame.identity.0),
                 );
             }
             let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);

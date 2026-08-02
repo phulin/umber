@@ -79,23 +79,21 @@ pub enum SourceNameClass {
 /// One tex.web §537/§362 file-bracketing transition, queued for the engine.
 ///
 /// `tex-command` prints nothing (see the crate's `AGENTS.md`): this is the
-/// record of when a [`SourceNameClass::File`] level opened or exhausted, in
-/// the exact order it happened, so a later layer can render §537's `(name`
-/// and §362's `)` without tex-command ever touching a print channel. Only a
-/// `File` level produces an event -- §331's terminal and §483's `\read`
-/// streams are excluded by construction, because both the push that opens a
-/// level and the retirement that exhausts one gate on the same
-/// [`SourceNameClass`] test rather than tracking bracketing state
-/// independently.
+/// record of when a named [`SourceNameClass::File`] level or e-TeX's traced
+/// `\scantokens` pseudo-file opened or exhausted, in exact occurrence order.
+/// A later layer renders §537's `(name`/`)` form without tex-command touching
+/// a print channel. Terminal, `\read`, and untraced `\scantokens` levels are
+/// excluded symmetrically at push and retirement.
 ///
 /// `Close` carries no name: tex.web's §362 `end_file_reading` prints a bare
 /// `)`, and the queue's strict open/close ordering is already enough for a
 /// stack-disciplined consumer to know which file is closing.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum FileFramingEvent {
-    /// §537 `start_input`: `print_char("("); slow_print(name)`.
+    /// §537 `start_input`: `print_char("("); slow_print(name)`, also used by
+    /// e-TeX's traced pseudo-file with one space as `name`.
     Open {
-        /// The §537 `a_make_name_string` name from [`SourceRegistration::with_name`].
+        /// A §537 resolved name, or e-TeX's one-space pseudo-file name.
         name: Arc<str>,
     },
     /// §362: a file's last line was consumed, printing `print_char(")")`.

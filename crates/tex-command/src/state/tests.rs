@@ -362,6 +362,36 @@ fn read_stream_and_terminal_source_levels_queue_no_framing_events() {
 }
 
 #[test]
+fn scantokens_framing_uses_a_space_name_only_when_traced() {
+    // e-TeX 2.6 manual §3.2: numeric pseudo-file name 19 records opening and
+    // closing like a file whose displayed name is one space; name 18 is
+    // silent when `\tracingscantokens<=0`.
+    for (numeric_name, expected) in [
+        (18, Vec::new()),
+        (
+            19,
+            vec![
+                FileFramingEvent::Open { name: " ".into() },
+                FileFramingEvent::Close,
+            ],
+        ),
+    ] {
+        let mut state = CommandState::default();
+        let identity = state
+            .open_scantokens(
+                SourceRegistration::new(RegisteredSourceKind::Generated, b"x\n".to_vec()),
+                None,
+                numeric_name,
+            )
+            .expect("scantokens pseudo-file opens");
+        state
+            .retire_exhausted_input(identity)
+            .expect("scantokens pseudo-file retires");
+        assert_eq!(state.take_file_framing_events(), expected);
+    }
+}
+
+#[test]
 fn unnamed_file_class_source_queues_no_close_without_a_matching_open() {
     // `push_source_level` only queues `Open` when the registration carries a
     // §537 name (`SourceRegistration::with_name`); a `File`-classed source

@@ -65,8 +65,8 @@ print channel of its own outside the borrowed
   and the job's root file alike; only §331's terminal and §483's `\read`
   streams need `open_registered_source_as` (`umber2-johp.245`). It also owns
   `SourceRegistration::with_name` (§537's `a_make_name_string`) and
-  `FileFramingEvent`, the queued `Open`/`Close` record of when a `File` level
-  opened or exhausted. The queue exists because the input stack is reached
+  `FileFramingEvent`, the queued `Open`/`Close` record of when a named `File`
+  level or traced `\scantokens` pseudo-file opened or exhausted. The queue exists because the input stack is reached
   from places that hold no `Universe`; `CommandState::render_file_framing_events`
   prints it as tex.web's `(name`/`)` bracketing through
   `tex_state::file_framing`, and the processor drains it the instant a source
