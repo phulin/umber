@@ -14,8 +14,8 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_oracle::{
-    CanonicalCommand, CanonicalValue, CommandEvent, Event, MutationEvent, NormalizedEvent,
-    ObservationStream, StateTarget,
+    CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, MutationEvent,
+    NormalizedEvent, ObservationStream, StateTarget,
 };
 
 const ARTIFACT_NAME: &str = "trip-triage-v1.txt";
@@ -367,6 +367,9 @@ struct TripProjection {
     /// Control sequences whose latest meaning mutation has established the
     /// same complete macro definition on both sides.
     matched_macros: BTreeSet<String>,
+    /// Prior proofs saved by explicit `\\begingroup` levels. TeX82 §282's
+    /// `unsave` restores these meanings at the matching `\\endgroup`.
+    explicit_group_macro_scopes: Vec<BTreeSet<String>>,
 }
 
 impl TripProjection {
@@ -424,6 +427,7 @@ impl TripProjection {
                 )));
         if channel == "command_events" {
             self.observe_meaning_mutations(&expected.semantic, &actual.semantic);
+            self.observe_explicit_group_boundary(&expected.semantic, &actual.semantic);
         }
         matches
     }
@@ -448,6 +452,41 @@ impl TripProjection {
             && matches!(expected_mutation.value, CanonicalValue::Tokens(_))
         {
             self.matched_macros.insert(expected_name.to_owned());
+        }
+        if expected_name == actual_name
+            && expected_mutation == actual_mutation
+            && expected_mutation.scope == "global"
+        {
+            for scope in &mut self.explicit_group_macro_scopes {
+                scope.remove(expected_name);
+                if matches!(expected_mutation.value, CanonicalValue::Tokens(_)) {
+                    scope.insert(expected_name.to_owned());
+                }
+            }
+        }
+    }
+
+    fn observe_explicit_group_boundary(&mut self, expected: &Event, actual: &Event) {
+        if expected != actual {
+            return;
+        }
+        let Event::Command(CommandEvent {
+            delivery: CommandDelivery::Expanded,
+            command,
+        }) = expected
+        else {
+            return;
+        };
+        match command.command.as_str() {
+            "begin_group" => self
+                .explicit_group_macro_scopes
+                .push(self.matched_macros.clone()),
+            "end_group" => {
+                if let Some(restored) = self.explicit_group_macro_scopes.pop() {
+                    self.matched_macros = restored;
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -1064,6 +1103,72 @@ mod tests {
         out
     }
 
+    fn scoped_macro_override_events(operand: CanonicalValue, override_scope: &str) -> Vec<u8> {
+        let command = |delivery, name: &str, control_sequence: &str, operand| {
+            Event::Command(CommandEvent {
+                delivery,
+                command: CanonicalCommand {
+                    command: name.into(),
+                    operand,
+                    control_sequence: Some(control_sequence.into()),
+                    location: None,
+                },
+            })
+        };
+        let events = vec![
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name("probe".into()),
+                value: macro_body(b'a'),
+                scope: "global".into(),
+            }),
+            command(
+                CommandDelivery::Raw,
+                "begin_group",
+                "begingroup",
+                CanonicalValue::Integer(0),
+            ),
+            command(
+                CommandDelivery::Expanded,
+                "begin_group",
+                "begingroup",
+                CanonicalValue::Integer(0),
+            ),
+            Event::Mutation(MutationEvent {
+                target: StateTarget::Meaning,
+                key: CanonicalValue::Name("probe".into()),
+                value: CanonicalValue::Name("hskip".into()),
+                scope: override_scope.into(),
+            }),
+            command(
+                CommandDelivery::Raw,
+                "end_group",
+                "endgroup",
+                CanonicalValue::Integer(0),
+            ),
+            command(
+                CommandDelivery::Expanded,
+                "end_group",
+                "endgroup",
+                CanonicalValue::Integer(0),
+            ),
+            command(CommandDelivery::Raw, "call", "probe", operand),
+        ];
+        let mut normalizer = Normalizer::new();
+        let mut out = format!(
+            "{{\"schema\":{SCHEMA_VERSION},\"manifest\":\"{}\"}}\n",
+            "a".repeat(64)
+        )
+        .into_bytes();
+        for event in events {
+            out.extend_from_slice(
+                &serde_json::to_vec(&normalizer.normalize(event)).expect("event"),
+            );
+            out.push(b'\n');
+        }
+        out
+    }
+
     fn macro_initialization_events(bodies: &[CanonicalValue]) -> Vec<u8> {
         macro_initialization_events_with_suffix(bodies, &[])
     }
@@ -1362,6 +1467,51 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn macro_call_projection_restores_local_explicit_group_overrides() {
+        // TeX82 §§277/282: a local meaning saves the prior eqtb value, and
+        // `unsave` restores it when the semi-simple group ends. The restored
+        // macro's `def_ref` remains allocator-owned (§382).
+        let temp = tempfile::tempdir().expect("temp");
+        let reference = scoped_macro_override_events(CanonicalValue::Integer(249_682), "local");
+        let actual = scoped_macro_override_events(CanonicalValue::Integer(23), "local");
+        let expected = TripTriageChannels {
+            initialization_events: None,
+            command_events: Some(&reference),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            command_events: Some(&actual),
+            ..expected
+        };
+        assert!(
+            write_trip_triage_artifact(temp.path(), input(expected, actual))
+                .expect("comparison")
+                .is_none()
+        );
+
+        let globally_overridden =
+            scoped_macro_override_events(CanonicalValue::Integer(23), "global");
+        assert!(
+            write_trip_triage_artifact(
+                temp.path(),
+                input(
+                    expected,
+                    TripTriageChannels {
+                        command_events: Some(&globally_overridden),
+                        ..actual
+                    },
+                ),
+            )
+            .expect("comparison")
+            .is_some(),
+            "§282 must not restore a global override"
+        );
     }
 
     #[test]

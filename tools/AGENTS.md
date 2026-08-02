@@ -90,6 +90,11 @@ delivery, it projects the reference engine's allocator-owned array-node
 address only when Umber supplies the portable register-class and
 `print_sa_num` identity; an absent or integer Umber operand remains a semantic
 divergence.
+Its macro-address projection follows explicit group lifetime: a local meaning
+mutation temporarily invalidates the outer macro proof, and TeX82 §282's
+`unsave` at the matching `\\endgroup` restores it. Global meaning mutations
+update every saved projection scope because §282 retains them rather than
+restoring the saved value.
 
 `tools/profile-analyzer` is the read-only Samply/Firefox processed-profile CLI.
 It reconstructs columnar sample stacks, consumes Samply presymbolication
