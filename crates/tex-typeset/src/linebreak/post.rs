@@ -28,11 +28,38 @@ pub struct LineMaterializer {
     pending_post: Vec<Node>,
     active_directions: Vec<Direction>,
     params: PostLineBreakParams,
+    physical: Option<Box<LineMaterializer>>,
 }
 
 impl LineMaterializer {
     #[must_use]
-    pub fn new(nodes: Vec<Node>, breaks: Vec<BreakDecision>, params: PostLineBreakParams) -> Self {
+    pub fn new(
+        sequence: tex_state::node_sequence::NodeSequence,
+        breaks: Vec<BreakDecision>,
+        params: PostLineBreakParams,
+    ) -> Self {
+        let (semantic, physical, boundaries) = sequence.into_parts();
+        let physical_breaks = breaks
+            .iter()
+            .map(|decision| BreakDecision {
+                position: boundaries[decision.position.min(boundaries.len() - 1)],
+                ..*decision
+            })
+            .collect();
+        let mut materializer = Self::from_nodes(semantic, breaks, params.clone());
+        materializer.physical = Some(Box::new(Self::from_nodes(
+            physical,
+            physical_breaks,
+            params,
+        )));
+        materializer
+    }
+
+    pub fn from_nodes(
+        nodes: Vec<Node>,
+        breaks: Vec<BreakDecision>,
+        params: PostLineBreakParams,
+    ) -> Self {
         let node_count = nodes.len();
         Self {
             nodes: nodes.into_iter(),
@@ -43,6 +70,7 @@ impl LineMaterializer {
             pending_post: Vec::new(),
             active_directions: Vec::new(),
             params,
+            physical: None,
         }
     }
 
@@ -106,8 +134,13 @@ impl LineMaterializer {
             let _ = self.nodes.next();
             self.position += 1;
         }
+        let physical_nodes = self
+            .physical
+            .as_mut()
+            .and_then(|physical| physical.materialize_next(state, Vec::new()))
+            .map_or_else(|| line.clone(), |physical| physical.nodes);
         Some(BrokenLine {
-            physical_nodes: line.clone(),
+            physical_nodes,
             nodes: line,
             penalty_after,
             hyphenated: decision.hyphenated,
@@ -154,7 +187,7 @@ pub fn post_line_break_owned<S: TypesetState>(
     params: PostLineBreakParams,
 ) -> Vec<BrokenLine> {
     let mut lines = Vec::with_capacity(breaks.len());
-    let mut materializer = LineMaterializer::new(nodes, breaks.to_vec(), params);
+    let mut materializer = LineMaterializer::from_nodes(nodes, breaks.to_vec(), params);
     while let Some(line) = materializer.materialize_next(state, Vec::new()) {
         lines.push(line);
     }

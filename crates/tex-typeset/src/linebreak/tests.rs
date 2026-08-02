@@ -2613,7 +2613,7 @@ fn line_materializer_reuses_the_returned_line_buffer() {
             hyphenated: false,
         },
     ];
-    let mut materializer = LineMaterializer::new(
+    let mut materializer = LineMaterializer::from_nodes(
         nodes,
         breaks,
         PostLineBreakParams {

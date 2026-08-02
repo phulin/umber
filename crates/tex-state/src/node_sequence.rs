@@ -85,6 +85,19 @@ impl NodeSequence {
         )
     }
 
+    pub fn into_parts(self) -> (Vec<Node>, Vec<Node>, Vec<usize>) {
+        let Self {
+            semantic,
+            physical,
+            physical_boundaries,
+        } = self;
+        let semantic = Arc::try_unwrap(semantic).unwrap_or_else(|nodes| (*nodes).clone());
+        let physical = Arc::try_unwrap(physical).unwrap_or_else(|nodes| (*nodes).clone());
+        let boundaries = Arc::try_unwrap(physical_boundaries)
+            .unwrap_or_else(|boundaries| (*boundaries).clone());
+        (semantic, physical, boundaries)
+    }
+
     pub fn push_mirrored(&mut self, node: Node) {
         Arc::make_mut(&mut self.semantic).push(node.clone());
         Arc::make_mut(&mut self.physical).push(node);

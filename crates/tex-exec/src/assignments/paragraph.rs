@@ -607,7 +607,11 @@ fn break_current_paragraph(
     let restore_pack_begin_line = stores.pack_begin_line();
     let paragraph_start_line = stores.pop_paragraph_start_line().unwrap_or(0);
     stores.set_pack_begin_line(paragraph_start_line);
-    let mut materializer = LineMaterializer::new(decisions.nodes, decisions.breaks, post_params);
+    let mut materializer = LineMaterializer::new(
+        tex_state::node_sequence::NodeSequence::mirrored(decisions.nodes),
+        decisions.breaks,
+        post_params,
+    );
     let mut line_nodes = Vec::new();
     let mut migrated = Vec::new();
     let mut pre_migrated = Vec::new();
