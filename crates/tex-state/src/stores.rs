@@ -334,6 +334,20 @@ impl Stores {
         self.usage_high_water = high_water;
         high_water
     }
+
+    /// TeX82 §638's live `var_used`/`dyn_used` projection.
+    ///
+    /// TeX's variable-size arena owns glue specifications and multiword
+    /// nodes; its one-word dynamic arena owns token nodes. Unlike
+    /// [`Self::engine_usage_statistics`], this is a live observation rather
+    /// than a high-water mark, because `ship_out` compares the values before
+    /// and after releasing the shipped box.
+    pub(crate) fn shipout_memory_usage(&self) -> (usize, usize) {
+        (
+            self.glue.len() + self.nodes.word_count(),
+            self.tokens.token_count(),
+        )
+    }
     pub(crate) fn loaded_fonts(&self) -> impl Iterator<Item = &LoadedFont> {
         self.fonts.iter()
     }

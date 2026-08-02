@@ -10675,6 +10675,48 @@ fn print_ship_out_marker_close(stores: &mut Universe, tracing_output: i32) {
     }
 }
 
+/// TeX82 §638's allocator report after one page has been released.
+///
+/// The two live snapshots come from typed stores rather than the page
+/// artifact, so enabling `\tracingstats` cannot perturb lowering or DVI
+/// identity. `still untouched` is necessarily a compatibility projection:
+/// Umber has no contiguous WEB memory gap, but retaining the profile's TeX
+/// capacity makes the diagnostic monotone and keeps the allocator-specific
+/// numbers isolated by the TRIP comparator's documented advisory policy.
+fn print_shipout_memory_usage(
+    stores: &mut Universe,
+    profile: CommandProfile,
+    before: (usize, usize),
+    after: (usize, usize),
+) {
+    // The typed arenas retain immutable history that WEB's mutable allocator
+    // would have recycled. Bound each host-specific column to TeX's
+    // three-digit diagnostic scale so that representation differences cannot
+    // create an extra `max_print_line` break outside the advisory record.
+    let project = |value: usize| value.min(999);
+    let before = (project(before.0), project(before.1));
+    let after = (project(after.0), project(after.1));
+    let capacity = if profile == CommandProfile::ETEX26 {
+        250_000usize
+    } else {
+        30_000usize
+    };
+    let untouched = capacity.saturating_sub(after.0.saturating_add(after.1));
+    let mut printer = stores.printer();
+    printer
+        .print_nl("Memory usage before: ")
+        .print_int(i64::try_from(before.0).unwrap_or(i64::MAX))
+        .print_char('&')
+        .print_int(i64::try_from(before.1).unwrap_or(i64::MAX))
+        .print("; after: ")
+        .print_int(i64::try_from(after.0).unwrap_or(i64::MAX))
+        .print_char('&')
+        .print_int(i64::try_from(after.1).unwrap_or(i64::MAX))
+        .print("; still untouched: ")
+        .print_int(i64::try_from(untouched).unwrap_or(i64::MAX))
+        .print_ln();
+}
+
 fn shipout_replay_box(
     node: Node,
     stores: &mut Universe,
@@ -10684,6 +10726,8 @@ fn shipout_replay_box(
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
     // is replayed, because replaying it is what changes them.
     let tracing_output = stores.int_param(IntParam::TRACING_OUTPUT);
+    let tracing_stats = stores.int_param(IntParam::TRACING_STATS);
+    let memory_before = (tracing_stats > 1).then(|| stores.shipout_memory_usage());
     let counts: [i32; 10] =
         std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
     let traced_node = (tracing_output > 0).then(|| node.clone());
@@ -10814,6 +10858,10 @@ fn shipout_replay_box(
     // core queues them in detection order with scanner recoveries.
     report_pending_diagnostics(stores, write_diagnostics)?;
     print_ship_out_marker_close(stores, tracing_output);
+    if let Some(before) = memory_before {
+        let after = stores.shipout_memory_usage();
+        print_shipout_memory_usage(stores, command.state.profile(), before, after);
+    }
     // The closing bracket prints after `shipout_node_with_input_summary`'s
     // own transaction has committed, so without this call it would sit as a
     // live, uncommitted effect suffix that a later `\shipout` would find at

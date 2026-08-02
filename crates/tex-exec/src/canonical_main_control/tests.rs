@@ -980,6 +980,34 @@ fn terminal_write_uses_live_line_width_and_breaks_after_message() {
 }
 
 #[test]
+fn tracingstats_frames_consecutive_shipouts_with_live_memory_reports() {
+    // TeX82 §638 snapshots allocator use around each page and closes the
+    // progress marker before printing its complete report. The diagnostic is
+    // per shipout; consecutive pages must not share one marker line.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingstats=2\shipout\hbox{}\shipout\hbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(!terminal.contains("[0] [0]"), "{terminal:?}");
+    assert_eq!(terminal.lines().filter(|line| *line == "[0]").count(), 2);
+    let reports = terminal
+        .lines()
+        .filter(|line| line.starts_with("Memory usage before: "))
+        .collect::<Vec<_>>();
+    assert_eq!(reports.len(), 2, "{terminal:?}");
+    for report in reports {
+        assert!(report.contains("; after: "), "{report:?}");
+        assert!(report.contains("; still untouched: "), "{report:?}");
+    }
+}
+
+#[test]
 fn showtokens_distinguishes_newlinechar_from_other_control_bytes() {
     // TeX82 §§262 and 1297: direct `token_show` output recognizes the live
     // newline character, while another non-printable byte keeps its `^^`

@@ -1450,6 +1450,12 @@ impl Universe {
     pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {
         self.stores.engine_usage_statistics()
     }
+
+    /// Returns TeX82 §638's live `(var_used, dyn_used)` projection.
+    #[must_use]
+    pub fn shipout_memory_usage(&self) -> (usize, usize) {
+        self.stores.shipout_memory_usage()
+    }
     /// Removes an ordered suffix from committed artifact/PDF publication.
     pub fn prepare_page_suffix(&mut self, start: usize) -> PreparedPageSuffix {
         let effect_base = self.world.effect_pos().raw()
