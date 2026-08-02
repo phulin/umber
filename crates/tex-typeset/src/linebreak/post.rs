@@ -176,10 +176,20 @@ fn push_owned_line_segment<S: TypesetState>(
         *position += 1;
         match node {
             Node::Disc {
+                kind,
                 pre,
                 post: post_list,
                 ..
             } if decision.hyphenated && absolute + 1 == end => {
+                // TeX82 §§879--882 makes the chosen discretionary compulsory
+                // but retains the emptied node before its transplanted
+                // pre-break material.
+                out.push(Node::Disc {
+                    kind,
+                    pre: empty_list,
+                    post: empty_list,
+                    replace: empty_list,
+                });
                 out.extend(state.nodes(pre).into_iter().map(|node| node.to_owned()));
                 post.extend(
                     state

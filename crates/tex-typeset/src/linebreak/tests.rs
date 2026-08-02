@@ -2055,10 +2055,21 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
         lines[0].nodes.as_slice(),
         [
             Node::Rule { width: Some(original), .. },
+            Node::Disc {
+                pre: cleared_pre,
+                post: cleared_post,
+                replace: cleared_replace,
+                ..
+            },
             Node::Rule { width: Some(pre_rule), .. },
             Node::Kern { amount: pre_kern, kind: KernKind::Explicit },
             Node::Glue { kind: GlueKind::RightSkip, .. },
-        ] if original.raw() == 1 && pre_rule.raw() == 11 && pre_kern.raw() == 12
+        ] if original.raw() == 1
+            && *cleared_pre == empty
+            && *cleared_post == empty
+            && *cleared_replace == empty
+            && pre_rule.raw() == 11
+            && pre_kern.raw() == 12
     ));
     assert!(matches!(
         lines[1].nodes.as_slice(),
