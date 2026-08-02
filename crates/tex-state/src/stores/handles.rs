@@ -12,6 +12,94 @@ use crate::token::{OriginId, Token};
 use crate::world::World;
 
 impl Stores {
+    /// Captures TeX82 §§252/283's box display while the save-stack-owned value
+    /// is live. Group reference accounting may retire an intermediate value
+    /// before the caller emits the deferred diagnostic.
+    pub(super) fn capture_current_group_box_restore_texts(&self) -> ahash::AHashMap<u64, String> {
+        let Some(pos) = self.env.last_group_marker_pos() else {
+            return ahash::AHashMap::new();
+        };
+        self.env
+            .journal_entries_since(pos)
+            .iter()
+            .filter_map(|entry| match entry {
+                crate::journal::Entry::BoxUndo(id) => Some(self.env.box_undo(*id).old().value()),
+                _ => None,
+            })
+            .map(|word| {
+                let text = NodeListId::decode_box_word(word)
+                    .map_or_else(|| "void".to_owned(), |id| self.box_restore_trace_text(id));
+                (word, text)
+            })
+            .collect()
+    }
+
+    pub(super) fn attach_box_restore_texts(
+        restores: &mut [crate::env::group::RestoreRecord],
+        texts: &ahash::AHashMap<u64, String>,
+    ) {
+        for record in restores {
+            if record.cell().bank() == crate::cell::BankTag::Box {
+                let text = texts
+                    .get(&record.old())
+                    .cloned()
+                    .unwrap_or_else(|| "void".to_owned());
+                record.capture_box_trace_text(text);
+            }
+        }
+    }
+
+    fn box_restore_trace_text(&self, id: NodeListId) -> String {
+        let Some(node) = self.nodes(id).first() else {
+            return "void".to_owned();
+        };
+        let (name, box_node) = match node {
+            crate::node_arena::NodeRef::HList(box_node) => ("hbox", box_node),
+            crate::node_arena::NodeRef::VList(box_node) => ("vbox", box_node),
+            _ => return "[]".to_owned(),
+        };
+        let scaled = |value: crate::scaled::Scaled| {
+            let raw = i64::from(value.raw());
+            let sign = if raw < 0 { "-" } else { "" };
+            let magnitude = raw.abs();
+            let whole = magnitude / 65_536;
+            let fraction = magnitude % 65_536;
+            if fraction == 0 {
+                format!("{sign}{whole}.0")
+            } else {
+                let mut digits = format!("{:05}", (fraction * 100_000 + 32_768) / 65_536);
+                while digits.ends_with('0') {
+                    digits.pop();
+                }
+                format!("{sign}{whole}.{digits}")
+            }
+        };
+        let mut text = format!(
+            "\\{name}({}+{})x{}",
+            scaled(box_node.height),
+            scaled(box_node.depth),
+            scaled(box_node.width)
+        );
+        if box_node.glue_sign != crate::node::Sign::Normal && !box_node.glue_set.is_zero() {
+            use std::fmt::Write as _;
+            let sign = if box_node.glue_sign == crate::node::Sign::Shrinking {
+                "-"
+            } else {
+                ""
+            };
+            let numerator = i64::from(box_node.glue_set.numerator()) * 65_536;
+            let denominator = i64::from(box_node.glue_set.denominator());
+            let ratio = crate::scaled::Scaled::from_raw(
+                i32::try_from((numerator + denominator / 2) / denominator).unwrap_or(i32::MAX),
+            );
+            let _ = write!(text, ", glue set {sign}{}", scaled(ratio));
+        }
+        if !self.nodes(box_node.children).is_empty() {
+            text.push_str(" []");
+        }
+        text
+    }
+
     pub(crate) fn assert_live_input_summary(&self, world: &World, summary: &InputSummary) {
         let mut max_source_id = None;
         for frame in summary.frames() {

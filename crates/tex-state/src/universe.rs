@@ -5653,7 +5653,7 @@ impl Universe {
         use crate::cell::BankTag;
         use crate::env::banks::{GlueParam, IntParam};
 
-        for &record in records {
+        for record in records {
             if record.tracing_restores() <= 0 {
                 continue;
             }
@@ -5664,8 +5664,9 @@ impl Universe {
                 } else {
                     "restoring"
                 };
-                let value = crate::ids::NodeListId::decode_box_word(record.old())
-                    .map_or_else(|| "void".to_owned(), |id| self.restore_box_trace_text(id));
+                let value = record
+                    .box_trace_text()
+                    .expect("box restore diagnostics are detached before group storage retires");
                 let mut diagnostic = crate::diagnostic::Diagnostic::begin_with_tracing_online(
                     self,
                     record.tracing_online(),
@@ -5677,7 +5678,7 @@ impl Universe {
                 diagnostic
                     .print(&format!("box{}=", cell.index()))
                     .print_ln()
-                    .print(&value)
+                    .print(value)
                     .print_char('}');
                 diagnostic.end(false);
                 continue;
@@ -5753,57 +5754,6 @@ impl Universe {
                 .print_char('}');
             diagnostic.end(false);
         }
-    }
-
-    fn restore_box_trace_text(&self, id: crate::ids::NodeListId) -> String {
-        let Some(node) = self.nodes(id).first() else {
-            return "void".to_owned();
-        };
-        let (name, box_node) = match node {
-            crate::node_arena::NodeRef::HList(box_node) => ("hbox", box_node),
-            crate::node_arena::NodeRef::VList(box_node) => ("vbox", box_node),
-            _ => return "[]".to_owned(),
-        };
-        let scaled = |value: crate::scaled::Scaled| {
-            let raw = i64::from(value.raw());
-            let sign = if raw < 0 { "-" } else { "" };
-            let magnitude = raw.abs();
-            let whole = magnitude / 65_536;
-            let fraction = magnitude % 65_536;
-            if fraction == 0 {
-                format!("{sign}{whole}.0")
-            } else {
-                let mut digits = format!("{:05}", (fraction * 100_000 + 32_768) / 65_536);
-                while digits.ends_with('0') {
-                    digits.pop();
-                }
-                format!("{sign}{whole}.{digits}")
-            }
-        };
-        let mut text = format!(
-            "\\{name}({}+{})x{}",
-            scaled(box_node.height),
-            scaled(box_node.depth),
-            scaled(box_node.width)
-        );
-        if box_node.glue_sign != crate::node::Sign::Normal && !box_node.glue_set.is_zero() {
-            use std::fmt::Write as _;
-            let sign = if box_node.glue_sign == crate::node::Sign::Shrinking {
-                "-"
-            } else {
-                ""
-            };
-            let numerator = i64::from(box_node.glue_set.numerator()) * 65_536;
-            let denominator = i64::from(box_node.glue_set.denominator());
-            let ratio = crate::scaled::Scaled::from_raw(
-                i32::try_from((numerator + denominator / 2) / denominator).unwrap_or(i32::MAX),
-            );
-            let _ = write!(text, ", glue set {sign}{}", scaled(ratio));
-        }
-        if !self.nodes(box_node.children).is_empty() {
-            text.push_str(" []");
-        }
-        text
     }
 
     /// e-TeX 2.6 [19.281]'s `group_trace(true)`, fired against the still-live

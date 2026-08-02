@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
 
 /// One TeX82 §283 save-stack diagnostic observed while unsaving a group.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreRecord {
     cell: CellId,
     old: u64,
@@ -16,6 +16,7 @@ pub struct RestoreRecord {
     tracing_restores: i32,
     tracing_online: i32,
     escape_char: i32,
+    box_trace_text: Option<String>,
 }
 
 impl RestoreRecord {
@@ -27,6 +28,7 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_trace_text: None,
         }
     }
 
@@ -38,6 +40,7 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_trace_text: None,
         }
     }
 
@@ -49,34 +52,45 @@ impl RestoreRecord {
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
             escape_char: env.int_param(crate::env::banks::IntParam::ESCAPE_CHAR),
+            box_trace_text: None,
         }
     }
 
     #[must_use]
-    pub const fn cell(self) -> CellId {
+    pub const fn cell(&self) -> CellId {
         self.cell
     }
 
     #[must_use]
-    pub const fn old(self) -> u64 {
+    pub const fn old(&self) -> u64 {
         self.old
     }
 
     #[must_use]
-    pub const fn is_retaining(self) -> bool {
+    pub const fn is_retaining(&self) -> bool {
         self.retaining
     }
 
-    pub const fn tracing_restores(self) -> i32 {
+    pub const fn tracing_restores(&self) -> i32 {
         self.tracing_restores
     }
 
-    pub const fn tracing_online(self) -> i32 {
+    pub const fn tracing_online(&self) -> i32 {
         self.tracing_online
     }
 
-    pub const fn escape_char(self) -> i32 {
+    pub const fn escape_char(&self) -> i32 {
         self.escape_char
+    }
+
+    pub(crate) fn capture_box_trace_text(&mut self, text: String) {
+        debug_assert_eq!(self.cell.bank(), BankTag::Box);
+        self.box_trace_text = Some(text);
+    }
+
+    #[must_use]
+    pub fn box_trace_text(&self) -> Option<&str> {
+        self.box_trace_text.as_deref()
     }
 }
 
