@@ -2143,19 +2143,15 @@ fn display_halign_closes_semisimple_group_and_discards_prior_formula() {
 
 #[test]
 fn display_halign_runs_assignments_before_missing_closer_recovery() {
-    let mut stores = support::stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\f \\hsize=50pt \\noindent$$\\halign{#\\cr a\\cr} \
          \\global\\count6=5 \\global\\postdisplaypenalty=-17 \
          \\global\\setbox= \\eqno \\end",
-    ));
-
-    let result = Executor::new().run(&mut input, &mut stores);
+    );
 
     assert_eq!(stores.count(6), 5);
     assert_eq!(stores.int_param(IntParam::POST_DISPLAY_PENALTY), -17);
-    let stats = result.expect("display recovery should reach final cleanup");
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(stores.execution_group_depth(), 0);
 }
 
