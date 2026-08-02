@@ -151,7 +151,7 @@ fn page_state_freezes_specs_and_tracks_sorted_insertion_records() {
     for class in [9, 3] {
         ins_class(&mut stores, class, 1_000, 100, 0, 0);
         let node = ins(&mut stores, class, 0, 0, &[]);
-        prepare_insertion(&mut stores, &node).expect("white-box operation succeeds");
+        prepare_insertion(&mut stores, &node, None).expect("white-box operation succeeds");
     }
     assert_eq!(
         stores
@@ -298,14 +298,14 @@ fn output_page_reset_retains_totals_until_the_next_page_starts() {
 fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
     let mut stores = crate::test_harness::universe();
     assert_eq!(
-        insertion_box_size(&mut stores, 4).expect("white-box operation succeeds"),
+        insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
         s(0)
     );
     let node = boxed(&mut stores, 11, 3, true);
     let list = stores.freeze_node_list(&[node]);
     stores.set_box_reg(4, list);
     assert_eq!(
-        insertion_box_size(&mut stores, 4).expect("white-box operation succeeds"),
+        insertion_box_size(&mut stores, 4, None).expect("white-box operation succeeds"),
         s(14)
     );
     assert!(stores.box_reg(4).is_some());
@@ -313,7 +313,7 @@ fn box_error_and_ensure_vbox_recover_only_invalid_live_boxes() {
     let list = stores.freeze_node_list(&[node]);
     stores.set_box_reg(5, list);
     assert_eq!(
-        insertion_box_size(&mut stores, 5).expect("white-box operation succeeds"),
+        insertion_box_size(&mut stores, 5, None).expect("white-box operation succeeds"),
         s(0)
     );
     assert!(stores.box_reg(5).is_none());
@@ -663,9 +663,9 @@ fn page_insertion_class_order_scaling_skip_and_fit_match_tex82() {
     ins_class(&mut stores, 9, 500, 100_000, 10, 3);
     ins_class(&mut stores, 3, 1_000, 100_000, 4, 3);
     let nine = ins(&mut stores, 9, 20_000, 0, &[]);
-    prepare_insertion(&mut stores, &nine).expect("white-box operation succeeds");
+    prepare_insertion(&mut stores, &nine, None).expect("white-box operation succeeds");
     let three = ins(&mut stores, 3, 8_000, 0, &[]);
-    prepare_insertion(&mut stores, &three).expect("white-box operation succeeds");
+    prepare_insertion(&mut stores, &three, None).expect("white-box operation succeeds");
     let records = stores.page_insertions();
     assert_eq!(
         records.iter().map(PageInsertion::class).collect::<Vec<_>>(),
@@ -686,7 +686,7 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
     stores.freeze_page_specs(PageContents::InsertsOnly);
     ins_class(&mut stores, 7, 1_000, 5, 0, 0);
     let split = ins(&mut stores, 7, 10, 17, &[rule(10, 0), Node::Penalty(51)]);
-    prepare_insertion(&mut stores, &split).expect("white-box operation succeeds");
+    prepare_insertion(&mut stores, &split, None).expect("white-box operation succeeds");
     assert!(matches!(
         stores
             .page_insertion(7)
@@ -695,14 +695,14 @@ fn page_insertion_split_float_penalty_and_invalid_box_recovery_match_tex82() {
         PageInsertionStatus::SplitUp { .. }
     ));
     let before = stores.insert_penalties();
-    prepare_insertion(&mut stores, &split).expect("white-box operation succeeds");
+    prepare_insertion(&mut stores, &split, None).expect("white-box operation succeeds");
     assert_eq!(stores.insert_penalties(), before + 17);
     ins_class(&mut stores, 8, 1_000, 100, 0, 0);
     let hbox = boxed(&mut stores, 4, 2, false);
     let list = stores.freeze_node_list(&[hbox]);
     stores.set_box_reg(8, list);
     let invalid = ins(&mut stores, 8, 0, 0, &[]);
-    prepare_insertion(&mut stores, &invalid).expect("white-box operation succeeds");
+    prepare_insertion(&mut stores, &invalid, None).expect("white-box operation succeeds");
     assert!(stores.box_reg(8).is_none());
     assert!(effects(&stores).contains("Insertions can only be added to a vbox"));
 }
@@ -717,9 +717,9 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     repeated.freeze_page_specs(PageContents::InsertsOnly);
     ins_class(&mut repeated, 2, 500, 40_000, 7_000, 3_000);
     let first = ins(&mut repeated, 2, 10_000, 0, &[]);
-    prepare_insertion(&mut repeated, &first).expect("first insertion fits");
+    prepare_insertion(&mut repeated, &first, None).expect("first insertion fits");
     let second = ins(&mut repeated, 2, 20_000, 0, &[]);
-    prepare_insertion(&mut repeated, &second).expect("repeated insertion fits");
+    prepare_insertion(&mut repeated, &second, None).expect("repeated insertion fits");
     let record = repeated.page_insertion(2).expect("class record is present");
     assert_eq!(record.height(), s(30_000));
     assert_eq!(record.last_ins_index(), Some(0));
@@ -731,7 +731,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     exact.freeze_page_specs(PageContents::InsertsOnly);
     ins_class(&mut exact, 3, 1_000, 10, 0, 0);
     let at_capacity = ins(&mut exact, 3, 10, 0, &[]);
-    prepare_insertion(&mut exact, &at_capacity).expect("capacity equality fits");
+    prepare_insertion(&mut exact, &at_capacity, None).expect("capacity equality fits");
     assert_eq!(exact.page_dimension(PageDimension::Goal), s(0));
     assert_eq!(exact.page_insertion_height(3), Some(s(10)));
     assert_eq!(
@@ -744,7 +744,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
     null_split.freeze_page_specs(PageContents::InsertsOnly);
     ins_class(&mut null_split, 5, 1_000, 20, 0, 0);
     let unsplittable = ins(&mut null_split, 5, 9, 37, &[rule(9, 0)]);
-    prepare_insertion(&mut null_split, &unsplittable).expect("null split is recorded");
+    prepare_insertion(&mut null_split, &unsplittable, None).expect("null split is recorded");
     assert_eq!(null_split.page_insertion_height(5), Some(s(9)));
     assert_eq!(null_split.insert_penalties(), EJECT_PENALTY);
     assert!(matches!(
@@ -755,7 +755,7 @@ fn page_insertion_count_capacity_and_null_split_matrix() {
         }
     ));
 
-    prepare_insertion(&mut null_split, &unsplittable)
+    prepare_insertion(&mut null_split, &unsplittable, None)
         .expect("later insertion in split class is held over");
     assert_eq!(null_split.insert_penalties(), EJECT_PENALTY + 37);
 }

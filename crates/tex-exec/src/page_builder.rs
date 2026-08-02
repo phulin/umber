@@ -23,17 +23,27 @@ const PAGE_EPISODE_SCHEMA: u32 = 1;
 const PAGE_ENV_HASH_DOMAIN: u64 = 0x7061_6765_656e_7601;
 
 pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
+    build_page_with_error_context(stores, None)
+}
+
+/// Runs TeX82's page builder with the live §82 input display of the command
+/// whose contribution triggered it. The canonical command core owns that
+/// stack; callers without one retain the legacy Universe-summary fallback.
+pub(crate) fn build_page_with_error_context(
+    stores: &mut Universe,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
     if stores.page_contributions().is_empty() {
-        return build_page_cold(stores);
+        return build_page_cold(stores, error_context);
     }
     if !stores.page_memo_enabled() {
         if stores.pure_memo_enabled() {
             stores.record_pure_memo_not_attempted(PureMemoLayer::Page);
         }
-        return build_page_cold(stores);
+        return build_page_cold(stores, error_context);
     }
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = page_episode_key(stores);
@@ -78,7 +88,7 @@ pub(crate) fn build_page(stores: &mut Universe) -> Result<(), ExecError> {
     }
     let contributions = stores.page_contributions().len();
     let effect_start = stores.world().effect_records().len();
-    build_page_cold(stores)?;
+    build_page_cold(stores, error_context)?;
     if stores.world().effect_records().len() == effect_start
         && let Some(input_origins) = input_origins
         && let Ok((transition, output_origins)) = stores.detach_page_memo_transition()
@@ -153,7 +163,7 @@ fn page_episode_key(stores: &Universe) -> PureMemoKey {
     )
 }
 
-fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
+fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result<(), ExecError> {
     if stores.page_fire_up().is_some() {
         return Ok(());
     }
@@ -231,7 +241,7 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
                 if stores.page_contents() == PageContents::Empty {
                     freeze_page_specs(stores, PageContents::InsertsOnly);
                 }
-                let node = prepare_insertion(stores, &node)?.unwrap_or(node);
+                let node = prepare_insertion(stores, &node, error_context)?.unwrap_or(node);
                 contribute_front_as(stores, node)?;
             }
             Node::Whatsit(_)
@@ -249,7 +259,11 @@ fn build_page_cold(stores: &mut Universe) -> Result<(), ExecError> {
     Ok(())
 }
 
-fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<Option<Node>, ExecError> {
+fn prepare_insertion(
+    stores: &mut Universe,
+    node: &Node,
+    error_context: Option<&str>,
+) -> Result<Option<Node>, ExecError> {
     let Node::Ins {
         class,
         size,
@@ -264,7 +278,7 @@ fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<Option<Node>,
 
     let mut insertion = match stores.page_insertion(*class) {
         Some(insertion) => insertion,
-        None => create_page_insertion(stores, *class)?,
+        None => create_page_insertion(stores, *class, error_context)?,
     };
     let mut replacement = None;
 
@@ -300,8 +314,12 @@ fn prepare_insertion(stores: &mut Universe, node: &Node) -> Result<Option<Node>,
     Ok(replacement)
 }
 
-fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsertion, ExecError> {
-    let existing_height = insertion_box_size(stores, class)?;
+fn create_page_insertion(
+    stores: &mut Universe,
+    class: u16,
+    error_context: Option<&str>,
+) -> Result<PageInsertion, ExecError> {
+    let existing_height = insertion_box_size(stores, class, error_context)?;
     let insertion = PageInsertion::new(class, existing_height);
     let scaled_height = scaled_insertion_size(existing_height, stores.count(class))?;
     let skip = stores.glue(stores.skip(class));
@@ -317,7 +335,11 @@ fn create_page_insertion(stores: &mut Universe, class: u16) -> Result<PageInsert
     Ok(insertion)
 }
 
-fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecError> {
+fn insertion_box_size(
+    stores: &mut Universe,
+    class: u16,
+    error_context: Option<&str>,
+) -> Result<Scaled, ExecError> {
     let Some(list) = stores.box_reg(class) else {
         return Ok(Scaled::from_raw(0));
     };
@@ -330,7 +352,10 @@ fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecE
             // TeX.web §993's `ensure_vbox`. The page builder runs between
             // commands rather than inside a scanner, so §82's display comes
             // from the last input summary the job published.
-            let context = crate::diagnostics::show_context(stores, stores.input_summary());
+            let context = error_context.map_or_else(
+                || crate::diagnostics::show_context(stores, stores.input_summary()),
+                str::to_owned,
+            );
             crate::error_report::report_error(
                 stores,
                 "Insertions can only be added to a vbox",
@@ -341,6 +366,21 @@ fn insertion_box_size(stores: &mut Universe, class: u16) -> Result<Scaled, ExecE
                 ],
                 context,
             )?;
+            // TeX82 §993's `box_error` continues after `error`: it enters a
+            // diagnostic scope, identifies the rejected box, and applies
+            // `show_box` before flushing the register. `show_box` itself
+            // starts with the structural newline emitted by §182.
+            let text = crate::node_dump::dump_node_list(
+                stores,
+                list,
+                crate::node_dump::DumpConfig::read(stores),
+            );
+            let mut diagnostic = stores.begin_diagnostic();
+            diagnostic
+                .print_nl("The following box has been deleted:")
+                .print_ln()
+                .print_rendered(&text);
+            diagnostic.end(true);
             stores.clear_box_reg(class);
             Ok(Scaled::from_raw(0))
         }

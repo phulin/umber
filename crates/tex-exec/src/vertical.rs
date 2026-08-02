@@ -93,6 +93,17 @@ pub(crate) fn build_page_if_outer_vertical(
     Ok(())
 }
 
+pub(crate) fn build_page_if_outer_vertical_with_error_context(
+    nest: &ModeNest,
+    stores: &mut Universe,
+    error_context: &str,
+) -> Result<(), ExecError> {
+    if is_outer_vertical(nest) {
+        crate::page_builder::build_page_with_error_context(stores, Some(error_context))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
     nest.depth() == 1 && nest.current_mode() == Mode::Vertical
 }

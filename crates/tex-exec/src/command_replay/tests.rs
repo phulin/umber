@@ -8686,6 +8686,49 @@ fn canonical_insert_recovers_reserved_and_out_of_range_class_numbers() {
 }
 
 #[test]
+fn outer_insert_ensure_vbox_reports_context_before_help() {
+    // TeX82 §§82/993/1100: closing an outer-vertical insertion immediately
+    // runs `build_page`; `ensure_vbox` calls `box_error`, whose first action
+    // is `error`. The closing brace's live input display therefore precedes
+    // §90's transcript-only help.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\nonstopmode\setbox1=\hbox{}
+\insert1{}
+\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let transcript = transcript_text(&universe);
+    let message = transcript
+        .find("! Insertions can only be added to a vbox.")
+        .expect("§993 message");
+    let context = transcript[message..]
+        .find("l.2 \\insert1{}")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("§82 live closing-brace context: {transcript:?}"));
+    let help = transcript[message..]
+        .find("Tut tut: You're trying to \\insert")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("§90 help: {transcript:?}"));
+    let deleted = transcript[message..]
+        .find("The following box has been deleted:")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("§993 deleted-box diagnostic: {transcript:?}"));
+    let dump = transcript[deleted..]
+        .find("\\hbox(0.0+0.0)x0.0")
+        .map(|offset| deleted + offset)
+        .unwrap_or_else(|| panic!("§198 rejected-box dump: {transcript:?}"));
+    assert!(
+        message < context && context < help && help < deleted && deleted < dump,
+        "{transcript:?}"
+    );
+}
+
+#[test]
 fn insert255_uses_canonical_error_reporting_in_every_interaction_mode() {
     // `\\errorstopmode` is covered by
     // `insert255_in_error_stop_mode_ends_the_job_at_section_83s_prompt`

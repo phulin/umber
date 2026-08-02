@@ -15064,6 +15064,10 @@ fn finish_insert_or_adjust_group(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) -> Result<ReplayStep, ExecError> {
+    // TeX82 §§993/1100: an outer-vertical insertion invokes `build_page`
+    // before main control fetches another command. Preserve this closing
+    // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
+    let page_error_context = command.state.output_open_context(&stores.command_context());
     crate::assignments::end_paragraph_with_fuel(modes, stores, command.fuel)?;
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
@@ -15099,7 +15103,11 @@ fn finish_insert_or_adjust_group(
         }
     };
     crate::vertical::append_vertical_contribution(modes, stores, node);
-    crate::vertical::build_page_if_outer_vertical(modes, stores)?;
+    crate::vertical::build_page_if_outer_vertical_with_error_context(
+        modes,
+        stores,
+        &page_error_context,
+    )?;
     Ok(ReplayStep::Continue)
 }
 
