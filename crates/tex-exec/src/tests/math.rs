@@ -1251,12 +1251,11 @@ fn initex_letter_mathcodes_use_variable_family_one_and_honor_fam() {
 }
 
 #[test]
-#[ignore = "umber2-xxz4: canonical showlists loses the unfinished-math entry line"]
 fn showlists_reports_unfinished_math_noad_fields() {
     let (stores, _) = run_math_source(r"$a_b^c\mathchoice{d}{t}{s}{u}\showlists$");
     let log = terminal_effect_text(&stores);
 
-    assert!(log.contains("### math mode entered at line 0"));
+    assert!(log.contains("### math mode entered at line 1"), "{log}");
     assert!(log.contains("\\mathord"));
     assert!(log.contains(".\\fam1 a"));
     assert!(log.contains("^\\fam1 c"));

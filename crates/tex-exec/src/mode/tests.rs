@@ -496,6 +496,28 @@ fn journal_level_identity_handles_push_pop_replacement_and_nested_edits() {
 }
 
 #[test]
+fn mode_entry_lines_survive_summary_restore_and_journal_rollback() {
+    let mut nest = ModeNest::new();
+    nest.push_at_line(Mode::Horizontal, 7)
+        .expect("horizontal mode push");
+    let saved = nest.summary();
+
+    let mut restored = ModeNest::from_summary(saved.clone()).expect("restore mode summary");
+    assert_eq!(restored.summary().levels()[1].entry_line(), 7);
+
+    restored.reset_journal_for_test();
+    let cursor = restored.begin_journal();
+    restored.pop().expect("pop restored horizontal mode");
+    restored
+        .push_at_line(Mode::Math, 11)
+        .expect("replacement math mode push");
+    restored.rollback_journal(cursor).expect("rollback");
+
+    assert_eq!(restored.summary(), saved);
+    assert_eq!(restored.summary().levels()[1].entry_line(), 7);
+}
+
+#[test]
 fn journal_rejects_non_innermost_and_stale_generation_cursors() {
     use super::journal::CursorError;
 
