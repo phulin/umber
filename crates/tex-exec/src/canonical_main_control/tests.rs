@@ -9051,3 +9051,180 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
         );
     }
 }
+
+fn run_canonical_etex(source: &[u8]) -> Universe {
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(&mut control, source);
+    run_to_end(&mut control, &mut stores);
+    stores
+}
+
+#[test]
+#[ignore = "xfail: umber2-6d6s canonical final cleanup drops an unterminated hbox page"]
+fn end_inside_unterminated_box_reaches_outer_cleanup() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\hbox{A\end");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
+}
+
+#[test]
+fn parshape_and_hanging_parameters_reset_after_paragraph() {
+    let stores =
+        run_canonical_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2 x\par");
+    assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
+    assert!(stores.paragraph_shape().is_empty());
+}
+
+#[test]
+fn vertical_par_resets_normal_paragraph_parameters_without_material() {
+    let stores =
+        run_canonical_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2\par");
+    assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
+    assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
+    assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
+    assert!(stores.paragraph_shape().is_empty());
+    assert!(stores.current_page_nodes().is_empty());
+    assert!(stores.page_contributions().is_empty());
+}
+
+#[test]
+fn parshape_assignment_obeys_local_and_global_grouping() {
+    let local = run_canonical_etex(br"\parshape=1 3pt 40pt{\parshape=0}\end");
+    assert_eq!(local.paragraph_shape().len(), 1);
+    assert_eq!(local.paragraph_shape()[0].indent.raw(), 3 * 65_536);
+    let global = run_canonical_etex(br"{\global\parshape=1 7pt 80pt}\end");
+    assert_eq!(global.paragraph_shape().len(), 1);
+    assert_eq!(global.paragraph_shape()[0].indent.raw(), 7 * 65_536);
+}
+
+#[test]
+fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
+    let stores = run_canonical_etex(
+        br"\parshape=2 1pt 2pt 3pt 4pt
+          \edef\result{\the\parshapeindent1/\the\parshapelength1/\the\parshapedimen3/\the\parshapedimen4/\the\parshapeindent8/\the\parshapelength8/\the\parshapeindent0}\end",
+    );
+    assert_eq!(
+        macro_character_text(&stores, "result"),
+        "1.0pt/2.0pt/3.0pt/4.0pt/3.0pt/4.0pt/0.0pt"
+    );
+}
+
+#[test]
+fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
+    let stores = run_canonical_etex(
+        br"\clubpenalties=2 200 100 \widowpenalties=2 300 400
+          \displaywidowpenalties=1 500 {\clubpenalties=1 7}
+          \interlinepenalties=2 8 7
+          \edef\before{\number\clubpenalties0/\the\clubpenalties1/\the\clubpenalties8/\the\widowpenalties1/\the\widowpenalties8/\the\displaywidowpenalties0/\the\displaywidowpenalties8/\the\interlinepenalties0}
+          \noindent\par \edef\after{\the\interlinepenalties0}\end",
+    );
+    assert_eq!(
+        macro_character_text(&stores, "before"),
+        "2/200/100/300/400/1/500/2"
+    );
+    assert_eq!(macro_character_text(&stores, "after"), "0");
+}
+
+#[test]
+fn long_prefix_on_let_reports_tex_prefix_error() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\nonstopmode\long\let\a=b");
+    run_to_end(&mut control, &mut stores);
+    assert!(terminal_text(&stores).contains("You can't use `\\long'"));
+    let a = stores.symbol("a").expect("let target exists");
+    assert_eq!(
+        stores.meaning(a),
+        Meaning::CharToken {
+            ch: 'b',
+            cat: Catcode::Letter
+        }
+    );
+}
+
+#[test]
+fn interactionmode_reads_and_assigns_globally() {
+    let stores = run_canonical_etex(
+        br"\edef\before{\the\interactionmode}\begingroup\interactionmode=1\endgroup\edef\after{\the\interactionmode}",
+    );
+    assert_eq!(macro_character_text(&stores, "before"), "3");
+    assert_eq!(macro_character_text(&stores, "after"), "1");
+    assert_eq!(
+        stores.interaction_mode(),
+        tex_state::InteractionMode::Nonstop
+    );
+}
+
+#[test]
+fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut stores);
+    tex_expand::install_etex_expandable_primitives(&mut stores);
+    crate::install_unexpandable_primitives(&mut stores);
+    crate::install_etex_unexpandable_primitives(&mut stores);
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    register_source(
+        &mut control,
+        br"\interactionmode=-1\edef\result{\the\interactionmode}",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(macro_character_text(&stores, "result"), "1");
+    assert!(terminal_text(&stores).contains("Bad interaction mode (-1)"));
+}
+
+#[test]
+fn etex_showgroups_and_showifs_render_live_nested_stacks() {
+    let stores =
+        run_canonical_etex(br"\nonstopmode\begingroup\iftrue\showgroups\showifs\fi\endgroup");
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("### semi simple group (level 1) entered at line 1 (\\begingroup)"),
+        "{output}"
+    );
+    assert!(output.contains("### bottom level"));
+    assert!(output.contains("### level 1: \\iftrue"), "{output}");
+}
+
+#[test]
+fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
+    let mut stores = run_canonical_etex(
+        br"\let\bgroup={\protected\def\two{}\let\three=\two\protected\unexpanded\bgroup\two\protected\three\protected\def\one{\two}}",
+    );
+    let one = stores.intern("one");
+    let Meaning::Macro { definition, flags } = stores.meaning(one) else {
+        panic!("one is defined")
+    };
+    assert!(flags.contains(tex_state::meaning::MeaningFlags::PROTECTED));
+    assert_eq!(
+        stores
+            .tokens(stores.macro_definition(definition).replacement_text())
+            .len(),
+        1
+    );
+    assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+}
+
+#[test]
+fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
+    let mut stores = run_canonical_etex(
+        br"\let\flag\iftrue\def\setfalse{\let\flag\iffalse}\begingroup\global\unexpanded{\setfalse}\endgroup",
+    );
+    let flag = stores.intern("flag");
+    assert_eq!(
+        stores.meaning(flag),
+        Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::IfFalse)
+    );
+    assert!(!terminal_text(&stores).contains("You can't use a prefix"));
+}
