@@ -3,6 +3,7 @@
 use super::*;
 use tex_fonts::{FontMetrics, LoadedFont};
 use tex_state::EffectRecord;
+use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{AdjustNode, BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
@@ -221,6 +222,32 @@ fn short_display_uses_print_ascii_for_eight_bit_character_codes() {
             "{} CA^^82",
             crate::node_dump::font_identifier(&stores, font)
         )
+    );
+}
+
+#[test]
+fn short_display_honors_live_newline_character() {
+    // TeX82 §§59/174: `short_display` prints a character node through the
+    // one-character string path, where `\newlinechar` is recognized before
+    // the `^^` spelling for an unprintable character.
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::NEWLINE_CHAR, 10);
+    let font = tex_state::font::NULL_FONT;
+    let nodes = [Node::Char {
+        font,
+        ch: '\n',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }];
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        format!("{} \n", crate::node_dump::font_identifier(&stores, font))
+    );
+
+    stores.set_int_param(IntParam::NEWLINE_CHAR, -1);
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        format!("{} ^^J", crate::node_dump::font_identifier(&stores, font))
     );
 }
 

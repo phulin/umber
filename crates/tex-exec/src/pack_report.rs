@@ -29,6 +29,7 @@ mod tests;
 use std::fmt::Write as _;
 
 use tex_state::Universe;
+use tex_state::env::banks::IntParam;
 use tex_state::ids::NodeListId;
 use tex_state::node::Node;
 use tex_typeset::PackDiagnostic;
@@ -339,5 +340,16 @@ fn append_short_char(
         out.push(' ');
         *font_in_short_display = Some(font.raw());
     }
-    out.push_str(&crate::node_dump::printable_char(ch));
+    // TeX82 §§59/174 call `print(character(p))`, not `print_char` and not a
+    // context-free `^^` renderer. A one-character string equal to the live
+    // `\newlinechar` therefore performs `print_ln` before §59 considers the
+    // non-printable-character spelling.
+    let newline_char = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
+        .ok()
+        .and_then(char::from_u32);
+    if newline_char == Some(ch) {
+        out.push('\n');
+    } else {
+        out.push_str(&crate::node_dump::printable_char(ch));
+    }
 }
