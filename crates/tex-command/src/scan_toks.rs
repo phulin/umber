@@ -140,7 +140,14 @@ impl CommandProcessor<'_> {
         }
         let result = self.scan_toks_inner(mode);
         if let Ok(result) = &result {
-            let mut partial = parameter_text_for_runaway(result, &self.state);
+            let mut partial = if matches!(
+                mode,
+                ScanToksMode::MacroDefinition { .. } | ScanToksMode::MacroDefinitionFor { .. }
+            ) {
+                parameter_text_for_runaway(result, &self.state)
+            } else {
+                Vec::new()
+            };
             partial.extend(
                 self.state
                     .tokens(result.replacement_text.token_list())
@@ -868,12 +875,26 @@ fn parameter_text_for_runaway(
     result: &ScannedToks,
     state: &tex_state::CommandContext<'_>,
 ) -> Vec<TracedTokenWord> {
-    state
+    let mut tokens: Vec<_> = state
         .tokens(result.parameter_text.token_list())
         .iter()
         .copied()
         .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
-        .collect()
+        .collect();
+    // TeX82 §§294/306/473 store one `def_ref` list whose `end_match_token`
+    // separates parameter text from replacement text and prints as `->`.
+    // Umber owns those halves as separate immutable lists, so reconstruct the
+    // sentinel's diagnostic spelling before appending the replacement below.
+    tokens.extend(['-', '>'].map(|ch| {
+        TracedTokenWord::pack(
+            Token::Char {
+                ch,
+                cat: Catcode::Other,
+            },
+            OriginId::UNKNOWN,
+        )
+    }));
+    tokens
 }
 
 fn is_parameter(token: Token) -> bool {

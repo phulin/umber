@@ -135,6 +135,17 @@ fn eof_recovery_restores_defining_status_before_macro_replacement_completes() {
     processor
         .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
         .expect("EOF recovery closes the replacement text");
+    let diagnostics = processor.take_semantic_diagnostics();
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            runaway: Some(runaway),
+            ..
+        },
+    ] = diagnostics.as_slice()
+    else {
+        panic!("expected runaway-definition diagnostic")
+    };
+    assert_eq!(runaway.partial, "->DEF ");
 
     let close = recorder
         .0
