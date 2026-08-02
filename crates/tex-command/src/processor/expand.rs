@@ -10,6 +10,8 @@ use tex_state::provenance::SynthesizedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
+use posix_regex::{PosixRegexBuilder, compile::Error as PosixRegexError};
+
 use crate::command::DeliveryStamp;
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior,
@@ -680,6 +682,12 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(&value.to_string(), command.origin());
                 Ok(())
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMatch) => {
+                self.expand_pdf_match(command)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
+                self.expand_pdf_last_match(command)
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original
@@ -1089,6 +1097,92 @@ impl CommandProcessor<'_> {
     /// §386 is `begin_token_list(cur_mark[cur_chr], mark_text)`, a distinct
     /// §307 token type from §467's `inserted`: a mark's text is the stored list
     /// itself, never a copy handed back through `ins_list`.
+    fn expand_pdf_match(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let mut case_insensitive = false;
+        let mut subcount = 10_u32;
+        loop {
+            if self.scan_keyword("icase")?.value {
+                case_insensitive = true;
+            } else if self.scan_keyword("subcount")?.value {
+                subcount = self.scan_integer()?.value.max(0) as u32;
+            } else {
+                break;
+            }
+        }
+        let pattern = self.scan_balanced_text(true)?.tokens.token_list();
+        let haystack = self.scan_balanced_text(true)?.tokens.token_list();
+        let pattern = pdftex_c_string(pdftex_token_bytes(&mut self.state, pattern));
+        let haystack = pdftex_c_string(pdftex_token_bytes(&mut self.state, haystack));
+        let regex = match PosixRegexBuilder::new(&pattern)
+            .with_default_classes()
+            .extended(true)
+            .compile()
+        {
+            Ok(regex) => regex.case_insensitive(case_insensitive),
+            Err(error) => {
+                self.pdftex_regex_warning(posix_regex_diagnostic(&error, &pattern));
+                self.push_rendered_text("-1", opener.origin());
+                return Ok(());
+            }
+        };
+        let captures = regex.matches(&haystack, Some(1)).into_iter().next();
+        let matched = captures.is_some();
+        let captures = captures
+            .unwrap_or_default()
+            .iter()
+            .take(subcount as usize)
+            .map(|capture| {
+                capture.map(|(start, end)| {
+                    (
+                        u32::try_from(start).expect("bounded TeX string offset fits u32"),
+                        u32::try_from(end).expect("bounded TeX string offset fits u32"),
+                    )
+                })
+            })
+            .collect();
+        self.state
+            .set_pdf_match_state(haystack, captures, subcount, matched);
+        self.push_rendered_text(if matched { "1" } else { "0" }, opener.origin());
+        Ok(())
+    }
+
+    fn expand_pdf_last_match(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let mut index = self.scan_integer()?.value;
+        if index < 0 {
+            self.pdftex_match_number_diagnostic(index);
+            index = 1;
+        }
+        let capture = u32::try_from(index)
+            .ok()
+            .and_then(|index| self.state.pdf_match_capture(index))
+            .map(|(offset, bytes)| (offset, bytes.to_vec()));
+        let mut rendered = match capture {
+            Some((offset, _)) => format!("{offset}->"),
+            None => "-1->".to_owned(),
+        };
+        if let Some((_, bytes)) = capture {
+            rendered.extend(bytes.into_iter().map(char::from));
+        }
+        self.push_rendered_text(&rendered, opener.origin());
+        Ok(())
+    }
+
+    fn pdftex_regex_warning(&mut self, message: &str) {
+        self.command.semantic_diagnostics.push(
+            crate::CommandSemanticDiagnostic::PdfExpansionMessage {
+                text: format!("pdfTeX warning: pdftex: \\pdfmatch: {message}"),
+            },
+        );
+    }
+
+    fn pdftex_match_number_diagnostic(&mut self, value: i32) {
+        self.command.semantic_diagnostics.push(
+            crate::CommandSemanticDiagnostic::PdfExpansionMessage {
+                text: format!("! Bad match number ({value})."),
+            },
+        );
+    }
+
     fn push_mark_text(&mut self, tokens: TokenListId) {
         let level = self.command.push_token_level(
             TokenPayload::Stored {
@@ -1748,6 +1842,63 @@ pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token
         text.push(' ');
     }
     text
+}
+
+fn pdftex_token_bytes(state: &mut tex_state::CommandContext<'_>, tokens: TokenListId) -> Vec<u8> {
+    token_list_string_text(state, tokens)
+        .chars()
+        .map(|ch| {
+            u8::try_from(u32::from(ch))
+                .expect("pdfTeX profile expanded strings contain only byte characters")
+        })
+        .collect()
+}
+
+fn pdftex_c_string(mut bytes: Vec<u8>) -> Vec<u8> {
+    if let Some(nul) = bytes.iter().position(|byte| *byte == 0) {
+        bytes.truncate(nul);
+    }
+    bytes
+}
+
+fn posix_regex_diagnostic(error: &PosixRegexError, pattern: &[u8]) -> &'static str {
+    if matches!(error, PosixRegexError::EOF) && has_unclosed_bracket(pattern) {
+        return "brackets ([ ]) not balanced";
+    }
+    match error {
+        PosixRegexError::Expected(b']', _) => "brackets ([ ]) not balanced",
+        PosixRegexError::Expected(b')', _) => "parentheses not balanced",
+        PosixRegexError::IllegalRange => "invalid character range",
+        PosixRegexError::IntegerOverflow | PosixRegexError::EmptyRepetition => {
+            "invalid repetition count(s)"
+        }
+        PosixRegexError::InvalidBackRef(_) => "invalid back reference",
+        PosixRegexError::LeadingRepetition => "repetition-operator operand invalid",
+        PosixRegexError::UnclosedRepetition => "braces not balanced",
+        PosixRegexError::UnknownClass(_) => "invalid character class",
+        PosixRegexError::UnknownCollation => "invalid collating element",
+        PosixRegexError::EOF | PosixRegexError::Expected(_, _) => {
+            "premature end of regular expression"
+        }
+        PosixRegexError::UnexpectedToken(_) => "invalid regular expression",
+    }
+}
+
+fn has_unclosed_bracket(pattern: &[u8]) -> bool {
+    let mut escaped = false;
+    let mut bracket = false;
+    for &byte in pattern {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'[' {
+            bracket = true;
+        } else if byte == b']' {
+            bracket = false;
+        }
+    }
+    bracket
 }
 
 fn roman_numeral(value: i32) -> String {

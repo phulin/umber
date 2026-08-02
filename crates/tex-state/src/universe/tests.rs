@@ -88,6 +88,15 @@ fn pdf_match_captures_are_checkpointed_and_hashed() {
 }
 
 #[test]
+fn pdf_match_capture_state_is_not_serialized_into_formats() {
+    let mut universe = Universe::new();
+    universe.set_pdf_match_state(b"session".to_vec(), vec![Some((0, 7))], 1, true);
+    let format = universe.dump_format().expect("dump format");
+    let restored = Universe::from_format(World::memory(), &format).expect("restore format");
+    assert_eq!(restored.pdf_match_capture(0), None);
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's

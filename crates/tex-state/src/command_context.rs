@@ -359,6 +359,24 @@ impl CommandContext<'_> {
         self.universe.pdf_normal_deviate()
     }
 
+    /// Replaces pdfTeX's ungrouped, checkpointed last-match state.
+    pub fn set_pdf_match_state(
+        &mut self,
+        haystack: Vec<u8>,
+        captures: Vec<Option<(u32, u32)>>,
+        slot_count: u32,
+        matched: bool,
+    ) {
+        self.universe
+            .set_pdf_match_state(haystack, captures, slot_count, matched);
+    }
+
+    /// Reads one capture from pdfTeX's checkpointed last-match state.
+    #[must_use]
+    pub fn pdf_match_capture(&self, index: u32) -> Option<(u32, &[u8])> {
+        self.universe.pdf_match_capture(index)
+    }
+
     /// Reads one token parameter for direct `\\the` insertion.
     #[must_use]
     pub fn tok_param(&self, param: TokParam) -> TokenListId {

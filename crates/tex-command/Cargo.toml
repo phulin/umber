@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+posix-regex.workspace = true
 tex-fonts = { path = "../tex-fonts" }
 tex-state = { path = "../tex-state" }
 

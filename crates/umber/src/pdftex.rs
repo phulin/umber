@@ -1901,7 +1901,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdfmatch_state_is_global_and_compile_failures_preserve_it() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -1926,6 +1925,27 @@ mod tests {
         assert!(observed.contains("bad=1->b"), "{observed}");
         assert!(observed.contains("Bad match number (-2)."), "{observed}");
         assert!(observed.contains("negative=1->b"), "{observed}");
+    }
+
+    #[test]
+    fn canonical_pdfmatch_options_capture_limits_and_nul_boundary_match_pdftex() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = run_pdf_memory(
+            concat!(
+                "\\catcode0=12 ",
+                "\\message{a=\\pdfmatch icase subcount 2{(a)(b+)}{xABBy}/",
+                "\\pdflastmatch0/\\pdflastmatch1/\\pdflastmatch2} ",
+                "\\message{n=\\pdfmatch{ab}{xxab^^@ab}/",
+                "\\pdflastmatch0} ",
+                "\\message{z=\\pdfmatch{z}{abc}/\\pdflastmatch0}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("canonical pdfTeX regex controls");
+        assert!(output.contains("a=1/1->ABB/1->A/-1->"), "{output}");
+        assert!(output.contains("n=1/2->ab"), "{output}");
+        assert!(output.contains("z=0/-1->"), "{output}");
     }
 
     #[test]

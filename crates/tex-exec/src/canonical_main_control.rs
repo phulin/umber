@@ -15876,6 +15876,12 @@ fn report_pending_diagnostics(
                 output.end(false);
             }
             PendingDiagnostic::Command(
+                tex_command::CommandSemanticDiagnostic::PdfExpansionMessage { text },
+            ) => {
+                let mut output = stores.printer();
+                output.print_nl(&text).print_ln();
+            }
+            PendingDiagnostic::Command(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
             ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?,
             PendingDiagnostic::Command(
