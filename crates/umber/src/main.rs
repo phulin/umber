@@ -3,7 +3,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use tex_lex::{Lexer, WorldInput};
+use tex_command::{
+    CatcodeQueries, CharacterCode, CommandDialect, CommandProfile, CommandState,
+    SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
+};
 use tex_state::env::banks::IntParam;
 use tex_state::token::Token;
 use tex_state::{FormatError, Universe, World, WorldError};
@@ -84,10 +87,30 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     // `umber run`; INITEX alone leaves `{ } $ & # ^ _` as `other_char`
     // (tex.web §232).
     stores.install_plain_catcodes();
-    let mut lexer = Lexer::new(WorldInput::from_content(content));
-
-    while let Some(token) = lexer.next_token(&mut stores)? {
-        println!("{}", format_token(token, &stores));
+    let mut command = CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
+    let source = command
+        .register_source(SourceRegistration::world(content))
+        .map_err(|error| CliError::CanonicalLex(error.to_string()))?;
+    command
+        .open_registered_source(source)
+        .map_err(|error| CliError::CanonicalLex(error.to_string()))?;
+    loop {
+        let step = command.next_unicode_source_step(
+            stores.int_param(IntParam::END_LINE_CHAR),
+            &mut CatcodeQueries(|code: CharacterCode| {
+                stores.catcode(code.to_char().expect("Unicode command profile"))
+            }),
+        );
+        match step {
+            SourceTokenizationStep::Token(token) => println!("{}", format_source_token(&token)),
+            SourceTokenizationStep::InvalidCharacter(invalid) => {
+                return Err(CliError::CanonicalLex(format!(
+                    "invalid character {}",
+                    invalid.code().to_char().expect("Unicode command profile") as u32
+                )));
+            }
+            SourceTokenizationStep::End => break,
+        }
     }
 
     Ok(())
@@ -827,11 +850,34 @@ fn format_token(token: Token, stores: &Universe) -> String {
     }
 }
 
+fn format_source_token(token: &SourceToken) -> String {
+    match token {
+        SourceToken::Character { code, catcode, .. } => format!(
+            "char:{}:{}",
+            code.to_char().expect("Unicode command profile") as u32,
+            *catcode as u8
+        ),
+        SourceToken::ControlSequence { name, kind, .. } => {
+            let name = match kind {
+                SourceControlSequenceKind::Paragraph => "par".to_owned(),
+                SourceControlSequenceKind::Null => String::new(),
+                SourceControlSequenceKind::Word
+                | SourceControlSequenceKind::Symbol
+                | SourceControlSequenceKind::Active => name
+                    .iter()
+                    .map(|code| code.to_char().expect("Unicode command profile"))
+                    .collect(),
+            };
+            format!("cs:{name}")
+        }
+    }
+}
+
 #[derive(Debug)]
 enum CliError {
     Usage(&'static str),
     World(WorldError),
-    Lex(tex_lex::LexError),
+    CanonicalLex(String),
     ExpandDump(expand_dump::ExpandDumpError),
     FormatCache(format_cache_cli::FormatCacheCliError),
     Exec(tex_exec::ExecError),
@@ -852,7 +898,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Usage(message) => f.write_str(message),
             Self::World(err) => write!(f, "{err}"),
-            Self::Lex(err) => write!(f, "{err}"),
+            Self::CanonicalLex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::FormatCache(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),
@@ -886,12 +932,6 @@ impl std::error::Error for CliError {}
 impl From<WorldError> for CliError {
     fn from(value: WorldError) -> Self {
         Self::World(value)
-    }
-}
-
-impl From<tex_lex::LexError> for CliError {
-    fn from(value: tex_lex::LexError) -> Self {
-        Self::Lex(value)
     }
 }
 

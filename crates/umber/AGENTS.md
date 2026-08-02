@@ -63,7 +63,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
   provider-failure, and cancellation coverage for composite acquisition.
 - `src/virtual_compile/resolvers.rs`: VFS-snapshot-backed input/font resolvers that register selected bytes through World, with typed missing-file and logical OpenType-font side state.
 - `src/virtual_compile/tests.rs`: native retry, path, precedence, limits, format, effect-isolation, font batching, and DVI coverage.
-- `src/main.rs`: `umber` binary entry point, CLI argument parsing, `lex-dump`/`expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
+- `src/main.rs`: `umber` binary entry point, CLI argument parsing, canonical `CommandState` source-tokenization for `lex-dump`, `expand-dump`/`run` dispatch, token formatting, and real-run file resolvers.
 - `src/cli_resource.rs`: retained native project/cache/distribution resolution, cancellation-aware resource retries, incremental source replacement, finite engine fuel/step/frame/journal/effect configuration, and accepted-run telemetry handoff.
 - `src/cli_resource/tests.rs`: retained-resource reuse and superseded-revision cancellation coverage.
 - `src/watch.rs`: polling incremental watch driver, supersession/Ctrl-C cancellation, DVI publication, and phase latency reporting.
