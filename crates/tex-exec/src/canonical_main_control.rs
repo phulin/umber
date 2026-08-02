@@ -15836,17 +15836,28 @@ fn arithmetic_dimension(
     old: Scaled,
     operand: ArithmeticOperand,
 ) -> Result<Scaled, ExecError> {
-    match (primitive, operand) {
-        (UnexpandablePrimitive::Advance, ArithmeticOperand::Dimension(rhs)) => old.checked_add(rhs),
+    let raw = match (primitive, operand) {
+        (UnexpandablePrimitive::Advance, ArithmeticOperand::Dimension(rhs)) => {
+            old.raw().checked_add(rhs.raw())
+        }
         (UnexpandablePrimitive::Multiply, ArithmeticOperand::Integer(rhs)) => {
-            old.raw().checked_mul(rhs).map(Scaled::from_raw)
+            old.raw().checked_mul(rhs)
         }
         (UnexpandablePrimitive::Divide, ArithmeticOperand::Integer(rhs)) => {
-            old.raw().checked_div(rhs).map(Scaled::from_raw)
+            old.raw().checked_div(rhs)
         }
         _ => None,
-    }
-    .ok_or(ExecError::ArithmeticOverflow)
+    };
+    raw.and_then(scaled_within_arithmetic_bounds)
+        .ok_or(ExecError::ArithmeticOverflow)
+}
+
+fn scaled_within_arithmetic_bounds(raw: i32) -> Option<Scaled> {
+    // TeX82 §1236 applies register arithmetic with `max_answer=max_dimen`
+    // for dimensions and every component of glue. Its `arith_error` path
+    // returns before the target definition, even when the result still fits
+    // in the wider machine integer representation.
+    (raw.unsigned_abs() <= Scaled::MAX_DIMEN.raw() as u32).then(|| Scaled::from_raw(raw))
 }
 
 fn arithmetic_glue(
@@ -15933,7 +15944,7 @@ fn glue_scale(spec: GlueSpec, factor: i32, divide: bool) -> Result<GlueSpec, Exe
         } else {
             value.raw().checked_mul(factor)
         };
-        raw.map(Scaled::from_raw)
+        raw.and_then(scaled_within_arithmetic_bounds)
             .ok_or(ExecError::ArithmeticOverflow)
     };
     Ok(GlueSpec {

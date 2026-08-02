@@ -504,30 +504,49 @@ fn arithmetic_overflow_reports_tex_error_text() {
 }
 
 #[test]
-#[ignore = "umber2-alfh.4.29: canonical dimension multiply overflow commits the target"]
 fn arithmetic_failures_preserve_every_target_after_consuming_the_operand() {
     let stores = super::core::run_canonical_tex82(concat!(
         "\\count0=1073741824 \\multiply\\count0 by 2 ",
         "\\dimen0=16383pt \\multiply\\dimen0 by 2 ",
+        "\\hsize=16383pt \\multiply\\hsize by 2 ",
         "\\skip0=1pt plus 2fil minus 3pt \\divide\\skip0 by 0 ",
+        "\\skip1=16383pt plus 2fil \\multiply\\skip1 by 2 ",
+        "\\baselineskip=16383pt plus 2fil \\multiply\\baselineskip by 2 ",
+        "\\muskip0=16383mu plus 2fil \\multiply\\muskip0 by 2 ",
+        "\\thinmuskip=16383mu plus 2fil \\multiply\\thinmuskip by 2 ",
         "\\count1=41 \\divide\\count1 by 0 ",
         "\\count2=9 \\end",
     ));
 
     assert_eq!(stores.count(0), 1_073_741_824);
     assert_eq!(stores.dimen(0).raw(), 16_383 * Scaled::UNITY);
+    assert_eq!(
+        stores.dimen_param(DimenParam::H_SIZE).raw(),
+        16_383 * Scaled::UNITY
+    );
     let skip = stores.glue(stores.skip(0));
     assert_eq!(skip.width.raw(), Scaled::UNITY);
     assert_eq!(skip.stretch.raw(), 2 * Scaled::UNITY);
     assert_eq!(skip.stretch_order, tex_state::glue::Order::Fil);
     assert_eq!(skip.shrink.raw(), 3 * Scaled::UNITY);
+    for glue_id in [
+        stores.skip(1),
+        stores.glue_param(GlueParam::BASELINE_SKIP),
+        stores.muskip(0),
+        stores.glue_param(GlueParam::new(15)),
+    ] {
+        let glue = stores.glue(glue_id);
+        assert_eq!(glue.width.raw(), 16_383 * Scaled::UNITY);
+        assert_eq!(glue.stretch.raw(), 2 * Scaled::UNITY);
+        assert_eq!(glue.stretch_order, tex_state::glue::Order::Fil);
+    }
     assert_eq!(stores.count(1), 41);
     assert_eq!(stores.count(2), 9, "all failed operands must be consumed");
     assert_eq!(
         terminal_effect_text(&stores)
             .matches("Arithmetic overflow")
             .count(),
-        4
+        9
     );
 }
 
