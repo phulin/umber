@@ -40,7 +40,7 @@ pub(crate) fn select_pending_page_output(
     fire_up: PageFireUp,
     error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
-    prepare_box255(stores, fire_up)?;
+    prepare_box255(stores, fire_up, Some(&error_context))?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
         prepend_output_heldover(stores, Vec::new());
@@ -115,7 +115,7 @@ fn fire_up_page(
     stats: &mut ExecutionStats,
     fire_up: PageFireUp,
 ) -> Result<(), ExecError> {
-    prepare_box255(stores, fire_up)?;
+    prepare_box255(stores, fire_up, None)?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
         prepend_output_heldover(stores, Vec::new());
@@ -152,10 +152,14 @@ fn fire_up_page(
     Ok(())
 }
 
-fn prepare_box255(stores: &mut Universe, fire_up: PageFireUp) -> Result<(), ExecError> {
+fn prepare_box255(
+    stores: &mut Universe,
+    fire_up: PageFireUp,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_void(stores, box255)?;
+        report_box255_not_void(stores, box255, error_context)?;
     }
 
     let split_index = fire_up.best_break().index();
@@ -580,8 +584,12 @@ fn report_output_loop(
 fn report_box255_not_void(
     stores: &mut Universe,
     deleted: tex_state::ids::NodeListId,
+    error_context: Option<&str>,
 ) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let context = error_context.map_or_else(
+        || crate::diagnostics::show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
     let mut report = stores.print_err("");
     report
         .print_esc("box")

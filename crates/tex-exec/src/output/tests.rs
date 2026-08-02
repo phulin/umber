@@ -107,7 +107,7 @@ fn fire_up_records_penalty_marks_boundary_and_packages_box255() {
     });
     stores.push_current_page_node(Node::Penalty(-51));
 
-    prepare_box255(&mut stores, fire(3, 3, 5)).expect("white-box operation succeeds");
+    prepare_box255(&mut stores, fire(3, 3, 5), None).expect("white-box operation succeeds");
 
     assert_eq!(stores.int_param(IntParam::OUTPUT_PENALTY), -51);
     assert_eq!(stores.page_mark_class(PageMark::Top, 0), old_bot);
@@ -173,7 +173,7 @@ fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
     stores.set_box_reg(255, old);
     let fire = push_simple_page(&mut stores);
 
-    prepare_box255(&mut stores, fire).expect("white-box operation succeeds");
+    prepare_box255(&mut stores, fire, None).expect("white-box operation succeeds");
 
     assert!(matches!(
         stores
@@ -184,6 +184,34 @@ fn fire_up_nonvoid_box255_recovery_discards_before_packaging() {
     assert!(effects(&stores).contains("box255 is not void"));
     assert!(effects(&stores).contains("The following box has been deleted:"));
     assert!(effects(&stores).contains("\\hbox(0.00002+0.0)x0.00002\n\n"));
+}
+
+#[test]
+fn canonical_fire_up_reports_nonvoid_box255_with_live_command_context() {
+    // TeX82 §§82/1015: fire_up diagnoses the preexisting box synchronously
+    // inside the command that triggered page output, before §90's help.
+    let mut stores = crate::test_harness::universe();
+    let old = boxed(&mut stores, false);
+    let old = stores.freeze_node_list(&[old]);
+    stores.set_box_reg(255, old);
+    let fire = push_simple_page(&mut stores);
+
+    select_pending_page_output(&mut stores, fire, "live fire_up context\n".to_owned())
+        .expect("canonical output selection succeeds");
+
+    let report = effects(&stores);
+    let message = report
+        .find("! \\box255 is not void.")
+        .expect("§1015 message");
+    let context = report[message..]
+        .find("live fire_up context")
+        .map(|offset| message + offset)
+        .expect("§82 live context");
+    let help = report[message..]
+        .find("You shouldn't use \\box255 except in \\output routines.")
+        .map(|offset| message + offset)
+        .expect("§90 help");
+    assert!(message < context && context < help, "{report}");
 }
 
 #[test]
