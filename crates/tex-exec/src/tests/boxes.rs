@@ -1,14 +1,24 @@
 use super::*;
-use tex_state::provenance::{InsertedOriginKind, OriginRecord};
+use tex_command::{CommandProfile, RegisteredSourceKind, SourceRegistration};
 
 fn run(source: &str) -> Universe {
-    let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    Executor::new()
-        .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
-        .expect("box hook source executes");
-    stores
+    super::core::run_canonical_tex82(&format!(r"{source}\end"))
+}
+
+fn run_loaded_format(source: &str, stores: &mut Universe) {
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            format!(r"{source}\end").into_bytes(),
+        ))
+        .expect("register format-loaded box-hook source");
+    for _ in 0..1024 {
+        if control.step(stores).expect("format-loaded box-hook step") == MainControlStep::End {
+            return;
+        }
+    }
+    panic!("format-loaded box-hook source did not terminate");
 }
 
 #[test]
@@ -96,42 +106,23 @@ fn every_box_hooks_survive_format_round_trip() {
     let format = initex.dump_format().expect("box-hook format dumps");
     let mut stores =
         Universe::from_format(tex_state::World::memory(), &format).expect("box-hook format loads");
-    tex_expand::register_expandable_primitives(&mut stores);
-    register_unexpandable_primitives(&mut stores);
-
-    Executor::new()
-        .run(
-            &mut InputStack::new(MemoryInput::new(r"\setbox0=\hbox{}\setbox1=\vbox{}")),
-            &mut stores,
-        )
-        .expect("format-loaded hooks execute");
+    run_loaded_format(r"\setbox0=\hbox{}\setbox1=\vbox{}", &mut stores);
 
     assert_eq!(stores.count(4), 1);
     assert_eq!(stores.count(5), 1);
 }
 
 #[test]
-fn every_hbox_replay_has_specific_token_list_provenance() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let error = Executor::new()
-        .run(
-            &mut InputStack::new(MemoryInput::new(r"\everyhbox{\input}\hbox{}")),
-            &mut stores,
-        )
-        .expect_err("input from everyhbox lacks a file name");
-    let origin = error.primary_origin().expect("hook replay origin");
-    let OriginRecord::Inserted(inserted) = stores.origin(origin) else {
-        panic!("hook token should have inserted provenance");
-    };
-    assert!(matches!(
-        inserted.kind(),
-        InsertedOriginKind::TokenListReplay(_)
-    ));
-    assert_eq!(
-        format!("{:?}", inserted.kind()),
-        "TokenListReplay(EveryHBox)"
+fn every_hbox_diagnostic_reports_its_replay_context() {
+    let stores = run(r"\nonstopmode\everyhbox{\errmessage{hook failure}}\hbox{}");
+    let terminal = support::terminal_effect_text(&stores);
+    assert!(
+        terminal.contains("hook failure"),
+        "hook diagnostic missing: {terminal}"
+    );
+    assert!(
+        terminal.contains("<everyhbox>"),
+        "hook replay context missing: {terminal}"
     );
 }
 
@@ -142,15 +133,11 @@ fn every_box_hook_execution_converges_after_rollback() {
     let checkpoint = stores.snapshot();
     let source = r"\setbox0=\hbox{\vbox{}}";
 
-    Executor::new()
-        .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
-        .expect("first hook execution");
+    run_loaded_format(source, &mut stores);
     let expected = stores.snapshot().state_hash();
     assert_eq!((stores.count(6), stores.count(7)), (1, 1));
 
     stores.rollback(&checkpoint);
-    Executor::new()
-        .run(&mut InputStack::new(MemoryInput::new(source)), &mut stores)
-        .expect("replayed hook execution");
+    run_loaded_format(source, &mut stores);
     assert_eq!(stores.snapshot().state_hash(), expected);
 }
