@@ -5094,7 +5094,7 @@ fn scan_noalign_body(
     let Some(command) = processor.get_x_token().map_err(command_error)? else {
         return Ok(ScannedStep::EndOfInput);
     };
-    report_command_trace(processor, mode, &command, shown_mode);
+    report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     match command.meaning() {
         Meaning::CharToken {
             cat: Catcode::EndGroup,
@@ -5149,7 +5149,7 @@ fn scan_alignment_delivery_step(
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
-            report_command_trace(processor, mode, &command, shown_mode);
+            report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
             // TeX82 §1132 dispatches every right brace seen with an active
             // `align_group` through the missing-\cr recovery, independent of
             // `align_state`. The command-owned fast path emits a structural
@@ -5265,7 +5265,7 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
-    report_command_trace(processor, mode, &command, shown_mode);
+    report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
     if main_loop_active
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(
@@ -5487,6 +5487,27 @@ fn report_command_trace(
     if processor.int_param(IntParam::TRACING_COMMANDS) > 0 {
         *shown_mode = Some(mode);
         processor.print_command_trace(tex_command::PrintCommand::from_current(command));
+    }
+}
+
+/// Applies TeX82's §1030 main-control trace boundary to a fetched command.
+///
+/// A constructed leader payload is the exception: after its box closes,
+/// §1078's `box_end` fetches the following glue inside the leader case and
+/// never returns to `big_switch`. The split replay lifecycle leaves that
+/// internal fetch to the next processor episode, so `pending_leader` retains
+/// the canonical boundary distinction and suppresses only §1030's settled
+/// unexpandable-command trace. Expansion tracing performed by `get_x_token`
+/// remains unchanged.
+fn report_main_control_command_trace(
+    processor: &mut CommandProcessor<'_>,
+    mode: Mode,
+    command: &tex_command::CurrentCommand,
+    boxes: &ReplayBoxes,
+    shown_mode: &mut Option<Mode>,
+) {
+    if boxes.pending_leader.is_none() {
+        report_command_trace(processor, mode, command, shown_mode);
     }
 }
 

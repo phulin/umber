@@ -197,6 +197,32 @@ fn disabled_tracingcommands_emits_no_command_diagnostic() {
 }
 
 #[test]
+fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
+    // TeX82 §§1030/1078: `box_end` fetches a constructed leader's glue
+    // operand inside the leader case, without returning to `big_switch`'s
+    // `show_cur_cmd_chr`. A later ordinary `\hskip` remains a main-control
+    // command and is the negative control.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingcommands=1\tracingonline=1
+\setbox0=\hbox{\leaders\hbox{}\hskip1pt\hskip2pt}
+\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = pending_sink_text(&stores, true);
+    assert!(terminal.contains("\\leaders}"), "{terminal:?}");
+    assert_eq!(
+        terminal.matches("{\\hskip}").count(),
+        1,
+        "only the ordinary post-leader hskip reaches §1030: {terminal:?}"
+    );
+}
+
+#[test]
 fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
