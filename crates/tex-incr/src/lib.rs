@@ -485,6 +485,12 @@ impl RevisionCandidate {
             }
             self.job_start_captured = true;
         }
+        // A fulfilled or authoritatively unavailable capability must make the
+        // replayed aggregate operation pass that same suspension boundary.
+        // Keep this list only until a committed main-control step: encountering
+        // an answered need again before then is a retained-host protocol bug,
+        // not legitimate engine work to fund up to the command-fuel limit.
+        let mut answered_needs = Vec::new();
         loop {
             if cancellation.is_cancelled() {
                 return Err(SessionError::Execute(
@@ -493,6 +499,7 @@ impl RevisionCandidate {
             }
             match self.control.advance(&mut self.universe)? {
                 CanonicalStepResult::Progress(step) => {
+                    answered_needs.clear();
                     self.delivered_commands = self.delivered_commands.saturating_add(1);
                     let boundaries = self.control.take_completed_boundaries();
                     for boundary in boundaries {
@@ -531,6 +538,9 @@ impl RevisionCandidate {
                     }
                 }
                 CanonicalStepResult::Suspended(need) => {
+                    if answered_needs.contains(&need) {
+                        return Err(SessionError::CanonicalResourceNoProgress { need });
+                    }
                     let outcome = {
                         let mut world = CanonicalResourceWorld::new(&mut self.universe);
                         host.fulfill(&mut world, &need)
@@ -538,8 +548,12 @@ impl RevisionCandidate {
                     match outcome {
                         CanonicalResourceOutcome::Fulfilled(fulfillment) => {
                             self.fulfill_resource(&need, fulfillment)?;
+                            answered_needs.push(need);
                         }
-                        CanonicalResourceOutcome::Unavailable => self.mark_unavailable(&need),
+                        CanonicalResourceOutcome::Unavailable => {
+                            self.mark_unavailable(&need);
+                            answered_needs.push(need);
+                        }
                         CanonicalResourceOutcome::Declined => {
                             self.suspension_serial = self.suspension_serial.saturating_add(1);
                             return Ok(RevisionCandidateResult::AwaitingResources(need));
@@ -560,6 +574,13 @@ impl RevisionCandidate {
                 CanonicalResourceNeed::Input { name: expected },
                 CanonicalResourceFulfillment::Input { name, source },
             ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
+            (
+                CanonicalResourceNeed::InputProbe { name: expected },
+                CanonicalResourceFulfillment::InputProbe { name, source },
+            ) if expected == &name => self
+                .control
+                .capabilities_mut()
+                .register_input_probe(name, source),
             (
                 CanonicalResourceNeed::Font { request: expected },
                 CanonicalResourceFulfillment::Font { request, resource },
@@ -583,6 +604,11 @@ impl RevisionCandidate {
         match need {
             CanonicalResourceNeed::Input { name } => {
                 self.control.capabilities_mut().mark_input_unavailable(name)
+            }
+            CanonicalResourceNeed::InputProbe { name } => {
+                self.control
+                    .capabilities_mut()
+                    .mark_input_probe_unavailable(name)
             }
             CanonicalResourceNeed::Font { request } => {
                 self.control.capabilities_mut().register_font(
@@ -3424,6 +3450,9 @@ pub enum SessionError {
     CandidateKindMismatch,
     CandidateNotComplete,
     UnexpectedCanonicalResource,
+    CanonicalResourceNoProgress {
+        need: CanonicalResourceNeed,
+    },
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
     MissingAcceptedSubstrate,
@@ -3467,6 +3496,10 @@ impl fmt::Display for SessionError {
             Self::UnexpectedCanonicalResource => {
                 f.write_str("canonical resource fulfillment does not match the pending need")
             }
+            Self::CanonicalResourceNoProgress { need } => write!(
+                f,
+                "canonical retained host answered {need:?}, but replay suspended on the identical need again before committing progress"
+            ),
             Self::SourceRegistration(error) => {
                 write!(f, "canonical source registration failed: {error}")
             }

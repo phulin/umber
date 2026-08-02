@@ -353,6 +353,9 @@ pub enum CanonicalResourceNeed {
     /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
     /// but the host has not supplied its immutable source registration.
     Input { name: String },
+    /// A non-opening `\openin` or pdfTeX file enquiry needs bytes or
+    /// authoritative absence.
+    InputProbe { name: String },
     /// TeX82's `new_font` completed its filename and size scan (§1254), but
     /// the host has not supplied the immutable font bytes.
     Font { request: FontLoadRequest },
@@ -989,11 +992,17 @@ impl CanonicalMainControl {
                 // suspends the step so the driver can acquire it, and only a
                 // host that reports the file absent reaches the closed-stream
                 // outcome.
-                Some(
-                    self.capabilities
-                        .input_resource(&packed_name)
-                        .ok_or(ExecError::MissingCanonicalInput { name: packed_name })?,
-                )
+                match self.capabilities.input_probe_resource(&packed_name) {
+                    Some(resource) => Some(resource),
+                    None if self
+                        .capabilities
+                        .input_probe_is_unavailable(&packed_name) => None,
+                    None => {
+                        return Err(ExecError::MissingCanonicalInputProbe {
+                            name: packed_name,
+                        });
+                    }
+                }
             }
             InputStreamRequest::Close { .. } | InputStreamRequest::Read { .. } => None,
         };
@@ -1312,6 +1321,9 @@ impl CanonicalMainControl {
             ExecError::MissingCanonicalInput { name } => Ok(CanonicalStepResult::Suspended(
                 CanonicalResourceNeed::Input { name },
             )),
+            ExecError::MissingCanonicalInputProbe { name } => Ok(
+                CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { name }),
+            ),
             ExecError::MissingCanonicalFont { request } => Ok(CanonicalStepResult::Suspended(
                 CanonicalResourceNeed::Font { request },
             )),
@@ -2000,6 +2012,11 @@ impl CanonicalMainControl {
             CanonicalStepResult::Progress(step) => Ok(step),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
+            }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { .. }) => {
+                Err(ExecError::MissingToken {
+                    context: "pdfTeX file enquiry",
+                })
             }
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
                 Err(ExecError::MissingToken {
@@ -3291,6 +3308,11 @@ impl CanonicalMainControl {
             CanonicalStepResult::Progress(step) => Ok(step),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
+            }
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { .. }) => {
+                Err(ExecError::MissingToken {
+                    context: "pdfTeX file enquiry",
+                })
             }
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
                 Err(ExecError::MissingToken {
@@ -16617,6 +16639,7 @@ fn report_font_parameter_recovery(
 fn command_error(error: CommandError) -> ExecError {
     match error {
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
+        CommandError::MissingInputProbe(name) => ExecError::MissingCanonicalInputProbe { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.

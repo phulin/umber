@@ -115,6 +115,8 @@ pub enum LastNodeItem {
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
     unavailable_input: BTreeSet<String>,
+    input_probes: BTreeMap<String, SourceRegistration>,
+    unavailable_input_probes: BTreeSet<String>,
     fonts: BTreeMap<PathBuf, FontResource>,
     images: Vec<(PdfImageRequest, PdfImageResource)>,
     job_name: String,
@@ -132,6 +134,8 @@ impl Default for CommandHostCapabilities {
         Self {
             input: BTreeMap::new(),
             unavailable_input: BTreeSet::new(),
+            input_probes: BTreeMap::new(),
+            unavailable_input_probes: BTreeSet::new(),
             fonts: BTreeMap::new(),
             images: Vec::new(),
             job_name: String::new(),
@@ -165,6 +169,29 @@ impl CommandHostCapabilities {
         let name = name.into();
         self.input.remove(&name);
         self.unavailable_input.insert(name);
+    }
+
+    /// Installs immutable backing for a non-opening file enquiry.
+    ///
+    /// Probe backing is deliberately not promoted to [`Self::register_input`]:
+    /// a later required read must revisit the host so dependency accounting
+    /// can upgrade an authoritative probe to a required read. A prior required
+    /// read may, however, answer a later probe from the stronger capability.
+    pub fn register_input_probe(
+        &mut self,
+        name: impl Into<String>,
+        source: SourceRegistration,
+    ) {
+        let name = name.into();
+        self.unavailable_input_probes.remove(&name);
+        self.input_probes.insert(name, source);
+    }
+
+    /// Records a completed non-opening lookup which found no backing.
+    pub fn mark_input_probe_unavailable(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.input_probes.remove(&name);
+        self.unavailable_input_probes.insert(name);
     }
 
     /// Registers a host-acquired immutable font resource for one request path.
@@ -207,6 +234,30 @@ impl CommandHostCapabilities {
     #[must_use]
     pub fn input_resource(&self, name: &str) -> Option<SourceRegistration> {
         self.input.get(name).cloned()
+    }
+
+    /// Reports that the host has authoritatively completed lookup without a
+    /// backing resource. This differs from an absent entry, which requests a
+    /// retry through the retained resource protocol.
+    #[must_use]
+    pub fn input_resource_is_unavailable(&self, name: &str) -> bool {
+        self.unavailable_input.contains(name)
+    }
+
+    /// Borrows bytes acquired for a non-opening enquiry. A prior required
+    /// input is a stronger acquisition and can answer the same enquiry.
+    #[must_use]
+    pub fn input_probe_resource(&self, name: &str) -> Option<SourceRegistration> {
+        self.input
+            .get(name)
+            .or_else(|| self.input_probes.get(name))
+            .cloned()
+    }
+
+    /// Reports an authoritative absence for a non-opening enquiry.
+    #[must_use]
+    pub fn input_probe_is_unavailable(&self, name: &str) -> bool {
+        self.unavailable_input.contains(name) || self.unavailable_input_probes.contains(name)
     }
 
     /// Sets the immutable job name presented by `\jobname` for this command
@@ -318,6 +369,14 @@ impl<'a> CommandHostContext<'a> {
 
     pub(crate) fn input_is_unavailable(&self, name: &str) -> bool {
         self._capabilities.unavailable_input.contains(name)
+    }
+
+    pub(crate) fn input_probe(&self, name: &str) -> Option<SourceRegistration> {
+        self._capabilities.input_probe_resource(name)
+    }
+
+    pub(crate) fn input_probe_is_unavailable(&self, name: &str) -> bool {
+        self._capabilities.input_probe_is_unavailable(name)
     }
 
     pub(crate) fn initialize_job_name(&mut self, filename: &str) {

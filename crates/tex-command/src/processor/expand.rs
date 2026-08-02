@@ -728,6 +728,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
                 self.expand_pdf_file_dump(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
+                self.expand_pdf_file_size(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
                 self.expand_pdf_insert_height(command)
             }
@@ -1301,11 +1304,11 @@ impl CommandProcessor<'_> {
             .into_iter()
             .map(char::from)
             .collect::<String>();
-        let Some(source) = self.host.input(&name) else {
-            return if self.host.input_is_unavailable(&name) {
+        let Some(source) = self.host.input_probe(&name) else {
+            return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInput(name))
+                Err(CommandError::MissingInputProbe(name))
             };
         };
         let start = usize::try_from(offset).expect("recovered file offset is nonnegative");
@@ -1322,6 +1325,24 @@ impl CommandProcessor<'_> {
             write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
         }
         self.push_rendered_text(&rendered, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §1590's `pdf_file_size_code` conversion.
+    fn expand_pdf_file_size(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let name = self.scan_balanced_text(true)?.tokens.token_list();
+        let name = pdftex_token_bytes(&mut self.state, name)
+            .into_iter()
+            .map(char::from)
+            .collect::<String>();
+        let Some(source) = self.host.input_probe(&name) else {
+            return if self.host.input_probe_is_unavailable(&name) {
+                Ok(())
+            } else {
+                Err(CommandError::MissingInputProbe(name))
+            };
+        };
+        self.push_rendered_text(&source.bytes().len().to_string(), opener.origin());
         Ok(())
     }
 

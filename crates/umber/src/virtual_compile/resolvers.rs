@@ -154,6 +154,16 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
                 .map(|lookup| {
                     lookup.map(|content| CanonicalResourceFulfillment::world_input(name, content))
                 }),
+            CanonicalResourceNeed::InputProbe { name } => world
+                .with_input_read_state(|input| {
+                    self.input
+                        .probe(input, FileKind::TexInput, name, request_index)
+                })
+                .map(|lookup| {
+                    lookup.map(|content| {
+                        CanonicalResourceFulfillment::world_input_probe(name, content)
+                    })
+                }),
             CanonicalResourceNeed::Font { request } => world
                 .with_input_read_state(|input| {
                     self.font
@@ -189,6 +199,9 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
             Err(error) => {
                 match need {
                     CanonicalResourceNeed::Input { .. } => {
+                        self.input.record_fatal(CompileError::World(error))
+                    }
+                    CanonicalResourceNeed::InputProbe { .. } => {
                         self.input.record_fatal(CompileError::World(error))
                     }
                     CanonicalResourceNeed::Font { .. } => {
@@ -471,6 +484,22 @@ impl<'a> VirtualFileResolver<'a> {
             original_name,
             request_index,
             FileOpenIntent::Required,
+        )
+    }
+
+    fn probe(
+        &mut self,
+        input: &mut dyn InputReadState,
+        kind: FileKind,
+        original_name: &str,
+        request_index: u64,
+    ) -> HostResult<FileContent> {
+        self.open_classified(
+            input,
+            kind,
+            original_name,
+            request_index,
+            FileOpenIntent::Probe,
         )
     }
 

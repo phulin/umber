@@ -262,6 +262,14 @@ impl CanonicalResourceHost for CorpusHost {
                         name, content,
                     ))
                 }),
+            CanonicalResourceNeed::InputProbe { name } => world
+                .read_file(canonical_input_path(name))
+                .ok()
+                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                    CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::world_input_probe(name, content),
+                    )
+                }),
             CanonicalResourceNeed::Font { request } => world
                 .read_file(canonical_font_path(&request.name))
                 .ok()

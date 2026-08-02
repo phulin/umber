@@ -2351,6 +2351,10 @@ fn positive_probe_can_promote_to_required_input_before_dump() {
             .windows(16)
             .any(|window| window == b"OPTIONAL-PRESENT")
     );
+    assert!(session.accepted_input_dependencies().any(|dependency| {
+        dependency.path() == Path::new("/texlive/optional.cfg")
+            && dependency.access() == tex_state::InputDependencyAccess::RequiredRead
+    }));
     assert!(
         session
             .into_accepted_finalization()
@@ -2665,9 +2669,10 @@ fn cumulative_engine_fuel_is_terminal_across_step_boundaries() {
     assert!(matches!(
         limited.compile_attempt(),
         CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
-            if diagnostic.message.contains("cumulative fuel limit")
+            if diagnostic.message.contains("canonical command fuel exhausted")
+                && diagnostic.message.contains("limit 1")
     ));
-    assert!(limited.compile_telemetry().execution.cumulative_fuel > 1);
+    assert_eq!(limited.compile_telemetry().execution.cumulative_fuel, 1);
 }
 
 #[test]

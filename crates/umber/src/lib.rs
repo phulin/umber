@@ -697,6 +697,16 @@ impl CanonicalResourceHost for FileSessionResolvers {
                         )
                     })
             }
+            tex_exec::CanonicalResourceNeed::InputProbe { name } => self
+                .input
+                .0
+                .read_from_canonical_world(world, name)
+                .ok()
+                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                    CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::world_input_probe(name, content),
+                    )
+                }),
             tex_exec::CanonicalResourceNeed::Font { request } => {
                 let mut path = PathBuf::from(&request.name);
                 if path.extension().is_none() {

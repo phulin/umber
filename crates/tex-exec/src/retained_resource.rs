@@ -17,6 +17,13 @@ pub enum CanonicalResourceFulfillment {
         name: String,
         source: SourceRegistration,
     },
+    /// Immutable bytes answering a non-opening pdfTeX file enquiry or
+    /// `\openin` probe. This remains distinct from required input backing so
+    /// a later opening read can upgrade host dependency accounting.
+    InputProbe {
+        name: String,
+        source: SourceRegistration,
+    },
     Font {
         request: FontLoadRequest,
         resource: Box<FontResource>,
@@ -46,6 +53,14 @@ impl CanonicalResourceFulfillment {
     #[must_use]
     pub fn world_input(name: impl Into<String>, content: FileContent) -> Self {
         Self::Input {
+            name: name.into(),
+            source: SourceRegistration::world(content),
+        }
+    }
+
+    #[must_use]
+    pub fn world_input_probe(name: impl Into<String>, content: FileContent) -> Self {
+        Self::InputProbe {
             name: name.into(),
             source: SourceRegistration::world(content),
         }

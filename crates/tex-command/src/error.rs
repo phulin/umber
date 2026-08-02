@@ -54,6 +54,9 @@ pub enum CommandError {
     /// The installed input capability has no immutable backing for a
     /// requested logical filename.
     MissingInput(String),
+    /// A non-opening file enquiry has no retained bytes or authoritative
+    /// absence yet and must suspend for a typed host probe.
+    MissingInputProbe(String),
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
@@ -107,6 +110,9 @@ impl std::fmt::Display for CommandError {
                 formatter.write_str("outer token found while scanning macro argument")
             }
             Self::MissingInput(name) => write!(formatter, "input source `{name}` is unavailable"),
+            Self::MissingInputProbe(name) => {
+                write!(formatter, "input enquiry `{name}` is unresolved")
+            }
             Self::UnsupportedExpandablePrimitive(primitive) => {
                 write!(
                     formatter,

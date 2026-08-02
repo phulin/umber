@@ -161,6 +161,11 @@ pub enum ExecError {
     MissingCanonicalInput {
         name: String,
     },
+    /// A non-opening file probe has not received bytes or authoritative
+    /// absence from the retained host yet.
+    MissingCanonicalInputProbe {
+        name: String,
+    },
     /// A canonical font definition completed scanning, but its transient
     /// host capability has not supplied the immutable resource yet.
     MissingCanonicalFont {
@@ -396,6 +401,9 @@ impl fmt::Display for ExecError {
             Self::MissingCanonicalInput { name } => {
                 write!(f, "input source `{name}` is unavailable")
             }
+            Self::MissingCanonicalInputProbe { name } => {
+                write!(f, "input enquiry `{name}` is unresolved")
+            }
             Self::MissingCanonicalFont { request } => {
                 write!(f, "font resource `{}` is unavailable", request.name)
             }
@@ -599,6 +607,7 @@ impl std::error::Error for ExecError {
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
             | Self::MissingCanonicalInput { .. }
+            | Self::MissingCanonicalInputProbe { .. }
             | Self::MissingCanonicalFont { .. }
             | Self::MissingCanonicalPdfImage { .. }
             | Self::MissingTracedToken { .. }
@@ -713,6 +722,7 @@ impl ExecError {
             | Self::MissingControlSequence { .. }
             | Self::MissingToken { .. }
             | Self::MissingCanonicalInput { .. }
+            | Self::MissingCanonicalInputProbe { .. }
             | Self::MissingCanonicalFont { .. }
             | Self::MissingCanonicalPdfImage { .. }
             | Self::Fatal(_)

@@ -445,6 +445,41 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         })
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
+            CanonicalResourceNeed::InputProbe { name } => self
+                .job_resources
+                .iter()
+                .find_map(|resource| match resource {
+                    LoadedFormatResource::Input {
+                        logical_name,
+                        resolved_name,
+                        source_kind,
+                        bytes,
+                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::InputProbe {
+                            name: logical_name.clone(),
+                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                .with_name(resolved_name.clone()),
+                        },
+                    )),
+                    _ => None,
+                })
+                .or_else(|| {
+                    self.format_resources.iter().find_map(|resource| match resource {
+                        FormatResource::Input {
+                            logical_name,
+                            source_kind,
+                            bytes,
+                        } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::InputProbe {
+                                name: logical_name.clone(),
+                                source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                    .with_name(format!("./{logical_name}")),
+                            },
+                        )),
+                        _ => None,
+                    })
+                })
+                .unwrap_or(CanonicalResourceOutcome::Unavailable),
             CanonicalResourceNeed::Font { request } => self
                 .job_resources
                 .iter()
@@ -688,6 +723,23 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                             *source_kind,
                             Arc::clone(bytes),
                         ),
+                    )),
+                    _ => None,
+                })
+                .unwrap_or(CanonicalResourceOutcome::Unavailable),
+            CanonicalResourceNeed::InputProbe { name } => self
+                .resources
+                .iter()
+                .find_map(|resource| match resource {
+                    FormatResource::Input {
+                        logical_name,
+                        source_kind,
+                        bytes,
+                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::InputProbe {
+                            name: logical_name.clone(),
+                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes)),
+                        },
                     )),
                     _ => None,
                 })
