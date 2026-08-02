@@ -5289,7 +5289,22 @@ fn scan_step(
         };
         return Ok(ScannedStep::ReplayCompleted(episode));
     };
-    report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+    // TeX82 §§1034/1038 keeps a fetched character inside `main_loop`;
+    // it reaches neither `reswitch` nor §1030's command trace. A
+    // non-character fetched by the same lookahead does go to `reswitch` and
+    // must retain the ordinary trace boundary.
+    let continues_main_loop = main_loop_active
+        && matches!(
+            command.meaning(),
+            Meaning::CharToken {
+                cat: Catcode::Letter | Catcode::Other,
+                ..
+            } | Meaning::CharGiven(_)
+                | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+        );
+    if !continues_main_loop {
+        report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+    }
     if main_loop_active
         && matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal)
         && matches!(

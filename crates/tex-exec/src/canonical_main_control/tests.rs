@@ -105,6 +105,28 @@ fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
 }
 
 #[test]
+fn tracingcommands_omits_characters_retired_inside_main_loop() {
+    // TeX82 §§1034/1038: after the first character enters `main_loop`,
+    // adjacent characters are retired by its raw lookahead and never reach
+    // §1030's `reswitch` trace boundary.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f\chardef\bee=66 \tracingcommands=1\tracingonline=1\setbox0=\hbox{AA\bee\char67}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = pending_sink_text(&stores, false);
+    assert_eq!(log.matches("the letter A").count(), 1, "{log}");
+    assert!(!log.contains("the letter B"), "{log}");
+    assert!(!log.contains(r"{\char"), "{log}");
+    assert!(log.contains("{end-group character }}"), "{log}");
+}
+
+#[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
