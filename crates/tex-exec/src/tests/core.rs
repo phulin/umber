@@ -3309,54 +3309,35 @@ fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
 
 #[test]
 fn new_paragraph_resets_prevgraf_before_tracking_finished_lines() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm\
          \\parindent=0pt \\hsize=20pt \\parfillskip=0pt\
          \\prevgraf=5 \\edef\\pg{\\the\\prevgraf}\
-         a\\penalty-10000 b\\penalty-10000 c\\par",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("prevgraf program executes");
+         a\\penalty-10000 b\\penalty-10000 c\\par\
+         \\edef\\finishedpg{\\the\\prevgraf}",
+    );
 
     assert_eq!(macro_text(&stores, "pg"), "5");
-    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 3);
+    assert_eq!(macro_text(&stores, "finishedpg"), "3");
 }
 
 #[test]
 fn negative_prevgraf_is_recoverable_and_leaves_value_unchanged() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\prevgraf=3\\prevgraf=-1"));
-    let mut executor = Executor::new();
+    let stores = run_canonical_tex82("\\prevgraf=3\\prevgraf=-1\\edef\\pg{\\the\\prevgraf}");
 
-    executor
-        .run(&mut input, &mut stores)
-        .expect("negative prevgraf is recoverable");
-
-    assert_eq!(executor.nest().enclosing_vertical_prev_graf(), 3);
+    assert_eq!(macro_text(&stores, "pg"), "3");
     assert!(support::terminal_effect_text(&stores).contains("Bad \\prevgraf"));
 }
 
 #[test]
 fn fresh_hanging_paragraph_keeps_its_first_item_line_at_full_width() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm\
          \\setbox0=\\vbox{\\hsize=100pt \\parindent=20pt \\parfillskip=0pt plus 1fil\
          \\noindent previous\\par\
          \\hangindent=20pt \\indent\
          \\hbox to 0pt{\\hss X\\hskip10pt}first\\penalty-10000 second\\par}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("item-shaped paragraphs execute");
+    );
 
     let box0 = stores.box_reg(0).expect("vbox register");
     let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
@@ -3380,16 +3361,10 @@ fn fresh_hanging_paragraph_keeps_its_first_item_line_at_full_width() {
 
 #[test]
 fn paragraph_hfill_sets_the_line_at_fill_order() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm\
          \\setbox0=\\vbox{\\hsize=345pt \\hfill lorem\\par}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("fill-order paragraph executes");
+    );
 
     let box0 = stores.box_reg(0).expect("vbox register");
     let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
@@ -3421,20 +3396,9 @@ fn paragraph_hfill_sets_the_line_at_fill_order() {
 
 #[test]
 fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\hrule width7pt"));
-    let mut executor = Executor::new();
+    let stores = run_canonical_tex82("\\hrule width7pt\\edef\\pd{\\the\\prevdepth}");
 
-    executor
-        .run(&mut input, &mut stores)
-        .expect("hrule executes");
-
-    assert_eq!(
-        executor.nest().current_list().prev_depth(),
-        Some(crate::mode::IGNORE_DEPTH)
-    );
-    assert!(executor.nest().current_list().nodes().is_empty());
+    assert_eq!(macro_text(&stores, "pd"), "-1000.0pt");
     let Some(tex_state::node::Node::Rule {
         width,
         height,
@@ -3451,16 +3415,9 @@ fn vertical_hrule_uses_defaults_and_sets_prevdepth_ignore_sentinel() {
 
 #[test]
 fn vertical_vrule_runs_everypar_before_scanning_rule_dimensions() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\vsize=1000pt \\everypar{\\hangindent=30pt}\\vrule width0pt X\\par",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vertical rule starts a paragraph");
+    );
 
     let rule = stores
         .current_page_nodes()
@@ -3483,16 +3440,9 @@ fn vertical_vrule_runs_everypar_before_scanning_rule_dimensions() {
 
 #[test]
 fn vertical_char_runs_everypar_before_scanning_and_appending_the_character() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\relax \\f \\vsize=1000pt \\everypar{\\char66 }\\char65 \\par",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vertical char starts a paragraph");
+    );
 
     let chars = stores
         .current_page_nodes()
@@ -3517,13 +3467,7 @@ fn vertical_char_runs_everypar_before_scanning_and_appending_the_character() {
 
 #[test]
 fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\hrule}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("hrule in hbox is recoverable");
+    let stores = run_canonical_tex82("\\setbox0=\\hbox{\\hrule}");
 
     assert!(stores.box_reg(0).is_some());
     assert!(support::terminal_effect_text(&stores).contains("hrule' here except with leaders"));
@@ -3531,15 +3475,8 @@ fn hrule_in_restricted_horizontal_mode_reports_and_is_ignored() {
 
 #[test]
 fn showlists_reports_vertical_rule_and_ignored_prevdepth() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\showboxbreadth=100 \\showboxdepth=100 \\hrule width7pt\\showlists",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("showlists executes");
+    let stores =
+        run_canonical_tex82("\\showboxbreadth=100 \\showboxdepth=100 \\hrule width7pt\\showlists");
 
     let log = terminal_effect_text(&stores);
     assert!(log.contains("### recent contributions:"));
