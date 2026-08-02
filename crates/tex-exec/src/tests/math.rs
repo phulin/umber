@@ -11,6 +11,7 @@ use tex_state::math::{
 };
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
+use tex_state::page::INF_PENALTY;
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::scaled::Scaled;
 
@@ -1131,7 +1132,6 @@ fn penalty_builds_ordinary_list_material_in_display_math() {
 }
 
 #[test]
-#[ignore = "umber2-qpzu: canonical postdisplay page fire commits twice"]
 fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
     let mut stores = support::stores_with_fonts();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -1167,6 +1167,18 @@ fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
     }
 
     assert_eq!(stores.world().artifact_commits().len(), 1);
+    assert_eq!(control.take_prepared_dvi_pages().len(), 1);
+    assert!(matches!(
+        stores.page_contribution_front(),
+        Some(Node::Penalty(value)) if *value == INF_PENALTY
+    ));
+    assert!(
+        stores
+            .page_contributions()
+            .iter()
+            .any(|node| matches!(node, Node::Penalty(-10_000))),
+        "the later forced post-display penalty waits for the next builder invocation"
+    );
 }
 
 #[test]

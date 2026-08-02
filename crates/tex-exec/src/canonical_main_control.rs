@@ -2536,13 +2536,16 @@ impl CanonicalMainControl {
                     if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
-                    // TeX82 §1025 returns from the default `ship_out` path to
-                    // §1014's page-builder continuation.  In particular, the
-                    // infinite penalty that §1013 left at the chosen break is
-                    // discarded before main control can reconsider a backed-up
-                    // `\end`; otherwise every reconsideration ejects another
-                    // empty page and can never satisfy §1054's `its_all_over`.
-                    crate::page_builder::build_page(stores)?;
+                    // TeX82 §§1014--1025 complete this invocation of
+                    // `build_page` after the default `ship_out`. Umber defers
+                    // that synchronous fire-up to the command-step tail, so
+                    // re-entering the builder here would be a second
+                    // invocation: contributions appended after the selected
+                    // breakpoint (notably a forced post-display penalty)
+                    // could ship a second page in the same deferred episode.
+                    // A later contributing command, or §1054's end-job loop,
+                    // starts the next invocation.
+                    break;
                 }
                 crate::output::SelectedPageOutput::UserRoutine => {
                     // This episode belongs to the step that contributed the
