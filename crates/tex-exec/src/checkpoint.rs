@@ -211,6 +211,7 @@ impl EngineCheckpoint {
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
         let mut rebound = self.clone();
+        rebound.universe = universe.snapshot();
         let command = rebound
             .command
             .as_mut()

@@ -47,6 +47,7 @@ fn canonical_font_path(name: &str) -> PathBuf {
 }
 
 fn canonical_candidate_control(
+    universe: &mut Universe,
     job_name: &str,
     source_path: &str,
     bytes: Vec<u8>,
@@ -61,6 +62,7 @@ fn canonical_candidate_control(
     control.register_root_source(
         SourceRegistration::new(RegisteredSourceKind::Generated, bytes).with_name(source_path),
     )?;
+    control.flush_pending_file_framing(universe);
     control.capabilities_mut().set_startup_job_name(job_name);
     Ok(control)
 }
@@ -306,6 +308,7 @@ pub struct RevisionCandidate {
     completed: Option<CanonicalCandidateCompletion>,
     suspension_serial: u64,
     delivered_commands: usize,
+    job_start_captured: bool,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
 }
@@ -467,6 +470,21 @@ impl RevisionCandidate {
         if self.completed.is_some() {
             return Ok(RevisionCandidateResult::Complete);
         }
+        if !self.job_start_captured {
+            let sink: &mut dyn CheckpointSink = match &mut self.sink {
+                CandidateSink::Cold(sink) => sink,
+                CandidateSink::Advance(sink) => sink,
+            };
+            if sink.wants_checkpoint(EngineBoundary::JobStart) {
+                let checkpoint = self.control.capture_checkpoint(
+                    EngineBoundary::JobStart,
+                    &mut self.universe,
+                    ExecutionBudgetCounters::default(),
+                )?;
+                sink.checkpoint(checkpoint);
+            }
+            self.job_start_captured = true;
+        }
         loop {
             if cancellation.is_cancelled() {
                 return Err(SessionError::Execute(
@@ -586,7 +604,7 @@ impl RevisionCandidate {
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
         self.control
-            .set_fuel_limit(limit)
+            .set_fuel_limit(limit.max(1))
             .expect("positive session fuel limit");
     }
 
@@ -1031,6 +1049,7 @@ impl Session {
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
         let control = canonical_candidate_control(
+            &mut universe,
             &self.job_name,
             &self.source_path,
             self.source_file_bytes(&self.source),
@@ -1048,6 +1067,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Initial {
                 source_len: self.source.len(),
@@ -1125,7 +1145,26 @@ impl Session {
             map: EditMap::new(0..0, 0),
             revision_setup_latency: revision_setup_started.elapsed(),
         });
-        self.start_replacement_candidate(setup)
+        let restart = setup
+            .old_history
+            .iter()
+            .position(|record| record.key.boundary == EngineBoundary::JobStart);
+        let can_restore = restart.is_some_and(|restart| {
+            self.substrate.as_ref().is_some_and(|substrate| {
+                setup.old_history[restart]
+                    .checkpoint()
+                    .can_fork_canonical_editor(
+                        substrate,
+                        setup.old_source.as_bytes(),
+                        &self.source_file_bytes(&setup.next),
+                    )
+            })
+        });
+        if let Some(restart) = restart.filter(|_| can_restore) {
+            self.start_restored_candidate(setup, restart, false)
+        } else {
+            self.start_replacement_candidate(setup)
+        }
     }
 
     fn start_advance_candidate_with_policy(
@@ -1251,6 +1290,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            job_start_captured: true,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Incremental {
                 setup,
@@ -1270,6 +1310,7 @@ impl Session {
         universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
         let control = canonical_candidate_control(
+            &mut universe,
             &self.job_name,
             setup.next_layout.path(),
             self.source_file_bytes(&setup.next),
@@ -1286,6 +1327,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },
         })

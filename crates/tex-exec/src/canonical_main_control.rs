@@ -1043,6 +1043,12 @@ impl CanonicalMainControl {
         Ok(id)
     }
 
+    /// Publishes source-open framing after root registration without
+    /// consuming the first command, allowing hosts to checkpoint JobStart.
+    pub fn flush_pending_file_framing(&mut self, stores: &mut Universe) {
+        self.drain_file_framing_events(stores);
+    }
+
     /// Selects retained fragment semantics: root exhaustion is the host
     /// boundary and must not consume §71 terminal lines looking for `\end`.
     pub fn stop_at_end_of_input(&mut self) {
