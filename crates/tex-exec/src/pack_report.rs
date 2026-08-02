@@ -115,7 +115,13 @@ fn report_one(
         }
     }
     headline.push_str(&origin_text(stores));
-    headline.push('\n');
+    // TeX82 §675 puts its `print_ln` inside the non-output-active vbox
+    // branch. During `\output`, §182's first `show_node_list` newline alone
+    // terminates the headline. The hbox path always closes its headline in
+    // §663 before printing the abbreviated list.
+    if direction == PackedDirection::Horizontal || !stores.output_routine_is_active() {
+        headline.push('\n');
+    }
 
     if direction == PackedDirection::Horizontal {
         // §663: `font_in_short_display:=null_font; short_display(list_ptr(r));

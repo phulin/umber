@@ -214,6 +214,37 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
     assert!(terminal.ends_with("\n\n"), "{terminal:?}");
 }
 
+#[test]
+fn output_active_vbox_dump_supplies_the_headline_newline() {
+    // TeX82 §§182/675: the output-active vbox branch omits its own
+    // `print_ln`; `show_box` supplies exactly one newline before the node.
+    // Outside `\output`, §675's explicit newline remains in addition.
+    for (output_active, separator) in [(true, "\n"), (false, "\n\n")] {
+        let mut stores = Universe::new();
+        stores.set_output_routine_active(output_active);
+        let packed = empty_hbox(&mut stores);
+
+        report_pack_diagnostics(
+            &mut stores,
+            PackedDirection::Vertical,
+            &[PackDiagnostic::Overfull {
+                excess: Scaled::from_raw(2 * Scaled::UNITY),
+            }],
+            &packed,
+        );
+
+        let origin = if output_active {
+            ") has occurred while \\output is active"
+        } else {
+            ") detected at line 0"
+        };
+        assert_eq!(
+            sink_text(&stores, false),
+            format!("\nOverfull \\vbox (2.0pt too high{origin}{separator}\\hbox(0.0+0.0)x0.0\n\n")
+        );
+    }
+}
+
 /// tex.web §§661--663: every `pack_begin_line` origin spelling is exact,
 /// output-routine context takes precedence, and §§54/§245 selectors keep the
 /// headline on the live selector while the box dump is transcript-only.
