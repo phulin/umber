@@ -348,6 +348,21 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
 }
 
 #[test]
+fn usage_report_separates_a_partial_final_cleanup_line_before_breaking() {
+    // TeX82 §1333's log-only usage report preserves the separator at the
+    // final-cleanup column before its first `wlog_cr`-style line break.
+    let mut stores = Universe::new();
+    stores.set_int_param_global(IntParam::TRACING_STATS, 1);
+    Printer::new(&mut stores, Selector::LogOnly).print("unfinished)");
+
+    finish_job(&mut stores, CommandProfile::TEX82, "stats", None, None);
+
+    assert!(
+        log_text(&stores).starts_with("unfinished) \nHere is how much of TeX's memory you used:\n")
+    );
+}
+
+#[test]
 fn finish_job_keeps_log_only_statistics_before_the_committed_page_report() {
     let mut stores = run_source_to_end(br"\shipout\hbox{}\end");
     stores.set_int_param_global(IntParam::TRACING_STATS, 1);

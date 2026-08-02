@@ -672,6 +672,9 @@ fn print_usage_statistics(stores: &mut Universe) {
     // for this block: statistics belong to the transcript even when ordinary
     // job framing is going to both terminal and log.
     let mut printer = Printer::new(stores, Selector::LogOnly);
+    if printer.log_offset() > 0 {
+        printer.print_char(' ');
+    }
     printer
         .print_nl("Here is how much of TeX's memory you used:")
         .print_nl(" ");
