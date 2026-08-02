@@ -164,15 +164,35 @@ impl Env {
     /// overlay. In that representation the restored value lives only in the
     /// immutable format base, so TeX82 §283's following `show_eqtb` must not
     /// interpret the undo word itself as the restored semantic value.
-    pub(crate) fn restored_semantic_word(&self, cell: CellId, journal_word: u64) -> u64 {
+    pub(crate) fn restored_semantic_word(
+        &self,
+        cell: CellId,
+        journal_word: u64,
+    ) -> RestoredSemanticWord {
         if journal_word != 0 {
-            return journal_word;
+            return RestoredSemanticWord {
+                word: journal_word,
+                trace_eligible: true,
+            };
         }
         let cell = CellId::new(cell.bank(), cell.index());
-        self.format_base
+        let format_word = self
+            .format_base
             .binary_search_by_key(&cell.raw(), |entry| entry.cell.raw())
             .ok()
-            .map_or(journal_word, |index| self.format_base[index].word)
+            .map(|index| self.format_base[index].word);
+        RestoredSemanticWord {
+            word: format_word.unwrap_or(journal_word),
+            // `par_shape_loc` is represented by a private token-list cell in
+            // Umber.  Its absent state has no TeX eqtb entry/save-stack word
+            // to show. A frozen format-base cell, however, is TeX's
+            // level-one value even when the mutable overlay's undo word is
+            // zero, and §283 must trace that restored value through §252.
+            trace_eligible: cell.bank() != BankTag::TokParam
+                || cell.index()
+                    != u32::from(super::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
+                || format_word.is_some(),
+        }
     }
 
     /// Returns a content-only hash of environment semantic state.
@@ -369,6 +389,11 @@ impl Env {
             }
         }
     }
+}
+
+pub(crate) struct RestoredSemanticWord {
+    pub(crate) word: u64,
+    pub(crate) trace_eligible: bool,
 }
 
 fn restore_font_bank_word(

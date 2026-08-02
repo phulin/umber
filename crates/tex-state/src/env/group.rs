@@ -13,6 +13,7 @@ pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
 pub struct RestoreRecord {
     cell: CellId,
     old: u64,
+    trace_eligible: bool,
     retaining: bool,
     tracing_restores: i32,
     tracing_online: i32,
@@ -22,9 +23,11 @@ pub struct RestoreRecord {
 
 impl RestoreRecord {
     fn restoring(env: &Env, cell: CellId, old: u64) -> Self {
+        let restored = env.restored_semantic_word(cell, old);
         Self {
             cell,
-            old: env.restored_semantic_word(cell, old),
+            old: restored.word,
+            trace_eligible: restored.trace_eligible,
             retaining: false,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
@@ -34,9 +37,11 @@ impl RestoreRecord {
     }
 
     fn retaining(env: &Env, cell: CellId) -> Self {
+        let restored = env.restored_semantic_word(cell, env.semantic_word(cell));
         Self {
             cell,
-            old: env.restored_semantic_word(cell, env.semantic_word(cell)),
+            old: restored.word,
+            trace_eligible: restored.trace_eligible,
             retaining: true,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
@@ -49,6 +54,7 @@ impl RestoreRecord {
         Self {
             cell: CellId::new(BankTag::Box, u32::from(index)),
             old: old.value(),
+            trace_eligible: true,
             retaining: false,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
@@ -65,6 +71,11 @@ impl RestoreRecord {
     #[must_use]
     pub const fn old(&self) -> u64 {
         self.old
+    }
+
+    #[must_use]
+    pub const fn trace_eligible(&self) -> bool {
+        self.trace_eligible
     }
 
     #[must_use]

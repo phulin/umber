@@ -5745,7 +5745,7 @@ impl Universe {
         use crate::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 
         for record in records {
-            if record.tracing_restores() <= 0 {
+            if record.tracing_restores() <= 0 || !record.trace_eligible() {
                 continue;
             }
             let cell = record.cell();

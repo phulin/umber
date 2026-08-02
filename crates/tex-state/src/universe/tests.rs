@@ -312,6 +312,33 @@ fn parshape_restore_trace_materializes_loaded_format_base_after_zero_overlay() {
 }
 
 #[test]
+fn absent_internal_parshape_restore_is_not_traced() {
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::TRACING_RESTORES, 1);
+    universe.set_int_param(IntParam::TRACING_ONLINE, 1);
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'\\'));
+    assert_eq!(universe.paragraph_shape_len(), 0);
+
+    universe.enter_group();
+    universe.set_paragraph_shape(&[], false);
+    let _ = universe.leave_group();
+
+    let output: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !output.contains("{restoring \\parshape=0}"),
+        "absent implementation backing cell acquired a TeX restore trace: {output:?}"
+    );
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's
