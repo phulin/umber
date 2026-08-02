@@ -12148,6 +12148,93 @@ fn loaded_output_resets_paragraph_state_at_the_opening_brace_boundary() {
 }
 
 #[test]
+fn display_resume_list_survives_deferred_output_routine() {
+    // TeX82 §1200 pushes the empty horizontal list for the text following a
+    // display before its final build_page call. If that call reaches §1026's
+    // output routine, the internal vertical output list is nested above that
+    // exact horizontal level and popping it must reveal the same list again.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.enable_geometry_observation();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\output={\global\setbox9=\box255}
+           \parshape=6 0pt11pt 0pt12pt 0pt13pt 0pt0pt 0pt0pt 0pt15pt\relax",
+    );
+    for _ in 0..64 {
+        control.step(&mut universe).expect("output assignment step");
+        if !universe
+            .tokens(universe.tok_param(TokParam::OUTPUT))
+            .is_empty()
+            && universe.paragraph_shape_len() == 6
+        {
+            break;
+        }
+    }
+    universe.set_dimen_param(DimenParam::V_SIZE, Scaled::from_raw(Scaled::UNITY));
+    universe.prepend_page_contributions(vec![
+        Node::Rule {
+            width: Some(Scaled::from_raw(Scaled::UNITY)),
+            height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+            depth: Some(Scaled::from_raw(0)),
+        },
+        Node::Penalty(-10_000),
+    ]);
+    crate::page_builder::build_page(&mut universe).expect("forced page break");
+    assert!(universe.page_fire_up().is_some());
+
+    control
+        .modes
+        .push(crate::Mode::Horizontal)
+        .expect("§1200 resumed paragraph");
+    control.modes.current_list_mutation().set_space_factor(1777);
+    let resumed = control.modes.summary().levels()[1].clone();
+    control
+        .fire_pending_page_output(&mut universe)
+        .expect("deferred output starts");
+    assert_eq!(control.current_mode(), crate::Mode::InternalVertical);
+    assert_eq!(control.modes.summary().levels()[1], resumed);
+
+    for _ in 0..128 {
+        control.step(&mut universe).expect("output routine step");
+        if universe.innermost_group_kind() != Some(tex_state::GroupKind::Output) {
+            assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+            assert_eq!(control.modes.depth(), 2);
+            assert_eq!(control.modes.summary().levels()[1], resumed);
+            register_source(
+                &mut control,
+                br"\vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\par\end",
+            );
+            run_to_end(&mut control, &mut universe);
+            let widths: Vec<_> = universe
+                .geometry_observations_since(0)
+                .iter()
+                .filter_map(|event| match event {
+                    tex_state::GeometryObservation::Hpack { width_sp, .. } => Some(*width_sp),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                widths.windows(6).any(|window| window
+                    == [
+                        11 * i64::from(Scaled::UNITY),
+                        12 * i64::from(Scaled::UNITY),
+                        13 * i64::from(Scaled::UNITY),
+                        0,
+                        0,
+                        15 * i64::from(Scaled::UNITY),
+                    ]),
+                "§1200's resumed paragraph must retain the exact parshape pack sequence: {widths:?}"
+            );
+            return;
+        }
+    }
+    panic!("fixture did not return from deferred output");
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main
