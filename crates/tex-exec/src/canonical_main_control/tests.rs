@@ -9065,15 +9065,44 @@ fn run_canonical_etex(source: &[u8]) -> Universe {
 }
 
 #[test]
-#[ignore = "xfail: umber2-6d6s canonical final cleanup drops an unterminated hbox page"]
 fn end_inside_unterminated_box_reaches_outer_cleanup() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    // TeX82 §§1064--1065/1095/1054: the stop is backed up behind an inserted
+    // right brace, the recovered hbox is appended to the outer vertical list,
+    // and the same stop then ejects that residual page exactly once. Use the
+    // standard nonstop test host so §82 tests the recovery instead of ending
+    // at an exhausted interactive terminal while asking for error advice.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\hbox{A\end");
-    run_to_end(&mut control, &mut stores);
+
+    let mut terminal_step = None;
+    let mut artifact_counts = Vec::new();
+    for step_index in 1..=16 {
+        let step = control
+            .step(&mut stores)
+            .expect("unterminated-box recovery executes");
+        artifact_counts.push(stores.world().artifact_commits().len());
+        assert!(
+            artifact_counts.last() <= Some(&1),
+            "end-job recovery must not repeat shipout"
+        );
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            terminal_step = Some((step_index, step));
+            break;
+        }
+    }
+
+    assert_eq!(terminal_step, Some((6, MainControlStep::End)));
+    assert_eq!(artifact_counts, [0, 0, 0, 0, 1, 1]);
     assert_eq!(stores.world().artifact_commits().len(), 1);
     assert!(stores.current_page_nodes().is_empty());
     assert!(stores.page_contributions().is_empty());
+    assert_eq!(stores.group_depth(), 0);
+    assert_eq!(control.current_mode(), Mode::Vertical);
+    assert!(control.fatal_error().is_none());
+    let terminal = terminal_text(&stores);
+    assert_eq!(terminal.matches("! Missing } inserted.").count(), 1);
+    assert!(!terminal.contains("That makes 100 errors"), "{terminal}");
 }
 
 #[test]
