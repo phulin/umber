@@ -8,38 +8,24 @@ use tex_state::scaled::Scaled;
 #[test]
 fn pdf_font_output_actions_record_host_neutral_checkpointed_state() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    for (name, primitive) in [
-        ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
-        ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
-        ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
-        ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
-        (
-            "pdfglyphtounicode",
-            UnexpandablePrimitive::PdfGlyphToUnicode,
-        ),
-        (
-            "pdfnobuiltintounicode",
-            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
-        ),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
-    }
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        "\\font\\base=cmr10 ",
-        "\\pdfmapfile{+pdftex.map} ",
-        "\\pdfmapline{+cmr10 CMR10 <cmr10.pfb} ",
-        "\\pdffontattr\\base{/StemV 70} ",
-        "\\pdfincludechars\\base{CABA} ",
-        "\\pdfglyphtounicode{A}{0041} ",
-        "\\pdfglyphtounicode{tfm:cmr10/ffi}{0066 0066 0069} ",
-        "\\pdfglyphtounicode{Digamma}{D875 DFCB} ",
-        "\\pdfnobuiltintounicode\\base \\end",
-    )));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("PDF font actions execute");
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        concat!(
+            "\\font\\base=cmr10 ",
+            "\\pdfmapfile{+pdftex.map} ",
+            "\\pdfmapline{+cmr10 CMR10 <cmr10.pfb} ",
+            "\\pdffontattr\\base{/StemV 70} ",
+            "\\pdfincludechars\\base{CABA} ",
+            "\\pdfglyphtounicode{A}{0041} ",
+            "\\pdfglyphtounicode{tfm:cmr10/ffi}{0066 0066 0069} ",
+            "\\pdfglyphtounicode{Digamma}{D875 DFCB} ",
+            "\\pdfnobuiltintounicode\\base \\end",
+        )
+        .as_bytes(),
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let font = font_meaning(&stores, "base");
     assert_eq!(stores.pdf_font_attribute(font), b"/StemV 70");
@@ -85,13 +71,13 @@ fn empty_pdf_map_primitives_block_the_implicit_default_map() {
         ),
     ] {
         let mut stores = stores_with_fonts();
-        tex_expand::install_expandable_primitives(&mut stores);
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
-        let mut input = InputStack::new(MemoryInput::new(source));
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("empty map primitive executes");
+        let mut control = canonical_pdf_font_control(&mut stores);
+        assert_eq!(
+            stores.meaning(stores.symbol(name).expect("PDF map primitive")),
+            Meaning::UnexpandablePrimitive(primitive)
+        );
+        register_canonical_source(&mut control, source.as_bytes());
+        run_canonical_to_end(&mut control, &mut stores);
         assert!(matches!(
             stores.pdf_font_maps().next(),
             Some(tex_state::PdfFontMapOperation::BlockDefault)
@@ -103,20 +89,17 @@ fn empty_pdf_map_primitives_block_the_implicit_default_map() {
 #[test]
 fn pdf_glyph_to_unicode_warns_and_continues_for_out_of_range_value() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let primitive = stores.intern("pdfglyphtounicode");
-    stores.set_meaning(
-        primitive,
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfGlyphToUnicode),
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_source(
+        &mut control,
+        concat!(
+            "\\def\\legacyvalue{00740074}",
+            "\\pdfglyphtounicode{t_t}{\\legacyvalue}",
+            "\\pdfglyphtounicode{A}{0041}\\end"
+        )
+        .as_bytes(),
     );
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        "\\def\\legacyvalue{00740074}",
-        "\\pdfglyphtounicode{t_t}{\\legacyvalue}",
-        "\\pdfglyphtounicode{A}{0041}\\end"
-    )));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("an invalid mapping is a recoverable pdfTeX warning");
+    run_canonical_to_end(&mut control, &mut stores);
     assert!(
         terminal_effect_text(&stores)
             .contains("pdfTeX warning: pdftex: ToUnicode: value out of range [0,10FFFF]: 740074")
@@ -134,23 +117,20 @@ fn duplicate_pdf_map_warning_uses_pdftex_positive_only_suppression() {
         "pdfTeX warning: pdftex: fontmap entry for `cmr10' already exists, duplicates ignored";
     for (control, expects_warning) in [(-1, true), (0, true), (1, false)] {
         let mut stores = stores_with_fonts();
-        tex_expand::install_expandable_primitives(&mut stores);
-        let primitive = stores.intern("pdfmapline");
-        stores.set_meaning(
-            primitive,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfMapLine),
-        );
+        let mut main_control = canonical_pdf_font_control(&mut stores);
         stores.set_int_param_global(
             tex_state::env::banks::IntParam::PDF_SUPPRESS_WARNING_DUP_MAP,
             control,
         );
-        let mut input = InputStack::new(MemoryInput::new(concat!(
-            "\\pdfmapline{cmr10 First <cmr10.pfb} ",
-            "\\pdfmapline{+cmr10 Ignored <ignored.pfb} \\end",
-        )));
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("duplicate map actions execute");
+        register_canonical_source(
+            &mut main_control,
+            concat!(
+                "\\pdfmapline{cmr10 First <cmr10.pfb} ",
+                "\\pdfmapline{+cmr10 Ignored <ignored.pfb} \\end",
+            )
+            .as_bytes(),
+        );
+        run_canonical_to_end(&mut main_control, &mut stores);
         assert_eq!(
             terminal_effect_text_unbroken(&stores).contains(WARNING),
             expects_warning,
@@ -688,6 +668,29 @@ fn canonical_font_control(stores: &mut Universe, profile: CommandProfile) -> Can
         }
         _ => panic!("font test helper supports TeX82 and e-TeX only"),
     }
+}
+
+fn canonical_pdf_font_control(stores: &mut Universe) -> CanonicalMainControl {
+    tex_command::install_tex82_expandable_primitives(stores);
+    for (name, primitive) in [
+        ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
+        ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
+        ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
+        ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
+        (
+            "pdfglyphtounicode",
+            UnexpandablePrimitive::PdfGlyphToUnicode,
+        ),
+        (
+            "pdfnobuiltintounicode",
+            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
+        ),
+    ] {
+        let symbol = stores.intern(name);
+        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
+    }
+    stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
+    CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027)
 }
 
 fn register_canonical_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
