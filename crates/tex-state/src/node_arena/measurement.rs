@@ -260,14 +260,15 @@ fn whatsit_owned_payloads(whatsit: &crate::node::Whatsit) -> WhatsitOwnedPayload
 impl NodeStorage {
     #[cfg(feature = "profiling")]
     pub(super) fn record_last_ligature_payload(&mut self) {
-        let (_, _, source, origins) = self
+        let ligature = self
             .ligatures
             .last()
             .expect("a ligature payload was just appended");
-        self.nested_payload_logical += (source.len() * core::mem::size_of::<char>()) as u64
-            + (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
-        self.nested_payload_retained += (source.capacity() * core::mem::size_of::<char>()) as u64
-            + (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+        self.nested_payload_logical += (ligature.orig.len() * core::mem::size_of::<char>()) as u64
+            + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+        self.nested_payload_retained += (ligature.orig.capacity() * core::mem::size_of::<char>())
+            as u64
+            + (ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
     }
 
     #[cfg(feature = "profiling")]
@@ -322,12 +323,14 @@ impl NodeStorage {
         self.nested_payload_logical = 0;
         self.nested_payload_retained = 0;
         for index in 0..self.ligatures.len() {
-            let (_, _, source, origins) = &self.ligatures[index];
-            self.nested_payload_logical += (source.len() * core::mem::size_of::<char>()) as u64
-                + (origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
-            self.nested_payload_retained += (source.capacity() * core::mem::size_of::<char>())
+            let ligature = &self.ligatures[index];
+            self.nested_payload_logical += (ligature.orig.len() * core::mem::size_of::<char>())
                 as u64
-                + (origins.capacity() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+                + (ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()) as u64;
+            self.nested_payload_retained += (ligature.orig.capacity()
+                * core::mem::size_of::<char>()) as u64
+                + (ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>())
+                    as u64;
         }
         for index in 0..self.whatsits.len() {
             let owned = whatsit_owned_payloads(&self.whatsits[index]);
@@ -510,25 +513,25 @@ impl NodeStorage {
             format!("{prefix}.ligatures.owned_sources"),
             self.ligatures
                 .iter()
-                .map(|(_, _, source, _)| source.len() * core::mem::size_of::<char>())
+                .map(|ligature| ligature.orig.len() * core::mem::size_of::<char>())
                 .sum(),
             self.ligatures
                 .iter()
-                .map(|(_, _, source, _)| source.capacity() * core::mem::size_of::<char>())
+                .map(|ligature| ligature.orig.capacity() * core::mem::size_of::<char>())
                 .sum(),
         ));
         out.push(NodeMemoryColumn::byte_payload(
             format!("{prefix}.ligatures.owned_origins"),
             self.ligatures
                 .iter()
-                .map(|(_, _, _, origins)| {
-                    origins.len() * core::mem::size_of::<crate::token::OriginId>()
+                .map(|ligature| {
+                    ligature.origins.len() * core::mem::size_of::<crate::token::OriginId>()
                 })
                 .sum(),
             self.ligatures
                 .iter()
-                .map(|(_, _, _, origins)| {
-                    origins.capacity() * core::mem::size_of::<crate::token::OriginId>()
+                .map(|ligature| {
+                    ligature.origins.capacity() * core::mem::size_of::<crate::token::OriginId>()
                 })
                 .sum(),
         ));
