@@ -811,7 +811,7 @@ fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
         physical_replace_count
     });
 
-    assert_eq!(counts, [2, 3, 0, 3]);
+    assert_eq!(counts, [2, 1, 0, 1]);
 }
 
 #[test]
@@ -877,7 +877,7 @@ fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
 
 #[test]
 fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let stores = crate::test_harness::universe_with_plain_catcodes();
     let font = stores.current_font();
     let replacement = Node::Lig {
         font,
@@ -892,6 +892,22 @@ fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
             amount: Scaled::from_raw(2 * Scaled::UNITY),
             kind: KernKind::Font,
         },
+        Node::Lig {
+            font,
+            ch: 'A',
+            orig: vec!['B', 'B'],
+            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
+        },
+    ];
+
+    let minor = [
+        replacement.clone(),
+        Node::Kern {
+            amount: Scaled::from_raw(2 * Scaled::UNITY),
+            kind: KernKind::Font,
+        },
         Node::Char {
             font,
             ch: 'B',
@@ -902,16 +918,55 @@ fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
             kind: KernKind::Font,
         },
     ];
-
-    let projected = crate::assignments::test_physical_post_break_span(
-        &mut stores,
+    let (count, projected) = crate::assignments::test_physical_post_break_span(
+        6,
+        (2, 3, 4),
         &replacement,
         &following,
-        None,
+        &minor,
     );
+    assert_eq!(count, 3);
     assert!(
         matches!(projected.as_slice(), [Node::Lig { orig, .. }, Node::Kern { kind: KernKind::Font, .. }, Node::Char { ch: 'B', .. }, Node::Kern { kind: KernKind::Font, .. }] if orig == &['B', 'B'])
     );
+}
+
+#[test]
+fn through_ligature_synchronization_counts_nodes_not_source_characters() {
+    // TeX82 §§914--918 counts major-branch linked nodes until the post-break
+    // reconstitution reaches the same character boundary. A structured `CA`
+    // ligature is one replacement node, while the post branch is the single
+    // `A` character at that boundary.
+    let stores = crate::test_harness::universe_with_plain_catcodes();
+    let font = stores.current_font();
+    let replacement = Node::Lig {
+        font,
+        ch: '\u{82}',
+        orig: vec!['C', 'A'],
+        origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
+    };
+    let following = [replacement.clone()];
+    let minor = [
+        Node::Char {
+            font,
+            ch: 'A',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        following[0].clone(),
+    ];
+
+    let (count, projected) = crate::assignments::test_physical_post_break_span(
+        10,
+        (6, 7, 8),
+        &replacement,
+        &following,
+        &minor,
+    );
+
+    assert_eq!(count, 1);
+    assert!(matches!(projected.as_slice(), [Node::Char { ch: 'A', .. }]));
 }
 
 #[test]

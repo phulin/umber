@@ -1489,40 +1489,6 @@ fn auto_kern(stores: &Universe, glyph: &PendingHRunChar, leading: Option<bool>) 
     }
 }
 
-pub(crate) fn right_boundary_kern(stores: &Universe, font: FontId, ch: char) -> Option<Node> {
-    if let Some(kern) = auto_kern_codes(stores, font, Some(ch), None) {
-        return Some(kern);
-    }
-    let left = font_code(ch).ok().map(LigKernChar::Char)?;
-    match stores.lig_kern_command(font, left, LigKernChar::Boundary)? {
-        LigKernCommand::Kern(amount) => Some(Node::Kern {
-            amount,
-            kind: KernKind::Font,
-        }),
-        LigKernCommand::Ligature(_) => None,
-    }
-}
-
-pub(crate) fn synchronization_kern(
-    stores: &Universe,
-    font: FontId,
-    left: char,
-    right: char,
-) -> Option<Node> {
-    if let Some(kern) = auto_kern_codes(stores, font, Some(left), Some(right)) {
-        return Some(kern);
-    }
-    let left = font_code(left).ok().map(LigKernChar::Char)?;
-    let right = font_code(right).ok().map(LigKernChar::Char)?;
-    match stores.lig_kern_command(font, left, right)? {
-        LigKernCommand::Kern(amount) => Some(Node::Kern {
-            amount,
-            kind: KernKind::Font,
-        }),
-        LigKernCommand::Ligature(_) => None,
-    }
-}
-
 fn auto_kern_codes(
     stores: &Universe,
     font: FontId,

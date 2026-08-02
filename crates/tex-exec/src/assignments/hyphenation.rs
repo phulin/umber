@@ -901,137 +901,132 @@ fn discretionary_through_node(
     let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    let target = automatic_physical_replace_count(std::slice::from_ref(&replacement))
-        .expect("one replacement node has a bounded physical span") as usize;
-    let physical_post = physical_post_break_span(
+    let (physical_replace_count, physical_post) = physical_discretionary_projection(
         stores,
+        word,
+        span,
         &replacement,
         following,
-        word.get(position + target).copied(),
         fuel,
     )?;
-    let disc = automatic_discretionary(stores, &pre, &post, &[replacement])
-        .expect("a single replacement node fits TeX82's quarterword count");
+    let disc = automatic_discretionary_with_count(
+        stores,
+        &pre,
+        &post,
+        &[replacement],
+        physical_replace_count,
+    )
+    .expect("a reconstituted word has a bounded physical replacement span");
     Ok((disc, physical_post))
 }
 
-fn physical_post_break_span(
+/// Replays TeX82 §§914--918's synchronization rule in character space.
+///
+/// Umber's semantic channel stores a ligature together with its source
+/// characters, whereas TeX counts the linked nodes produced by successive
+/// `reconstitute` calls.  The two branches synchronize at the first source
+/// character boundary represented by both reconstitutions.  Projecting that
+/// boundary here retains TeX's exact replacement count and post-break list
+/// without flattening the semantic ligature used by packing and shipout.
+fn physical_discretionary_projection(
     stores: &mut Universe,
+    word: &[WordChar],
+    span: (usize, usize, usize),
     replacement: &Node,
     following: &[Node],
-    synchronization_next: Option<WordChar>,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<tex_state::ids::NodeListId, ExecError> {
-    let target = automatic_physical_replace_count(std::slice::from_ref(replacement))
-        .expect("one replacement node has a bounded physical span") as usize;
-    let mut projected = vec![replacement.clone()];
-    let mut consumed = node_original_len(replacement);
-    for node in following {
-        if consumed >= target {
-            if matches!(
-                node,
-                Node::Kern {
-                    kind: KernKind::Font,
-                    ..
-                }
-            ) {
-                projected.push(node.clone());
-                continue;
-            }
-            break;
-        }
-        match node {
-            Node::Kern {
-                kind: KernKind::Font,
-                ..
-            } => projected.push(node.clone()),
-            Node::Char { .. } => {
-                projected.push(node.clone());
-                consumed += 1;
-            }
-            Node::Lig {
-                font,
-                orig,
-                origins,
-                ..
-            } => {
-                let remaining = target - consumed;
-                if orig.len() <= remaining {
-                    projected.push(node.clone());
-                    consumed += orig.len();
-                } else {
-                    let pending = orig[..remaining]
-                        .iter()
-                        .copied()
-                        .zip(origins[..remaining].iter().copied())
-                        .map(|(ch, origin)| PendingHChar {
-                            font: *font,
-                            ch,
-                            origin,
-                        })
-                        .collect::<Vec<_>>();
-                    projected.extend(
-                        super::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
-                            .map_err(ExecError::Command)?,
-                    );
-                    if !matches!(
-                        projected.last(),
-                        Some(Node::Kern {
-                            kind: KernKind::Font,
-                            ..
-                        })
-                    ) && let Some(kern) =
-                        super::hmode::right_boundary_kern(stores, *font, orig[remaining - 1])
-                    {
-                        projected.push(kern);
-                    }
-                    if !matches!(projected.last(), Some(Node::Kern { .. }))
-                        && let Some(next) = synchronization_next
-                        && next.font == *font
-                        && let Some(kern) = super::hmode::synchronization_kern(
-                            stores,
-                            *font,
-                            orig[remaining - 1],
-                            next.ch,
-                        )
-                    {
-                        projected.push(kern);
-                    }
-                    consumed = target;
-                }
-            }
-            _ => break,
-        }
-    }
-    Ok(stores.freeze_node_list(&projected))
+) -> Result<(u8, tex_state::ids::NodeListId), ExecError> {
+    let (start, position, end) = span;
+    let mut major = Vec::with_capacity(following.len() + 1);
+    major.push(replacement.clone());
+    major.extend_from_slice(following);
+    let minor_pending = word[position..]
+        .iter()
+        .map(WordChar::pending)
+        .collect::<Vec<_>>();
+    let minor = super::hmode::reconstitute_with_fuel(stores, &minor_pending, false, false, fuel)
+        .map_err(ExecError::Command)?;
+
+    let (major_len, minor_len) = synchronized_physical_branch_lengths(
+        &major,
+        start,
+        &minor,
+        position,
+        end,
+        word.len(),
+    );
+    let physical_replace_count = u8::try_from(major_len)
+        .ok()
+        .filter(|&count| count <= 127)
+        .expect("a TeX word has at most 127 physical replacement nodes");
+    Ok((
+        physical_replace_count,
+        stores.freeze_node_list(&minor[..minor_len]),
+    ))
+}
+
+fn physical_character_boundaries(nodes: &[Node], start: usize) -> Vec<usize> {
+    let mut boundary = start;
+    nodes
+        .iter()
+        .map(|node| {
+            boundary = boundary.saturating_add(node_original_len(node));
+            boundary
+        })
+        .collect()
+}
+
+fn nodes_through_character_boundary(boundaries: &[usize], synchronization: usize) -> usize {
+    boundaries
+        .iter()
+        .take_while(|&&boundary| boundary <= synchronization)
+        .count()
+}
+
+fn synchronized_physical_branch_lengths(
+    major: &[Node],
+    major_start: usize,
+    minor: &[Node],
+    minor_start: usize,
+    initial_end: usize,
+    word_len: usize,
+) -> (usize, usize) {
+    let major_boundaries = physical_character_boundaries(major, major_start);
+    let minor_boundaries = physical_character_boundaries(minor, minor_start);
+    let synchronization = major_boundaries
+        .iter()
+        .copied()
+        .filter(|&boundary| boundary >= initial_end)
+        .find(|boundary| minor_boundaries.contains(boundary))
+        .unwrap_or(word_len);
+    (
+        nodes_through_character_boundary(&major_boundaries, synchronization),
+        nodes_through_character_boundary(&minor_boundaries, synchronization),
+    )
 }
 
 #[cfg(test)]
 pub(crate) fn test_physical_post_break_span(
-    stores: &mut Universe,
+    word_len: usize,
+    span: (usize, usize, usize),
     replacement: &Node,
     following: &[Node],
-    synchronization_next: Option<(tex_state::ids::FontId, char)>,
-) -> Vec<Node> {
-    let mut fuel = tex_command::CommandFuelLedger::default();
-    let synchronization_next = synchronization_next.map(|(font, ch)| WordChar {
-        font,
-        ch,
-        lower: ch,
-        origin: OriginId::UNKNOWN,
-    });
-    let list = physical_post_break_span(
-        stores,
-        replacement,
-        following,
-        synchronization_next,
-        fuel.fuel_mut(),
+    minor: &[Node],
+) -> (u8, Vec<Node>) {
+    let (start, position, end) = span;
+    let mut major = vec![replacement.clone()];
+    major.extend_from_slice(following);
+    let (major_len, minor_len) = synchronized_physical_branch_lengths(
+        &major, start, minor, position, end, word_len,
+    );
+    (
+        u8::try_from(major_len).expect("bounded test projection"),
+        minor[..minor_len].to_vec(),
     )
-    .expect("test diagnostic projection fuel");
-    stores.nodes(list).to_vec()
 }
 
 /// Freezes a §914 automatic discretionary when §918's replacement count fits.
+#[cfg(test)]
 fn automatic_discretionary(
     stores: &mut Universe,
     pre: &[Node],
@@ -1039,7 +1034,17 @@ fn automatic_discretionary(
     replace: &[Node],
 ) -> Option<Node> {
     let physical_replace_count = automatic_physical_replace_count(replace)?;
-    Some(Node::Disc {
+    automatic_discretionary_with_count(stores, pre, post, replace, physical_replace_count)
+}
+
+fn automatic_discretionary_with_count(
+    stores: &mut Universe,
+    pre: &[Node],
+    post: &[Node],
+    replace: &[Node],
+    physical_replace_count: u8,
+) -> Option<Node> {
+    (physical_replace_count <= 127).then(|| Node::Disc {
         kind: DiscKind::AutomaticHyphen,
         pre: stores.freeze_node_list(pre),
         post: stores.freeze_node_list(post),
@@ -1060,7 +1065,7 @@ fn automatic_physical_replace_count(replace: &[Node]) -> Option<u8> {
                 ..
             },
         ] => 2,
-        [Node::Lig { orig, .. }] => 1_usize.checked_add(orig.len())?,
+        [Node::Lig { .. }] => 1,
         _ => replace.len(),
     };
     u8::try_from(count).ok().filter(|&count| count <= 127)
