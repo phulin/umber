@@ -242,26 +242,35 @@ fn run_canonical_math_recovery(
 }
 
 fn run_registered_canonical_math_source(
+    stores: Universe,
+    control: CanonicalMainControl,
+    source: &str,
+) -> (Universe, CanonicalMainControl) {
+    run_registered_canonical_math_source_with_limit(stores, control, source, 1024).0
+}
+
+fn run_registered_canonical_math_source_with_limit(
     mut stores: Universe,
     mut control: CanonicalMainControl,
     source: &str,
-) -> (Universe, CanonicalMainControl) {
+    step_limit: usize,
+) -> ((Universe, CanonicalMainControl), usize) {
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
             source.as_bytes().to_vec(),
         ))
         .expect("register canonical math-recovery source");
-    for _ in 0..1024 {
+    for step in 1..=step_limit {
         if control
             .step(&mut stores)
             .expect("canonical math-recovery step")
             != MainControlStep::Continue
         {
-            return (stores, control);
+            return ((stores, control), step);
         }
     }
-    panic!("canonical math-recovery source did not stop consuming input");
+    panic!("canonical math-recovery source did not stop within {step_limit} steps");
 }
 
 #[test]
@@ -1752,14 +1761,24 @@ fn vcenter_replays_everyvbox_before_its_body() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-yasr canonical everymath/everydisplay replay does not advance"]
 fn every_math_and_every_display_tokens_are_inserted_on_entry() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let control = CanonicalMainControl::tex82_initex(&mut stores);
     let displaystyle = stores.symbol("displaystyle").expect("displaystyle");
     let every_math = stores.intern_token_list(&[Token::Cs(displaystyle.symbol())]);
     stores.set_tok_param(TokParam::EVERY_MATH, every_math);
-    let (_stores, control) = run_registered_canonical_math_source(stores, control, "$a");
+    // TeX82 §§1138 and 1145 insert the hook exactly once, then §357 advances
+    // its token-list cursor and §360 retires the exhausted level. Keeping this
+    // bound tight makes a cursor reset or repeated entry-hook push fail before
+    // it can grow the input stack without limit.
+    let ((_stores, mut control), inline_steps) =
+        run_registered_canonical_math_source_with_limit(stores, control, "$a", 8);
+    assert!(inline_steps <= 8);
+    assert_eq!(
+        control.command_mut().input_level_count(),
+        0,
+        "the everymath level and its enclosing source both retire"
+    );
     let nodes = control.current_list().nodes();
     assert!(matches!(
         nodes[0],
