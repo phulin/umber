@@ -4,35 +4,22 @@ use tex_state::scaled::Scaled;
 
 #[test]
 fn register_assignments_cover_sparse_aliases_and_arithmetic() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\count300 = 7 \\countdef\\foo=300 \\advance\\foo by 5 \\multiply\\foo 3 \\divide\\foo by 2",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("register assignments execute");
+    let stores = super::core::run_canonical_etex(
+        "\\count300 = 7 \\countdef\\foo=300 \\advance\\foo by 5 \\multiply\\foo 3 \\divide\\foo by 2 \\end",
+    );
 
     assert_eq!(stores.count(300), 18);
 }
 
 #[test]
 fn arithmetic_character_target_is_consumed_before_recovery() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\advance= \\count1=9"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("invalid arithmetic target must recover with forward progress");
+    let stores = super::core::run_canonical_tex82("\\count0=7 \\advance= \\count1=9 \\end");
 
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(1), 9);
     assert_eq!(
         terminal_effect_text(&stores)
-            .matches("Improper assignment target")
+            .matches("! You can't use `the character =' after \\advance.")
             .count(),
         1
     );
@@ -41,29 +28,30 @@ fn arithmetic_character_target_is_consumed_before_recovery() {
 #[test]
 fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let source = "\\def\\a{#x}".repeat(100);
-    let mut input = InputStack::new(MemoryInput::new(source));
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let source = "\\def\\a{#x}".repeat(100) + "\\count0=23\\end";
+    control
+        .register_root_source(tex_command::SourceRegistration::new(
+            tex_command::RegisteredSourceKind::Generated,
+            source.into_bytes(),
+        ))
+        .expect("register canonical source");
 
-    let error = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("the hundredth macro-scan error terminates execution");
+    let error = loop {
+        match control.step(&mut stores) {
+            Ok(MainControlStep::Continue) => {}
+            Ok(step) => panic!("hundredth macro-scan error must be fatal, got {step:?}"),
+            Err(error) => break error,
+        }
+    };
 
-    assert_eq!(
-        error.to_string(),
-        "100 errors occurred while scanning a macro definition"
-    );
+    assert_eq!(error.as_fatal(), Some(tex_command::FatalError::TooManyErrors));
+    assert_eq!(stores.count(0), 0, "fatal exit skips the later assignment");
 }
 
 #[test]
 fn tex82_compatibility_rejects_sparse_register_numbers() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\count300=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("bad compatibility register recovers to register zero");
+    let stores = super::core::run_canonical_tex82("\\count300=7 \\end");
 
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(300), 0);
@@ -78,10 +66,7 @@ fn etex_extended_register_boundary_matrix_covers_aliases_and_grouping() {
     // to 0..32767. Pin the dense/sparse boundary and the final sparse slot,
     // including definition aliases and both local restoration and global
     // assignment through a group.
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let stores = super::core::run_canonical_etex(concat!(
         "\\nonstopmode ",
         "\\count255=1 \\count256=2 \\count32767=3 ",
         "\\dimen255=1pt \\dimen256=2pt \\dimen32767=3pt ",
@@ -104,11 +89,7 @@ fn etex_extended_register_boundary_matrix_covers_aliases_and_grouping() {
         "\\global\\toks32767={y} \\global\\setbox32767=\\hbox{y}} ",
         "\\setbox254=\\hbox{\\leaders\\copy\\B\\hskip1pt} ",
         "\\output=\\T \\showbox\\B \\count0=44 \\end",
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("sparse e-TeX register assignments execute");
+    ));
 
     for (index, expected) in [(255, 1), (256, 2), (32_767, 31)] {
         assert_eq!(stores.count(index), expected);
@@ -154,16 +135,9 @@ fn etex_extended_register_boundary_matrix_covers_aliases_and_grouping() {
 
 #[test]
 fn etex_register_definitions_recover_bad_codes_to_register_zero() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\countdef\\negative=-1 \\negative=7 \\countdef\\large=32768 \\large=8",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("bad register definitions recover");
+    let stores = super::core::run_canonical_etex(
+        "\\countdef\\negative=-1 \\negative=7 \\countdef\\large=32768 \\large=8 \\end",
+    );
 
     assert_eq!(stores.count(0), 8);
     let output = terminal_effect_text(&stores);
