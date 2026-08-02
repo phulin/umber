@@ -698,7 +698,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6.2.1.2: canonical form traversal"]
     fn pdf_form_state_and_diagnostics_match_the_pinned_initex_oracle() {
         let reference = test_support::read_fixture("tex_exec", "pdf_form_state", "ref");
         let expected = [
@@ -773,6 +772,75 @@ mod tests {
             error.to_string(),
             "pdfTeX error (ext1): \\pdfxform cannot be used with a void box"
         );
+    }
+
+    #[test]
+    fn immediate_and_lazy_form_positions_publish_and_rollback_together() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let baseline = stores.snapshot();
+
+        run_pdf_memory(
+            concat!(
+                "\\pdfoutput=1",
+                "\\setbox0=\\hbox{\\kern2pt\\pdfsavepos}",
+                "\\immediate\\pdfxform0\\end",
+            ),
+            &mut stores,
+        )
+        .expect("immediate form traverses at creation");
+        let immediate_position = stores.pdf_last_position();
+        assert_eq!(
+            immediate_position,
+            (Scaled::from_raw(2 * 65_536), Scaled::from_raw(0))
+        );
+        assert_eq!(
+            stores
+                .pdf_form_artifact(1)
+                .expect("immediate artifact is published")
+                .last_position(),
+            Some(immediate_position)
+        );
+
+        run_pdf_memory(
+            "\\setbox0=\\hbox{\\kern3pt\\pdfsavepos}\\pdfxform0\\end",
+            &mut stores,
+        )
+        .expect("lazy form is captured");
+        assert!(stores.pdf_form_artifact(3).is_none());
+        assert_eq!(stores.pdf_last_position(), immediate_position);
+
+        stores.rollback(&baseline);
+        assert_eq!(
+            stores.pdf_last_position(),
+            (Scaled::from_raw(0), Scaled::from_raw(0))
+        );
+        assert!(stores.pdf_forms().next().is_none());
+        assert!(stores.pdf_form_artifact(1).is_none());
+        assert!(stores.pdf_form_artifact(3).is_none());
+        assert_eq!(stores.snapshot().state_hash(), baseline.state_hash());
+
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        run_pdf_memory(
+            concat!(
+                "\\pdfoutput=1",
+                "\\setbox0=\\hbox{\\kern3pt\\pdfsavepos}\\pdfxform0",
+                "\\shipout\\hbox{\\pdfrefxform1}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("lazy form traverses on first reference");
+        let lazy_position = stores
+            .pdf_form_artifact(1)
+            .expect("lazy artifact is published")
+            .last_position()
+            .expect("lazy form publishes its save position");
+        assert_eq!(
+            lazy_position,
+            (Scaled::from_raw(3 * 65_536), Scaled::from_raw(0))
+        );
+        assert_eq!(stores.pdf_last_position(), lazy_position);
     }
 
     #[test]

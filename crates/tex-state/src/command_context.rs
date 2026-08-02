@@ -476,6 +476,8 @@ impl CommandContext<'_> {
             InternalInteger::PdfLastAnnot => self.universe.pdf_last_annotation() as i32,
             InternalInteger::PdfLastLink => self.universe.pdf_last_link() as i32,
             InternalInteger::PdfLastXForm => self.universe.pdf_last_form() as i32,
+            InternalInteger::PdfLastXPos => self.universe.pdf_last_position().0.raw(),
+            InternalInteger::PdfLastYPos => self.universe.pdf_last_position().1.raw(),
             InternalInteger::PdfLastXImage => self.universe.pdf_last_ximage() as i32,
             InternalInteger::PdfLastXImagePages => self.universe.pdf_last_ximage_pages() as i32,
             InternalInteger::PdfLastXImageColorDepth => {
@@ -483,8 +485,6 @@ impl CommandContext<'_> {
             }
             InternalInteger::LastNodeType => self.universe.page_last_node_type(),
             InternalInteger::InputLineNumber
-            | InternalInteger::PdfLastXPos
-            | InternalInteger::PdfLastYPos
             | InternalInteger::PdfReturnValue
             | InternalInteger::CurrentGroupLevel
             | InternalInteger::CurrentGroupType

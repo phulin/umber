@@ -287,7 +287,7 @@ pub(crate) fn shipout_node_with_input_summary(
     }))
 }
 
-pub(super) fn stage_pdf_form(
+pub(crate) fn stage_pdf_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
     expansion: &mut tex_expand::ExpansionContext<'_>,

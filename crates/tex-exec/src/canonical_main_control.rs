@@ -9308,7 +9308,7 @@ fn apply_pdf_form_request(
     request: PdfFormRequest,
     stores: &mut Universe,
     modes: &mut ModeNest,
-    fuel: &mut tex_command::CommandFuel,
+    command: &mut CommandMachine<'_>,
     immediate: bool,
 ) -> Result<ReplayStep, ExecError> {
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
@@ -9327,7 +9327,7 @@ fn apply_pdf_form_request(
             crate::assignments::append_whatsit(
                 modes,
                 stores,
-                fuel,
+                command.fuel,
                 Whatsit::PdfRefXForm {
                     object: form.object(),
                     width: form.width(),
@@ -9354,7 +9354,7 @@ fn apply_pdf_form_request(
                 }
                 _ => return Err(ExecError::PdfXFormVoidBox),
             };
-            stores
+            let form = stores
                 .initialize_pdf_form(
                     identity,
                     list,
@@ -9364,6 +9364,20 @@ fn apply_pdf_form_request(
                     immediate,
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
+            if immediate {
+                // pdftex.web §1549's `do_extension` applies the immediate
+                // prefix by traversing the captured form at creation time.
+                // Use the same typed form traversal as lazy references so
+                // graphics, saved positions, colors, and nested forms have
+                // one ledger/artifact owner.
+                let mut expansion = tex_expand::ExpansionContext::new("texput");
+                let artifact = crate::assignments::stage_pdf_form(form, stores, &mut expansion)?;
+                stores.publish_pdf_traversal_positions(
+                    artifact.last_position(),
+                    artifact.snap_reference(),
+                );
+                stores.set_pdf_form_artifact(form.object(), artifact);
+            }
         }
     }
     Ok(ReplayStep::Continue)
@@ -12756,7 +12770,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfForm(request) => {
-            apply_pdf_form_request(request, stores, modes, command.fuel, false)
+            apply_pdf_form_request(request, stores, modes, command, false)
         }
         ScannedStep::PdfDocumentFragment(request) => {
             let dvi_only_error = matches!(request.kind, tex_state::PdfDocumentFragmentKind::Names);
@@ -13391,7 +13405,7 @@ fn apply_scanned_step(
                     apply_pdf_object_request(request, stores, true)?;
                 }
                 ImmediateExtension::PdfForm(request) => {
-                    apply_pdf_form_request(request, stores, modes, command.fuel, true)?;
+                    apply_pdf_form_request(request, stores, modes, command, true)?;
                 }
                 ImmediateExtension::PdfImage(_) => {
                     unreachable!("immediate image requests are normalized before resolution")

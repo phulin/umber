@@ -501,7 +501,7 @@ fn append_whatsit_effect(
                 let artifact = super::stage_form(form, stores, expansion.expansion)?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
-                    stores.pdf_snap_reference(),
+                    artifact.snap_reference(),
                 );
                 stores.set_pdf_form_artifact(object, artifact);
             }
