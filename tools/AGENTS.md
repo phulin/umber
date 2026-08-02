@@ -95,6 +95,11 @@ mutation temporarily invalidates the outer macro proof, and TeX82 §282's
 `unsave` at the matching `\\endgroup` restores it. Global meaning mutations
 update every saved projection scope because §282 retains them rather than
 restoring the saved value.
+The reference e-TeX instrumentation's
+`protected_delivery_suppression` splice is projected out rather than copied
+into the engine: e-TeX [53a] returns the protected command directly from
+`get_token`, and [37.785]/[37.791] use that result as alignment lookahead. The
+raw command and its later backup/template replay remain exact gating events.
 
 `tools/profile-analyzer` is the read-only Samply/Firefox processed-profile CLI.
 It reconstructs columnar sample stacks, consumes Samply presymbolication

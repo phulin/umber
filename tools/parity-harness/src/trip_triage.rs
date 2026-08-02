@@ -332,25 +332,45 @@ fn event_divergence(
                 expected_initialization,
                 actual_initialization,
             )?;
-            let index = expected
-                .events
+            let expected_events = projected_events(channel, &expected.events);
+            let actual_events = projected_events(channel, &actual.events);
+            let index = expected_events
                 .iter()
-                .zip(&actual.events)
+                .zip(&actual_events)
                 .position(|(left, right)| !projection.events_match(channel, left, right));
             let index = index.or_else(|| {
-                (expected.events.len() != actual.events.len())
-                    .then_some(expected.events.len().min(actual.events.len()))
+                (expected_events.len() != actual_events.len())
+                    .then_some(expected_events.len().min(actual_events.len()))
             });
             Ok(index.map(|index| {
                 Divergence::event(
                     channel,
                     index,
-                    expected.events.get(index),
-                    actual.events.get(index),
+                    expected_events.get(index),
+                    actual_events.get(index),
                 )
             }))
         }
     }
+}
+
+fn projected_events(channel: &str, events: &[NormalizedEvent]) -> Vec<NormalizedEvent> {
+    events
+        .iter()
+        .filter(|event| {
+            channel != "command_events"
+                || !matches!(
+                    &event.semantic,
+                    Event::TokenList(token_list)
+                        if token_list.purpose == "protected_delivery_suppression"
+                )
+        })
+        .enumerate()
+        .map(|(sequence, event)| NormalizedEvent {
+            sequence: sequence as u64,
+            semantic: event.semantic.clone(),
+        })
+        .collect()
 }
 
 /// Compares canonical events after removing TeX's allocation-only macro
@@ -382,7 +402,9 @@ impl TripProjection {
             .context("expected initialization history is not canonical schema-v1 JSONL")?;
         let actual = ObservationStream::from_canonical_json_lines(actual)
             .context("actual initialization history is not canonical schema-v1 JSONL")?;
-        for (expected, actual) in expected.events.iter().zip(&actual.events) {
+        let expected_events = projected_events("command_events", &expected.events);
+        let actual_events = projected_events("command_events", &actual.events);
+        for (expected, actual) in expected_events.iter().zip(&actual_events) {
             if !projection.events_match("command_events", expected, actual) {
                 return Ok(Self::default());
             }
@@ -392,11 +414,10 @@ impl TripProjection {
         // stream cannot invalidate macro meanings already established by the
         // common completed history. A one-sided meaning mutation can, so
         // discard only the affected proof from an otherwise exact prefix.
-        for event in expected
-            .events
+        for event in expected_events
             .iter()
-            .skip(actual.events.len())
-            .chain(actual.events.iter().skip(expected.events.len()))
+            .skip(actual_events.len())
+            .chain(actual_events.iter().skip(expected_events.len()))
         {
             if let Some((name, _)) = meaning_mutation(&event.semantic) {
                 projection.matched_macros.remove(name);
@@ -874,20 +895,25 @@ fn event_accounting(
         .expect("event streams were validated before report rendering");
     let actual = ObservationStream::from_canonical_json_lines(actual)
         .expect("event streams were validated before report rendering");
+    let raw_expected_count = expected.events.len();
+    let raw_actual_count = actual.events.len();
+    let expected_events = projected_events(channel, &expected.events);
+    let actual_events = projected_events(channel, &actual.events);
     let mut projection =
         TripProjection::from_initialization(expected_initialization, actual_initialization)
             .expect("initialization streams were validated before report rendering");
-    let mut projected_equivalent_count = 0;
+    let mut projected_equivalent_count =
+        raw_expected_count - expected_events.len() + raw_actual_count - actual_events.len();
     let mut projected_divergence_count = 0;
-    for (left, right) in expected.events.iter().zip(&actual.events) {
+    for (left, right) in expected_events.iter().zip(&actual_events) {
         let matches = projection.events_match(channel, left, right);
         projected_equivalent_count += usize::from(left != right && matches);
         projected_divergence_count += usize::from(!matches);
     }
-    projected_divergence_count += expected.events.len().abs_diff(actual.events.len());
+    projected_divergence_count += expected_events.len().abs_diff(actual_events.len());
     EventAccounting {
-        expected_count: expected.events.len().to_string(),
-        actual_count: actual.events.len().to_string(),
+        expected_count: raw_expected_count.to_string(),
+        actual_count: raw_actual_count.to_string(),
         projected_equivalent_count: projected_equivalent_count.to_string(),
         projected_divergence_count: projected_divergence_count.to_string(),
     }
@@ -988,7 +1014,8 @@ mod tests {
     use super::*;
     use tex_oracle::{
         CanonicalValue, EffectEvent, EffectKind, Event, InputEvent, InputReason, InputTransition,
-        MutationEvent, Normalizer, OracleToken, SCHEMA_VERSION, StateTarget,
+        MutationEvent, Normalizer, OracleToken, SCHEMA_VERSION, StateTarget, TokenListEvent,
+        TokenListTransition,
     };
 
     fn events(page: i64) -> Vec<u8> {
@@ -1511,6 +1538,49 @@ mod tests {
             .expect("comparison")
             .is_some(),
             "§282 must not restore a global override"
+        );
+    }
+
+    #[test]
+    fn protected_alignment_delivery_marker_is_reference_instrumentation_only() {
+        // e-TeX [53a] returns a protected macro directly from `get_token`;
+        // [37.785]/[37.791] then back that same token up for the alignment
+        // template. The reference-only marker precedes, but does not perform,
+        // either semantic transition.
+        let backup = Event::Input(InputEvent {
+            transition: InputTransition::Push,
+            reason: InputReason::Backup,
+            name: "backup".into(),
+        });
+        let marker = Event::TokenList(TokenListEvent {
+            transition: TokenListTransition::Splice,
+            purpose: "protected_delivery_suppression".into(),
+            tokens: vec![OracleToken {
+                character: 0,
+                catcode: "escape".into(),
+                control_sequence: Some("probe".into()),
+                location: None,
+            }],
+        });
+        let reference = macro_initialization_events_with_suffix(&[], &[marker, backup.clone()]);
+        let actual = macro_initialization_events_with_suffix(&[], &[backup]);
+        let temp = tempfile::tempdir().expect("temp");
+        let expected = TripTriageChannels {
+            initialization_events: None,
+            command_events: Some(&reference),
+            geometry_events: None,
+            transcript: b"same",
+            log: b"same",
+            dvi: None,
+        };
+        let actual = TripTriageChannels {
+            command_events: Some(&actual),
+            ..expected
+        };
+        assert!(
+            write_trip_triage_artifact(temp.path(), input(expected, actual))
+                .expect("comparison")
+                .is_none()
         );
     }
 
