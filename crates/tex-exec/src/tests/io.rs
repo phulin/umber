@@ -1149,7 +1149,6 @@ fn shipout_reports_incompatible_magnification_diagnostic() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.46 canonical copied shipout emits page progress"]
 fn shipout_copy_expands_deferred_write_each_time() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     run_canonical_source(
@@ -1166,11 +1165,14 @@ fn shipout_copy_expands_deferred_write_each_time() {
         stores.world().artifact_commits()[0],
         stores.world().artifact_commits()[1]
     );
-    assert_eq!(memory_terminal_text(&stores), "p:1\np:2\n");
+    // TeX82 §638 opens each page-progress marker before traversing the
+    // shipped box. The deferred `\write16` therefore prints between that
+    // page's counter and its closing bracket, and `\count0` is expanded
+    // afresh for each copy.
+    assert_eq!(memory_terminal_text(&stores), "[1\np:1\n] [2\np:2\n]");
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.43 canonical shipout progress survives rollback"]
 fn rollback_after_shipout_does_not_replay_committed_effects() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     run_canonical_source(&mut stores, b"\\shipout\\hbox{\\write16{once}}\\end", &[])
@@ -1185,7 +1187,10 @@ fn rollback_after_shipout_does_not_replay_committed_effects() {
         .commit_effects(effect_pos)
         .expect("post-rollback final commit succeeds");
 
-    assert_eq!(memory_terminal_text(&stores), "once\n");
+    // The page marker and deferred write were committed atomically by the
+    // successful shipout. Rolling back the later message restores only the
+    // live suffix, so a second commit must reproduce neither effect.
+    assert_eq!(memory_terminal_text(&stores), "[0\nonce\n]");
 }
 
 #[test]
