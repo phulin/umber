@@ -2692,18 +2692,9 @@ fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
     // e-TeX short reference manual section 3.3 assigns -1 to an empty list
     // and the e-TRIP node codes 1, 12, and 13 to hlist, kern, and penalty.
     for (material, expected) in [("\\hbox{}", "1"), ("\\kern1pt", "12"), ("\\penalty7", "13")] {
-        let mut stores = crate::test_harness::universe_with_plain_catcodes();
-        tex_expand::install_expandable_primitives(&mut stores);
-        tex_expand::install_etex_expandable_primitives(&mut stores);
-        crate::install_unexpandable_primitives(&mut stores);
-        crate::install_etex_unexpandable_primitives(&mut stores);
-        let mut input = InputStack::new(MemoryInput::new(format!(
+        let stores = run_canonical_etex(&format!(
             "\\relax{material}\\edef\\result{{\\the\\lastnodetype}}"
-        )));
-
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("lastnodetype program");
+        ));
 
         assert_eq!(macro_text(&stores, "result"), expected);
     }
@@ -2713,18 +2704,9 @@ fn etex_lastnodetype_tracks_effective_outer_vertical_tail() {
 fn etex_tracingscantokens_closes_after_everyeof() {
     // The e-TeX manual sections 3.2 and 3.6 require `( ` on pseudo-file
     // entry and the matching `)` only when scanning, including everyeof, ends.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_etex(
         "\\tracingscantokens=1\\everyeof{\\message{EOF}}\\scantokens{\\message{BODY}}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("traced scantokens program");
+    );
 
     let output = terminal_effect_text(&stores);
     let open = output.find('(').expect("pseudo-file opening trace");
@@ -2736,21 +2718,12 @@ fn etex_tracingscantokens_closes_after_everyeof() {
 
 #[test]
 fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_etex(
         "\\skip0=1pt plus 2fill minus 3fil\\muskip0=4mu plus 5fil\
          \\edef\\result{\\the\\gluestretch\\skip0/\\the\\glueshrink\\skip0/\
          \\the\\gluestretchorder\\skip0,\\the\\glueshrinkorder\\skip0/\
          \\the\\gluetomu\\skip0/\\the\\mutoglue\\muskip0}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("glue enquiries");
+    );
     assert_eq!(
         macro_text(&stores, "result"),
         "2.0pt/3.0pt/2,1/1.0mu plus 2.0fill minus 3.0fil/4.0pt plus 5.0fil"
@@ -2759,52 +2732,20 @@ fn etex_glue_component_and_conversion_enquiries_match_manual_types() {
 
 #[test]
 fn etex_showtokens_decomposes_unexpanded_balanced_text() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\foo#1{X#1}\\showtokens{a \\foo{b}}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("showtokens");
+    let stores = run_canonical_etex("\\def\\foo#1{X#1}\\showtokens{a \\foo{b}}\\end");
     assert!(terminal_effect_text(&stores).contains("> a \\foo {b}."));
 }
 
 #[test]
 fn etex_showtokens_expands_only_to_find_its_opening_brace() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\payload{kept}\\showtokens\\expandafter{\\payload}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("showtokens with expanded opening brace");
+    let stores =
+        run_canonical_etex("\\def\\payload{kept}\\showtokens\\expandafter{\\payload}\\end");
     assert!(terminal_effect_text(&stores).contains("> kept."));
 }
 
 #[test]
 fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\begingroup\\iftrue\\showgroups\\showifs\\fi\\endgroup\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("stack displays");
+    let stores = run_canonical_etex("\\begingroup\\iftrue\\showgroups\\showifs\\fi\\endgroup\\end");
     let output = terminal_effect_text(&stores);
     assert!(
         output.contains("### semi simple group (level 1)"),
@@ -2816,16 +2757,7 @@ fn etex_showgroups_and_showifs_report_live_checkpointed_stacks() {
 
 #[test]
 fn etex_showifs_is_available_inside_math_mode() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\iftrue$\\showifs$\\fi\\end"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("showifs in math mode");
+    let stores = run_canonical_etex("\\iftrue$\\showifs$\\fi\\end");
     assert!(terminal_effect_text(&stores).contains("\\iftrue"));
 }
 
