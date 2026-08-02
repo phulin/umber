@@ -1425,6 +1425,7 @@ fn canonical_pdf_graphics_objects_and_forms_cross_only_typed_requests() {
 #[test]
 fn canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source() {
     let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     control.modes.push(Mode::Math).expect("test mode push");
     register_source(&mut control, br"\mathop{a}^b\left( c d \right)\over e");

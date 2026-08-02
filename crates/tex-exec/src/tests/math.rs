@@ -1333,7 +1333,14 @@ fn canonical_etex_middle_invalid_context_matrix_recovers_exactly() {
     ] {
         let stores = super::core::run_canonical_etex(source);
         let output = canonical_log_text(&stores);
-        assert!(output.starts_with("\n! Extra \\middle.\n"));
+        let missing = output
+            .find("! Missing delimiter (. inserted).")
+            .expect("invalid delimiter reports first");
+        let extra = output.find("! Extra \\middle.").expect("extra middle");
+        assert!(
+            missing < extra,
+            "wrong recovery order for {source:?}: {output:?}"
+        );
         assert!(
             output.contains("\nI'm ignoring a \\middle that had no matching \\left.\n"),
             "wrong recovery help for {source:?}: {output:?}"

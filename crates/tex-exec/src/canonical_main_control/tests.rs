@@ -1780,6 +1780,35 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
     panic!("canonical noalign regression exceeded its step bound");
 }
 
+#[test]
+fn invalid_middle_and_right_report_missing_delimiter_before_extra_command() {
+    // TeX82 §§1160-1161 scan and recover the delimiter before §1192 tests
+    // whether the boundary has a matching `\left`. The rejected `\par` is
+    // therefore named by both errors, in that order, for each command.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingonline=1\setbox0=\vbox{\middle \par \right \par}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = pending_sink_text(&stores, false);
+    let first_missing = log
+        .find("! Missing delimiter (. inserted).")
+        .expect("first missing delimiter");
+    let extra_middle = log.find("! Extra \\middle.").expect("extra middle");
+    let second_missing = log[extra_middle..]
+        .find("! Missing delimiter (. inserted).")
+        .map(|offset| extra_middle + offset)
+        .expect("second missing delimiter");
+    let extra_right = log.find("! Extra \\right.").expect("extra right");
+    assert!(first_missing < extra_middle);
+    assert!(extra_middle < second_missing);
+    assert!(second_missing < extra_right);
+}
+
 fn run_to_end_observed(
     control: &mut CanonicalMainControl,
     stores: &mut Universe,

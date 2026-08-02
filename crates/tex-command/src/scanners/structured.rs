@@ -577,6 +577,9 @@ pub struct ScannedMathCharacter {
 pub struct ScannedMathDelimiter {
     pub code: u32,
     pub recovered: bool,
+    /// §1161 rejected a non-delimiter token and backed it up. The executor
+    /// owns the resulting error report after the scanner borrow ends.
+    pub missing_delimiter: bool,
     pub provenance: StructuredProvenance,
 }
 
@@ -1665,6 +1668,7 @@ impl CommandProcessor<'_> {
         Ok(ScannedMathDelimiter {
             code: scanned.value as u32,
             recovered: scanned.recovered,
+            missing_delimiter: false,
             provenance: StructuredProvenance {
                 primary: scanned.provenance.primary,
             },
@@ -1708,6 +1712,7 @@ impl CommandProcessor<'_> {
             return Ok(ScannedMathDelimiter {
                 code: 0,
                 recovered: true,
+                missing_delimiter: true,
                 provenance: StructuredProvenance {
                     primary: OriginId::UNKNOWN,
                 },
@@ -1732,12 +1737,14 @@ impl CommandProcessor<'_> {
             return Ok(ScannedMathDelimiter {
                 code: 0,
                 recovered: true,
+                missing_delimiter: true,
                 provenance: StructuredProvenance { primary },
             });
         }
         Ok(ScannedMathDelimiter {
             code: code as u32,
             recovered: false,
+            missing_delimiter: false,
             provenance: StructuredProvenance { primary },
         })
     }
