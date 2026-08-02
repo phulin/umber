@@ -860,15 +860,9 @@ fn through_ligature_synchronization_counts_nodes_not_source_characters() {
 
 #[test]
 fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\hyphenation{ab-cdefgh} \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("pretolerance allocation setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let par_fill = stores.glue_param(GlueParam::PAR_FILL_SKIP);
@@ -927,7 +921,7 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
     use tex_state::glue::GlueSpec;
     use tex_typeset::linebreak::{LineShape, LineShapeEntry, ParagraphShape};
 
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut stores = super::core::run_canonical_tex82("\\end");
     stores.enable_pure_memo(pretolerance_memo_config());
     let nodes = vec![
         Node::Rule {
@@ -1049,7 +1043,7 @@ fn pretolerance_memo_hits_and_every_explicit_parameter_changes_its_strong_key() 
 fn malformed_pretolerance_entry_is_rejected_and_recomputed() {
     use tex_state::{DetachedMemoValue, DetachedPureKernelPlan, PureMemoStats};
 
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut stores = super::core::run_canonical_tex82("\\end");
     stores.enable_pure_memo(pretolerance_memo_config());
     let nodes = vec![Node::Penalty(-10_000)];
     let params = tex_typeset::linebreak::LineBreakParams {
