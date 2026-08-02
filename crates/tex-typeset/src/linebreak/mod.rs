@@ -566,6 +566,7 @@ fn run_pass<S: TypesetState>(
         let mut survivor_count = 0;
         let forced = bp.penalty <= EJECT_PENALTY;
         let mut feasible_traces = Vec::new();
+        let mut traced_feasible = false;
         for active_index in 0..prior_active_len {
             let active_candidate = active[active_index];
             // Material discarded after the active break can extend beyond a
@@ -666,6 +667,7 @@ fn run_pass<S: TypesetState>(
                     ),
                 };
                 if trace.is_some() {
+                    traced_feasible = true;
                     let display_end = trace_display_end(state, nodes, bp);
                     feasible_traces.push((
                         line_number_class(candidate.line, easy_line),
@@ -702,7 +704,11 @@ fn run_pass<S: TypesetState>(
                     // Consecutive discretionaries are still distinct
                     // breakpoints; their shared replacement run begins only
                     // after the cluster.
-                    displayed_through = trace_display_next_start(nodes, bp, display_end);
+                    // Every later feasible route to this same `cur_p` sees
+                    // `printed_node=cur_p` and therefore prints no fragment.
+                    // The detached cursor for the next breakpoint is restored
+                    // after this active-list traversal finishes.
+                    displayed_through = display_end;
                 }
                 if !canonical_trace_admission {
                     next_serial += 1;
@@ -780,6 +786,9 @@ fn run_pass<S: TypesetState>(
                 events.push(event);
             }
             events.extend(active_traces.map(|(_, event)| event));
+        }
+        if traced_feasible {
+            displayed_through = trace_display_next_start(state, nodes, bp, displayed_through);
         }
         merge_active_candidates(
             &mut active,
@@ -878,9 +887,27 @@ fn trace_display_end<S: TypesetState>(state: &S, nodes: &[Node], bp: Breakpoint)
         .min(nodes.len())
 }
 
-fn trace_display_next_start(nodes: &[Node], bp: Breakpoint, display_end: usize) -> usize {
+fn trace_display_next_start<S: TypesetState>(
+    state: &S,
+    nodes: &[Node],
+    bp: Breakpoint,
+    display_end: usize,
+) -> usize {
     if trace_display_suffix(nodes, bp).is_some() {
         display_end.saturating_add(1).min(nodes.len())
+    } else if let Some(Node::Disc { replace, .. }) = bp
+        .position
+        .checked_sub(1)
+        .and_then(|index| nodes.get(index))
+        && display_end.saturating_sub(bp.position) == state.nodes(*replace).len()
+    {
+        // §851's temporary link surgery may make the current structural slice
+        // include nodes used to model `replace_count`; §855 skips them only
+        // while displaying this discretionary. If every extended node was
+        // hidden this way, none was consumed by `short_display`, so the next
+        // detached fragment begins there. A longer extension contains real
+        // rendered successors and keeps `display_end` instead.
+        bp.position
     } else {
         display_end
     }
