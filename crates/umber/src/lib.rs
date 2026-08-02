@@ -2014,17 +2014,28 @@ pub fn run_memory_with_stores_and_profile(
 ) -> Result<String, CanonicalSessionError> {
     let _ = emit_dvi;
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
-    run_retained_root(
-        stores,
-        RetainedRootRequest::authored("texput", Arc::<[u8]>::from(source.as_bytes()), profile),
-        &mut host,
-    )
-    .map(|result| result.terminal_text)
+    let mut session = CanonicalEngineSession::new(stores, profile);
+    session.project_terminal_text_to_root_body();
+    session.register_retained_root_with_invocation(
+        "texput",
+        "texput",
+        SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source.as_bytes()),
+        ),
+    )?;
+    session
+        .run(&mut host, &mut NoCanonicalCheckpoints)
+        .map(|result| result.terminal_text)
 }
 
 fn uncommitted_terminal_text(stores: &Universe) -> String {
+    terminal_text_from_effects(stores.world().effect_records())
+}
+
+fn terminal_text_from_effects(records: &[EffectRecord]) -> String {
     let mut text = String::new();
-    for record in stores.world().effect_records() {
+    for record in records {
         let EffectRecord::StreamWrite { sink, text: chunk } = record else {
             continue;
         };
@@ -2125,8 +2136,10 @@ mod tests {
     use super::{
         DriverFile, EngineSession, FinalizationCommit, FinalizationError, PlannedFinalization,
         dvi_from_committed_artifacts, dvi_from_page_plans, prepare_pdftex_run_stores,
-        run_input_collecting_artifacts_with_profile, uncommitted_terminal_text,
+        run_input_collecting_artifacts_with_profile, terminal_text_from_effects,
+        uncommitted_terminal_text,
     };
+    use crate::FileSessionResolvers;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use tex_command::{CommandProfile, PdfImageResource, RegisteredSourceKind};
@@ -2315,6 +2328,59 @@ mod tests {
 
         assert_eq!(result.terminal_text, "canonical");
         assert_eq!(session.stores().count(0), 17);
+    }
+
+    #[test]
+    fn retained_memory_roots_project_local_text_and_keep_effect_cursors_rollbackable() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        install_expandable_primitives(&mut stores);
+        install_unexpandable_primitives(&mut stores);
+
+        let run = |source: &'static [u8], stores: &mut Universe| {
+            let mut host =
+                FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
+            let mut session = crate::CanonicalEngineSession::new(stores, CommandProfile::TEX82);
+            session.project_terminal_text_to_root_body();
+            session
+                .register_retained_root_with_invocation(
+                    "texput",
+                    "texput",
+                    tex_command::SourceRegistration::new(RegisteredSourceKind::Generated, source),
+                )
+                .expect("root registers");
+            session
+                .run(&mut host, &mut super::NoCanonicalCheckpoints)
+                .expect("retained root completes")
+        };
+
+        let first = run(b"\\count0=7\\message{first}\\end", &mut stores);
+        assert_eq!(first.terminal_text, " first");
+        assert_eq!(
+            terminal_text_from_effects(&first.effects),
+            "(texput first )"
+        );
+        let after_first = stores.snapshot();
+
+        let second = run(
+            b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
+            &mut stores,
+        );
+        assert_eq!(second.terminal_text, " second=8");
+        assert_eq!(
+            terminal_text_from_effects(&second.effects),
+            "(texput second=8 )"
+        );
+        assert!(!terminal_text_from_effects(&second.effects).contains("first"));
+        let second_hash = stores.snapshot().state_hash();
+
+        stores.rollback(&after_first);
+        assert_eq!(stores.count(0), 7);
+        let replay = run(
+            b"\\advance\\count0 by1\\message{second=\\the\\count0}\\end",
+            &mut stores,
+        );
+        assert_eq!(replay.terminal_text, second.terminal_text);
+        assert_eq!(stores.snapshot().state_hash(), second_hash);
     }
 
     #[test]

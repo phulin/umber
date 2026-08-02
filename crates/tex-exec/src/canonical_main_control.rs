@@ -196,6 +196,9 @@ pub struct CanonicalMainControl {
     /// tex.web's job-framing state: see [`crate::job`] and
     /// `docs/job_framing.md`.
     job: crate::job::JobFraming,
+    /// Effect-record boundary immediately before §1335 final-cleanup
+    /// framing. Drivers can project a root body without deleting framing.
+    job_body_effect_end: Option<tex_state::EffectPos>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -894,6 +897,7 @@ impl CanonicalMainControl {
         dump: bool,
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) {
+        self.job_body_effect_end = Some(stores.world().effect_pos());
         crate::job::close_open_parens(stores);
         crate::job::report_unclosed_groups(stores);
         report_incomplete_conditions(stores, incomplete_conditions);
@@ -3305,6 +3309,12 @@ impl CanonicalMainControl {
     #[must_use]
     pub const fn fatal_error(&self) -> Option<FatalError> {
         self.fatal
+    }
+
+    /// Returns the effect cursor immediately before final-cleanup framing.
+    #[must_use]
+    pub const fn job_body_effect_end(&self) -> Option<tex_state::EffectPos> {
+        self.job_body_effect_end
     }
 
     fn step_with_observer_once(

@@ -245,6 +245,8 @@ pub struct CanonicalEngineSession<'a> {
     terminated: bool,
     artifact_cursor: usize,
     effect_cursor: usize,
+    terminal_text_cursor: tex_state::EffectPos,
+    project_root_body_terminal_text: bool,
     terminal_input_cursor: Option<tex_state::TerminalInputPosition>,
     no_progress_limit: u8,
     mode_transitions: Vec<tex_exec::Mode>,
@@ -256,6 +258,8 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_text_cursor: stores.world().effect_pos(),
+            project_root_body_terminal_text: false,
             terminal_input_cursor: None,
             stores,
             control: CanonicalMainControl::with_profile(profile),
@@ -283,6 +287,8 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_text_cursor: stores.world().effect_pos(),
+            project_root_body_terminal_text: false,
             terminal_input_cursor: None,
             control: CanonicalMainControl::tex82_initex(stores),
             stores,
@@ -307,6 +313,8 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_text_cursor: stores.world().effect_pos(),
+            project_root_body_terminal_text: false,
             terminal_input_cursor: None,
             control: CanonicalMainControl::prepared_initex(profile),
             stores,
@@ -373,6 +381,12 @@ impl<'a> CanonicalEngineSession<'a> {
     /// Bounds only consecutive host declines for one suspension epoch.
     pub fn set_no_progress_limit(&mut self, limit: u8) {
         self.no_progress_limit = limit.max(1);
+    }
+
+    /// Projects [`RunResult::terminal_text`] to the authored root body while
+    /// retaining canonical startup/final-cleanup framing in `effects`.
+    pub(crate) fn project_terminal_text_to_root_body(&mut self) {
+        self.project_root_body_terminal_text = true;
     }
 
     /// Registers the sole World- or host-selected immutable root before any
@@ -545,6 +559,9 @@ impl<'a> CanonicalEngineSession<'a> {
             }
             self.print_startup_headline();
             self.print_startup_input_opening();
+            if self.project_root_body_terminal_text && !self.root_framing_is_command_owned {
+                self.terminal_text_cursor = self.stores.world().effect_pos();
+            }
             self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
         }
         if self.terminated {
@@ -947,13 +964,32 @@ impl<'a> CanonicalEngineSession<'a> {
         let effect_records = self.stores.world().effect_records();
         let effect_start = self.effect_cursor.min(effect_records.len());
         let effects = effect_records[effect_start..].to_vec();
+        let terminal_text = if self.project_root_body_terminal_text {
+            let effect_end = self.stores.world().effect_pos().raw();
+            let effect_base = effect_end.saturating_sub(effect_records.len() as u64);
+            let index = |position: tex_state::EffectPos| {
+                usize::try_from(position.raw().saturating_sub(effect_base))
+                    .unwrap_or(usize::MAX)
+                    .min(effect_records.len())
+            };
+            let terminal_start = index(self.terminal_text_cursor);
+            let terminal_end = index(
+                self.control
+                    .job_body_effect_end()
+                    .unwrap_or_else(|| self.stores.world().effect_pos()),
+            )
+            .max(terminal_start);
+            crate::terminal_text_from_effects(&effect_records[terminal_start..terminal_end])
+        } else {
+            crate::uncommitted_terminal_text(self.stores)
+        };
         self.artifact_cursor = commits.len();
         self.effect_cursor = effect_records.len();
         if let Some(position) = self.terminal_input_cursor.take() {
             self.stores.restore_terminal_input_position(position);
         }
         Ok(CanonicalSessionState::Complete(RunResult {
-            terminal_text: crate::uncommitted_terminal_text(self.stores),
+            terminal_text,
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
             artifacts,

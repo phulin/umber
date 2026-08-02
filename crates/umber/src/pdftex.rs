@@ -572,7 +572,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6.2.1.4: retained-root terminal ownership"]
     fn pdfxform_consumes_box_and_captures_options_and_dimensions() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
