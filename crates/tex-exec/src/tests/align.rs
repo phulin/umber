@@ -893,11 +893,9 @@ fn extra_alignment_tab_is_changed_to_row_terminator() {
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
     let output = support::terminal_effect_text(&stores);
 
-    // Narrow xfail: canonical recovery is live, but umber2-eb9c tracks its
-    // missing TeX82 §792 diagnostic. An XPASS deliberately fails this test.
     assert!(
-        !output.contains("Extra alignment tab has been changed to \\cr"),
-        "xfail umber2-eb9c unexpectedly passed; restore the TeX82 §792 wording assertion"
+        output.contains("Extra alignment tab has been changed to \\cr"),
+        "{output}"
     );
     assert_eq!(rows.len(), 2);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "a");
@@ -910,11 +908,9 @@ fn extra_span_is_changed_to_row_terminator() {
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
     let output = support::terminal_effect_text(&stores);
 
-    // Narrow xfail: canonical recovery is live, but umber2-eb9c tracks its
-    // missing TeX82 §792 diagnostic. An XPASS deliberately fails this test.
     assert!(
-        !output.contains("Extra alignment tab has been changed to \\cr"),
-        "xfail umber2-eb9c unexpectedly passed; restore the TeX82 §792 wording assertion"
+        output.contains("Extra alignment tab has been changed to \\cr"),
+        "{output}"
     );
     assert_eq!(rows.len(), 2);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "a");

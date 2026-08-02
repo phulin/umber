@@ -11427,6 +11427,9 @@ fn begin_next_replay_alignment_cell(
             delimiter,
             AlignmentCellDelimiter::Tab | AlignmentCellDelimiter::Span
         );
+    if extra_tab_recovery {
+        report_extra_alignment_tab(command.state, stores)?;
+    }
     // TeX82 §791's `if extra_info(cur_align)<>span_code then begin unsave;
     // new_save_level(align_group)`: every entry that does not continue through
     // `\span` replaces the §774 entry save level, discarding the cell's local
@@ -11516,6 +11519,24 @@ fn begin_next_replay_alignment_cell(
         }
     }
     Ok(())
+}
+
+/// TeX82 §792's exhausted-preamble diagnostic for a saved tab or span.
+fn report_extra_alignment_tab(
+    command: &CommandState,
+    stores: &mut Universe,
+) -> Result<(), ExecError> {
+    let context = command.output_open_context(&stores.command_context());
+    crate::error_report::report_error(
+        stores,
+        "Extra alignment tab has been changed to \\cr",
+        &[
+            "You have given more \\span or & marks than there were",
+            "in the preamble to the \\halign or \\valign now in progress.",
+            "So I'll assume that you meant to type \\cr instead.",
+        ],
+        context,
+    )
 }
 
 /// Applies TeX82 §791 `fin_col`'s `unsave; new_save_level(align_group)`.
