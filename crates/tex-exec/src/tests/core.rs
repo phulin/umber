@@ -4117,18 +4117,11 @@ fn vertical_mode_discretionary_hyphen_starts_a_paragraph() {
 
 #[test]
 fn insertion_starts_with_normal_paragraph_parameters() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let stores = run_canonical_tex82(concat!(
         "\\hsize=100pt ",
         "\\hangindent=99pt \\hangafter=0 \\looseness=2 ",
         "\\insert7{a b c d e f g h i j}"
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("insertion paragraph executes");
+    ));
 
     let (size, content) = stores
         .current_page_nodes()
@@ -4154,19 +4147,14 @@ fn insertion_starts_with_normal_paragraph_parameters() {
 #[test]
 fn vtop_normalizes_paragraph_parameters_locally_before_display() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     let source = concat!(
         "\\font\\f=cmr10 \\f \\hsize=100pt ",
         "\\parshape=1 3pt 13pt \\hangindent=-10pt \\hangafter=-12 \\looseness=-2 ",
-        "\\setbox0=\\vtop{\\noindent$$$$}"
+        "\\setbox0=\\vtop{\\noindent$$$$}\\end"
     );
     let checkpoint = stores.snapshot();
 
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vtop display executes");
+    stores = run_canonical_tex82_with_fonts_and_universe(stores, source);
 
     let first_hash = stores.snapshot().state_hash();
     let root = stores.box_reg(0).expect("box0");
@@ -4199,23 +4187,13 @@ fn vtop_normalizes_paragraph_parameters_locally_before_display() {
     assert_eq!(stores.int_param(IntParam::LOOSENESS), -2);
 
     stores.rollback(&checkpoint);
-    let mut replay = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut replay, &mut stores)
-        .expect("vtop display replay executes");
+    stores = run_canonical_tex82_with_fonts_and_universe(stores, source);
     assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
 fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\parskip=12pt \\insert7{x}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("insertion paragraph executes");
+    let stores = run_canonical_tex82_with_fonts("\\parskip=12pt \\insert7{x}");
 
     let content = stores
         .current_page_nodes()
@@ -4233,16 +4211,10 @@ fn insertion_omits_parskip_before_first_internal_vlist_paragraph() {
 
 #[test]
 fn insertion_skip_reports_infinite_shrink_correction() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\topskip=0pt \\vsize=100pt \\count7=1000 \\dimen7=100pt \
          \\skip7=0pt minus 1fil \\insert7{\\hrule height1pt}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("insert skip executes");
+    );
 
     let log = terminal_effect_text(&stores);
     assert!(log.contains("! Infinite glue shrinkage inserted from \\skip7."));
@@ -4256,16 +4228,10 @@ fn insertion_skip_reports_infinite_shrink_correction() {
 
 #[test]
 fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\topskip=0pt \\vsize=20pt \\count7=1000 \\dimen7=12pt \
          \\insert7{\\hrule height8pt\\vskip0pt minus 1fil\\penalty123\\hrule height8pt}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("split insert executes");
+    );
 
     let log = terminal_effect_text(&stores);
     assert!(log.contains("! Infinite glue shrinkage found in box being split."));
@@ -4293,19 +4259,18 @@ fn split_insertion_reports_and_normalizes_infinite_shrink_content() {
 #[test]
 fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut setup = InputStack::new(MemoryInput::new(
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    run_registered_canonical_tex82(
+        &mut control,
+        &mut stores,
         "\\setbox0=\\vbox{\\hrule height10pt\\vskip0pt minus 1fil\\hrule height10pt}",
-    ));
-    Executor::new()
-        .run(&mut setup, &mut stores)
-        .expect("vsplit source builds");
+    );
     let before = stores.testing_epoch_clone_counts();
-    let mut input = InputStack::new(MemoryInput::new("\\setbox1=\\vsplit0 to 30pt"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("\\vsplit executes");
+    run_registered_canonical_tex82(
+        &mut control,
+        &mut stores,
+        "\\setbox1=\\vsplit0 to 30pt\\end",
+    );
     assert_eq!(stores.testing_epoch_clone_counts(), before);
 
     let log = terminal_effect_text(&stores);
@@ -4329,30 +4294,14 @@ fn vsplit_reports_and_normalizes_infinite_shrink_glue() {
 
 #[test]
 fn vsplit_recovers_a_missing_to_keyword() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\vbox{}\\setbox1=\\vsplit0 0pt",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vsplit inserts a missing to keyword");
+    let stores = run_canonical_tex82("\\setbox0=\\vbox{}\\setbox1=\\vsplit0 0pt\\end");
 
     assert!(support::terminal_effect_text(&stores).contains("Missing `to' inserted"));
 }
 
 #[test]
 fn vsplit_leaves_hbox_source_untouched_and_returns_void() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox3=\\hbox{}\\setbox4=\\vsplit3 to 0pt",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vsplit of hbox is recoverable");
+    let stores = run_canonical_tex82("\\setbox3=\\hbox{}\\setbox4=\\vsplit3 to 0pt\\end");
 
     assert!(stores.box_reg(3).is_some());
     assert!(stores.box_reg(4).is_none());
@@ -5018,7 +4967,10 @@ pub(super) fn run_canonical_tex82(source: &str) -> Universe {
 }
 
 pub(super) fn run_canonical_tex82_with_fonts(source: &str) -> Universe {
-    let mut stores = stores_with_fonts();
+    run_canonical_tex82_with_fonts_and_universe(stores_with_fonts(), source)
+}
+
+fn run_canonical_tex82_with_fonts_and_universe(mut stores: Universe, source: &str) -> Universe {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     for name in ["cmr10.tfm", "cmmi10.tfm"] {
         let metrics = tex_state::InputReadState::read_input_file(
