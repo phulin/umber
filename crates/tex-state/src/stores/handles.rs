@@ -89,9 +89,12 @@ impl Stores {
             };
             let numerator = i64::from(box_node.glue_set.numerator()) * 65_536;
             let denominator = i64::from(box_node.glue_set.denominator());
-            let ratio = crate::scaled::Scaled::from_raw(
-                i32::try_from((numerator + denominator / 2) / denominator).unwrap_or(i32::MAX),
-            );
+            let raw = if numerator >= 0 {
+                (numerator + denominator / 2) / denominator
+            } else {
+                -((-numerator + denominator / 2) / denominator)
+            };
+            let ratio = crate::scaled::Scaled::from_raw(i32::try_from(raw).unwrap_or(i32::MAX));
             let _ = write!(text, ", glue set {sign}{}", scaled(ratio));
         }
         if !self.nodes(box_node.children).is_empty() {

@@ -905,7 +905,11 @@ fn glue_component_unit(order: Order, unit: &str) -> String {
 fn format_glue_ratio(value: GlueSetRatio) -> String {
     let numerator = i64::from(value.numerator()) * i64::from(Scaled::UNITY);
     let denominator = i64::from(value.denominator());
-    let raw = (numerator + denominator / 2) / denominator;
+    let raw = if numerator >= 0 {
+        (numerator + denominator / 2) / denominator
+    } else {
+        -((-numerator + denominator / 2) / denominator)
+    };
     format_scaled_without_unit(Scaled::from_raw(i32::try_from(raw).unwrap_or(i32::MAX)))
 }
 

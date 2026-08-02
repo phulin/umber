@@ -139,6 +139,10 @@ fn glue_set_ratio_preserves_exact_reduced_fraction() {
         GlueSetRatio::from_scaled_ratio(Scaled::from_raw(i32::MAX), Scaled::from_raw(1)),
         GlueSetRatio::from_ratio_parts(i32::MAX, 1)
     );
+    assert_eq!(
+        GlueSetRatio::from_scaled_ratio(Scaled::from_raw(2), Scaled::from_raw(-3)),
+        GlueSetRatio::from_ratio_parts(-2, 3)
+    );
 }
 
 #[test]
@@ -152,8 +156,8 @@ fn glue_set_ratio_deserialization_reconstructs_only_canonical_values() {
         GlueSetRatio::from_ratio_parts(3, 4)
     );
     assert_eq!(
-        bincode::deserialize::<GlueSetRatio>(&wire(-6, 8)).expect("sign normalizes"),
-        GlueSetRatio::from_ratio_parts(3, 4)
+        bincode::deserialize::<GlueSetRatio>(&wire(-6, 8)).expect("signed ratio decodes"),
+        GlueSetRatio::from_ratio_parts(-3, 4)
     );
     assert_eq!(
         bincode::deserialize::<GlueSetRatio>(&wire(0, 99)).expect("zero ratio decodes"),

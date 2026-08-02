@@ -501,6 +501,30 @@ fn box_lr_has_exact_canonical_node_dump_evidence() {
     }
 }
 
+#[test]
+fn stretching_box_dump_preserves_negative_glue_set_ratio() {
+    // tex.web §186 prints the signed `glue_set` value independently of
+    // `glue_sign`; negative stretch totals can produce this combination.
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: tex_state::node::BoxLr::Normal,
+        glue_set: GlueSetRatio::from_ratio_parts(-2, 1),
+        glue_sign: Sign::Stretching,
+        glue_order: Order::Normal,
+        children: empty,
+    }))]);
+
+    assert_eq!(
+        dump_node_list(&stores, list, DumpConfig::read(&stores)),
+        "\\hbox(0.0+0.0)x0.0, glue set -2.0\n"
+    );
+}
+
 /// bd `umber2-alfh.6`: with `\showboxbreadth`/`\showboxdepth` left at
 /// INITEX's default of 0 (tex.web §240's `eqtb` zeroing loop), `\showbox`
 /// printed `etc.` for a one-item box instead of the box line, because

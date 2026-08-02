@@ -229,7 +229,7 @@ impl std::error::Error for DimensionError {}
 /// Compatibility scale used when constructing or displaying glue-set ratios.
 pub const GLUE_SET_RATIO_SCALE: i32 = 1_000_000;
 
-/// Exact reduced glue-set ratio used by packed boxes and output drivers.
+/// Exact signed reduced glue-set ratio used by packed boxes and output drivers.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize)]
 pub struct GlueSetRatio {
     numerator: i32,
@@ -308,19 +308,22 @@ impl GlueSetRatio {
         if numerator == 0 || denominator == 0 {
             return Self::ZERO;
         }
+        let negative = (numerator < 0) != (denominator < 0);
         let numerator = numerator.saturating_abs();
         let denominator = denominator.saturating_abs();
         let divisor = gcd_i32(numerator, denominator);
+        let numerator = numerator / divisor;
         Self {
-            numerator: numerator / divisor,
+            numerator: if negative { -numerator } else { numerator },
             denominator: denominator / divisor,
         }
     }
 
     /// Reconstructs a canonical ratio from externally supplied signed parts.
     ///
-    /// A negative numerator is normalized to its magnitude because box glue
-    /// direction is represented separately. Nonpositive denominators and the
+    /// The numerator's sign is part of TeX's `glue_set`; `glue_sign` records
+    /// whether stretch or shrink participates, but negative glue totals can
+    /// still produce a negative setting. Nonpositive denominators and the
     /// unrepresentable magnitude of `i32::MIN` are rejected.
     pub const fn try_from_ratio_parts(
         numerator: i32,
@@ -332,12 +335,14 @@ impl GlueSetRatio {
         if numerator == 0 {
             return Ok(Self::ZERO);
         }
+        let negative = numerator < 0;
         let Some(numerator) = numerator.checked_abs() else {
             return Err(GlueSetRatioError::UnrepresentableNumerator);
         };
         let divisor = gcd_i32(numerator, denominator);
+        let numerator = numerator / divisor;
         Ok(Self {
-            numerator: numerator / divisor,
+            numerator: if negative { -numerator } else { numerator },
             denominator: denominator / divisor,
         })
     }
@@ -377,15 +382,7 @@ impl GlueSetRatio {
     /// Computes `numerator / denominator` with the fixed-point scale.
     #[must_use]
     pub fn from_scaled_ratio(numerator: Scaled, denominator: Scaled) -> Self {
-        let denominator = i64::from(denominator.raw()).abs();
-        if denominator == 0 {
-            return Self::ZERO;
-        }
-        let numerator = i64::from(numerator.raw()).abs();
-        Self::from_ratio_parts(
-            i32::try_from(numerator).expect("TeX dimensions fit i32"),
-            i32::try_from(denominator).expect("TeX dimensions fit i32"),
-        )
+        Self::from_ratio_parts(numerator.raw(), denominator.raw())
     }
 }
 

@@ -38,10 +38,10 @@ fn rounded_glue_set(glue_set: GlueSetRatio, cur_glue: Scaled) -> Scaled {
     // multiplies it by the running glue total before `round`. Emulate both
     // binary64 round-to-even operations with integers so output stays
     // deterministic on every host.
-    let numerator = glue_set.numerator() as u128;
+    let numerator = u128::from(glue_set.numerator().unsigned_abs());
     let denominator = glue_set.denominator() as u128;
     let (ratio_significand, ratio_exponent) = binary64_ratio(numerator, denominator);
-    let negative = cur_glue.raw() < 0;
+    let negative = (glue_set.numerator() < 0) != (cur_glue.raw() < 0);
     let magnitude = u128::from(cur_glue.raw().unsigned_abs());
     let (significand, exponent) =
         binary64_multiply_integer(ratio_significand, ratio_exponent, magnitude);
@@ -172,6 +172,19 @@ mod tests {
                 Scaled::from_raw(65_536),
             ),
             Scaled::from_raw(203_266_396)
+        );
+    }
+
+    #[test]
+    fn signed_glue_ratio_combines_with_the_running_glue_sign() {
+        let ratio = GlueSetRatio::from_ratio_parts(-2, 1);
+        assert_eq!(
+            rounded_glue_set(ratio, Scaled::from_raw(3)),
+            Scaled::from_raw(-6)
+        );
+        assert_eq!(
+            rounded_glue_set(ratio, Scaled::from_raw(-3)),
+            Scaled::from_raw(6)
         );
     }
 
