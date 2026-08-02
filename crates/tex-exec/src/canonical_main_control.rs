@@ -6167,7 +6167,7 @@ fn scan_command(
             | UnexpandablePrimitive::Dp),
         ) => {
             let index = processor
-                .scan_eight_bit_register_index()
+                .scan_profile_register_index()
                 .map_err(command_error)?;
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_dimension().map_err(command_error)?.value;

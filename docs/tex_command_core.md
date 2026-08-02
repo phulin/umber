@@ -468,6 +468,13 @@ selector for both `\box` and `\copy` with `scan_register_num`, so this same
 command-owned scan accepts sparse box registers through 32767 while TeX82
 retains its 0--255 bound.
 
+The same profile boundary owns box-dimension access. TeX82 §424 reads and
+§1247 writes `\wd`, `\ht`, and `\dp` through an eight-bit box selector;
+e-TeX [26.420] and [49.1247] replace both directions with
+`scan_register_num` plus the sparse box fetch. Assignment and later internal
+scans therefore address one extended box register rather than independently
+recovering an out-of-range selector to box zero.
+
 After `init_align` validates and replays its opening brace, the command
 processor owns the complete `get_preamble_token` episode. It retains raw
 delivery while `scanner_status=aligning`, freezes u/v template pairs at `#`

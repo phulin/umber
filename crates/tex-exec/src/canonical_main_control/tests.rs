@@ -4771,6 +4771,28 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
 }
 
 #[test]
+fn etex_sparse_box_dimension_assignment_is_visible_to_internal_scans() {
+    // e-TeX 2.6 [49.1247] widens `alter_box_dimen` with
+    // `scan_register_num`; [26.420] uses the same sparse fetch when `\ht`
+    // is subsequently scanned as an internal dimension.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = canonical_etex_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\setbox32101=\hbox{} \ht32101=2pt
+           \ifdim\ht32101=2pt \count0=1\fi \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.box_dimension(32101, tex_state::BoxDimension::Height),
+        Some(Scaled::from_raw(2 * Scaled::UNITY))
+    );
+    assert_eq!(stores.count(0), 1);
+}
+
+#[test]
 fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // e-TeX §275 applies the `eq_word_define` reassignment shortcut to every
     // fullword eqtb location, including the code tables. The nested identical
