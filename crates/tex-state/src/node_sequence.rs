@@ -6,10 +6,17 @@ use crate::node::Node;
 
 /// A node sequence whose semantic channel drives execution and whose physical
 /// channel preserves TeX's linked-list topology for diagnostics.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct NodeSequence {
     semantic: Arc<Vec<Node>>,
     physical: Arc<Vec<Node>>,
+    physical_boundaries: Arc<Vec<usize>>,
+}
+
+impl Default for NodeSequence {
+    fn default() -> Self {
+        Self::mirrored(Vec::new())
+    }
 }
 
 impl PartialEq for NodeSequence {
@@ -23,21 +30,37 @@ impl NodeSequence {
     pub fn mirrored(nodes: Vec<Node>) -> Self {
         Self {
             physical: Arc::new(nodes.clone()),
+            physical_boundaries: Arc::new((0..=nodes.len()).collect()),
             semantic: Arc::new(nodes),
         }
     }
 
     #[must_use]
     pub fn from_channels(semantic: Vec<Node>, physical: Vec<Node>) -> Self {
+        assert_eq!(semantic.len(), physical.len());
+        let physical_boundaries = Arc::new((0..=semantic.len()).collect());
         Self {
             semantic: Arc::new(semantic),
             physical: Arc::new(physical),
+            physical_boundaries,
         }
     }
 
     #[must_use]
-    pub fn from_shared_channels(semantic: Arc<Vec<Node>>, physical: Arc<Vec<Node>>) -> Self {
-        Self { semantic, physical }
+    pub fn from_projection(
+        semantic: Vec<Node>,
+        physical: Vec<Node>,
+        physical_boundaries: Vec<usize>,
+    ) -> Self {
+        assert_eq!(physical_boundaries.len(), semantic.len() + 1);
+        assert_eq!(physical_boundaries.first(), Some(&0));
+        assert_eq!(physical_boundaries.last(), Some(&physical.len()));
+        assert!(physical_boundaries.windows(2).all(|pair| pair[0] <= pair[1]));
+        Self {
+            semantic: Arc::new(semantic),
+            physical: Arc::new(physical),
+            physical_boundaries: Arc::new(physical_boundaries),
+        }
     }
 
     #[must_use]
@@ -50,6 +73,11 @@ impl NodeSequence {
         &self.physical
     }
 
+    #[must_use]
+    pub fn physical_boundary(&self, semantic_boundary: usize) -> Option<usize> {
+        self.physical_boundaries.get(semantic_boundary).copied()
+    }
+
     pub fn take(self) -> (Vec<Node>, Vec<Node>) {
         (
             Arc::try_unwrap(self.semantic).unwrap_or_else(|nodes| (*nodes).clone()),
@@ -60,6 +88,7 @@ impl NodeSequence {
     pub fn push_mirrored(&mut self, node: Node) {
         Arc::make_mut(&mut self.semantic).push(node.clone());
         Arc::make_mut(&mut self.physical).push(node);
+        Arc::make_mut(&mut self.physical_boundaries).push(self.physical.len());
     }
 
     pub fn extend_mirrored(&mut self, nodes: impl IntoIterator<Item = Node>) {
@@ -71,6 +100,8 @@ impl NodeSequence {
     pub fn replace_channels(&mut self, semantic: Vec<Node>, physical: Vec<Node>) {
         self.semantic = Arc::new(semantic);
         self.physical = Arc::new(physical);
+        assert_eq!(self.semantic.len(), self.physical.len());
+        self.physical_boundaries = Arc::new((0..=self.semantic.len()).collect());
     }
 
     /// Mutates semantic nodes and atomically resets the physical channel to
@@ -79,12 +110,14 @@ impl NodeSequence {
     pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
         let result = mutate(Arc::make_mut(&mut self.semantic));
         self.physical = Arc::new((*self.semantic).clone());
+        self.physical_boundaries = Arc::new((0..=self.semantic.len()).collect());
         result
     }
 
     pub fn truncate(&mut self, semantic_len: usize, physical_len: usize) {
         Arc::make_mut(&mut self.semantic).truncate(semantic_len);
         Arc::make_mut(&mut self.physical).truncate(physical_len);
+        Arc::make_mut(&mut self.physical_boundaries).truncate(semantic_len + 1);
     }
 
     pub fn semantic_arc(&self) -> Arc<Vec<Node>> {
@@ -108,5 +141,17 @@ mod tests {
         let clone = left.clone();
         assert!(Arc::ptr_eq(&left.semantic_arc(), &clone.semantic_arc()));
         assert!(Arc::ptr_eq(&left.physical_arc(), &clone.physical_arc()));
+    }
+
+    #[test]
+    fn physical_boundaries_map_collapsed_semantic_nodes() {
+        let sequence = NodeSequence::from_projection(
+            vec![Node::Penalty(1), Node::Penalty(2)],
+            vec![Node::Penalty(10), Node::Penalty(11), Node::Penalty(12)],
+            vec![0, 2, 3],
+        );
+        assert_eq!(sequence.physical_boundary(0), Some(0));
+        assert_eq!(sequence.physical_boundary(1), Some(2));
+        assert_eq!(sequence.physical_boundary(2), Some(3));
     }
 }
