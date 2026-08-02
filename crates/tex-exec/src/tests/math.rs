@@ -439,7 +439,6 @@ fn token_register_macros_resume_expansion_in_math_mode() {
 }
 
 #[test]
-#[ignore = "xfail: canonical aftergroup replay loses its physical parent (umber2-7svq)"]
 fn semi_simple_math_aftergroup_replay_has_aftergroup_provenance() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
@@ -493,7 +492,6 @@ fn math_shift_groups_restore_code_tables_and_replay_aftergroup_after_restore() {
 }
 
 #[test]
-#[ignore = "xfail: canonical aftergroup replay loses its physical parent (umber2-7svq)"]
 fn math_shift_aftergroup_replay_has_inserted_provenance() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

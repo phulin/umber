@@ -170,7 +170,9 @@ impl Env {
             cell.hash(&mut hasher);
             word.hash(&mut hasher);
         });
-        self.aftergroup.hash(&mut hasher);
+        for spelling in &self.aftergroup {
+            spelling.semantic_token().hash(&mut hasher);
+        }
         self.afterassignment.hash(&mut hasher);
         hasher.finish()
     }
@@ -238,7 +240,7 @@ impl Env {
     }
 
     #[cfg(any(test, feature = "testing", feature = "shadow"))]
-    pub(crate) fn testing_aftergroup_payloads(&self) -> &[crate::token::Token] {
+    pub(crate) fn testing_aftergroup_payloads(&self) -> &[crate::token::TracedTokenWord] {
         &self.aftergroup
     }
 

@@ -182,7 +182,7 @@ pub struct Env {
     paragraph_mutations: Option<paragraph::ParagraphMutationRecorder>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
-    aftergroup: Vec<Token>,
+    aftergroup: Vec<crate::token::TracedTokenWord>,
     afterassignment: Option<Token>,
     group_depth: u32,
     next_group_lineage: u64,

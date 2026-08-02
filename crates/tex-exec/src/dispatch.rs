@@ -462,9 +462,17 @@ pub(crate) fn leave_group_with_origin(
         Ok(tokens) => {
             let tokens: Vec<_> = tokens
                 .into_iter()
-                .map(|token| {
-                    let inserted =
-                        stores.inserted_origin(InsertedOriginKind::AfterGroup, token, origin);
+                .map(|spelling| {
+                    let token = spelling.semantic_token();
+                    let inserted = stores.inserted_origin(
+                        InsertedOriginKind::AfterGroup,
+                        token,
+                        if origin == OriginId::UNKNOWN {
+                            spelling.origin()
+                        } else {
+                            origin
+                        },
+                    );
                     TracedTokenWord::pack(token, inserted)
                 })
                 .collect();

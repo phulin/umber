@@ -1,7 +1,7 @@
 use super::{Env, cell_key, checked_aftergroup_start, u32_len};
 use crate::cell::{BankTag, CellId};
 use crate::journal::{BoxUndoRec, Entry, JournalPos, Marker, UndoRec};
-use crate::token::Token;
+use crate::token::{Token, TracedTokenWord};
 use ahash::AHashMap;
 use ahash::AHashSet;
 use smallvec::SmallVec;
@@ -476,6 +476,13 @@ impl Env {
 
     /// Pushes an opaque `\aftergroup` payload for the current group.
     pub(crate) fn push_aftergroup(&mut self, payload: Token) {
+        self.push_aftergroup_traced(TracedTokenWord::pack(
+            payload,
+            crate::token::OriginId::UNKNOWN,
+        ));
+    }
+
+    pub(crate) fn push_aftergroup_traced(&mut self, payload: TracedTokenWord) {
         if self.group_depth != 0 {
             self.record_paragraph_group_frame_mutation();
             self.aftergroup.push(payload);
@@ -499,7 +506,11 @@ impl Env {
     #[must_use]
     #[cfg(test)]
     pub(crate) fn leave_group(&mut self) -> Vec<Token> {
-        self.leave_group_unchecked().0
+        self.leave_group_unchecked()
+            .0
+            .into_iter()
+            .map(TracedTokenWord::semantic_token)
+            .collect()
     }
 
     /// Leaves the innermost group and reports whether meaning cells were
@@ -507,7 +518,7 @@ impl Env {
     #[must_use]
     pub(crate) fn leave_group_observing_meanings(
         &mut self,
-    ) -> (Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>) {
+    ) -> (Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>) {
         self.leave_group_unchecked()
     }
 
@@ -523,13 +534,18 @@ impl Env {
         if actual != expected {
             return Err(GroupMismatch::new(expected, actual));
         }
-        Ok(self.leave_group_unchecked().0)
+        Ok(self
+            .leave_group_unchecked()
+            .0
+            .into_iter()
+            .map(TracedTokenWord::semantic_token)
+            .collect())
     }
 
     pub(crate) fn leave_group_with_kind_observing_meanings(
         &mut self,
         expected: GroupKind,
-    ) -> Result<(Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>), GroupMismatch> {
+    ) -> Result<(Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>), GroupMismatch> {
         let Some(actual) = self.innermost_group_kind() else {
             return Err(GroupMismatch::new_no_group(expected));
         };
@@ -539,7 +555,9 @@ impl Env {
         Ok(self.leave_group_unchecked())
     }
 
-    fn leave_group_unchecked(&mut self) -> (Vec<Token>, bool, ChangedCells, Vec<RestoreRecord>) {
+    fn leave_group_unchecked(
+        &mut self,
+    ) -> (Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>) {
         self.record_paragraph_group_frame_mutation();
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");

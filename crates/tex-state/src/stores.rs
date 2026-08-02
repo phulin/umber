@@ -19,7 +19,7 @@ use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
 use crate::state_hash::StateHashFragment;
 
 type GroupExitObservation = (
-    Vec<Token>,
+    Vec<crate::token::TracedTokenWord>,
     crate::env::group::ChangedCells,
     CodeTableGenerations,
     CodeTableGenerations,
@@ -2318,11 +2318,20 @@ impl Stores {
         self.env.push_aftergroup(payload);
     }
 
+    pub fn push_aftergroup_traced(&mut self, payload: crate::token::TracedTokenWord) {
+        self.assert_live_token(payload.semantic_token());
+        self.env.push_aftergroup_traced(payload);
+    }
+
     /// Leaves the innermost TeX group and returns its `\aftergroup` payloads.
     #[must_use]
     #[cfg(test)]
     pub fn leave_group(&mut self) -> Vec<Token> {
-        self.leave_group_observing_dependencies().0
+        self.leave_group_observing_dependencies()
+            .0
+            .into_iter()
+            .map(crate::token::TracedTokenWord::semantic_token)
+            .collect()
     }
 
     pub(crate) fn leave_group_observing_dependencies(&mut self) -> GroupExitObservation {
@@ -2893,7 +2902,7 @@ impl Stores {
             }
         });
         for &token in self.env.testing_aftergroup_payloads() {
-            self.testing_hash_token(token, hasher);
+            self.testing_hash_token(token.semantic_token(), hasher);
         }
         match self.env.testing_afterassignment() {
             Some(token) => {

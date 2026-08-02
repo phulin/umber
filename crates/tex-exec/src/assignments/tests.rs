@@ -200,7 +200,10 @@ fn nested_typed_groups_push_one_boundary_and_restore_outer_metadata() {
         assert_eq!(
             stores
                 .leave_group_with_kind(kind)
-                .expect("matching typed group leaves"),
+                .expect("matching typed group leaves")
+                .into_iter()
+                .map(TracedTokenWord::semantic_token)
+                .collect::<Vec<_>>(),
             [letter(char::from(b'A' + index as u8))]
         );
         assert_eq!(stores.group_depth(), index as u32);
@@ -293,7 +296,10 @@ fn unsave_restores_local_entries_retains_globals_then_replays_tokens() {
     assert_eq!(
         stores
             .leave_group_with_kind(GroupKind::Simple)
-            .expect("inner unsave"),
+            .expect("inner unsave")
+            .into_iter()
+            .map(TracedTokenWord::semantic_token)
+            .collect::<Vec<_>>(),
         [letter('I')]
     );
     assert_eq!(stores.count(0), 13);
@@ -302,7 +308,10 @@ fn unsave_restores_local_entries_retains_globals_then_replays_tokens() {
     assert_eq!(
         stores
             .leave_group_with_kind(GroupKind::SemiSimple)
-            .expect("outer unsave"),
+            .expect("outer unsave")
+            .into_iter()
+            .map(TracedTokenWord::semantic_token)
+            .collect::<Vec<_>>(),
         [letter('O')]
     );
     assert_eq!(stores.count(0), 13);

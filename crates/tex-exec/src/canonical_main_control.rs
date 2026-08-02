@@ -5188,7 +5188,7 @@ enum ScannedStep {
         meaning: Meaning,
         global: bool,
     },
-    AfterGroup(Token),
+    AfterGroup(TracedTokenWord),
     AfterAssignment(Token),
     Rule {
         width: Option<Scaled>,
@@ -7875,8 +7875,7 @@ fn scan_command(
                     .ok_or(ExecError::MissingToken {
                         context: "\\aftergroup",
                     })?
-                    .spelling()
-                    .semantic_token(),
+                    .spelling(),
             ))
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::AfterAssignment) => {
@@ -11620,7 +11619,7 @@ fn replace_alignment_entry_save_level(
 fn leave_alignment_save_level(
     stores: &mut Universe,
     context: &'static str,
-) -> Result<Vec<Token>, ExecError> {
+) -> Result<Vec<TracedTokenWord>, ExecError> {
     stores
         .leave_group_with_kind(GroupKind::Align)
         .map_err(|_| ExecError::MissingToken { context })
@@ -11635,7 +11634,7 @@ fn leave_alignment_save_level(
 fn leave_fin_align_save_level(
     stores: &mut Universe,
     confusion_site: &'static str,
-) -> Result<Vec<Token>, ExecError> {
+) -> Result<Vec<TracedTokenWord>, ExecError> {
     stores
         .leave_group_with_kind(GroupKind::Align)
         .map_err(|_| ExecError::Fatal(FatalError::confusion(confusion_site)))
@@ -14011,7 +14010,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterGroup(token) => {
-            stores.push_aftergroup(token);
+            stores.push_aftergroup_traced(token);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterAssignment(token) => {
@@ -15446,18 +15445,19 @@ fn print_display_content(stores: &mut Universe, content: &str) {
 fn schedule_aftergroup(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
-    tokens: Vec<Token>,
+    tokens: Vec<TracedTokenWord>,
 ) -> Result<(), ExecError> {
     if tokens.is_empty() {
         return Ok(());
     }
     let traced: Vec<_> = tokens
         .into_iter()
-        .map(|token| {
+        .map(|spelling| {
+            let token = spelling.semantic_token();
             let origin = stores.inserted_origin(
                 tex_state::provenance::InsertedOriginKind::AfterGroup,
                 token,
-                tex_state::token::OriginId::UNKNOWN,
+                spelling.origin(),
             );
             tex_state::token::TracedTokenWord::pack(token, origin)
         })

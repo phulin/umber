@@ -803,6 +803,30 @@ fn aftergroup_payloads_are_fifo_per_group_across_nesting() {
 }
 
 #[test]
+fn aftergroup_payload_origin_survives_snapshot_rollback_and_group_exit() {
+    let mut env = Env::new();
+    let token = Token::Char {
+        ch: 'x',
+        cat: Catcode::Letter,
+    };
+    let parent = crate::token::OriginId::from_raw(42);
+
+    env.enter_group();
+    env.push_aftergroup_traced(crate::token::TracedTokenWord::pack(token, parent));
+    let snapshot = env.checkpoint();
+    env.push_aftergroup(Token::Char {
+        ch: 'y',
+        cat: Catcode::Letter,
+    });
+    env.rollback_to(snapshot);
+
+    let payloads = env.leave_group_observing_meanings().0;
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(payloads[0].semantic_token(), token);
+    assert_eq!(payloads[0].origin(), parent);
+}
+
+#[test]
 fn sparse_register_local_restores_on_group_exit() {
     let mut env = Env::new();
     let mut oracle = Oracle::new();

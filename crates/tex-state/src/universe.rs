@@ -5700,6 +5700,10 @@ impl Universe {
         self.stores.push_aftergroup(payload);
     }
 
+    pub fn push_aftergroup_traced(&mut self, payload: crate::token::TracedTokenWord) {
+        self.stores.push_aftergroup_traced(payload);
+    }
+
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
         let trace_context = self.leaving_group_trace_context();
@@ -5713,12 +5717,15 @@ impl Universe {
             self.trace_group_leave(kind, level, entered_line);
         }
         tokens
+            .into_iter()
+            .map(crate::token::TracedTokenWord::semantic_token)
+            .collect()
     }
 
     pub fn leave_group_with_kind(
         &mut self,
         expected: GroupKind,
-    ) -> Result<Vec<Token>, GroupMismatch> {
+    ) -> Result<Vec<crate::token::TracedTokenWord>, GroupMismatch> {
         let trace_context = self.leaving_group_trace_context();
         let (tokens, changed_cells, code_before, code_after, restores, code_restores) = self
             .stores
