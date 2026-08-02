@@ -21,6 +21,16 @@ fn read_macro_tokens(stores: &Universe, name: &str) -> Vec<Token> {
 }
 
 fn run_file_reads(contents: &[u8], commands: &str, etex: bool) -> Universe {
+    run_named_file_reads("stream.tex", "stream.tex", contents, commands, etex)
+}
+
+fn run_named_file_reads(
+    name: &str,
+    scanned_name: &str,
+    contents: &[u8],
+    commands: &str,
+    etex: bool,
+) -> Universe {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = if etex {
         install_tex82_expandable_primitives(&mut stores);
@@ -32,13 +42,13 @@ fn run_file_reads(contents: &[u8], commands: &str, etex: bool) -> Universe {
         CanonicalMainControl::tex82_initex(&mut stores)
     };
     control.capabilities_mut().register_input(
-        "stream.tex",
+        name,
         SourceRegistration::new(RegisteredSourceKind::World, contents.to_vec()),
     );
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
-            format!("\\openin1=stream.tex {commands}\\end").into_bytes(),
+            format!("\\openin1={scanned_name} {commands}\\end").into_bytes(),
         ))
         .expect("register canonical file-read source");
     for _ in 0..1024 {
@@ -55,52 +65,40 @@ fn run_file_reads(contents: &[u8], commands: &str, etex: bool) -> Universe {
 
 #[test]
 fn openin_read_defines_control_sequence_from_world_stream() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("stream.tex", b"abc\nnext".to_vec())
-        .expect("seed stream");
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\openin1=stream.tex \\read1 to \\foo \\message{\\foo}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("read from opened stream");
+    let stores = run_file_reads(
+        b"abc\nnext",
+        "\\read1 to \\foo \\message{\\foo}\\ifeof1\\message{EARLY}\\fi ",
+        false,
+    );
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("abc"));
-    assert!(
-        !stores
-            .world()
-            .input_stream_eof(tex_state::StreamSlot::new(1))
+    assert!(!output.contains("EARLY"), "{output:?}");
+    assert_eq!(
+        read_macro_tokens(&stores, "foo")
+            .iter()
+            .filter_map(|token| match token {
+                Token::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect::<String>(),
+        "abc "
     );
 }
 
 #[test]
 fn ifeof_remains_false_until_a_read_attempts_past_the_final_line() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("stream.tex", b"one\ntwo\n".to_vec())
-        .expect("seed stream");
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        "\\openin1=stream.tex ",
-        "\\read1 to \\first ",
-        "\\read1 to \\second ",
-        "\\ifeof1\\message{EARLY}\\else\\message{[\\second]}\\fi ",
-        "\\read1 to \\past ",
-        "\\ifeof1\\message{CLOSED}\\fi ",
-        "\\end",
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("read through stream EOF");
+    let stores = run_file_reads(
+        b"one\ntwo\n",
+        concat!(
+            "\\read1 to \\first ",
+            "\\read1 to \\second ",
+            "\\ifeof1\\message{EARLY}\\else\\message{[\\second]}\\fi ",
+            "\\read1 to \\past ",
+            "\\ifeof1\\message{CLOSED}\\fi ",
+        ),
+        false,
+    );
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("[two ]"), "{output:?}");
@@ -110,40 +108,26 @@ fn ifeof_remains_false_until_a_read_attempts_past_the_final_line() {
 
 #[test]
 fn openin_accepts_a_quoted_filename_with_spaces() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("stream file.tex", b"quoted".to_vec())
-        .expect("seed quoted stream");
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\openin1=\"stream file.tex\" \\read1 to \\foo \\message{\\foo}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("read from quoted stream name");
+    let stores = run_named_file_reads(
+        "stream file.tex",
+        "\"stream file.tex\"",
+        b"quoted",
+        "\\read1 to \\foo \\message{\\foo}",
+        false,
+    );
 
     assert!(terminal_effect_text(&stores).contains("quoted"));
 }
 
 #[test]
 fn openin_accepts_a_brace_delimited_filename() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("stream.tex", b"braced".to_vec())
-        .expect("seed braced stream");
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\openin1={stream.tex}\\read1 to \\foo \\message{\\foo}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("read from brace-delimited stream name");
+    let stores = run_named_file_reads(
+        "stream.tex",
+        "{stream.tex}",
+        b"braced",
+        "\\read1 to \\foo \\message{\\foo}",
+        false,
+    );
 
     assert!(terminal_effect_text(&stores).contains("braced"));
 }
@@ -152,22 +136,7 @@ fn openin_accepts_a_brace_delimited_filename() {
 fn readline_uses_only_space_and_other_catcodes() {
     // e-TeX short reference manual section 3.2: unlike \read, \readline
     // assigns catcode 10 to spaces and catcode 12 to every other character.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    stores
-        .world_mut()
-        .set_memory_file("stream.tex", b"a {\\x".to_vec())
-        .expect("seed stream");
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\openin1=stream.tex \\readline1 to \\foo \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("readline from opened stream");
+    let stores = run_file_reads(b"a {\\x", "\\readline1 to \\foo ", true);
 
     let foo = stores.symbol("foo").expect("readline target was defined");
     let replacement = stores
