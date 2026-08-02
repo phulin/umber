@@ -785,16 +785,16 @@ impl CommandProcessor<'_> {
                 scantokens_numeric_name(tracing_scantokens),
             )
             .map_err(|_| CommandError::input_invariant())?;
-        let (group_depth, _) = self.state.current_group_values();
         self.command.record_source_open_depths(
             level,
-            group_depth.max(0) as u32,
-            self.state.current_group_lineage(),
-            u32::try_from(self.command.conditions.frames.len()).unwrap_or(u32::MAX),
+            self.state.group_lineages().into_boxed_slice(),
             self.command
                 .conditions
-                .current()
-                .map(|frame| frame.identity.0),
+                .frames
+                .iter()
+                .map(|frame| frame.identity.0)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
         );
         let source = self
             .command

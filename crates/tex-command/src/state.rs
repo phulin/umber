@@ -1211,27 +1211,24 @@ impl CommandState {
     }
 
     /// e-TeX 2.6 [23.328]'s `grp_stack[in_open]:=cur_boundary;
-    /// if_stack[in_open]:=cond_ptr`, recorded by the opener because
+    /// if_stack[in_open]:=cond_ptr`, represented by their full enclosing
+    /// identity chains and recorded by the opener because
     /// `push_source_level` has no `Universe` access to read the live group
     /// depth itself. A no-op if `level` is not a live source level (for
     /// example, it has already been retired).
     pub(crate) fn record_source_open_depths(
         &mut self,
         level: InputLevelId,
-        group_depth: u32,
-        group_lineage: Option<u64>,
-        conditional_depth: u32,
-        conditional_identity: Option<u64>,
+        group_lineages: Box<[u64]>,
+        conditional_identities: Box<[u64]>,
     ) {
         for entry in &mut self.input.levels {
             if let InputLevel::Source(source) = entry
                 && source.identity == level
             {
                 source.open_depths = Some(Box::new(crate::input::SourceOpenDepths {
-                    group_depth,
-                    group_lineage,
-                    conditional_depth,
-                    conditional_identity,
+                    group_lineages,
+                    conditional_identities,
                 }));
                 return;
             }
@@ -1246,7 +1243,7 @@ impl CommandState {
     ) -> Option<crate::input::SourceOpenDepths> {
         self.input.levels.iter().find_map(|entry| match entry {
             InputLevel::Source(source) if source.identity == level => {
-                source.open_depths.as_deref().copied()
+                source.open_depths.as_deref().cloned()
             }
             _ => None,
         })
@@ -1258,7 +1255,7 @@ impl CommandState {
             .iter()
             .rev()
             .find_map(|entry| match entry {
-                InputLevel::Source(source) => source.open_depths.as_deref().copied(),
+                InputLevel::Source(source) => source.open_depths.as_deref().cloned(),
                 _ => None,
             })
     }

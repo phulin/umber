@@ -594,13 +594,12 @@ fn etex_scantokens_records_file_warning_open_depths() {
     assert_eq!(
         command.source_open_depths(level),
         Some(crate::input::SourceOpenDepths {
-            group_depth: universe.group_depth(),
-            group_lineage: universe
+            group_lineages: universe
                 .group_frames()
-                .next_back()
-                .map(|frame| frame.lineage()),
-            conditional_depth: 0,
-            conditional_identity: None,
+                .map(|frame| frame.lineage())
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            conditional_identities: Box::new([]),
         })
     );
 }
@@ -1366,10 +1365,18 @@ fn cross_file_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> S
         .expect("source level is live");
     command.record_source_open_depths(
         level,
-        u32::from(!conditional),
-        None,
-        u32::from(conditional),
-        command.conditions.current().map(|frame| frame.identity.0),
+        if conditional {
+            Box::new([])
+        } else {
+            Box::new([0])
+        },
+        command
+            .conditions
+            .frames
+            .iter()
+            .map(|frame| frame.identity.0)
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
     );
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
@@ -1413,7 +1420,7 @@ fn cross_file_nesting_warning_with_macro_context() -> String {
     let level = command
         .top_input_level_identity()
         .expect("source level is live");
-    command.record_source_open_depths(level, 1, None, 0, None);
+    command.record_source_open_depths(level, Box::new([0]), Box::new([]));
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     install_macro(
@@ -1471,15 +1478,52 @@ fn file_boundary_nesting_warning_text(tracing_nesting: i32, conditional: bool) -
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
         processor.warn_file_boundary_incomplete(
             crate::input::SourceOpenDepths {
-                group_depth: 0,
-                group_lineage: None,
-                conditional_depth: 0,
-                conditional_identity: None,
+                group_lineages: Box::new([]),
+                conditional_identities: Box::new([]),
             },
             None,
         );
     }
     effect_text(&universe)
+}
+
+#[test]
+fn file_warning_reports_replaced_saved_group_before_coexisting_conditional() {
+    // e-TeX 2.6 [23.328] saves `cur_boundary`, not just `cur_level`. Closing
+    // that boundary, replacing it at the same level, and opening another
+    // group above it must report both replacement groups before the
+    // conditional loop begins.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 1);
+    universe.enter_group_with_kind(tex_state::GroupKind::Simple);
+    universe.enter_group_with_kind(tex_state::GroupKind::AdjustedHBox);
+    let open_depths = crate::input::SourceOpenDepths {
+        group_lineages: universe
+            .group_frames()
+            .map(|frame| frame.lineage())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        conditional_identities: Box::new([]),
+    };
+    let _ = universe.leave_group();
+    universe.enter_group_with_kind_at_line(tex_state::GroupKind::VTop, 5);
+    universe.enter_group_with_kind_at_line(tex_state::GroupKind::MathShift, 7);
+    command.conditions.push(ConditionalKind::IfFalse, 9);
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.warn_file_boundary_incomplete(open_depths, None);
+    }
+
+    let output = effect_text(&universe);
+    let math = output
+        .find("math shift group (level 3)")
+        .expect("math warning");
+    let vtop = output.find("vtop group (level 2)").expect("vtop warning");
+    let conditional = output.find("\\iffalse").expect("conditional warning");
+    assert!(math < vtop && vtop < conditional, "{output:?}");
 }
 
 #[test]

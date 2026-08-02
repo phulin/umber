@@ -508,6 +508,18 @@ impl CommandContext<'_> {
             .map(|frame| frame.lineage())
     }
 
+    /// The outermost-first lineage of every live group boundary.
+    ///
+    /// e-TeX's `file_warning` saves `cur_boundary`, whose enclosing save-stack
+    /// chain distinguishes a surviving boundary from same-depth replacements.
+    #[must_use]
+    pub fn group_lineages(&self) -> Vec<u64> {
+        self.universe
+            .group_frames()
+            .map(|frame| frame.lineage())
+            .collect()
+    }
+
     /// Every open group at or above `min_depth` (1-based group level),
     /// outermost first, as `(level, group_text, entered_line)`: e-TeX 2.6
     /// [49.1293]'s `print_group` fields for `\tracingnesting`'s

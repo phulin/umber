@@ -43,7 +43,7 @@ impl CommandProcessor<'_> {
         let Some(open_depths) = self.command.current_source_open_depths() else {
             return;
         };
-        if group_depth > open_depths.group_depth as usize {
+        if group_depth > open_depths.group_lineages.len() {
             return;
         }
         {
@@ -72,7 +72,7 @@ impl CommandProcessor<'_> {
         let Some(open_depths) = self.command.current_source_open_depths() else {
             return;
         };
-        if self.command.conditions.frames.len() > open_depths.conditional_depth as usize {
+        if self.command.conditions.frames.len() > open_depths.conditional_identities.len() {
             return;
         }
         let name = self.conditional_kind_text(frame);
@@ -91,7 +91,7 @@ impl CommandProcessor<'_> {
 
     /// `etex.ch` [23.328]'s `file_warning`, called once a source level has
     /// retired (its `end_file_reading` has run) with `open_depths` the
-    /// group/conditional depth recorded when that level began.
+    /// group/conditional boundary ancestry recorded when that level began.
     ///
     /// Prints "Warning: end of file when <group> is incomplete" for every
     /// group opened since, innermost first, then "Warning: end of file when
@@ -111,33 +111,20 @@ impl CommandProcessor<'_> {
         if tracing_nesting <= 0 {
             return;
         }
-        let group_depth = open_depths.group_depth as usize;
-        let conditional_depth = open_depths.conditional_depth as usize;
-        let current_group_depth = self.state.current_group_values().0.max(0) as usize;
+        let current_group_lineages = self.state.group_lineages();
+        let group_start = open_depths
+            .group_lineages
+            .iter()
+            .zip(&current_group_lineages)
+            .take_while(|(saved, current)| saved == current)
+            .count();
         let current_conditional_depth = self.command.conditions.frames.len();
-        let group_start = if current_group_depth > group_depth {
-            group_depth
-        } else if current_group_depth == group_depth
-            && self.state.current_group_lineage() != open_depths.group_lineage
-        {
-            group_depth.saturating_sub(1)
-        } else {
-            current_group_depth
-        };
-        let condition_start = if current_conditional_depth > conditional_depth {
-            conditional_depth
-        } else if current_conditional_depth == conditional_depth
-            && self
-                .command
-                .conditions
-                .current()
-                .map(|frame| frame.identity.0)
-                != open_depths.conditional_identity
-        {
-            conditional_depth.saturating_sub(1)
-        } else {
-            current_conditional_depth
-        };
+        let condition_start = open_depths
+            .conditional_identities
+            .iter()
+            .zip(&self.command.conditions.frames)
+            .take_while(|(saved, current)| **saved == current.identity.0)
+            .count();
 
         // Pre-render every line's text before opening any print scope: the
         // group text needs no borrow, but the conditional text borrows

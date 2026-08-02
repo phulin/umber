@@ -3531,17 +3531,16 @@ impl CommandProcessor<'_> {
             // if_stack[in_open]:=cond_ptr`, recorded for `\tracingnesting`'s
             // `file_warning` at this level's eventual `end_file_reading`.
             if let Some(level) = self.command.top_input_level_identity() {
-                let (group_depth, _) = self.state.current_group_values();
-                let conditional_depth = self.command.conditions.frames.len();
                 self.command.record_source_open_depths(
                     level,
-                    group_depth.max(0) as u32,
-                    self.state.current_group_lineage(),
-                    u32::try_from(conditional_depth).unwrap_or(u32::MAX),
+                    self.state.group_lineages().into_boxed_slice(),
                     self.command
                         .conditions
-                        .current()
-                        .map(|frame| frame.identity.0),
+                        .frames
+                        .iter()
+                        .map(|frame| frame.identity.0)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
                 );
             }
             let endlinechar = self.state.int_param(IntParam::END_LINE_CHAR);
