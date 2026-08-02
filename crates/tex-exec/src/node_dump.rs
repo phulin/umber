@@ -850,7 +850,10 @@ fn dump_box(
     match box_node.box_lr {
         tex_state::node::BoxLr::Normal => {}
         tex_state::node::BoxLr::Reversed => out.push_str(", reversed"),
-        tex_state::node::BoxLr::DList => out.push_str(", display"),
+        // `DList` is an execution-side marker for display-math packaging,
+        // not a TeX82 box subtype. Section 184's `show_node_list` prints a
+        // box's dimensions, glue set, and shift only.
+        tex_state::node::BoxLr::DList => {}
     }
     if depth + 1 >= config.depth {
         if !stores.nodes(children).is_empty() {

@@ -530,13 +530,15 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
 }
 
 #[test]
-fn box_lr_has_exact_canonical_node_dump_evidence() {
+fn box_lr_projects_only_canonical_node_dump_evidence() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     for (box_lr, suffix) in [
         (tex_state::node::BoxLr::Normal, ""),
         (tex_state::node::BoxLr::Reversed, ", reversed"),
-        (tex_state::node::BoxLr::DList, ", display"),
+        // TeX82 §184 has no display-list box subtype. `DList` remains an
+        // internal execution marker and projects like an ordinary hbox.
+        (tex_state::node::BoxLr::DList, ""),
     ] {
         let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
             width: Scaled::from_raw(0),
@@ -554,6 +556,42 @@ fn box_lr_has_exact_canonical_node_dump_evidence() {
             format!("\\hbox(0.0+0.0)x0.0{suffix}\n"),
         );
     }
+}
+
+#[test]
+fn shifted_display_box_and_parametric_glue_project_independently() {
+    // TeX82 §184 prints the shift but no internal display-list marker;
+    // §189 still names neighboring glue from its parameter subtype.
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let baseline = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(10 * Scaled::UNITY),
+        stretch: Scaled::from_raw(41 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let list = stores.freeze_node_list(&[
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(50 * Scaled::UNITY),
+            box_lr: tex_state::node::BoxLr::DList,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        })),
+        Node::Glue {
+            spec: baseline,
+            kind: GlueKind::BaselineSkip,
+            leader: None,
+        },
+    ]);
+
+    assert_eq!(
+        dump_node_list(&stores, list, DumpConfig::read(&stores)),
+        "\\hbox(0.0+0.0)x0.0, shifted 50.0\n\\glue(\\baselineskip) 10.0 plus 41.0\n",
+    );
 }
 
 #[test]
