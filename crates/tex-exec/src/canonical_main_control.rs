@@ -9386,6 +9386,31 @@ fn applied_mutation_observation(
             tokens: Some(Vec::new()),
             global: *global,
         },
+        // e-TeX 2.6 [47.1070] extends TeX82 §1070's `normal_paragraph` by
+        // locally clearing a non-null `inter_line_penalties_ptr`. Vertical
+        // box construction calls that routine after opening the box group;
+        // [17.230] exposes the affected eqtb slot as token register 256 to
+        // the reference mutation instrumentation.
+        ScannedStep::SetBox {
+            payload: ScannedBoxShiftPayload::Construction(construction),
+            ..
+        }
+        | ScannedStep::BeginBox(construction)
+        | ScannedStep::BeginLeaderBox { construction, .. }
+        | ScannedStep::BoxShift(ScannedBoxShift {
+            payload: ScannedBoxShiftPayload::Construction(construction),
+            ..
+        }) if construction.kind != ScannedBoxKind::HBox
+            && !stores.penalty_array(PenaltyArrayKind::InterLine).is_empty() =>
+        {
+            MutationRecord {
+                target: "register",
+                value: "tokens".into(),
+                key: Some("toks:256".into()),
+                tokens: Some(Vec::new()),
+                global: false,
+            }
+        }
         // -- Parameters: §1226/§1227's token-list parameters and §1228's
         // `assign_int`/`assign_dimen`/`assign_glue`/`assign_mu_glue` cases.
         ScannedStep::IntParam {

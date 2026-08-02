@@ -5177,6 +5177,37 @@ fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
 }
 
 #[test]
+fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
+    // e-TeX 2.6 [47.1070] extends TeX82 §1070's `normal_paragraph` to clear
+    // the interline-penalty array. TeX82 §§1070/1085 invoke it for vertical
+    // boxes, while an hbox must leave the array alone.
+    for (box_command, expected_mutations) in [("vbox", 2), ("vtop", 2), ("hbox", 1)] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = canonical_etex_initex(&mut stores);
+        let source = format!(r"\interlinepenalties=1 10 \setbox0=\{box_command}{{}} \end");
+        register_source(&mut control, source.as_bytes());
+        let mut observations = ObservationRecorder::default();
+        run_to_end_observed(&mut control, &mut stores, &mut observations);
+
+        let mutations = observations
+            .0
+            .iter()
+            .filter(|observation| {
+                matches!(
+                    observation,
+                    CommandObservation::Mutation(record)
+                        if record.target == "register"
+                            && record.key.as_deref() == Some("toks:256")
+                            && record.tokens.as_deref() == Some([].as_slice())
+                            && !record.global
+                )
+            })
+            .count();
+        assert_eq!(mutations, expected_mutations, "\\{box_command}");
+    }
+}
+
+#[test]
 fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_tokens() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = canonical_etex_initex(&mut stores);
