@@ -72,11 +72,11 @@ pub(crate) fn resume_page_builder_after_output(
 ) -> Result<(), ExecError> {
     if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores, box255, error_context)?;
+        report_box255_not_emptied(stores, box255, error_context.clone())?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes);
-    build_page(stores)
+    crate::page_builder::build_page_with_error_context(stores, Some(&error_context))
 }
 
 pub(crate) fn drain_pending_output(

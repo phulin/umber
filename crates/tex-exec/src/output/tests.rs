@@ -527,3 +527,43 @@ fn output_resume_recovers_unbalanced_tokens_and_nonvoid_box255() {
     assert!(effects(&stores).contains("The following box has been deleted:"));
     assert!(effects(&stores).contains("\\vbox(0.00002+0.0)x0.00002\n\n"));
 }
+
+#[test]
+fn output_resume_preserves_live_context_for_insertion_shrink_error() {
+    // TeX82 §§82/1009/1026: after an output routine ends, `build_page`
+    // resumes while the triggering command remains live below the exhausted
+    // output token list. A synchronous insertion error displays that context
+    // before §90's help.
+    let mut stores = crate::test_harness::universe();
+    let skip = stores.intern_glue(GlueSpec {
+        shrink: s(1),
+        shrink_order: Order::Fil,
+        ..GlueSpec::ZERO
+    });
+    stores.set_skip(1, skip);
+    stores.set_count(1, 1_000);
+    stores.set_dimen(1, Scaled::MAX_DIMEN);
+    let node = insertion(&mut stores, 1, &[]);
+    stores.append_page_contribution(node);
+
+    resume_page_builder_after_output(
+        &mut stores,
+        Vec::new(),
+        "live backed-up \\hbox context\n".to_owned(),
+    )
+    .expect("page builder resumes");
+
+    let report = effects(&stores);
+    let message = report
+        .find("! Infinite glue shrinkage inserted from \\skip1.")
+        .expect("§1009 message");
+    let context = report[message..]
+        .find("live backed-up \\hbox context")
+        .map(|offset| message + offset)
+        .expect("§82 live context");
+    let help = report[message..]
+        .find("The correction glue for page breaking with insertions")
+        .map(|offset| message + offset)
+        .expect("§90 help");
+    assert!(message < context && context < help, "{report:?}");
+}
