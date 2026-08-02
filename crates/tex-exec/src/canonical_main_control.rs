@@ -2141,6 +2141,9 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
+            let display_alignment_tail = redispatch.is_none()
+                && mode == Mode::DisplayMath
+                && self.modes.current_list().has_display_alignment();
             let scanned = match redispatch {
                 Some(command) => dispatch_main_control_command(
                     &mut processor,
@@ -2153,6 +2156,32 @@ impl CanonicalMainControl {
                     &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
+                None if display_alignment_tail => {
+                    // TeX82 §1206 runs §1270 `do_assignments` after
+                    // `fin_align`. Its fetch skips blanks and relax commands,
+                    // then dispatches the delivered command in place. If it is
+                    // an assignment, the still-pending display alignment makes
+                    // the next step repeat this branch; the first
+                    // non-assignment (normally `$`) is dispatched by this same
+                    // delivery without backup or a second fetch.
+                    match processor
+                        .next_do_assignments_command()
+                        .map_err(command_error)?
+                    {
+                        Some(command) => dispatch_main_control_command(
+                            &mut processor,
+                            command,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            false,
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                        )?,
+                        None => ScannedStep::EndOfInput,
+                    }
+                }
                 None => scan_replay_step(
                     &mut processor,
                     mode,
@@ -3567,6 +3596,9 @@ impl CanonicalMainControl {
                 &mut self.operation_observations,
                 stores,
             );
+            let display_alignment_tail = redispatch.is_none()
+                && mode == Mode::DisplayMath
+                && self.modes.current_list().has_display_alignment();
             let scanned = match redispatch {
                 Some(command) => dispatch_main_control_command(
                     &mut processor,
@@ -3579,6 +3611,23 @@ impl CanonicalMainControl {
                     &mut self.shown_mode,
                     &mut diagnostics,
                 )?,
+                None if display_alignment_tail => match processor
+                    .next_do_assignments_command()
+                    .map_err(command_error)?
+                {
+                    Some(command) => dispatch_main_control_command(
+                        &mut processor,
+                        command,
+                        mode,
+                        &self.boxes,
+                        innermost_group,
+                        job_is_all_over,
+                        false,
+                        &mut self.shown_mode,
+                        &mut diagnostics,
+                    )?,
+                    None => ScannedStep::EndOfInput,
+                },
                 None => scan_replay_step(
                     &mut processor,
                     mode,

@@ -403,6 +403,10 @@ impl ModeList {
         self.display_alignment = true;
     }
 
+    pub(crate) const fn has_display_alignment(&self) -> bool {
+        self.display_alignment
+    }
+
     pub fn take_display_alignment(&mut self) -> Option<(Vec<Node>, Option<Scaled>)> {
         if !std::mem::take(&mut self.display_alignment) {
             return None;

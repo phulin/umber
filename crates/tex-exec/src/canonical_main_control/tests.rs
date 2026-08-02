@@ -1450,6 +1450,48 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     assert_eq!(boxed.width.raw(), 5 * Scaled::UNITY);
 }
 
+#[test]
+fn display_alignment_tail_runs_assignments_before_main_control() {
+    // TeX82 §1206 runs §1270 `do_assignments` after `fin_align` and
+    // before checking for the closing `$$`. Its §404 fetch suppresses the
+    // separating blank, so the malformed postdisplaypenalty assignment must
+    // diagnose before any later display-mode command trace.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let format = initialized.dump_format().expect("dump TeX82 format");
+    let loaded =
+        Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
+
+    for (mut stores, mut control) in [
+        (initialized, fresh_control),
+        (
+            loaded,
+            CanonicalMainControl::with_profile(CommandProfile::TEX82),
+        ),
+    ] {
+        control
+            .set_fuel_limit(20_000)
+            .expect("bounded canonical fuel");
+        register_source(
+            &mut control,
+            br"\nonstopmode\tracingcommands=1\tracingonline=1
+              \noindent$$\halign{#\cr\cr} \global\postdisplaypenalty=*$$\end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let terminal = pending_sink_text(&stores, true);
+        assert!(
+            terminal.contains("Missing number, treated as zero"),
+            "assignment reports its missing integer: {terminal}"
+        );
+        assert!(
+            !terminal.contains("{display math mode: blank space}"),
+            "the do_assignments blank must not reach main control: {terminal}"
+        );
+    }
+}
+
 fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);

@@ -2205,6 +2205,17 @@ impl CommandProcessor<'_> {
         }
     }
 
+    /// Delivers one command from TeX82 §1270's `do_assignments` fetch.
+    ///
+    /// The fetch itself is §404's "next non-blank non-relax non-call token".
+    /// Callers must dispatch the returned command in place: `do_assignments`
+    /// neither backs up assignments nor refetches the first non-assignment it
+    /// stops on. This boundary is also used by §1206 after `fin_align`, where
+    /// blanks before the display-closing command must not reach main control.
+    pub fn next_do_assignments_command(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
+        self.next_non_blank_non_relax_x_token()
+    }
+
     /// Consumes only §1117/§1120's opening brace. The body remains on the
     /// live input stack and returns to main control in restricted horizontal
     /// mode; in particular, no macro or conditional from the body is expanded
