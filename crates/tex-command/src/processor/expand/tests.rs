@@ -3671,6 +3671,14 @@ fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
             expected
         );
     }
+
+    // TeX82 §262 tests the current catcode, not the character's Unicode
+    // alphabetic property, when a direct-address control sequence is shown.
+    universe.set_catcode('!', Catcode::Letter);
+    assert_eq!(
+        print_cs_text(&mut universe.command_context(), symbol),
+        "\\! "
+    );
 }
 
 #[test]
@@ -4375,6 +4383,17 @@ fn token_list_control_sequences_use_live_escapechar() {
     assert_eq!(
         token_list_token_text(&universe.command_context(), Token::Cs(null_cs)),
         "@csname@endcsname "
+    );
+
+    let symbol = universe.intern("@").symbol();
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::Cs(symbol)),
+        "@@"
+    );
+    universe.set_catcode('@', Catcode::Letter);
+    assert_eq!(
+        token_list_token_text(&universe.command_context(), Token::Cs(symbol)),
+        "@@ "
     );
 
     // TeX82 §§262/289/294: these are permanent frozen eqtb control

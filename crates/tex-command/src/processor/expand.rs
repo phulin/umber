@@ -2118,9 +2118,9 @@ pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token
         print_esc_text(state, name)
     };
     let mut chars = name.chars();
-    let control_symbol = matches!((chars.next(), chars.next()), (Some(_), None));
-    if !control_symbol || name.chars().next().is_some_and(char::is_alphabetic) {
-        text.push(' ');
+    match (chars.next(), chars.next()) {
+        (Some(character), None) if state.catcode(character) != Catcode::Letter => {}
+        _ => text.push(' '),
     }
     text
 }

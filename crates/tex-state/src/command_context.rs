@@ -189,7 +189,7 @@ impl CommandContext<'_> {
 
     /// Reads one catcode through the aggregate code-table boundary.
     #[must_use]
-    pub fn catcode(&mut self, ch: char) -> Catcode {
+    pub fn catcode(&self, ch: char) -> Catcode {
         self.universe.catcode(ch)
     }
 

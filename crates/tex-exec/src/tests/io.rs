@@ -693,7 +693,6 @@ fn protected_macros_are_preserved_in_immediate_write_expansion() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-iijc canonical print_cs omits required single-character separator"]
 fn print_cs_spacing_is_shared_by_diagnostics_and_immediate_and_deferred_writes() {
     const DEFINITIONS: &str = r"\let\foo=\relax
           \let\@=\relax
