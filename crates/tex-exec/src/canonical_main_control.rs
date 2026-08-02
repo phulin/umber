@@ -1718,6 +1718,9 @@ impl CanonicalMainControl {
                 Ok(ReplayStep::Continue)
             }
             ScannedStep::Math(request) => self.apply_canonical_math_request(request, stores),
+            ScannedStep::DisplayAlignmentEquationNumber { token, side } => {
+                self.recover_display_alignment_equation_number(token, side, stores)
+            }
             ScannedStep::MathDelimiter(boundary) => {
                 self.apply_canonical_math_delimiter(boundary, stores)
             }
@@ -2176,18 +2179,32 @@ impl CanonicalMainControl {
                         .next_do_assignments_command()
                         .map_err(command_error)?
                     {
-                        Some(command) => dispatch_main_control_command(
-                            &mut processor,
-                            command,
-                            mode,
-                            &self.boxes,
-                            innermost_group,
-                            job_is_all_over,
-                            false,
-                            &mut self.shown_mode,
-                            &mut diagnostics,
-                            false,
-                        )?,
+                        Some(command) => match command.meaning() {
+                            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo) => {
+                                ScannedStep::DisplayAlignmentEquationNumber {
+                                    token: command.spelling(),
+                                    side: tex_command::EquationNumberSide::Right,
+                                }
+                            }
+                            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo) => {
+                                ScannedStep::DisplayAlignmentEquationNumber {
+                                    token: command.spelling(),
+                                    side: tex_command::EquationNumberSide::Left,
+                                }
+                            }
+                            _ => dispatch_main_control_command(
+                                &mut processor,
+                                command,
+                                mode,
+                                &self.boxes,
+                                innermost_group,
+                                job_is_all_over,
+                                false,
+                                &mut self.shown_mode,
+                                &mut diagnostics,
+                                false,
+                            )?,
+                        },
                         None => ScannedStep::EndOfInput,
                     }
                 }
@@ -2817,50 +2834,6 @@ impl CanonicalMainControl {
                 })
             }
             CanonicalMathRequest::EquationNumber(number) => {
-                if self.modes.current_mode() == Mode::DisplayMath
-                    && let Some((nodes, aux_prev_depth)) =
-                        self.modes.current_list_mutation().take_display_alignment()
-                {
-                    // TeX82 §§812 and 1206 require the next non-assignment
-                    // command after a display alignment to be `$$`. §1207's
-                    // recovery inserts that closer before retrying the
-                    // offending command, so `\eqno` must not consume the
-                    // finished rows as an ordinary display mlist.
-                    let context = self.command.output_open_context(&stores.command_context());
-                    crate::error_report::report_error(
-                        stores,
-                        "Missing $$ inserted",
-                        &[
-                            "Displays can use special alignments (like \\eqalignno)",
-                            "only if nothing but the alignment itself is between $$'s.",
-                        ],
-                        context,
-                    )?;
-                    self.finish_canonical_display_alignment(
-                        stores,
-                        crate::align::FinishedAlignment {
-                            nodes,
-                            aux_prev_depth,
-                            aux_space_factor: None,
-                        },
-                    )?;
-                    // The retry §1207 arranges lands in the paragraph the
-                    // display interrupted, where §1049 lists `eq_no` under
-                    // `non_math` and so answers with `report_illegal_case`.
-                    let primitive = match number.side {
-                        tex_command::EquationNumberSide::Left => "leqno",
-                        tex_command::EquationNumberSide::Right => "eqno",
-                    };
-                    let token = Token::Cs(stores.intern(primitive).symbol());
-                    let context = self.command.output_open_context(&stores.command_context());
-                    crate::diagnostics::report_illegal_case_with_context(
-                        stores,
-                        token,
-                        Mode::Horizontal,
-                        Some(context),
-                    )?;
-                    return Ok(ReplayStep::Continue);
-                }
                 if self.modes.current_mode() != Mode::DisplayMath {
                     // §1140's `mmode+eq_no` is guarded by `privileged`, and
                     // §1049 lists `eq_no` under `non_math`; both failures end
@@ -2905,6 +2878,51 @@ impl CanonicalMainControl {
             }
             CanonicalMathRequest::Family(_) => {}
         }
+        Ok(ReplayStep::Continue)
+    }
+
+    /// TeX82 §1207's missing-display-closer recovery for an equation number.
+    fn recover_display_alignment_equation_number(
+        &mut self,
+        token: tex_state::token::TracedTokenWord,
+        side: tex_command::EquationNumberSide,
+        stores: &mut Universe,
+    ) -> Result<ReplayStep, ExecError> {
+        let Some((nodes, aux_prev_depth)) =
+            self.modes.current_list_mutation().take_display_alignment()
+        else {
+            return self.apply_canonical_math_request(
+                CanonicalMathRequest::EquationNumber(tex_command::ScannedEquationNumber { side }),
+                stores,
+            );
+        };
+
+        // §1207 calls back_error before resume_after_display. The backup
+        // level must already be live when §82 renders context, and ordinary
+        // main control must retry the command in the resumed paragraph.
+        let context = {
+            let mut machine = self.command_machine();
+            let mut processor = machine.processor(stores);
+            processor.back_input_token(token).map_err(command_error)?;
+            processor.error_context()
+        };
+        crate::error_report::report_error(
+            stores,
+            "Missing $$ inserted",
+            &[
+                "Displays can use special alignments (like \\eqalignno)",
+                "only if nothing but the alignment itself is between $$'s.",
+            ],
+            context,
+        )?;
+        self.finish_canonical_display_alignment(
+            stores,
+            crate::align::FinishedAlignment {
+                nodes,
+                aux_prev_depth,
+                aux_space_factor: None,
+            },
+        )?;
         Ok(ReplayStep::Continue)
     }
 
@@ -4669,6 +4687,10 @@ enum ScannedStep {
     MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
+    DisplayAlignmentEquationNumber {
+        token: tex_state::token::TracedTokenWord,
+        side: tex_command::EquationNumberSide,
+    },
     MathDelimiter(MathDelimiterBoundary),
     MathFamily {
         family: tex_command::ScannedMathFamily,
@@ -10618,6 +10640,7 @@ fn applied_mutation_observation(
         // outright.
         ScannedStep::ReplayCompleted(..)
         | ScannedStep::Math(..)
+        | ScannedStep::DisplayAlignmentEquationNumber { .. }
         | ScannedStep::MathDelimiter(..)
         | ScannedStep::MathShift { .. }
         | ScannedStep::DiscretionaryOpening(..)
@@ -12126,9 +12149,10 @@ fn apply_scanned_step(
         }
         // These are intercepted by `CanonicalMainControl::step_once`, where
         // the owning opaque episode and mutable replay driver are available.
-        ScannedStep::ReplayCompleted(_) | ScannedStep::Math(_) | ScannedStep::MathDelimiter(_) => {
-            Ok(ReplayStep::Continue)
-        }
+        ScannedStep::ReplayCompleted(_)
+        | ScannedStep::Math(_)
+        | ScannedStep::DisplayAlignmentEquationNumber { .. }
+        | ScannedStep::MathDelimiter(_) => Ok(ReplayStep::Continue),
         ScannedStep::MathFamily {
             family,
             font,

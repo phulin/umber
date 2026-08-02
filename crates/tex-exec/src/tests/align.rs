@@ -2090,6 +2090,33 @@ fn display_halign_runs_assignments_before_missing_closer_recovery() {
 }
 
 #[test]
+fn display_halign_missing_closer_backs_up_eqno_before_retry() {
+    let stores =
+        super::core::run_canonical_tex82("\\nonstopmode\\noindent$$\\halign{#\\cr\\cr}\\eqno\\end");
+    let output = support::terminal_effect_text(&stores);
+    let missing = output
+        .find("! Missing $$ inserted.")
+        .expect("§1207 missing-closer diagnostic");
+    let replay = output[missing..]
+        .find("<to be read again>")
+        .map(|offset| missing + offset)
+        .expect("rejected equation-number token is backed up before error context");
+    let replayed_eqno = output[replay..]
+        .find("\\eqno")
+        .map(|offset| replay + offset)
+        .expect("backup context names the rejected equation-number token");
+    let retry = output[replayed_eqno..]
+        .find("You can't use `\\eqno' in horizontal mode")
+        .map(|offset| replayed_eqno + offset)
+        .expect("ordinary main control retries eqno after finishing the display");
+
+    assert!(
+        missing < replay && replay < replayed_eqno && replayed_eqno < retry,
+        "TeX82 §1207 requires back_error context before display finish and retry: {output}"
+    );
+}
+
+#[test]
 fn nested_alignment_executes_inside_cell() {
     let stores = run_boxed_alignment_source("\\halign{#\\cr \\vbox{\\halign{#\\cr x\\cr}}\\cr}");
     let vbox = box_zero_vlist(&stores);
