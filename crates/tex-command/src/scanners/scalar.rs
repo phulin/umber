@@ -1278,13 +1278,15 @@ impl CommandProcessor<'_> {
                     (Some(ch), None) => i32::try_from(u32::from(ch)).unwrap_or(0),
                     _ => {
                         self.back_input(command)?;
-                        return Ok((0, ScalarRecovery::None));
+                        self.improper_alphabetic_constant_error()?;
+                        return Ok((0, ScalarRecovery::InsertedZero));
                     }
                 }
             }
             _ => {
                 self.back_input(command)?;
-                return Ok((0, ScalarRecovery::None));
+                self.improper_alphabetic_constant_error()?;
+                return Ok((0, ScalarRecovery::InsertedZero));
             }
         };
         if value > i32::from(u8::MAX) && !self.command.profile().capabilities().supports_unicode() {

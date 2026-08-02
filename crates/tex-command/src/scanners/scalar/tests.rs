@@ -5435,7 +5435,19 @@ fn integer_character_constant_raw_token_and_optional_space_matrix() {
     );
     assert_eq!(
         (value, recovery, following),
-        (0, ScalarRecovery::None, Some(word))
+        (0, ScalarRecovery::InsertedZero, Some(word))
+    );
+    let text = diagnostic_text(&universe);
+    assert_eq!(text.matches("! Improper alphabetic constant.").count(), 1);
+    assert_eq!(
+        text.matches("A one-character control sequence belongs after a ` mark.")
+            .count(),
+        1
+    );
+    assert_eq!(
+        text.matches("So I'm essentially inserting \\0 here.")
+            .count(),
+        1
     );
 
     for (character, expected) in [('\0', 0), ('ÿ', 255)] {
