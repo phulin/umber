@@ -389,16 +389,23 @@ fn read_closes_partial_group_and_stops_at_outer_macro() {
 }
 
 #[test]
-#[ignore = "umber2-alfh.4.35.1: canonical ifeof misses the outer-aborted final read line"]
 fn read_loop_observes_eof_after_outer_aborted_final_line() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    // TeX82 §1275 supplies `.tex` before opening an extensionless name, so
+    // the typed resource is registered under the packed name the host sees.
     run_canonical_source(
         &mut stores,
-        br"\openin0=tripos \def\loop{\ifeof0\let\loop=\relax\else{\global\read0to\a}\fi\loop}\catcode`0=15\catcode`[=1\outer\def\uppercase{}\loop\count1=7",
-        &[("tripos", br"\uppercase{0[")],
+        br"\openin0=tripos \def\loop{\ifeof0\let\loop=\relax\else{\global\read0to\a}\fi\loop}\catcode`0=15\catcode`[=1\outer\def\uppercase{}\loop\count1=7\end",
+        &[("tripos.tex", br"\uppercase{0[")],
     )
         .expect("read loop reaches eof after final unterminated line");
 
+    assert!(
+        stores
+            .world()
+            .input_stream_eof(tex_state::StreamSlot::new(0)),
+        "the read past the unterminated final line closes stream 0"
+    );
     assert_eq!(stores.count(1), 7);
 }
 
