@@ -1220,10 +1220,10 @@ pub struct Universe {
 
 /// TeX82 §177's `print_spec(p,"pt")`, used by §252 `show_eqtb` when §283
 /// traces restoration of a named glue parameter.
-fn format_restore_glue(spec: GlueSpec) -> String {
-    fn component_unit(order: Order) -> &'static str {
+fn format_restore_glue(spec: GlueSpec, normal_unit: &'static str) -> String {
+    fn component_unit(order: Order, normal_unit: &'static str) -> &'static str {
         match order {
-            Order::Normal => "pt",
+            Order::Normal => normal_unit,
             Order::Fil => "fil",
             Order::Fill => "fill",
             Order::Filll => "filll",
@@ -1231,18 +1231,35 @@ fn format_restore_glue(spec: GlueSpec) -> String {
     }
 
     let mut text = crate::scaled::print_scaled(spec.width);
-    text.push_str("pt");
+    text.push_str(normal_unit);
     if spec.stretch.raw() != 0 {
         text.push_str(" plus ");
         text.push_str(&crate::scaled::print_scaled(spec.stretch));
-        text.push_str(component_unit(spec.stretch_order));
+        text.push_str(component_unit(spec.stretch_order, normal_unit));
     }
     if spec.shrink.raw() != 0 {
         text.push_str(" minus ");
         text.push_str(&crate::scaled::print_scaled(spec.shrink));
-        text.push_str(component_unit(spec.shrink_order));
+        text.push_str(component_unit(spec.shrink_order, normal_unit));
     }
     text
+}
+
+/// TeX82 §252's bounded token-list display used by §283 restore tracing.
+fn format_restore_tokens(universe: &Universe, stored: u64, escape_char: i32) -> String {
+    let mut value = String::new();
+    if let Some(raw) = stored.checked_sub(1) {
+        let tokens = universe.tokens(TokenListId::new(raw as u32));
+        let mut shown = 0;
+        while shown < tokens.len() && value.chars().count() < 32 {
+            crate::token_show::append_token_show_text(universe, tokens[shown], &mut value);
+            shown += 1;
+        }
+        if shown < tokens.len() {
+            value.push_str(&escaped_restore_name(escape_char, "ETC."));
+        }
+    }
+    value
 }
 
 /// tex.web's `line`, `pack_begin_line`, and the `mode_line` stack §804 reads
@@ -5830,6 +5847,27 @@ impl Universe {
                     ),
                     true,
                 ),
+                BankTag::Skip => {
+                    let id = GlueId::new(record.old() as u32);
+                    (
+                        format!("skip{}", cell.index()),
+                        format_restore_glue(self.glue(id), "pt"),
+                        true,
+                    )
+                }
+                BankTag::Muskip => {
+                    let id = GlueId::new(record.old() as u32);
+                    (
+                        format!("muskip{}", cell.index()),
+                        format_restore_glue(self.glue(id), "mu"),
+                        true,
+                    )
+                }
+                BankTag::Toks => (
+                    format!("toks{}", cell.index()),
+                    format_restore_tokens(self, record.old(), record.escape_char()),
+                    true,
+                ),
                 BankTag::IntParam if cell.index() < 128 => {
                     let Some(name) = IntParam::new(cell.index() as u16).canonical_name() else {
                         continue;
@@ -5860,26 +5898,17 @@ impl Universe {
                         continue;
                     };
                     let id = GlueId::new(record.old() as u32);
-                    (name.to_owned(), format_restore_glue(self.glue(id)), true)
+                    (
+                        name.to_owned(),
+                        format_restore_glue(self.glue(id), "pt"),
+                        true,
+                    )
                 }
                 BankTag::TokParam if cell.index() < 128 => {
                     let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {
                         continue;
                     };
-                    let mut value = String::new();
-                    if let Some(raw) = record.old().checked_sub(1) {
-                        let id = TokenListId::new(raw as u32);
-                        let tokens = self.tokens(id);
-                        let mut shown = 0;
-                        while shown < tokens.len() && value.chars().count() < 32 {
-                            let token = tokens[shown];
-                            crate::token_show::append_token_show_text(self, token, &mut value);
-                            shown += 1;
-                        }
-                        if shown < tokens.len() {
-                            value.push_str(&escaped_restore_name(record.escape_char(), "ETC."));
-                        }
-                    }
+                    let value = format_restore_tokens(self, record.old(), record.escape_char());
                     (name.to_owned(), value, true)
                 }
                 BankTag::CurrentFont => {

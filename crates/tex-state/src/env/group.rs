@@ -630,6 +630,7 @@ impl Env {
                 true
             }
         });
+        reorder_sparse_register_restores(&mut restores);
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
         let payloads = self.aftergroup.drain(aftergroup_start..).collect();
@@ -787,4 +788,35 @@ impl Env {
         self.afterassignment = snapshot.afterassignment;
         self.epoch.bump();
     }
+}
+
+/// e-TeX [49.1221--1224] represents all extended registers through one
+/// save-stack sparse-array boundary. TeX82 §283 therefore restores ordinary
+/// entries above that boundary first, then drains extended-register entries
+/// together in reverse assignment order.
+fn reorder_sparse_register_restores(restores: &mut Vec<RestoreRecord>) {
+    fn is_sparse_register(record: &RestoreRecord) -> bool {
+        matches!(
+            record.cell().bank(),
+            BankTag::Count | BankTag::Dimen | BankTag::Skip | BankTag::Muskip | BankTag::Toks
+        ) && record.cell().index() > 255
+    }
+
+    let Some(last_sparse) = restores.iter().rposition(is_sparse_register) else {
+        return;
+    };
+    let insertion = restores[..last_sparse]
+        .iter()
+        .filter(|record| !is_sparse_register(record))
+        .count();
+    let mut sparse = Vec::new();
+    restores.retain(|record| {
+        if is_sparse_register(record) {
+            sparse.push(record.clone());
+            false
+        } else {
+            true
+        }
+    });
+    restores.splice(insertion..insertion, sparse);
 }

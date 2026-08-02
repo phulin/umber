@@ -128,6 +128,62 @@ fn ignore_primitive_error_parameter_rolls_back_with_the_environment() {
 }
 
 #[test]
+fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
+    // TeX82 §§252/283 pop ordinary entries in LIFO order; e-TeX
+    // [49.1221--1224] drains extended registers at their shared sparse-array
+    // save-stack boundary.
+    let mut universe = Universe::new();
+    universe.set_int_param(IntParam::TRACING_RESTORES, 1);
+    universe.set_int_param(IntParam::TRACING_ONLINE, 1);
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'\\'));
+    let glue = universe.intern_glue(GlueSpec {
+        width: Scaled::from_raw(5 * Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let toks = universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: Catcode::Other,
+    }]);
+
+    universe.enter_group();
+    universe.set_count(20, 5);
+    universe.set_count(2000, 5);
+    universe.set_dimen(21, Scaled::from_raw(5 * Scaled::UNITY));
+    universe.set_dimen(2100, Scaled::from_raw(5 * Scaled::UNITY));
+    universe.set_skip(22, glue);
+    universe.set_muskip(2200, glue);
+    universe.set_toks(32767, toks);
+    let _ = universe.leave_group();
+
+    let output: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let skip_pos = output.find("{restoring \\skip22=0.0pt}").unwrap();
+    let dimen21_pos = output.find("{restoring \\dimen21=0.0pt}").unwrap();
+    let toks_pos = output
+        .find("{restoring \\toks32767=}")
+        .unwrap_or_else(|| panic!("missing toks restore in {output:?}"));
+    let muskip_pos = output.find("{restoring \\muskip2200=0.0mu}").unwrap();
+    let dimen_pos = output.find("{restoring \\dimen2100=0.0pt}").unwrap();
+    let count2000_pos = output.find("{restoring \\count2000=0}").unwrap();
+    let count20_pos = output.find("{restoring \\count20=0}").unwrap();
+    assert!(
+        skip_pos < dimen21_pos
+            && dimen21_pos < toks_pos
+            && toks_pos < muskip_pos
+            && muskip_pos < dimen_pos
+            && dimen_pos < count2000_pos
+            && count2000_pos < count20_pos
+    );
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's
