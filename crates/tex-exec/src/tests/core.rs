@@ -3917,15 +3917,21 @@ fn paragraph_infinite_shrink_reports_once_per_paragraph_and_normalizes_glue() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-qd5j canonical arithmetic does not update writable page scalars"]
-fn writable_page_scalars_read_after_page_freeze() {
+fn page_scalars_read_after_page_freeze_and_reject_register_arithmetic() {
+    // TeX82 §1236 accepts only assign_int..assign_mu_glue as named
+    // arithmetic targets. Page scalars are readable internal quantities, but
+    // their direct writes instead belong to §1245/§1246, so the rejected
+    // \advance leaves the frozen live page value unchanged.
     let (stores, _) = run_canonical_tex82_current_list(
         "\\topskip=0pt \\setbox0=\\hbox{}\\copy0 \
          \\pagegoal=12pt \\advance\\pagegoal by 3pt \
          \\insertpenalties=4 \\edef\\snapshot{\\the\\pagegoal/\\the\\insertpenalties}",
     );
 
-    assert_eq!(macro_text(&stores, "snapshot"), "15.0pt/4");
+    assert_eq!(macro_text(&stores, "snapshot"), "12.0pt/4");
+    assert!(
+        terminal_effect_text(&stores).contains("! You can't use `\\pagegoal' after \\advance.")
+    );
 }
 
 #[test]

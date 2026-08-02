@@ -8232,6 +8232,53 @@ fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
 }
 
 #[test]
+fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
+    // TeX82 §1236 rejects set_page_dimen as an arithmetic target before
+    // scanning an operand. Restoring the command checkpoint must restore both
+    // the live frozen page values and the rejected target for an identical
+    // retry through §1269's recovery path.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode \topskip=0pt \setbox0=\hbox{}\copy0
+           \pagegoal=12pt \insertpenalties=4
+           \advance\pagegoal by 3pt \edef\snapshot{\the\pagegoal/\the\insertpenalties}",
+    );
+    while stores.page_dimension(PageDimension::Goal).raw() != 12 * Scaled::UNITY
+        || stores.page_integer(PageInteger::InsertPenalties) != 4
+    {
+        assert_eq!(
+            control.step(&mut stores).expect("setup executes"),
+            MainControlStep::Continue
+        );
+    }
+    let checkpoint = control
+        .capture_checkpoint(
+            crate::EngineBoundary::OuterParagraphEnd,
+            &mut stores,
+            crate::ExecutionBudgetCounters::default(),
+        )
+        .expect("frozen page checkpoint captures");
+
+    run_to_end(&mut control, &mut stores);
+    let first_hash = stores.testing_state_hash();
+    let first_output = terminal_text(&stores);
+    assert_eq!(
+        stores.page_dimension(PageDimension::Goal).raw(),
+        12 * Scaled::UNITY
+    );
+    assert!(first_output.contains("You can't use `\\pagegoal' after \\advance"));
+
+    control
+        .restore_checkpoint(&checkpoint, &mut stores)
+        .expect("frozen page checkpoint restores");
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(stores.testing_state_hash(), first_hash);
+    assert_eq!(terminal_text(&stores), first_output);
+}
+
+#[test]
 fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
     // TeX82 §§63/298/1236: both commands in the diagnostic are printed via
     // `print_cmd_chr`/`print_esc`, so neither spelling hardcodes a backslash.
