@@ -1295,6 +1295,35 @@ fn commit_flushes_prefix_once_and_drops_history() {
 }
 
 #[test]
+fn checkpoint_root_survives_effect_commit_drop_and_rollback() {
+    let mut universe = Universe::new();
+    universe
+        .world_mut()
+        .record_special("checkpoint", b"before".to_vec());
+    let snapshot = universe.snapshot();
+    let committed = universe.world().effect_pos();
+
+    universe
+        .commit_effects(committed)
+        .expect("effect prefix commits");
+    assert!(universe.world().effect_records().is_empty());
+    assert!(universe.can_rollback_to(&snapshot));
+
+    universe.rollback(&snapshot);
+    assert_eq!(universe.world().effect_pos(), committed);
+    assert!(matches!(
+        universe.world().effect_records(),
+        [EffectRecord::Special { class, payload }]
+            if class == "checkpoint" && payload == b"before"
+    ));
+
+    universe
+        .commit_effects(committed)
+        .expect("restored prefix remains commit-capable");
+    assert!(universe.world().effect_records().is_empty());
+}
+
+#[test]
 fn retained_session_exports_once_in_order() {
     let mut universe = Universe::new();
     let slot = StreamSlot::new(2);

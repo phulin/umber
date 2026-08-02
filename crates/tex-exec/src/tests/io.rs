@@ -1101,7 +1101,6 @@ fn shipout_artifact_captures_page_offsets() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.42 canonical rejected shipout commits snapshot output"]
 fn huge_shipout_is_diagnosed_without_committing_an_artifact() {
     let mut stores = support::stores_with_fonts();
     let before = stores.snapshot();

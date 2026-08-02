@@ -1591,6 +1591,15 @@ impl std::error::Error for WorldError {}
 /// Snapshot-owned `World` state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorldSnapshot {
+    /// Persistent root for the exact virtual-effect prefix at capture time.
+    ///
+    /// Eager publication may advance `World::effect_base` and drop its live
+    /// prefix, but a durable Universe checkpoint must still be able to
+    /// restore that virtual timeline for deterministic replay.  The Arc is
+    /// the ownership contract: publication detaches through COW while any
+    /// checkpoint retains the old root.
+    effect_base: EffectPos,
+    effects: Arc<Vec<EffectRecord>>,
     effect_pos: EffectPos,
     stream_bufs: Arc<StreamBufState>,
     rng: RngState,
@@ -3539,11 +3548,6 @@ impl World {
     }
 
     #[must_use]
-    pub(crate) fn effect_pos_is_retained(&self, effect_pos: EffectPos) -> bool {
-        self.effect_base <= effect_pos && effect_pos <= self.effect_pos()
-    }
-
-    #[must_use]
     pub(crate) fn effect_records_since(&self, cursor: &WorldStateHashCursor) -> &[EffectRecord] {
         assert!(
             cursor.effect_pos >= self.effect_base,
@@ -3637,6 +3641,8 @@ impl World {
     #[must_use]
     pub(crate) fn snapshot(&self) -> WorldSnapshot {
         WorldSnapshot {
+            effect_base: self.effect_base,
+            effects: Arc::clone(&self.effects),
             effect_pos: self.effect_pos(),
             stream_bufs: self.stream_bufs.clone(),
             rng: self.rng,
@@ -3658,7 +3664,8 @@ impl World {
 
     pub(crate) fn assert_snapshot_retained(&self, snapshot: &WorldSnapshot) {
         assert!(
-            self.effect_pos_is_retained(snapshot.effect_pos)
+            snapshot.effect_pos
+                == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
                 && (self.artifact_base..=self.artifact_pos())
                     .contains(&snapshot.artifact_commit_len),
             "World snapshot output position has already been committed and dropped"
@@ -3667,7 +3674,7 @@ impl World {
 
     #[must_use]
     pub(crate) fn snapshot_is_retained(&self, snapshot: &WorldSnapshot) -> bool {
-        self.effect_pos_is_retained(snapshot.effect_pos)
+        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
             && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
     }
 
@@ -3676,8 +3683,8 @@ impl World {
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
-        Arc::make_mut(&mut self.effects)
-            .truncate((snapshot.effect_pos.raw() - self.effect_base.raw()) as usize);
+        self.effect_base = snapshot.effect_base;
+        self.effects = Arc::clone(&snapshot.effects);
         self.stream_bufs = snapshot.stream_bufs.clone();
         self.rng = snapshot.rng;
         self.pdf_rng = snapshot.pdf_rng.clone();
