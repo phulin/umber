@@ -1,5 +1,7 @@
 use super::support::*;
 use super::*;
+use tex_command::CommandProfile;
+use tex_state::InputOpenState;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::scaled::Scaled;
 
@@ -673,38 +675,101 @@ fn letterspaced_shipout_flattens_virtual_packets_onto_the_source_font() {
     assert!(!dvi.windows(b"+100ls".len()).any(|bytes| bytes == b"+100ls"));
 }
 
+fn canonical_font_control(stores: &mut Universe, profile: CommandProfile) -> CanonicalMainControl {
+    match profile {
+        CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(stores),
+        CommandProfile::ETEX26 => {
+            let control = CanonicalMainControl::prepared_initex(profile);
+            tex_expand::install_expandable_primitives(stores);
+            crate::install_unexpandable_primitives(stores);
+            tex_expand::install_etex_expandable_primitives(stores);
+            crate::install_etex_unexpandable_primitives(stores);
+            control
+        }
+        _ => panic!("font test helper supports TeX82 and e-TeX only"),
+    }
+}
+
+fn register_canonical_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
+    control
+        .register_root_source(tex_command::SourceRegistration::new(
+            tex_command::RegisteredSourceKind::Generated,
+            bytes.to_vec(),
+        ))
+        .expect("register canonical font-test source");
+}
+
+fn register_canonical_font(
+    control: &mut CanonicalMainControl,
+    stores: &mut Universe,
+    capability_name: &str,
+    world_path: &str,
+) {
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut stores.input_open_context(),
+        std::path::Path::new(world_path),
+    )
+    .expect("font-test fixture reads through the world");
+    control.capabilities_mut().register_font(
+        capability_name,
+        tex_command::FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+}
+
+fn run_canonical_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
+    loop {
+        match control
+            .step(stores)
+            .expect("canonical font program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+}
+
 #[test]
 fn font_definition_loads_tfm_via_world_and_reuses_identity() {
     let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new("\\font\\a=cmr10 \\font\\b=cmr10 \\end"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font definitions execute");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_source(&mut control, br"\font\a=cmr10 \font\b=cmr10 \end");
+    let state_before_request = stores.testing_state_hash();
+    let request = match control.advance(&mut stores).expect("font request suspends") {
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { request }) => request,
+        other => panic!("expected font suspension, got {other:?}"),
+    };
+    assert_eq!(request.name, "cmr10");
+    assert_eq!(stores.testing_state_hash(), state_before_request);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    assert_eq!(
+        control
+            .advance(&mut stores)
+            .expect("fulfilled font request retries atomically"),
+        CanonicalStepResult::Progress(MainControlStep::Continue)
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let a = font_meaning(&stores, "a");
     let b = font_meaning(&stores, "b");
     assert_eq!(a, b);
     assert_eq!(stores.font_name(a), "cmr10");
-    assert_eq!(stores.world().input_records().len(), 2);
+    assert_eq!(stores.world().input_records().len(), 1);
 }
 
 #[test]
 fn etex_font_character_enquiries_share_loaded_metrics() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut control = canonical_font_control(&mut stores, CommandProfile::ETEX26);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(&mut control,
         "\\font\\f=cmr10 \
          \\message{\\iffontchar\\f65Y\\else N\\fi/\\iffontchar\\f255Y\\else N\\fi}\
          \\message{\\the\\fontcharwd\\f65/\\the\\fontcharht\\f65/\\the\\fontchardp\\f65/\\the\\fontcharic\\f65/\\the\\fontcharwd\\f255}\
-         \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font character enquiries");
+         \\end".as_bytes());
+    run_canonical_to_end(&mut control, &mut stores);
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("Y/N"), "{output:?}");
@@ -715,14 +780,10 @@ fn etex_font_character_enquiries_share_loaded_metrics() {
 #[test]
 fn font_file_name_backs_up_the_first_non_character_token() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\a=cmr10\\relax\\message{loaded}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font name terminator should be redispatched");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(&mut control, br"\font\a=cmr10\relax\message{loaded}\end");
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(stores.font_name(font_meaning(&stores, "a")), "cmr10");
     assert!(terminal_effect_text(&stores).contains("loaded"));
@@ -731,12 +792,10 @@ fn font_file_name_backs_up_the_first_non_character_token() {
 #[test]
 fn illegal_font_magnification_reports_and_uses_design_size() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\font\\a=cmr10 scaled 32769 \\end"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("illegal font scale is recoverable");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(&mut control, br"\font\a=cmr10 scaled 32769 \end");
+    run_canonical_to_end(&mut control, &mut stores);
 
     let font = font_meaning(&stores, "a");
     assert_eq!(stores.font(font).size(), stores.font(font).design_size());
@@ -756,13 +815,10 @@ fn font_definition_uses_driver_font_resolution_and_records_resolved_path() {
         .set_memory_file("/fonts/cmr10.tfm", CMR10.to_vec())
         .expect("seed redirected font");
     let snapshot = stores.snapshot();
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\end"));
-    let mut resolvers = MemoryResolvers::new().with_font_root("/fonts");
-    let mut context = resolvers.context();
-
-    Executor::new()
-        .run_with_context(&mut input, &mut stores, &mut context)
-        .expect("font definition resolves through driver hook");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "/fonts/cmr10.tfm");
+    register_canonical_source(&mut control, br"\font\f=cmr10 \end");
+    run_canonical_to_end(&mut control, &mut stores);
 
     let font = font_meaning(&stores, "f");
     assert_eq!(
@@ -790,15 +846,13 @@ fn malformed_tfm_uses_not_loadable_recovery() {
         .world_mut()
         .set_memory_file("/fonts/broken.tfm", vec![0, 1, 2])
         .expect("seed malformed font");
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\broken=broken \\message{continued}\\end",
-    ));
-    let mut resolvers = MemoryResolvers::new().with_font_root("/fonts");
-    let mut context = resolvers.context();
-
-    Executor::new()
-        .run_with_context(&mut input, &mut stores, &mut context)
-        .expect("malformed TFM is recoverable");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "broken.tfm", "/fonts/broken.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\broken=broken \message{continued}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(font_meaning(&stores, "broken"), tex_state::font::NULL_FONT);
     let output = terminal_effect_text(&stores);
@@ -839,13 +893,13 @@ fn font_capacity_reports_not_loaded_and_rolls_back() {
         }
     }
     let survivor_name = stores.font(survivor).name().to_owned();
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\overflow=cmr10 \\message{continued}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font capacity error is recoverable");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\overflow=cmr10 \message{continued}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(
         font_meaning(&stores, "overflow"),
@@ -860,16 +914,16 @@ fn font_capacity_reports_not_loaded_and_rolls_back() {
 #[test]
 fn font_properties_are_inherently_global() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
         "\\font\\f=cmr10 \\relax \\fontdimen2\\f=10pt \
          {\\fontdimen2\\f=20pt \\hyphenchar\\f=128 \\skewchar\\f=129} \
-         \\message{fd=\\the\\fontdimen2\\f,hc=\\the\\hyphenchar\\f,sc=\\the\\skewchar\\f}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("fontdimen assignments execute");
+         \\message{fd=\\the\\fontdimen2\\f,hc=\\the\\hyphenchar\\f,sc=\\the\\skewchar\\f}\\end"
+            .as_bytes(),
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("fd=20.0pt,hc=128,sc=129"), "{output:?}");

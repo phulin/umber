@@ -107,11 +107,6 @@ impl MemoryResolvers {
         }
     }
 
-    pub(crate) fn with_font_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.font.root = Some(root.into());
-        self
-    }
-
     pub(crate) fn context(&mut self) -> crate::ExecutionContext<'_> {
         crate::ExecutionContext::with_resolvers("texput", &mut self.input, &mut self.font)
     }
