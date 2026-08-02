@@ -68,10 +68,11 @@ pub(crate) fn select_pending_page_output(
 pub(crate) fn resume_page_builder_after_output(
     stores: &mut Universe,
     output_nodes: Vec<Node>,
+    error_context: String,
 ) -> Result<(), ExecError> {
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores)?;
+        report_box255_not_emptied(stores, error_context)?;
     }
     stores.clear_page_discards();
     prepend_output_heldover(stores, output_nodes);
@@ -544,7 +545,8 @@ fn run_output_routine_inner(
     stores.set_output_routine_active(false);
     if stores.box_reg(255).is_some() {
         stores.clear_box_reg_same_level(255);
-        report_box255_not_emptied(stores)?;
+        let context = crate::diagnostics::show_context(stores, stores.input_summary());
+        report_box255_not_emptied(stores, context)?;
     }
     prepend_output_heldover(stores, output_level.list().nodes().to_vec());
     Ok(())
@@ -591,8 +593,7 @@ fn report_box255_not_void(stores: &mut Universe) -> Result<(), ExecError> {
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
-fn report_box255_not_emptied(stores: &mut Universe) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+fn report_box255_not_emptied(stores: &mut Universe, context: String) -> Result<(), ExecError> {
     let mut report = stores.print_err("Output routine didn't use all of ");
     report
         .print_esc("box")

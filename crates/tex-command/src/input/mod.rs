@@ -64,8 +64,35 @@ impl InputState {
         stores: &tex_state::CommandContext<'_>,
         parameters: &crate::macro_call::ParameterState,
     ) -> String {
+        self.render_context_for_levels(&self.levels, stores, parameters)
+    }
+
+    pub(crate) fn output_close_context(
+        &self,
+        stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
+    ) -> String {
+        let output_index = self.levels.iter().position(|level| {
+            matches!(
+                level,
+                InputLevel::Tokens(TokenCursor {
+                    trace: ReplayTrace::Stored(StoredReplayReason::OutputRoutine),
+                    ..
+                })
+            )
+        });
+        let levels = output_index.map_or(self.levels.as_slice(), |index| &self.levels[..index]);
+        self.render_context_for_levels(levels, stores, parameters)
+    }
+
+    fn render_context_for_levels(
+        &self,
+        levels: &[InputLevel],
+        stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
+    ) -> String {
         tex_state::print::render_error_context(
-            &self.error_context_levels(stores, parameters),
+            &self.error_context_levels_for(levels, stores, parameters),
             stores.error_context_widths(),
             stores.int_param(tex_state::env::banks::IntParam::new(54)),
         )
@@ -77,14 +104,15 @@ impl InputState {
     /// level that is either a real file (`name>19` in e-TeX) or the bottom of
     /// the stack -- so a scantokens pseudo-file (`name=18` or `19`) keeps
     /// traversing while nothing below an `\input`ed file is projected.
-    fn error_context_levels(
+    fn error_context_levels_for(
         &self,
+        input_levels: &[InputLevel],
         stores: &tex_state::CommandContext<'_>,
         parameters: &crate::macro_call::ParameterState,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
-        for (index, level) in self.levels.iter().enumerate().rev() {
-            let current = levels.is_empty() && index + 1 == self.levels.len();
+        for (index, level) in input_levels.iter().enumerate().rev() {
+            let current = levels.is_empty() && index + 1 == input_levels.len();
             match level {
                 InputLevel::Source(source) => {
                     let bottom = index == 0

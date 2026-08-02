@@ -13188,7 +13188,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOutputRoutine => {
-            let context = command.state.output_open_context(&stores.command_context());
+            let output_context = command.state.output_open_context(&stores.command_context());
             let unbalanced = {
                 let mut processor = command_processor(
                     command.state,
@@ -13210,9 +13210,15 @@ fn apply_scanned_step(
                         "Your sneaky output routine has problematic {'s and/or }'s.",
                         "I can't handle that very well; good luck.",
                     ],
-                    context,
+                    output_context,
                 )?;
             }
+            // TeX82 §1026 has now semantically ended the output token list.
+            // Section 1028's subsequent error therefore sees the source
+            // level below every retained depleted `<output>` replay.
+            let context = command
+                .state
+                .output_close_context(&stores.command_context());
             // TeX82 §1026 retires the output token list, then runs §1096's
             // `end_graf` before it unsaves the output group. A non-null
             // paragraph left open by \output must be line-broken into this
@@ -13232,6 +13238,7 @@ fn apply_scanned_step(
             crate::output::resume_page_builder_after_output(
                 stores,
                 output_level.list().nodes().to_vec(),
+                context,
             )?;
             Ok(ReplayStep::Continue)
         }

@@ -478,8 +478,12 @@ fn output_resume_recovers_unbalanced_tokens_and_nonvoid_box255() {
     stores.push_page_discard(Node::Penalty(9));
     let tokens = nonempty_tokens(&mut stores);
 
-    resume_page_builder_after_output(&mut stores, vec![Node::Mark { class: 12, tokens }])
-        .expect("white-box operation succeeds");
+    resume_page_builder_after_output(
+        &mut stores,
+        vec![Node::Mark { class: 12, tokens }],
+        "live output context\n".to_owned(),
+    )
+    .expect("white-box operation succeeds");
 
     assert!(stores.box_reg(255).is_none());
     assert!(stores.page_discards().is_empty());
@@ -489,4 +493,5 @@ fn output_resume_recovers_unbalanced_tokens_and_nonvoid_box255() {
         [Node::Mark { class: 12, .. }]
     ));
     assert!(effects(&stores).contains("Output routine didn't use all of"));
+    assert!(effects(&stores).contains("live output context"));
 }

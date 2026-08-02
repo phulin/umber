@@ -202,6 +202,17 @@ impl CommandState {
         self.input.output_open_context(stores, &self.parameters)
     }
 
+    /// TeX82 §§1026/1028's context after the selected output list ends.
+    ///
+    /// Canonical delivery can retain a depleted cursor until the next fetch
+    /// so its retirement remains observable at that boundary. The
+    /// synchronous post-output error nevertheless sees the levels below it,
+    /// exactly as it would after §1026's `end_token_list`.
+    #[must_use]
+    pub fn output_close_context(&self, stores: &tex_state::CommandContext<'_>) -> String {
+        self.input.output_close_context(stores, &self.parameters)
+    }
+
     /// Whether TeX82 §1370's artificial deferred-write input is live.
     pub(crate) fn expanding_deferred_write(&self) -> bool {
         self.input.levels.iter().any(|level| {

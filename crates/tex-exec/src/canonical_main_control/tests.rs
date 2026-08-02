@@ -283,6 +283,30 @@ fn tracingrestores_reports_dimension_register_restoration() {
 }
 
 #[test]
+fn output_routine_box255_error_reports_live_command_context() {
+    // TeX82 §§1026/1028 reach §82's error after retiring the output token
+    // list, while the command-owned source level beneath it remains live.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        b"\\maxdeadcycles=2\\output={\\relax}\\topskip=0pt\\setbox0=\\hbox{}\\copy0\\penalty-10000\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    let report = concat!(
+        "! Output routine didn't use all of \\box255.\n",
+        "<to be read again> \n",
+        "                   \\end \n",
+    );
+    assert_eq!(output.matches(report).count(), 2, "{output:?}");
+    assert!(!output.contains("<output>"), "{output:?}");
+}
+
+#[test]
 fn tracingrestores_reports_restored_box_register_value() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
