@@ -474,9 +474,8 @@ fn tracingrestores_reports_code_table_restoration_and_retained_globals() {
 #[test]
 fn tracingrestores_reports_current_font_selector_restoration() {
     // TeX82 §§252/283: `cur_font_loc` has the unescaped label `current font`,
-    // followed by the restored font's control-sequence identifier. Loading a
-    // format proves that the saved packed selector is resolved through the
-    // format-backed interner instead of being mistaken for a live symbol id.
+    // followed by the restored font's frozen identifier, not the selector
+    // token used to choose it. Loading a format also exercises frozen symbols.
     let mut initialized = Universe::new_with_plain_catcodes();
     let mut initex = CanonicalMainControl::tex82_initex(&mut initialized);
     register_cmr10_as(&mut initex, &mut initialized, "cmr10.tfm");
@@ -488,13 +487,35 @@ fn tracingrestores_reports_current_font_selector_restoration() {
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore font selector format");
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
-    register_source(&mut control, br"\tracingrestores=1\tracingonline=1{\g}\end");
+    register_source(
+        &mut control,
+        br"\let\alias=\g\tracingrestores=1\tracingonline=1{\alias}\end",
+    );
 
     run_to_end(&mut control, &mut stores);
 
     assert_eq!(
         pending_sink_text(&stores, true),
         "{restoring current font=\\f}\n"
+    );
+}
+
+#[test]
+fn tracingrestores_spells_active_character_names_without_an_escape() {
+    // TeX82 §§252/263: region-1 `show_eqtb` uses `sprint_cs`, under which
+    // an active-character control sequence prints as the bare character.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\catcode`\?=13 \tracingrestores=1\tracingonline=1{\def?{x}}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        pending_sink_text(&stores, true),
+        "{restoring ?=undefined}\n"
     );
 }
 

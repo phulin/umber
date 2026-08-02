@@ -5753,6 +5753,7 @@ impl Universe {
                     let Some(symbol) = self.stores.symbol_at_slot(cell.index()) else {
                         continue;
                     };
+                    let symbol = self.stores.resolve_stored_symbol(symbol);
                     let meaning = self
                         .stores
                         .resolve_stored_meaning(Meaning::decode_stored(record.old()));
@@ -5804,7 +5805,15 @@ impl Universe {
                         }
                         _ => continue,
                     };
-                    (self.stores.resolve(symbol).to_owned(), value, true)
+                    (
+                        sprint_restore_name(
+                            record.escape_char(),
+                            self.stores.control_sequence_kind(symbol),
+                            self.stores.resolve(symbol),
+                        ),
+                        value,
+                        false,
+                    )
                 }
                 BankTag::Count => (
                     format!("count{}", cell.index()),
@@ -5875,25 +5884,19 @@ impl Universe {
                 }
                 BankTag::CurrentFont => {
                     // TeX82 §252's `show_eqtb(cur_font_loc)` uses the literal
-                    // label `current font` (without `print_esc`) and prints
-                    // the selector stored beside the font id. Section 283
-                    // invokes that same renderer for restored and retained
-                    // save-stack entries.
-                    let raw_symbol = record.old() >> 32;
-                    let value = if raw_symbol == 0 {
-                        let font = self
-                            .stores
-                            .resolve_stored_font(FontId::new(record.old() as u32));
-                        let Some(symbol) = self.stores.font_identifier_symbol(font) else {
-                            continue;
-                        };
-                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol))
-                    } else {
-                        let symbol = self
-                            .stores
-                            .resolve_stored_symbol(Symbol::new((raw_symbol - 1) as u32));
-                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol))
+                    // label `current font` (without `print_esc`) and then
+                    // `font_id_text(equiv(n))`: the restored font's frozen
+                    // identifier, not the token that most recently selected
+                    // it. Section 283 invokes that same renderer for restored
+                    // and retained save-stack entries.
+                    let font = self
+                        .stores
+                        .resolve_stored_font(FontId::new(record.old() as u32));
+                    let Some(symbol) = self.stores.font_identifier_symbol(font) else {
+                        continue;
                     };
+                    let value =
+                        escaped_restore_name(record.escape_char(), self.stores.resolve(symbol));
                     ("current font".to_owned(), value, false)
                 }
                 BankTag::MathFamilyFont if cell.index() < 48 => {
@@ -7243,6 +7246,27 @@ fn escaped_restore_name(escape_char: i32, name: &str) -> String {
     }
     escaped.push_str(name);
     escaped
+}
+
+/// TeX82 §263's `sprint_cs` spelling under the saved `\escapechar` value.
+fn sprint_restore_name(
+    escape_char: i32,
+    kind: crate::interner::ControlSequenceKind,
+    name: &str,
+) -> String {
+    use crate::interner::ControlSequenceKind;
+
+    match kind {
+        ControlSequenceKind::ActiveCharacter => name.to_owned(),
+        ControlSequenceKind::Null => format!(
+            "{}{}",
+            escaped_restore_name(escape_char, "csname"),
+            escaped_restore_name(escape_char, "endcsname")
+        ),
+        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
+            escaped_restore_name(escape_char, name)
+        }
+    }
 }
 
 /// TeX82 §§252/262's bounded macro half of `show_eqtb`.
