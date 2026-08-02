@@ -64,8 +64,8 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
         &[
             Node::Rule {
                 width: None,
-                height: Some(sp(2)),
-                depth: Some(sp(1)),
+                height: None,
+                depth: None,
             },
             Node::Rule {
                 width: Some(sp(7)),
@@ -88,17 +88,22 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     assert!(matches!(
         horizontal.as_slice(),
         [
-            Node::Rule { width: Some(width), height: Some(_), depth: Some(_) },
-            Node::Rule { width: Some(fixed), height: Some(_), depth: Some(_) },
-        ] if *width == sp(11) && *fixed == sp(7)
+            Node::Rule { width: Some(width), height: Some(height), depth: Some(depth) },
+            Node::Rule { width: Some(fixed), height: Some(fixed_height), depth: Some(fixed_depth) },
+        ] if *width == sp(11)
+            && *height == sp(13)
+            && depth.raw() == 0
+            && *fixed == sp(7)
+            && *fixed_height == sp(3)
+            && *fixed_depth == sp(1)
     ));
 
     let vertical = set_alignment_nodes(
         AlignmentKind::VAlign,
         &[Node::Rule {
-            width: Some(sp(2)),
+            width: None,
             height: None,
-            depth: Some(sp(1)),
+            depth: None,
         }],
         &ResolvedWidths {
             columns: vec![sp(13)],
@@ -114,7 +119,11 @@ fn set_alignment_list_extends_running_rules_and_offsets_display_rules() {
     .expect("running vertical rules resolve");
     assert!(matches!(
         vertical.as_slice(),
-        [Node::Rule { height: Some(height), .. }] if *height == sp(13)
+        [Node::Rule {
+            width: Some(width),
+            height: Some(height),
+            depth: Some(depth),
+        }] if *width == sp(11) && *height == sp(13) && depth.raw() == 0
     ));
 
     // TeX82 §806's second half: a nonzero §800 `o` wraps the rule in an

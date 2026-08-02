@@ -76,17 +76,13 @@ fn set_running_rule(config: SetConfig<'_>, node: &Node, stores: &mut Universe) -
     else {
         return node.clone();
     };
-    let rule = match config.kind {
-        AlignmentKind::HAlign => Node::Rule {
-            width: Some(width.unwrap_or(prototype.width)),
-            height: *height,
-            depth: *depth,
-        },
-        AlignmentKind::VAlign => Node::Rule {
-            width: *width,
-            height: Some(height.unwrap_or(prototype.height)),
-            depth: *depth,
-        },
+    // TeX82 §808 applies all three tests independently; alignment direction
+    // affects how the prototype was packed, not which running dimensions are
+    // resolved from it.
+    let rule = Node::Rule {
+        width: Some(width.unwrap_or(prototype.width)),
+        height: Some(height.unwrap_or(prototype.height)),
+        depth: Some(depth.unwrap_or(prototype.depth)),
     };
     if config.offset.raw() == 0 {
         return rule;
