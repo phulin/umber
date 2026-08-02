@@ -4254,7 +4254,10 @@ enum ScannedStep {
     /// apply time, mirroring `DeleteLast` above.
     SetInteractionMode(UnexpandablePrimitive),
     /// e-TeX 2.6 etex.ch §3736's assignable `\interactionmode` primitive.
-    SetInteractionModeValue(i32),
+    SetInteractionModeValue {
+        value: i32,
+        context: String,
+    },
     /// TeX82 §1112's `hmode+ital_corr: append_italic_correction` (the
     /// procedure itself is §1113) or its math-mode twin (§1112's
     /// `mmode+ital_corr: tail_append(new_kern(0))`); which applies is
@@ -6326,7 +6329,10 @@ fn scan_command(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::InteractionMode) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
-            Ok(ScannedStep::SetInteractionModeValue(value))
+            Ok(ScannedStep::SetInteractionModeValue {
+                value,
+                context: processor.error_context(),
+            })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SpaceFactor) => {
             if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) {
@@ -9707,7 +9713,7 @@ fn applied_mutation_observation(
         | ScannedStep::FontInteger { .. }
         | ScannedStep::HyphenationData { .. }
         | ScannedStep::SetInteractionMode(..)
-        | ScannedStep::SetInteractionModeValue(..) => return None,
+        | ScannedStep::SetInteractionModeValue { .. } => return None,
         // -- TeX82 §1257's `new_font` observes only the provisional
         // `define(u,set_font,null_font)`: its common ending writes the loaded
         // font number directly with `equiv(u):=f`. e-TeX change [49.1257]
@@ -11423,14 +11429,16 @@ fn apply_scanned_step(
             stores.set_interaction_mode(mode);
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::SetInteractionModeValue(value) => {
+        ScannedStep::SetInteractionModeValue { value, context } => {
             let mode = match value {
                 0 => tex_state::InteractionMode::Batch,
                 1 => tex_state::InteractionMode::Nonstop,
                 2 => tex_state::InteractionMode::Scroll,
                 3 => tex_state::InteractionMode::ErrorStop,
                 value => {
-                    crate::diagnostics::report_bad_interaction_mode(stores, value)?;
+                    crate::diagnostics::report_bad_interaction_mode_with_context(
+                        stores, value, context,
+                    )?;
                     return Ok(ReplayStep::Continue);
                 }
             };

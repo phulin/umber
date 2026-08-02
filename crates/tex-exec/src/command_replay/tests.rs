@@ -11823,6 +11823,29 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
 }
 
 #[test]
+fn canonical_bad_interaction_mode_reports_the_live_scan_context() {
+    let mut universe = Universe::new_with_plain_catcodes();
+    tex_expand::install_expandable_primitives(&mut universe);
+    tex_expand::install_etex_expandable_primitives(&mut universe);
+    crate::install_unexpandable_primitives(&mut universe);
+    crate::install_etex_unexpandable_primitives(&mut universe);
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
+    register_source(&mut control, br"\interactionmode=-1 \end");
+
+    run_to_end(&mut control, &mut universe);
+
+    let terminal = terminal_only_text(&universe);
+    let headline = terminal
+        .find("! Bad interaction mode (-1).\n")
+        .expect("bad-mode headline");
+    let context = terminal
+        .find(r"l.1 \interactionmode=-1 ")
+        .expect("live source context");
+    assert!(headline < context, "{terminal:?}");
+}
+
+#[test]
 fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
     // e-TeX 2.6 etex.ch [45.999] saves discarded vertical nodes, while
     // TeX82 §1335 releases the page builder's transient `last_glue` before

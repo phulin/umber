@@ -38,6 +38,16 @@ pub(crate) fn report_bad_interaction_mode(
     value: i32,
 ) -> Result<(), ExecError> {
     let context = show_context(stores, stores.input_summary());
+    report_bad_interaction_mode_with_context(stores, value, context)
+}
+
+/// Canonical-command variant of [`report_bad_interaction_mode`], carrying
+/// the command processor's live input context across the scan/apply boundary.
+pub(crate) fn report_bad_interaction_mode_with_context(
+    stores: &mut Universe,
+    value: i32,
+    context: String,
+) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         &format!("Bad interaction mode ({value})"),
