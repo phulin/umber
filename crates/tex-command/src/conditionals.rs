@@ -527,6 +527,7 @@ impl CommandProcessor<'_> {
             .cloned()
             .ok_or(CommandError::input_invariant())?;
         let branch = if result { "true" } else { "false" };
+        self.trace_boolean_result(branch);
         self.observe_condition("branch", &evaluating, Some(branch.into()));
         if !result {
             return self.resume_after_skip(condition);
@@ -544,6 +545,27 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         self.observe_condition("limit", &frame, None);
         Ok(())
+    }
+
+    /// TeX82 §502's diagnostic immediately after a boolean predicate has
+    /// been evaluated and before its selected or skipped limb is entered.
+    fn trace_boolean_result(&mut self, result: &'static str) {
+        if self.state.int_param(IntParam::TRACING_COMMANDS) <= 1 {
+            return;
+        }
+        let text = format!("{{{result}}}");
+        if self.command.expanding_deferred_write() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+            return;
+        }
+        let mut diagnostic = self.state.begin_diagnostic();
+        diagnostic.print_nl(&text);
+        diagnostic.end(false);
     }
 
     fn complete_ifcase(

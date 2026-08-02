@@ -907,6 +907,130 @@ fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
     );
 }
 
+fn diagnostic_text(universe: &Universe) -> String {
+    universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn tracingcommands_two_reports_true_and_false_boolean_results() {
+    // TeX82 §502 prints the predicate value after evaluation and before
+    // entering the selected limb. Both outcomes use the shared §245
+    // diagnostic channel.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+    let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_true,
+            other('t'),
+            otherwise,
+            other('x'),
+            fi,
+            if_false,
+            other('x'),
+            otherwise,
+            other('f'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 't');
+    assert_eq!(next_character(&mut processor), 'f');
+    assert!(processor.get_x_token().expect("input exhausts").is_none());
+    drop(processor);
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains("{\\iftrue}\n{true}"),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains("{\\iffalse}\n{false}"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn tracingcommands_one_or_less_omits_boolean_results() {
+    // TeX82 §502 uses the strict `tracing_commands>1` threshold.
+    for level in [0, 1] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe();
+        universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, level);
+        let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+        let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+        push(&mut command, vec![if_true, other('t'), fi]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(next_character(&mut processor), 't');
+        assert!(processor.get_x_token().expect("input exhausts").is_none());
+        drop(processor);
+
+        let diagnostics = diagnostic_text(&universe);
+        assert!(
+            !diagnostics.contains("{true}"),
+            "level={level}: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.contains("{false}"),
+            "level={level}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn boolean_result_trace_uses_tracingonline_diagnostic_routing() {
+    // TeX82 §§245/502: the result uses `begin_diagnostic`, so nonpositive
+    // `\tracingonline` redirects it to the log and a positive value retains
+    // the terminal-and-log selector.
+    for (tracing_online, expected_sink) in [
+        (0, tex_state::PrintSink::Log),
+        (1, tex_state::PrintSink::TerminalAndLog),
+    ] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe();
+        universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+        universe.set_int_param(
+            tex_state::env::banks::IntParam::TRACING_ONLINE,
+            tracing_online,
+        );
+        let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+        push(&mut command, vec![if_true, other('t')]);
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        assert_eq!(next_character(&mut processor), 't');
+        drop(processor);
+
+        assert!(universe.world().effect_records().iter().any(|effect| {
+            matches!(
+                effect,
+                tex_state::EffectRecord::StreamWrite { sink, text }
+                    if *sink == expected_sink && text.contains("{true}")
+            )
+        }));
+    }
+}
+
 #[test]
 fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
     let mut command = CommandState::default();
