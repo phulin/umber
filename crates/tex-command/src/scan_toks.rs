@@ -237,8 +237,23 @@ impl CommandProcessor<'_> {
                     (expanded, Vec::new(), None, None, primary, false)
                 }
                 ScanToksMode::GeneralAfterOpening { expanded, primary } => {
+                    // The opening command was already classified through
+                    // `get_x_token` by §1227 and backed up solely so the
+                    // absorbing scanner status precedes its replay. Preserve
+                    // that semantic classification here: a `\let` alias for
+                    // `{` is spelled as a control sequence, but it is still
+                    // the one opening command this mode is required to
+                    // consume. Requiring a literal begin-group spelling
+                    // would mistake the following body token for a second
+                    // opening delimiter after the alias replay.
                     let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
-                    if !is_begin_group(opening.spelling().semantic_token()) {
+                    if !matches!(
+                        opening.meaning(),
+                        Meaning::CharToken {
+                            cat: Catcode::BeginGroup,
+                            ..
+                        }
+                    ) {
                         return Err(CommandError::input_invariant());
                     }
                     self.observe_expanded_delivery(&opening);

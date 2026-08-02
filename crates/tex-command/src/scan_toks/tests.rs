@@ -109,6 +109,68 @@ fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
 }
 
 #[test]
+fn general_after_opening_replays_a_begin_group_alias_by_meaning() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let open = universe.intern("open").symbol();
+    universe.set_meaning(
+        open,
+        Meaning::CharToken {
+            ch: '{',
+            cat: Catcode::BeginGroup,
+        },
+    );
+    push(
+        &mut command,
+        vec![
+            Token::Cs(open),
+            Token::Char {
+                ch: 'a',
+                cat: Catcode::Letter,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let opening = processor
+        .get_x_token()
+        .expect("expanded delivery succeeds")
+        .expect("opening alias is present");
+    assert!(matches!(
+        opening.meaning(),
+        Meaning::CharToken {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ));
+    let primary = opening.origin();
+    processor
+        .back_input(opening)
+        .expect("opening alias is backed up for absorbing replay");
+
+    let scanned = processor
+        .scan_toks(ScanToksMode::GeneralAfterOpening {
+            expanded: false,
+            primary,
+        })
+        .expect("the backed-up semantic begin-group starts collection");
+    assert_eq!(
+        processor
+            .state
+            .tokens(scanned.replacement_text.token_list()),
+        &[Token::Char {
+            ch: 'a',
+            cat: Catcode::Letter,
+        }]
+    );
+}
+
+#[test]
 fn eof_recovery_restores_defining_status_before_macro_replacement_completes() {
     let mut command = CommandState::default();
     let source = command

@@ -337,7 +337,6 @@ fn token_register_assignments_scan_balanced_text_and_copy_variables() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.26 canonical scan_toks left-brace recovery"]
 fn token_register_assignment_uses_tex_scan_left_brace_recovery() {
     let stores = super::core::run_canonical_tex82(concat!(
         "\\let\\open={ ",
