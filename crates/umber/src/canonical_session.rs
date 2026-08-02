@@ -545,7 +545,10 @@ impl<'a> CanonicalEngineSession<'a> {
                 .read_line(prompt)
                 .ok_or(CanonicalSessionError::StartupInputExhausted)?;
             let name = startup_file_name(&line);
-            let need = CanonicalResourceNeed::Input { name: name.clone() };
+            let need = CanonicalResourceNeed::Input {
+                name: name.clone(),
+                original_name: name.clone(),
+            };
             let outcome = {
                 let mut world = CanonicalResourceWorld::new(self.stores);
                 host.fulfill(&mut world, &need)
@@ -769,7 +772,9 @@ impl<'a> CanonicalEngineSession<'a> {
         let matches = match (&fulfillment, need) {
             (
                 CanonicalResourceFulfillment::Input { name, .. },
-                CanonicalResourceNeed::Input { name: expected },
+                CanonicalResourceNeed::Input {
+                    name: expected, ..
+                },
             ) => name == expected,
             (
                 CanonicalResourceFulfillment::InputProbe { name, .. },
@@ -814,7 +819,7 @@ impl<'a> CanonicalEngineSession<'a> {
 
     fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
         match need {
-            CanonicalResourceNeed::Input { name } => {
+            CanonicalResourceNeed::Input { name, .. } => {
                 let capabilities = self.control.capabilities_mut();
                 capabilities.mark_input_unavailable(name);
                 if !name.contains(['/', '\\', ':']) {
@@ -965,7 +970,7 @@ impl<'a> CanonicalEngineSession<'a> {
         need: &CanonicalResourceNeed,
     ) -> Option<CanonicalResourceFulfillment> {
         let name = match need {
-            CanonicalResourceNeed::Input { name }
+            CanonicalResourceNeed::Input { name, .. }
             | CanonicalResourceNeed::InputProbe { name } => name,
             CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
                 return None;
@@ -1180,7 +1185,7 @@ mod tests {
             need: &CanonicalResourceNeed,
         ) -> CanonicalResourceOutcome {
             match need {
-                CanonicalResourceNeed::Input { name } => world.read_file(name).ok().map_or(
+                CanonicalResourceNeed::Input { name, .. } => world.read_file(name).ok().map_or(
                     CanonicalResourceOutcome::Unavailable,
                     |content| {
                         CanonicalResourceOutcome::Fulfilled(
@@ -1376,7 +1381,7 @@ mod tests {
         ) -> CanonicalResourceOutcome {
             self.calls += 1;
             match need {
-                CanonicalResourceNeed::Input { name } if name == "child.tex" => {
+                CanonicalResourceNeed::Input { name, .. } if name == "child.tex" => {
                     CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
                         "child.tex",
                         RegisteredSourceKind::Generated,
@@ -1403,7 +1408,7 @@ mod tests {
             if self.calls <= self.unavailable {
                 return CanonicalResourceOutcome::Unavailable;
             }
-            let CanonicalResourceNeed::Input { name } = need else {
+            let CanonicalResourceNeed::Input { name, .. } = need else {
                 return CanonicalResourceOutcome::Unavailable;
             };
             CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(

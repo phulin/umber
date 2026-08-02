@@ -283,7 +283,13 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect_err("unavailable input requests host retry");
-    assert_eq!(error, CommandError::MissingInput("chapter.tex".to_owned()));
+    assert_eq!(
+        error,
+        CommandError::MissingInput {
+            name: "chapter.tex".to_owned(),
+            original_name: "chapter.tex".to_owned(),
+        }
+    );
 
     command
         .rollback(snapshot)
@@ -316,7 +322,13 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
             .get_x_token()
             .expect_err("empty outer filename requests interactive recovery")
     };
-    assert_eq!(error, CommandError::MissingInput(".tex".to_owned()));
+    assert_eq!(
+        error,
+        CommandError::MissingInput {
+            name: ".tex".to_owned(),
+            original_name: String::new(),
+        }
+    );
     assert!(!command.name_in_progress());
     {
         let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);

@@ -2246,7 +2246,13 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
             .open_registered_input()
             .expect_err("unregistered input is structured recovery")
     };
-    assert_eq!(error, CommandError::MissingInput("x.tex".to_owned()));
+    assert_eq!(
+        error,
+        CommandError::MissingInput {
+            name: "x.tex".to_owned(),
+            original_name: "x".to_owned(),
+        }
+    );
 }
 
 #[test]
@@ -2280,10 +2286,36 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
             .open_registered_input()
             .expect_err("both attempts fail")
     };
-    assert_eq!(error, CommandError::MissingInput("missing.tex".into()));
+    assert_eq!(
+        error,
+        CommandError::MissingInput {
+            name: "missing.tex".into(),
+            original_name: "missing".into(),
+        }
+    );
     command
         .rollback(failed)
         .expect("failed attempts leave no source level");
+}
+
+#[test]
+fn start_input_retains_parent_relative_authored_spelling() {
+    let mut command = CommandState::default();
+    push(&mut command, text_tokens("../secret "));
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .open_registered_input()
+        .expect_err("parent-relative request remains host-owned");
+    assert_eq!(
+        error,
+        CommandError::MissingInput {
+            name: "../secret.tex".into(),
+            original_name: "../secret".into(),
+        }
+    );
 }
 
 #[test]

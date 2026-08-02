@@ -2153,8 +2153,10 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     for _ in 0..3 {
         assert!(matches!(
             control.advance(&mut stores).expect("missing input suspends"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
-                if name == "child.tex"
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+                name,
+                original_name,
+            }) if name == "child.tex" && original_name == "child"
         ));
         assert_eq!(terminal_text(&stores), committed);
     }
@@ -7746,8 +7748,10 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
     for _ in 0..3 {
         assert!(matches!(
             control.advance(&mut stores).expect("missing input suspends"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
-                if name == "child.tex"
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+                name,
+                original_name,
+            }) if name == "child.tex" && original_name == "child"
         ));
         assert_eq!(stores.count(0), 1);
         assert_eq!(stores.take_afterassignment(), None);

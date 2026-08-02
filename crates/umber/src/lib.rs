@@ -673,7 +673,7 @@ impl CanonicalResourceHost for FileSessionResolvers {
         need: &tex_exec::CanonicalResourceNeed,
     ) -> CanonicalResourceOutcome {
         match need {
-            tex_exec::CanonicalResourceNeed::Input { name } => {
+            tex_exec::CanonicalResourceNeed::Input { name, .. } => {
                 if let Some(result) = self
                     .input
                     .0

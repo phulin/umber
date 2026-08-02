@@ -360,7 +360,10 @@ struct ActiveDiscretionary {
 pub enum CanonicalResourceNeed {
     /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
     /// but the host has not supplied its immutable source registration.
-    Input { name: String },
+    Input {
+        name: String,
+        original_name: String,
+    },
     /// A non-opening `\openin` or pdfTeX file enquiry needs bytes or
     /// authoritative absence.
     InputProbe { name: String },
@@ -1342,10 +1345,14 @@ impl CanonicalMainControl {
                 site,
                 frozen,
             } => match *error {
-                ExecError::MissingCanonicalInput { name } => {
+                ExecError::MissingCanonicalInput {
+                    name,
+                    original_name,
+                } => {
                     self.pending_resource_site = Some(site);
                     Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
                         name,
+                        original_name,
                     }))
                 }
                 ExecError::MissingCanonicalInputProbe { name } => {
@@ -1360,9 +1367,13 @@ impl CanonicalMainControl {
                     frozen,
                 }),
             },
-            ExecError::MissingCanonicalInput { name } => Ok(CanonicalStepResult::Suspended(
-                CanonicalResourceNeed::Input { name },
-            )),
+            ExecError::MissingCanonicalInput {
+                name,
+                original_name,
+            } => Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+                name,
+                original_name,
+            })),
             ExecError::MissingCanonicalInputProbe { name } => Ok(
                 CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { name }),
             ),
@@ -16751,7 +16762,13 @@ fn command_error(error: CommandError) -> ExecError {
         CommandError::AtOrigin { error, origin } => {
             command_error(*error).capture_command_origin(origin)
         }
-        CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
+        CommandError::MissingInput {
+            name,
+            original_name,
+        } => ExecError::MissingCanonicalInput {
+            name,
+            original_name,
+        },
         CommandError::MissingInputProbe(name) => ExecError::MissingCanonicalInputProbe { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps

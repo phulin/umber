@@ -643,7 +643,9 @@ impl RevisionCandidate {
     ) -> Result<(), SessionError> {
         match (need, fulfillment) {
             (
-                CanonicalResourceNeed::Input { name: expected },
+                CanonicalResourceNeed::Input {
+                    name: expected, ..
+                },
                 CanonicalResourceFulfillment::Input { name, source },
             ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
             (
@@ -674,7 +676,7 @@ impl RevisionCandidate {
 
     fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
         match need {
-            CanonicalResourceNeed::Input { name } => {
+            CanonicalResourceNeed::Input { name, .. } => {
                 self.control.capabilities_mut().mark_input_unavailable(name)
             }
             CanonicalResourceNeed::InputProbe { name } => {

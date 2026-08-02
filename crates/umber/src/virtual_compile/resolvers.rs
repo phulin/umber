@@ -146,10 +146,13 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
         let request_index = self.request_index;
         self.request_index = self.request_index.saturating_add(1);
         let result = match need {
-            CanonicalResourceNeed::Input { name } => world
+            CanonicalResourceNeed::Input {
+                name,
+                original_name,
+            } => world
                 .with_input_read_state(|input| {
                     self.input
-                        .open(input, FileKind::TexInput, name, request_index)
+                        .open(input, FileKind::TexInput, original_name, request_index)
                 })
                 .map(|lookup| {
                     lookup.map(|content| CanonicalResourceFulfillment::world_input(name, content))

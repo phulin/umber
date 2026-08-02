@@ -247,7 +247,7 @@ impl CanonicalResourceHost for CorpusHost {
         need: &CanonicalResourceNeed,
     ) -> CanonicalResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name } => world
+            CanonicalResourceNeed::Input { name, .. } => world
                 .read_file(canonical_input_path(name))
                 .ok()
                 .map_or(CanonicalResourceOutcome::Unavailable, |content| {

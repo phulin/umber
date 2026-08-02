@@ -3519,6 +3519,7 @@ impl CommandProcessor<'_> {
     /// capability. No filesystem or host lookup escapes this boundary.
     pub fn open_registered_input(&mut self) -> Result<RegisteredInput, CommandError> {
         let mut file_name = self.scan_file_name()?;
+        let original_name = file_name.packed();
         file_name.components.apply_default_extension(".tex");
         let has_area = !file_name.components.area.is_empty();
         let packed_name = file_name.packed();
@@ -3581,7 +3582,10 @@ impl CommandProcessor<'_> {
             });
         }
         if unresolved || self.state.interaction_permits_terminal_input() {
-            Err(CommandError::MissingInput(packed_name))
+            Err(CommandError::MissingInput {
+                name: packed_name,
+                original_name,
+            })
         } else {
             Err(CommandError::Fatal(crate::FatalError::emergency_stop(
                 "job aborted, file error in nonstop mode",

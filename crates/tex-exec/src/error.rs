@@ -173,6 +173,7 @@ pub enum ExecError {
     /// borrow-scoped host capability has not supplied immutable bytes yet.
     MissingCanonicalInput {
         name: String,
+        original_name: String,
     },
     /// A non-opening file probe has not received bytes or authoritative
     /// absence from the retained host yet.
@@ -411,7 +412,7 @@ impl fmt::Display for ExecError {
                 )
             }
             Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
-            Self::MissingCanonicalInput { name } => {
+            Self::MissingCanonicalInput { name, .. } => {
                 write!(f, "input source `{name}` is unavailable")
             }
             Self::MissingCanonicalInputProbe { name } => {

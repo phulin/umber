@@ -54,7 +54,10 @@ pub enum CommandError {
     OuterInMacroArgument,
     /// The installed input capability has no immutable backing for a
     /// requested logical filename.
-    MissingInput(String),
+    MissingInput {
+        name: String,
+        original_name: String,
+    },
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and must suspend for a typed host probe.
     MissingInputProbe(String),
@@ -94,7 +97,7 @@ impl CommandError {
     }
 
     pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
-        if matches!(self, Self::MissingInput(_) | Self::MissingInputProbe(_) | Self::AtOrigin { .. })
+        if matches!(self, Self::MissingInput { .. } | Self::MissingInputProbe(_) | Self::AtOrigin { .. })
         {
             self
         } else {
@@ -129,7 +132,9 @@ impl std::fmt::Display for CommandError {
             Self::OuterInMacroArgument => {
                 formatter.write_str("outer token found while scanning macro argument")
             }
-            Self::MissingInput(name) => write!(formatter, "input source `{name}` is unavailable"),
+            Self::MissingInput { name, .. } => {
+                write!(formatter, "input source `{name}` is unavailable")
+            }
             Self::MissingInputProbe(name) => {
                 write!(formatter, "input enquiry `{name}` is unresolved")
             }

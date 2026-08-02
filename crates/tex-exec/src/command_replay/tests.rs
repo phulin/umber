@@ -876,7 +876,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
     loop {
         match control.advance(&mut universe).expect("alignment advances") {
             CanonicalStepResult::Progress(MainControlStep::Continue) => {}
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) => {
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name, .. }) => {
                 assert_eq!(name, "child.tex");
                 break;
             }
@@ -891,7 +891,7 @@ fn alignment_math_endv_recovery_survives_input_suspension_rollback() {
     for _ in 0..3 {
         assert!(matches!(
             control.advance(&mut universe).expect("retry suspends"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name, .. })
                 if name == "child.tex"
         ));
         assert_eq!(
@@ -2468,7 +2468,7 @@ fn canonical_openin_missing_resource_rolls_back_and_retries_fresh() {
 
     assert!(matches!(
         control.advance(&mut universe).expect("openin suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child.tex"
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name, .. }) if name == "child.tex"
     ));
     assert!(universe.world().input_stream_eof(StreamSlot::new(1)));
 
@@ -2620,7 +2620,7 @@ fn macro_prefix_mismatch_diagnostic_is_atomic_across_input_resource_retry() {
     assert!(
         matches!(
             suspended,
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name })
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name, .. })
                 if name == "child" || name == "child.tex"
         ),
         "{suspended:?}"
@@ -8431,7 +8431,7 @@ fn missing_canonical_input_rolls_back_the_whole_step_and_retries_fresh() {
         failed
             .advance_with_observer(&mut failed_universe, &mut failed_observations)
             .expect("missing input suspends"),
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name }) if name == "child.tex"
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name, .. }) if name == "child.tex"
     ));
     assert_eq!(failed_universe.count(3), 0);
     assert_eq!(failed.current_mode(), Mode::Vertical);
@@ -8501,7 +8501,7 @@ fn macro_retry_rolls_back_command_and_provenance_as_one_timeline() {
     for retry in 0..32 {
         assert!(matches!(
             control.advance(&mut universe).expect("missing nested input"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name })
+            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { name, .. })
                 if name == "child.tex"
         ));
         assert_eq!(
@@ -9856,7 +9856,7 @@ fn restricted_integer_error_commits_once_after_input_resource_retry() {
         .expect("missing expansion input suspends");
     assert!(matches!(
         suspended,
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name })
+        CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { ref name, .. })
             if name == "child" || name == "child.tex"
     ));
     assert_eq!(universe.world().error_channel().error_count(), 0);

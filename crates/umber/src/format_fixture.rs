@@ -405,7 +405,7 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
         need: &CanonicalResourceNeed,
     ) -> CanonicalResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name } => self
+            CanonicalResourceNeed::Input { name, .. } => self
                 .job_resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -709,7 +709,7 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
         need: &CanonicalResourceNeed,
     ) -> CanonicalResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name } => self
+            CanonicalResourceNeed::Input { name, .. } => self
                 .resources
                 .iter()
                 .find_map(|resource| match resource {

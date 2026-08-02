@@ -4534,7 +4534,7 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
         need: &CanonicalResourceNeed,
     ) -> CanonicalResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name } => self
+            CanonicalResourceNeed::Input { name, .. } => self
                 .files
                 .as_deref()
                 .and_then(|files| {
