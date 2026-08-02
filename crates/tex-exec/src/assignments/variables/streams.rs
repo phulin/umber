@@ -85,7 +85,11 @@ pub(in crate::assignments) fn execute_immediate_stream_command(
             let name = scan_file_name(input, stores, execution, "\\openout")?;
             let target = openout_target(name);
             stores.world_mut().open_out(slot, target.clone());
-            crate::diagnostics::report_openout(stores, slot.raw(), &target);
+            // TeX82 §1374 opens the stream silently. The diagnostic is the
+            // later Web2C extension retained by Umber's pdfTeX profile.
+            if stores.pdf_output_enabled() {
+                crate::diagnostics::report_openout(stores, slot.raw(), &target);
+            }
         }
         UnexpandablePrimitive::CloseOut => {
             stores.world_mut().close_out(slot);

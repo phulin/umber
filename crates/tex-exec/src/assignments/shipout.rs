@@ -88,13 +88,15 @@ pub(crate) fn shipout_node(
     // The legacy path prints no progress marker of its own, so every live
     // effect is genuine carried-forward whatsit output.
     let pending_end = stores.world().effect_records().len();
+    let announce_openout = stores.pdf_output_enabled();
     shipout_node_with_input_summary(
         node,
         input_summary,
         ShipoutOrigin {
             output_open_context: None,
             pending_end,
-            announce_openout: true,
+            // TeX82 §1374 is silent; pdfTeX retains Web2C's notice.
+            announce_openout,
         },
         stores,
         execution,

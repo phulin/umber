@@ -561,6 +561,7 @@ fn openout_closeout_append_deferred_whatsits_before_shipout() {
 #[test]
 fn immediate_openout_write_closeout_append_world_effect_records() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.enable_pdf_output();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -599,6 +600,7 @@ fn immediate_openout_write_closeout_append_world_effect_records() {
 #[test]
 fn immediate_openout_defaults_an_extensionless_name_at_execution() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.enable_pdf_output();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(
@@ -624,6 +626,7 @@ fn immediate_openout_defaults_an_extensionless_name_at_execution() {
 #[test]
 fn newlinechar_is_honored_by_message_and_immediate_write() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.enable_pdf_output();
     tex_expand::install_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(

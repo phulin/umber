@@ -2826,7 +2826,19 @@ fn user_files_override_distribution_bindings() {
 
 #[test]
 fn attempt_local_effects_do_not_leak_across_fetch_rounds() {
-    let mut session = session("\\message{before}\\input remote \\end");
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        job_name: Some("texput".to_owned()),
+        authored_root_name: Some("texput".to_owned()),
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file(
+            "main.tex",
+            b"\\message{before}\\input remote \\end".to_vec(),
+        )
+        .expect("main source");
     let missing = requests(session.compile_attempt());
     session
         .provide_resolved_file(
@@ -2839,8 +2851,10 @@ fn attempt_local_effects_do_not_leak_across_fetch_rounds() {
         panic!("retry should complete");
     };
     let terminal = String::from_utf8_lossy(&output.terminal);
+    assert_eq!(terminal.matches("(texput").count(), 1);
     assert_eq!(terminal.matches("before").count(), 1);
     assert_eq!(terminal.matches("after").count(), 1);
+    assert!(terminal.ends_with(" )"));
 }
 
 #[test]
@@ -2882,7 +2896,6 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
 }
 
 #[test]
-#[ignore = "umber2-johp.24.1.2: align virtual and retained-root job framing"]
 fn native_and_vfs_single_pass_outputs_are_byte_identical() {
     let source = concat!(
         "\\immediate\\openout1=shared.aux ",
@@ -2897,6 +2910,7 @@ fn native_and_vfs_single_pass_outputs_are_byte_identical() {
 
     let mut virtual_session = VirtualCompileSession::new(SessionOptions {
         job_name: Some("texput".to_owned()),
+        authored_root_name: Some("texput".to_owned()),
         ..SessionOptions::default()
     })
     .expect("virtual session");

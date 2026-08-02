@@ -216,6 +216,10 @@ impl Default for SessionLimits {
 pub struct SessionOptions {
     pub main_path: String,
     pub job_name: Option<String>,
+    /// Optional authored startup identity, distinct from the VFS provenance
+    /// path. This selects the same canonical root framing as
+    /// [`crate::RetainedRootRequest::authored`].
+    pub authored_root_name: Option<String>,
     pub format: Option<Vec<u8>>,
     /// Validated, transport-only requests likely to be needed by the compile.
     /// They are emitted once, with the first required resource batch.
@@ -240,6 +244,7 @@ impl Default for SessionOptions {
         Self {
             main_path: "/job/main.tex".to_owned(),
             job_name: None,
+            authored_root_name: None,
             format: None,
             initial_prefetch_hints: None,
             engine: EngineMode::Tex82,
@@ -705,6 +710,7 @@ enum ResourceRequestKey {
 pub struct VirtualCompileSession {
     main_path: VirtualPath,
     job_name: String,
+    authored_root_name: Option<String>,
     format: Option<Vec<u8>>,
     initial_prefetch_hints: Option<Box<[ResourceRequest]>>,
     engine: EngineMode,
@@ -925,6 +931,7 @@ impl VirtualCompileSession {
         Ok(Self {
             main_path,
             job_name,
+            authored_root_name: options.authored_root_name,
             format: options.format,
             initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
                 .then(|| initial_prefetch_hints.into_boxed_slice()),
@@ -975,6 +982,7 @@ impl VirtualCompileSession {
         SessionOptions {
             main_path: self.main_path.to_string(),
             job_name: Some(self.job_name.clone()),
+            authored_root_name: self.authored_root_name.clone(),
             format: self.format.clone(),
             initial_prefetch_hints: self.initial_prefetch_hints.clone(),
             engine: self.engine,
@@ -1819,7 +1827,7 @@ impl VirtualCompileSession {
                 .ok_or_else(|| CompileError::MissingMainFile(self.main_path.to_string()))?;
             let source = source.bytes().to_vec();
             let world = World::memory_with_clock(self.clock);
-            let template = if let Some(format) = &self.format {
+            let mut template = if let Some(format) = &self.format {
                 let mut template = Universe::from_format(world, format)
                     .map_err(|error| CompileError::Format(error.to_string()))?;
                 self.engine.install_after_format(&mut template);
@@ -1840,6 +1848,9 @@ impl VirtualCompileSession {
                 self.engine.prepare_fresh(&mut template);
                 template
             };
+            if let Some(name) = &self.authored_root_name {
+                tex_state::file_framing::print_startup_file_open(&mut template, name);
+            }
             let session = Box::new({
                 let mut session = tex_incr::Session::start_with_source_bytes(
                     template,
@@ -2135,6 +2146,17 @@ impl VirtualCompileSession {
             return Err(fatal);
         }
         match drive {
+            Ok(tex_incr::RevisionCandidateResult::Complete)
+                if self.authored_root_name.is_some() =>
+            {
+                let stores = match &mut retained.execution {
+                    RetainedExecution::Initial { candidate, .. }
+                    | RetainedExecution::Pending(candidate) => candidate
+                        .completed_universe_mut()
+                        .expect("a completed drive exposes its candidate universe"),
+                };
+                tex_state::file_framing::print_remaining_file_closes(stores);
+            }
             Ok(tex_incr::RevisionCandidateResult::Complete) => {}
             Ok(tex_incr::RevisionCandidateResult::AwaitingResources(_)) => {
                 stage.discard();

@@ -353,6 +353,7 @@ impl NativeCompileSession {
         let mut session = VirtualCompileSession::new(SessionOptions {
             main_path: format!("/job/{name}"),
             job_name: Some(job_name),
+            authored_root_name: None,
             format,
             initial_prefetch_hints: (!initial_prefetch_hints.is_empty())
                 .then(|| initial_prefetch_hints.into_boxed_slice()),
