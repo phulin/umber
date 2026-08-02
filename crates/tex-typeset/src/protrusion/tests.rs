@@ -161,6 +161,7 @@ fn edge_search_distinguishes_transparent_zero_width_and_blocking_material() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
     ];
     for node in transparent {

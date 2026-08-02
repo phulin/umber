@@ -1846,6 +1846,11 @@ impl CanonicalMainControl {
             pre,
             post,
             replace,
+            physical_replace_count: stores
+                .nodes(replace)
+                .len()
+                .try_into()
+                .expect("TeX discretionary replacement count fits a quarterword"),
         });
         Ok(ReplayStep::Continue)
     }
@@ -1883,6 +1888,7 @@ impl CanonicalMainControl {
             pre,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         });
         Ok(ReplayStep::Continue)
     }

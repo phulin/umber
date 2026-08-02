@@ -5,7 +5,7 @@ use crate::cell::{BankTag, CellId};
 use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
 use crate::glue::Order;
-use crate::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
+use crate::node::{BoxLr, BoxNode, BoxNodeFields, DiscKind, Node, Sign};
 use crate::node_arena::NodeRef;
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::stores::Stores;
@@ -65,6 +65,33 @@ fn raw_box_environment_value_fails_before_store_publication() {
     assert!(matches!(
         format.restore(),
         Err(StoreFormatError::Invalid("raw box environment value"))
+    ));
+}
+
+#[test]
+fn format_round_trip_preserves_diagnostic_disc_replacement_count() {
+    let mut stores = Stores::new();
+    let empty = stores.freeze_node_list(&[]);
+    let root = stores.freeze_node_list(&[Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
+        pre: empty,
+        post: empty,
+        replace: empty,
+        physical_replace_count: 3,
+    }]);
+    stores.set_box_reg(0, root);
+
+    let restored = StoreFormat::capture(&stores)
+        .expect("capture disc format state")
+        .restore()
+        .expect("restore disc format state");
+    let restored_root = restored.box_reg(0).expect("restored box root");
+    assert!(matches!(
+        restored.nodes(restored_root).first(),
+        Some(NodeRef::Disc {
+            physical_replace_count: 3,
+            ..
+        })
     ));
 }
 

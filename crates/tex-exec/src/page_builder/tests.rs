@@ -396,6 +396,7 @@ fn page_builder_rejects_impossible_contribution_nodes_with_page_confusion() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         Node::MathOn(s(1)),
         Node::MathOff(s(1)),

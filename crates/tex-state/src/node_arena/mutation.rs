@@ -7,7 +7,11 @@ use crate::math::MathField;
 impl NodeStorage {
     pub(crate) fn apply_child_patch(&mut self, patch: ChildPatch) {
         match patch {
-            ChildPatch::Box { row, child, diagnostic_child } => {
+            ChildPatch::Box {
+                row,
+                child,
+                diagnostic_child,
+            } => {
                 self.boxes.rows[row].children = child;
                 self.boxes.rows[row].diagnostic_children = diagnostic_child;
             }

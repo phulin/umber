@@ -807,6 +807,7 @@ fn emit_index(
             pre,
             post,
             replace,
+            ..
         } => {
             emission.node([]);
             output.disc(lower_disc_kind(kind), |disc| {

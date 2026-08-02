@@ -61,6 +61,7 @@ fn short_display_skips_materialized_replacement_by_side_list_count() {
             pre: empty,
             post: empty,
             replace: replacement,
+            physical_replace_count: 1,
         },
         Node::Rule {
             width: None,
@@ -130,6 +131,7 @@ fn short_display_maps_all_node_classes() {
             pre,
             post,
             replace: empty,
+            physical_replace_count: 0,
         },
         Node::Penalty(100),
         Node::Kern {

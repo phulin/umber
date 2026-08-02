@@ -423,6 +423,7 @@ fn reshaping_respects_font_kern_glue_and_discretionary_boundaries() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
     ];
 

@@ -274,7 +274,10 @@ impl ModeNest {
                     old,
                 } => {
                     let level = self.level_by_id_mut(level_id);
-                    level.list.sequence.mutate_semantic(|nodes| nodes[index] = old);
+                    level
+                        .list
+                        .sequence
+                        .mutate_semantic(|nodes| nodes[index] = old);
                 }
                 Inverse::Nodes { level_id, old } => {
                     self.level_by_id_mut(level_id).list.sequence = old;

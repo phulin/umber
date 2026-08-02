@@ -1696,6 +1696,7 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
             pre: disc_pre,
             post: disc_post,
             replace: disc_replace,
+            physical_replace_count: 1,
         },
         tex_state::node::Node::Mark {
             class: 7,

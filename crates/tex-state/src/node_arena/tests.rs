@@ -14,8 +14,8 @@ use proptest::prelude::*;
 
 #[test]
 fn node_layout_baseline() {
-    assert_eq!(std::mem::size_of::<Node>(), 88);
-    assert_eq!(std::mem::size_of::<BoxNode>(), 48);
+    assert_eq!(std::mem::size_of::<Node>(), 96);
+    assert_eq!(std::mem::size_of::<BoxNode>(), 64);
     assert_eq!(std::mem::size_of::<crate::node::UnsetNode>(), 48);
     assert_eq!(std::mem::size_of::<crate::node::Whatsit>(), 48);
     assert_eq!(std::mem::size_of::<NodeListId>(), 16);
@@ -520,6 +520,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 3,
         },
         Node::Mark {
             class: u16::MAX,
@@ -563,6 +564,23 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
     ];
     let id = arena.append(&nodes);
     assert_eq!(arena.get_epoch(id), nodes);
+    assert!(matches!(
+        arena.get_epoch(id).get(5),
+        Some(super::NodeRef::Disc {
+            physical_replace_count: 3,
+            ..
+        })
+    ));
+    let mut semantic_twin = nodes[5].clone();
+    let Node::Disc {
+        physical_replace_count,
+        ..
+    } = &mut semantic_twin
+    else {
+        unreachable!()
+    };
+    *physical_replace_count = 2;
+    assert_eq!(nodes[5], semantic_twin);
     assert_eq!(
         arena.storage.testing_sidecar_lengths(),
         [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]

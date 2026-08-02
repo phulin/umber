@@ -55,7 +55,11 @@ impl NodeSequence {
         assert_eq!(physical_boundaries.len(), semantic.len() + 1);
         assert_eq!(physical_boundaries.first(), Some(&0));
         assert_eq!(physical_boundaries.last(), Some(&physical.len()));
-        assert!(physical_boundaries.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(
+            physical_boundaries
+                .windows(2)
+                .all(|pair| pair[0] <= pair[1])
+        );
         Self {
             semantic: Arc::new(semantic),
             physical: Arc::new(physical),
@@ -93,8 +97,8 @@ impl NodeSequence {
         } = self;
         let semantic = Arc::try_unwrap(semantic).unwrap_or_else(|nodes| (*nodes).clone());
         let physical = Arc::try_unwrap(physical).unwrap_or_else(|nodes| (*nodes).clone());
-        let boundaries = Arc::try_unwrap(physical_boundaries)
-            .unwrap_or_else(|boundaries| (*boundaries).clone());
+        let boundaries =
+            Arc::try_unwrap(physical_boundaries).unwrap_or_else(|boundaries| (*boundaries).clone());
         (semantic, physical, boundaries)
     }
 

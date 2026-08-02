@@ -57,6 +57,8 @@ pub enum Node {
         pre: NodeListId,
         post: NodeListId,
         replace: NodeListId,
+        /// TeX's physical `replace_count`, retained only for diagnostics.
+        physical_replace_count: u8,
     },
     Mark {
         class: u16,
@@ -190,12 +192,14 @@ impl PartialEq for Node {
                     pre: left_pre,
                     post: left_post,
                     replace: left_replace,
+                    ..
                 },
                 Self::Disc {
                     kind: right_kind,
                     pre: right_pre,
                     post: right_post,
                     replace: right_replace,
+                    ..
                 },
             ) => {
                 left_kind == right_kind

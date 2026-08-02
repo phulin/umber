@@ -414,6 +414,11 @@ pub(super) fn execute_hmode_material(
                 pre,
                 post,
                 replace,
+                physical_replace_count: stores
+                    .nodes(replace)
+                    .len()
+                    .try_into()
+                    .expect("TeX discretionary replacement count fits a quarterword"),
             });
         }
         UnexpandablePrimitive::DiscretionaryHyphen => {
@@ -434,6 +439,7 @@ pub(super) fn execute_hmode_material(
                 pre,
                 post: empty,
                 replace: empty,
+                physical_replace_count: 0,
             });
         }
         UnexpandablePrimitive::NoBoundary => nest.current_list_mutation().set_no_boundary(true),
@@ -1627,6 +1633,7 @@ fn literal_hyphen_disc(
         pre: empty,
         post: empty,
         replace: empty,
+        physical_replace_count: 0,
     })
 }
 

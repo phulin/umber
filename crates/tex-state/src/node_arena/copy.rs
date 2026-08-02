@@ -56,9 +56,15 @@ pub(crate) enum ChildPatch {
 impl ChildPatch {
     pub(crate) fn remap(mut self, mut map: impl FnMut(NodeListId) -> NodeListId) -> Self {
         match &mut self {
-            Self::Box { child, diagnostic_child, .. } => {
+            Self::Box {
+                child,
+                diagnostic_child,
+                ..
+            } => {
                 *child = map(*child);
-                if let Some(child) = diagnostic_child { *child = map(*child); }
+                if let Some(child) = diagnostic_child {
+                    *child = map(*child);
+                }
             }
             Self::Unset { child, .. }
             | Self::Leader { child, .. }
@@ -151,7 +157,7 @@ impl NodeStorage {
                 14 => {
                     let row = copy_vec_row(14, &mut self.discs, &source.storage.discs, side);
                     let index = row.payload() as usize;
-                    let (_, pre, post, replace) = self.discs[index];
+                    let (_, pre, post, replace, _) = self.discs[index];
                     pending.push(ChildPatch::Disc {
                         row: index,
                         children: [pre, post, replace],

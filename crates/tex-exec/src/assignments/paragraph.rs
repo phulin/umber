@@ -645,9 +645,7 @@ fn break_current_paragraph(
         let mut diagnostic_nodes = broken
             .physical_nodes
             .into_iter()
-            .filter(|node| {
-                !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
-            })
+            .filter(|node| !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)))
             .collect::<Vec<_>>();
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {

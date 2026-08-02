@@ -181,7 +181,7 @@ pub(crate) struct NodeStorage {
     pub(super) unsets: UnsetTable,
     pub(super) rules: Vec<(Option<Scaled>, Option<Scaled>, Option<Scaled>)>,
     pub(super) leaders: Vec<(GlueId, GlueKind, crate::node::LeaderPayload)>,
-    pub(super) discs: Vec<(DiscKind, NodeListId, NodeListId, NodeListId)>,
+    pub(super) discs: Vec<(DiscKind, NodeListId, NodeListId, NodeListId, u8)>,
     pub(super) marks: Vec<(u16, crate::ids::TokenListId)>,
     pub(super) insertions: InsertionTable,
     pub(super) whatsits: Vec<crate::node::Whatsit>,
@@ -510,7 +510,12 @@ impl NodeStorage {
                 pre,
                 post,
                 replace,
-            } => push_sidecar(14, &mut self.discs, (*kind, *pre, *post, *replace)),
+                physical_replace_count,
+            } => push_sidecar(
+                14,
+                &mut self.discs,
+                (*kind, *pre, *post, *replace, *physical_replace_count),
+            ),
             Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (*class, *tokens)),
             Node::Ins {
                 class,
@@ -616,7 +621,12 @@ impl NodeStorage {
                 pre,
                 post,
                 replace,
-            } => push_sidecar(14, &mut self.discs, (kind, pre, post, replace)),
+                physical_replace_count,
+            } => push_sidecar(
+                14,
+                &mut self.discs,
+                (kind, pre, post, replace, physical_replace_count),
+            ),
             Node::Mark { class, tokens } => push_sidecar(15, &mut self.marks, (class, tokens)),
             Node::Ins {
                 class,

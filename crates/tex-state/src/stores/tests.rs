@@ -120,6 +120,7 @@ fn owned_and_borrowed_semantic_hash_paths_match_every_node_variant() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         Node::Mark { class: 3, tokens },
         Node::Ins {
@@ -2337,6 +2338,7 @@ fn promotion_patches_every_child_bearing_compact_row() {
             pre: child,
             post: child,
             replace: child,
+            physical_replace_count: 3,
         },
         Node::Ins {
             class: 1,
@@ -2369,6 +2371,13 @@ fn promotion_patches_every_child_bearing_compact_row() {
 
     stores.set_box_reg(17, root);
     let promoted = stores.box_reg(17).expect("root should be promoted");
+    assert!(stores.nodes(promoted).into_iter().any(|node| matches!(
+        node,
+        crate::node_arena::NodeRef::Disc {
+            physical_replace_count: 3,
+            ..
+        }
+    )));
     let mut child_count = 0;
     for node in stores.nodes(promoted) {
         let mut children = Vec::new();

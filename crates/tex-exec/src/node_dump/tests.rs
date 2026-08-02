@@ -752,6 +752,7 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
         pre: two_kerns,
         post: two_kerns,
         replace: two_kerns,
+        physical_replace_count: 2,
     };
     let source = [adjust, leader, disc];
     let before = stores.nodes(two_kerns).to_vec();
@@ -805,6 +806,7 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
         pre,
         post,
         replace,
+        physical_replace_count: 1,
     };
 
     assert_eq!(

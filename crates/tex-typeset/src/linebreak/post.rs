@@ -223,6 +223,7 @@ fn push_owned_line_segment<S: TypesetState>(
                     pre: empty_list,
                     post: empty_list,
                     replace: empty_list,
+                    physical_replace_count: 0,
                 });
                 out.extend(state.nodes(pre).into_iter().map(|node| node.to_owned()));
                 post.extend(
@@ -237,12 +238,14 @@ fn push_owned_line_segment<S: TypesetState>(
                 pre,
                 post,
                 replace,
+                physical_replace_count,
             } => {
                 out.push(Node::Disc {
                     kind,
                     pre,
                     post,
                     replace,
+                    physical_replace_count,
                 });
                 out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
             }

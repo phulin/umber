@@ -3797,6 +3797,7 @@ fn production_driver_executes_discretionary_parts_in_isolated_hmode_episodes() {
         pre,
         post,
         replace,
+        ..
     }) = control.modes.current_list().nodes().last()
     else {
         panic!("canonical replay appended a discretionary node");
@@ -3837,6 +3838,7 @@ fn canonical_discretionary_hyphen_appends_an_explicit_hyphen_node() {
         pre,
         post,
         replace,
+        ..
     }) = control.modes.current_list().nodes().last()
     else {
         panic!("canonical replay appended an explicit discretionary hyphen");

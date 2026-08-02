@@ -163,7 +163,8 @@ impl ModeList {
         index: usize,
         mutate: impl FnOnce(&mut Node) -> R,
     ) -> Option<R> {
-        self.sequence.mutate_semantic(|nodes| nodes.get_mut(index).map(mutate))
+        self.sequence
+            .mutate_semantic(|nodes| nodes.get_mut(index).map(mutate))
     }
 
     #[cfg(test)]
@@ -183,22 +184,22 @@ impl ModeList {
         third: Option<Node>,
     ) {
         self.sequence.mutate_semantic(|target| {
-        target.reserve(
-            usize::from(insertion.is_some())
-                + 1
-                + usize::from(second.is_some())
-                + usize::from(third.is_some()),
-        );
-        if let Some((index, node)) = insertion {
-            target.insert(index, node);
-        }
-        target.push(first);
-        if let Some(node) = second {
-            target.push(node);
-        }
-        if let Some(node) = third {
-            target.push(node);
-        }
+            target.reserve(
+                usize::from(insertion.is_some())
+                    + 1
+                    + usize::from(second.is_some())
+                    + usize::from(third.is_some()),
+            );
+            if let Some((index, node)) = insertion {
+                target.insert(index, node);
+            }
+            target.push(first);
+            if let Some(node) = second {
+                target.push(node);
+            }
+            if let Some(node) = third {
+                target.push(node);
+            }
         });
     }
 

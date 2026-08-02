@@ -529,6 +529,7 @@ fn pdftex_hz_modes_have_the_exact_scoring_and_breakpoint_matrix() {
                     pre,
                     post: empty,
                     replace: empty,
+                    physical_replace_count: 0,
                 },
                 microtype_char(first, 'B'),
                 Node::Glue {
@@ -1087,12 +1088,14 @@ fn tracing_display_retains_structural_successors_after_discretionary_cluster() {
             pre: empty,
             post: empty,
             replace: first_replace,
+            physical_replace_count: 0,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
             pre: empty,
             post: empty,
             replace: second_replace,
+            physical_replace_count: 2,
         },
         kern(1),
         kern(2),
@@ -1133,12 +1136,14 @@ fn tracing_display_does_not_repeat_successors_rendered_with_a_discretionary_clus
             pre: empty,
             post: empty,
             replace: first_replace,
+            physical_replace_count: 1,
         },
         Node::Disc {
             kind: DiscKind::Discretionary,
             pre: empty,
             post: empty,
             replace: second_replace,
+            physical_replace_count: 2,
         },
         kern(1),
         kern(2),
@@ -1182,6 +1187,7 @@ fn tracing_display_includes_automatic_discretionary_replacement_after_font_kern(
             pre: empty,
             post: empty,
             replace,
+            physical_replace_count: 1,
         },
         Node::Kern {
             amount: sp(1),
@@ -1414,6 +1420,7 @@ fn active_list_order_matches_tex_for_equal_demerit_discretionary_routes() {
         pre,
         post: empty,
         replace: empty,
+        physical_replace_count: 0,
     };
     // This is the equal-demerit shape used by TRIP's line-breaking test.
     // TeX keeps active nodes ordered by line number and reverse breakpoint
@@ -1737,6 +1744,7 @@ fn looseness_can_select_empty_line_after_terminal_discretionary() {
             pre: hyphen,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         Node::Penalty(10_000),
         Node::Glue {
@@ -2008,6 +2016,7 @@ fn discretionary_penalty_depends_on_pre_break_text() {
             pre,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         kern(20),
         rule(1),
@@ -2022,6 +2031,7 @@ fn discretionary_penalty_depends_on_pre_break_text() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         kern(20),
         rule(1),
@@ -2067,6 +2077,7 @@ fn existing_discretionary_is_available_on_the_pretolerance_pass() {
             pre,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         rule(20),
         Node::Penalty(10_000),
@@ -2095,6 +2106,7 @@ fn final_hyphen_demerits_apply_to_penultimate_hyphenated_line() {
             pre: empty,
             post: empty,
             replace: empty,
+            physical_replace_count: 0,
         },
         rule(20),
     ];
@@ -2255,6 +2267,7 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
             pre,
             post,
             replace: replacement,
+            physical_replace_count: 1,
         },
         rule(2),
         Node::Penalty(EJECT_PENALTY),
@@ -2339,6 +2352,7 @@ fn discretionary_post_break_width_participates_in_the_next_line() {
             pre,
             post,
             replace,
+            physical_replace_count: 1,
         },
         rule(6),
         Node::Penalty(EJECT_PENALTY),
@@ -2555,6 +2569,7 @@ fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count
             pre: empty,
             post: empty,
             replace: replacement,
+            physical_replace_count: 1,
         },
         Node::Penalty(10_000),
     ];

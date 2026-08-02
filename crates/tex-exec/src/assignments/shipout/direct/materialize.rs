@@ -156,6 +156,7 @@ pub(super) fn materialize_node_list(
                 pre,
                 post,
                 replace,
+                ..
             } => Some(PageNode::Disc {
                 kind: lower_disc_kind(kind),
                 pre: materialize_node_list(

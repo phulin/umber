@@ -433,7 +433,10 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     let diagnostic_box = diagnostic_nodes.map_or(packed.node, |nodes| {
         let children = stores.freeze_node_list(nodes);
         packed.node.diagnostic_children = Some(children);
-        tex_state::node::BoxNode { children, ..packed.node }
+        tex_state::node::BoxNode {
+            children,
+            ..packed.node
+        }
     });
     crate::pack_report::report_pack_diagnostics(
         stores,

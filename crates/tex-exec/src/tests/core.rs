@@ -3008,6 +3008,7 @@ fn recursive_test_box(stores: &mut Universe) -> tex_state::ids::NodeListId {
             pre,
             post,
             replace,
+            physical_replace_count: 1,
         },
         Node::HList(box_node(pre)),
         Node::VList(box_node(post)),
@@ -3093,6 +3094,7 @@ fn recursive_node_signature(stores: &Universe, list: tex_state::ids::NodeListId)
                 post,
                 replace,
                 kind,
+                ..
             } => format!(
                 "disc={kind:?}/pre={}/post={}/replace={}",
                 recursive_node_signature(stores, *pre),

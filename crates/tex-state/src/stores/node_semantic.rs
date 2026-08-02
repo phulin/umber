@@ -183,6 +183,7 @@ impl Stores {
                 pre,
                 post,
                 replace,
+                ..
             } => {
                 hasher.tag(9);
                 hasher.u8(match kind {

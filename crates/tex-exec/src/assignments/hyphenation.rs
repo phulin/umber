@@ -786,6 +786,7 @@ fn automatic_discretionary(
         pre: stores.freeze_node_list(pre),
         post: stores.freeze_node_list(post),
         replace: stores.freeze_node_list(replace),
+        physical_replace_count: replace.len() as u8,
     })
 }
 
@@ -827,6 +828,7 @@ fn discretionary_hyphen(
         pre,
         post: empty,
         replace,
+        physical_replace_count: u8::from(replacement.is_some()),
     }
 }
 

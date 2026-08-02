@@ -60,6 +60,7 @@ pub(super) enum FormatNode {
         pre: FormatListKey,
         post: FormatListKey,
         replace: FormatListKey,
+        physical_replace_count: u8,
     },
     Mark {
         class: u16,
@@ -412,11 +413,13 @@ impl FormatNode {
                 pre,
                 post,
                 replace,
+                physical_replace_count,
             } => Self::Disc {
                 kind,
                 pre: key(stores, pre, roots),
                 post: key(stores, post, roots),
                 replace: key(stores, replace, roots),
+                physical_replace_count,
             },
             Node::Mark { class, tokens } => Self::Mark {
                 class,
@@ -534,11 +537,13 @@ impl FormatNode {
                 pre,
                 post,
                 replace,
+                physical_replace_count,
             } => Node::Disc {
                 kind,
                 pre: list_id(ids, pre)?,
                 post: list_id(ids, post)?,
                 replace: list_id(ids, replace)?,
+                physical_replace_count,
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class,

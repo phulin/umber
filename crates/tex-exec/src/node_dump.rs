@@ -802,14 +802,7 @@ fn dump_box(
     } else {
         ListContext::VList
     };
-    dump_list(
-        stores,
-        children,
-        config,
-        depth + 1,
-        child_context,
-        out,
-    );
+    dump_list(stores, children, config, depth + 1, child_context, out);
 }
 
 fn dump_unset(

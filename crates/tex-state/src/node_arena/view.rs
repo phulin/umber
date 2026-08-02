@@ -62,6 +62,7 @@ pub enum NodeRef<'a> {
         pre: NodeListId,
         post: NodeListId,
         replace: NodeListId,
+        physical_replace_count: u8,
     },
     Mark {
         class: u16,
@@ -195,11 +196,13 @@ impl NodeRef<'_> {
                 pre,
                 post,
                 replace,
+                physical_replace_count,
             } => Node::Disc {
                 kind: *kind,
                 pre: *pre,
                 post: *post,
                 replace: *replace,
+                physical_replace_count: *physical_replace_count,
             },
             Self::Mark { class, tokens } => Node::Mark {
                 class: *class,
@@ -592,12 +595,13 @@ impl NodeStorage {
                 }
             }
             14 => {
-                let (kind, pre, post, replace) = self.discs[side];
+                let (kind, pre, post, replace, physical_replace_count) = self.discs[side];
                 NodeRef::Disc {
                     kind,
                     pre,
                     post,
                     replace,
+                    physical_replace_count,
                 }
             }
             15 => {
