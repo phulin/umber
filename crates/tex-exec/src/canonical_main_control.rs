@@ -11248,6 +11248,8 @@ pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
+    let mut control = CanonicalMainControl::default();
+    let snapshot = CanonicalStepSnapshot::capture(&mut control, stores);
     let mut fuel = tex_command::CommandFuelLedger::default();
     let mut shown_mode = None;
     let mut command = CommandMachine {
@@ -11260,7 +11262,16 @@ pub(crate) fn test_shipout_replay_box(
         initex: true,
         emit_dvi_override: None,
     };
-    shipout_replay_box(node, stores, &mut command)
+    match shipout_replay_box(node, stores, &mut command) {
+        Ok(receipt) => {
+            snapshot.commit(&mut control);
+            Ok(receipt)
+        }
+        Err(error) => {
+            snapshot.rollback(&mut control, stores);
+            Err(error)
+        }
+    }
 }
 
 /// Renders a committed meaning the way the reference instrumentation's

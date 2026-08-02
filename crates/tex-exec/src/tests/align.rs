@@ -1232,14 +1232,20 @@ fn alignment_preamble_errors_match_reference_wording() {
 #[test]
 fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     let (mut stores, state) = scan_halign_preamble("{#&#\\cr}");
-    let seed =
-        tex_state::InputSummary::new_with_resume_state(Vec::new(), None, None, None, 1, true);
-    let mut input = InputStack::from_summary(&seed, |_, _, _| -> Result<MemoryInput, ()> {
-        unreachable!("empty seed has no source to restore")
-    })
-    .expect("restore empty input stack");
-    input.push_source(MemoryInput::new("b&c\\cr}"));
-    let input_summary = input.publication_summary(&mut stores);
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"b&c\\cr}".to_vec(),
+        ))
+        .expect("alignment continuation source should register");
+    command
+        .open_registered_source(source)
+        .expect("alignment continuation source should open");
+    let command_summary = command
+        .publish_summary()
+        .expect("alignment continuation should be quiescent");
+    let command_snapshot = command.snapshot();
     let mut nest = ModeNest::new();
     nest.push(Mode::InternalVertical).expect("test mode push");
     nest.current_list_mutation().set_align_state(state);
@@ -1283,12 +1289,14 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
         })
         .expect("alignment state");
     }
-    stores.set_input_summary(input_summary.clone());
     let snapshot = stores.snapshot();
     let summary = nest.summary();
 
     let _temporary = stores.freeze_node_list(&[Node::Penalty(99)]);
-    stores.set_input_summary(tex_state::InputSummary::default());
+    command
+        .load_next_source_line(-1)
+        .expect("temporary command state should read the continuation");
+    assert!(command.next_source_character().is_some());
     {
         let mut list = nest.current_list_mutation();
         list.push(Node::Penalty(123));
@@ -1297,9 +1305,17 @@ fn mid_alignment_snapshot_rollback_restores_summary_and_unset_rows() {
     }
 
     stores.rollback(&snapshot);
+    command
+        .rollback(command_snapshot)
+        .expect("canonical command snapshot should restore");
     let restored = ModeNest::from_summary(summary.clone()).expect("restored alignment summary");
 
-    assert_eq!(stores.input_summary(), &input_summary);
+    assert_eq!(
+        command
+            .publish_summary()
+            .expect("restored command state should remain quiescent"),
+        command_summary
+    );
     assert_eq!(restored.summary(), summary);
     let restored_state = restored
         .current_list()
@@ -1324,19 +1340,15 @@ fn shipout_rejects_unset_alignment_nodes() {
     let state_before = stores.testing_state_hash();
     let nodes_before = stores.testing_epoch_node_count();
     let effects_before = stores.world().effect_records().to_vec();
-    let mut shipout_input = InputStack::new(MemoryInput::new(""));
-    let err = crate::assignments::shipout_node(
-        unset,
-        &mut shipout_input,
-        &mut stores,
-        &mut crate::ExecutionContext::new("texput"),
-    )
-    .expect_err("unset alignment node must not lower to shipout artifact");
+    let err = crate::canonical_main_control::test_shipout_replay_box(unset, &mut stores)
+        .expect_err("unset alignment node must not lower to shipout artifact");
 
-    assert_eq!(
-        err.to_string(),
-        "shipout artifact lowering does not support unset alignment nodes yet"
-    );
+    assert!(matches!(
+        err,
+        crate::ExecError::UnsupportedShipoutNode {
+            node: "unset alignment"
+        }
+    ));
     assert_eq!(stores.testing_state_hash(), state_before);
     assert_eq!(stores.testing_epoch_node_count(), nodes_before);
     assert_eq!(stores.world().effect_records(), effects_before);
