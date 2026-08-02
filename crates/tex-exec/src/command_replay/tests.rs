@@ -13758,10 +13758,10 @@ fn canonical_discretionary_rejects_128_replacement_nodes_and_keeps_following_inp
 }
 
 #[test]
-fn canonical_discretionary_flushes_forbidden_part_nodes_and_keeps_following_input() {
+fn canonical_discretionary_retains_prefix_and_flushes_forbidden_suffix() {
     // Glue is not admissible in any discretionary sublist. Section 1121
-    // diagnoses the offending list, flushes it, and resumes after the third
-    // group without consuming the following parent-list character.
+    // retains the nodes preceding the first forbidden node, diagnoses and
+    // flushes the suffix beginning there, then finishes the discretionary.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_cmr10_font(&mut control, &mut universe);
@@ -13778,19 +13778,24 @@ l.1 ...r10\f\setbox0=\hbox{\discretionary{}{A\hss}
 Discretionary lists must contain only boxes and kerns.
 
 The following discretionary sublist has been deleted:
-\f A
 \glue 0.0 plus 1.0fil minus 1.0fil
 
 ";
     assert_eq!(transcript, expected);
-    assert!(matches!(
-        box_children(&universe, 0).as_slice(),
-        [Node::Char { ch: 'Z', .. }]
-    ));
+    let children = box_children(&universe, 0);
+    let [Node::Disc { post, .. }, Node::Char { ch: 'Z', .. }] = children.as_slice() else {
+        panic!("trimmed discretionary must survive before following input: {children:?}")
+    };
+    let retained = universe
+        .nodes(*post)
+        .iter()
+        .map(|node| node.to_owned())
+        .collect::<Vec<_>>();
+    assert!(matches!(retained.as_slice(), [Node::Char { ch: 'A', .. }]));
 }
 
 #[test]
-fn canonical_discretionary_rejects_forbidden_nodes_in_every_part() {
+fn canonical_discretionary_prunes_forbidden_suffix_in_every_part() {
     // TeX82 §1121 applies the same admissibility check to pre-break,
     // post-break, and no-break replacement lists.
     for parts in [
@@ -13816,7 +13821,7 @@ fn canonical_discretionary_rejects_forbidden_nodes_in_every_part() {
         );
         assert!(matches!(
             box_children(&universe, 0).as_slice(),
-            [Node::Char { ch: 'Z', .. }]
+            [Node::Disc { .. }, Node::Char { ch: 'Z', .. }]
         ));
     }
 }

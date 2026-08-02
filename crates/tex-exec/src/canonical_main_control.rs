@@ -2034,8 +2034,12 @@ impl CanonicalMainControl {
     ) -> Result<ReplayStep, ExecError> {
         let level =
             crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
-        let part_is_admissible = level.list().nodes().iter().all(|node| {
-            matches!(
+        // TeX82 §1121 advances `q` across the admissible prefix and, on the
+        // first forbidden node `p`, severs `link(q)`. Thus the prefix remains
+        // this discretionary part while `show_box(p)` reports and flushes the
+        // entire suffix beginning at the offending node.
+        let first_forbidden = level.list().nodes().iter().position(|node| {
+            !matches!(
                 node,
                 Node::Char { .. }
                     | Node::Lig { .. }
@@ -2045,7 +2049,10 @@ impl CanonicalMainControl {
                     | Node::VList(_)
             )
         });
-        let nodes = stores.freeze_node_list(level.list().nodes());
+        let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
+        let nodes = stores.freeze_node_list(&level.list().nodes()[..prefix_end]);
+        let deleted = first_forbidden
+            .map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
         let aftergroup =
             stores
                 .leave_group_with_kind(GroupKind::Disc)
@@ -2063,13 +2070,13 @@ impl CanonicalMainControl {
                 })?;
             active.parts.push(nodes);
             let part_count = active.parts.len();
-            let replacement_too_long = part_count == 3 && level.list().nodes().len() > 127;
-            active.rejected |= !part_is_admissible || replacement_too_long;
+            let replacement_too_long = part_count == 3 && prefix_end > 127;
+            active.rejected |= replacement_too_long;
             (part_count, replacement_too_long)
         };
-        if !part_is_admissible {
+        if let Some(deleted) = deleted {
             let context = self.command.output_open_context(&stores.command_context());
-            report_improper_discretionary(stores, nodes, context)?;
+            report_improper_discretionary(stores, deleted, context)?;
         }
         if replacement_too_long {
             let context = self.command.output_open_context(&stores.command_context());
