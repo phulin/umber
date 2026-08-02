@@ -758,17 +758,14 @@ fn show_resolves_an_active_character_macro() {
 #[test]
 fn shipout_commits_deferred_openout_closeout_whatsits() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\shipout\\hbox{\\openout2=out.aux \\write2{alpha}\\closeout2}\\end",
-    ));
+    run_canonical_source(
+        &mut stores,
+        br"\shipout\hbox{\openout2=out.aux \write2{alpha}\closeout2}\end",
+        &[],
+    )
+    .expect("shipout succeeds");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout succeeds");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(
         stores.world().memory_output("out.aux"),
         Some(&b"alpha\n"[..])
@@ -780,7 +777,7 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
 
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -812,17 +809,14 @@ fn shipout_commits_deferred_openout_closeout_whatsits() {
 #[test]
 fn shipped_extensionless_openout_is_visible_to_same_job_input() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\shipout\\hbox{\\openout10=tripos \\write10{} \\write10{\\uppercase{0{\\outputpenalty}}} \\write10{[\\uppercase{mmmmmmmmmm}[} \\closeout10}\\end",
-    ));
+    run_canonical_source(
+        &mut stores,
+        br"\shipout\hbox{\openout10=tripos \write10{} \write10{\uppercase{0{\outputpenalty}}} \write10{[\uppercase{mmmmmmmmmm}[} \closeout10}\end",
+        &[],
+    )
+    .expect("shipout succeeds");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout succeeds");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(stores.world().memory_output("tripos"), None);
     let expected = b"\n\\uppercase {0{\\outputpenalty }}\n[\\uppercase {mmmmmmmmmm}[\n";
     assert_eq!(
@@ -837,7 +831,7 @@ fn shipped_extensionless_openout_is_visible_to_same_job_input() {
 
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -862,25 +856,22 @@ fn shipout_artifacts_ignore_source_token_provenance() {
 #[test]
 fn newlinechar_is_honored_by_deferred_shipout_write() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\newlinechar=`| \
+    run_canonical_source(
+        &mut stores,
+        b"\\newlinechar=`| \
          \\shipout\\hbox{\\openout2=ship.out \\write2{s|t}\\closeout2}\\end",
-    ));
+        &[],
+    )
+    .expect("shipout write executes");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout write executes");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(
         stores.world().memory_output("ship.out"),
         Some(&b"s\nt\n"[..])
     );
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -900,15 +891,10 @@ fn newlinechar_is_honored_by_deferred_shipout_write() {
 #[test]
 fn top_level_deferred_openout_closeout_without_write_materializes_empty_output() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\openout2=empty.out \\closeout2\\end"));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
+    run_canonical_source(&mut stores, br"\openout2=empty.out \closeout2\end", &[])
         .expect("final cleanup succeeds");
 
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(stores.world().memory_output("empty.out"), Some(&b""[..]));
     assert!(
         stores.world().effect_records().is_empty(),
@@ -921,15 +907,9 @@ fn top_level_deferred_openout_closeout_without_write_materializes_empty_output()
 fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
     let source = read_io_source("top_open_close");
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(&source));
+    run_canonical_source(&mut stores, source.as_bytes(), &[]).expect("final cleanup succeeds");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("final cleanup succeeds");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     assert_eq!(stores.world().memory_output("top.out"), Some(&b"top\n"[..]));
 
     let reference = read_fixture("tex_exec_io", "top_open_close", "out");
@@ -939,26 +919,28 @@ fn top_level_deferred_openout_closeout_ship_during_final_cleanup() {
 #[test]
 fn copied_box_replays_deferred_openout_closeout_per_shipout() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\hbox{\\openout2=copy.out \\write2{p:\\the\\count0}\\closeout2}\
+    run_canonical_source(
+        &mut stores,
+        b"\\setbox0=\\hbox{\\openout2=copy.out \\write2{p:\\the\\count0}\\closeout2}\
          \\count0=1 \\shipout\\copy0\
          \\count0=2 \\shipout\\copy0\\end",
-    ));
+        &[],
+    )
+    .expect("shipout copies succeed");
 
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout copies succeed");
-
-    assert_eq!(stats.shipped_artifacts.len(), 2);
+    assert_eq!(stores.world().artifact_commits().len(), 2);
     assert_eq!(
         stores.world().memory_output("copy.out"),
         Some(&b"p:2\n"[..]),
         "second replayed openout truncates the stream like TeX"
     );
 
-    for (index, expected) in stats.shipped_artifacts.iter().zip(["p:1\n", "p:2\n"]) {
+    for (index, expected) in stores
+        .world()
+        .artifact_commits()
+        .iter()
+        .zip(["p:1\n", "p:2\n"])
+    {
         let bytes = stores
             .world()
             .read_artifact(*index)
@@ -982,24 +964,21 @@ fn copied_box_replays_deferred_openout_closeout_per_shipout() {
 #[test]
 fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\count0=7 \\setbox0=\\hbox{\\write16{p:\\the\\count0}}\
+    run_canonical_source(
+        &mut stores,
+        b"\\count0=7 \\setbox0=\\hbox{\\write16{p:\\the\\count0}}\
          \\count0=9 \\shipout\\box0\\end",
-    ));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout succeeds");
+        &[],
+    )
+    .expect("shipout succeeds");
     let effect_pos = stores.world().effect_pos();
     stores
         .commit_effects(effect_pos)
         .expect("final commit is idempotent");
 
-    assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(memory_terminal_text(&stores), "p:9\n");
-    assert_eq!(memory_log_text(&stores), "p:9\n");
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+    assert_eq!(memory_terminal_text(&stores), "[9\np:9\n]");
+    assert_eq!(memory_log_text(&stores), "[9\np:9\n]");
     assert!(
         stores.world().effect_records().is_empty(),
         "shipout should flush the committed effect prefix"
@@ -1007,7 +986,7 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
 
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1029,20 +1008,17 @@ fn shipout_expands_write_against_barrier_state_and_stores_artifact() {
 #[test]
 fn shipout_preserves_protected_macros_in_deferred_write_expansion() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\protected\\def\\p{expanded}\\shipout\\hbox{\\write16{\\p}}\\end",
-    ));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout succeeds");
+    run_canonical_profile_source(
+        &mut stores,
+        br"\protected\def\p{expanded}\shipout\hbox{\write16{\p}}\end",
+        &[],
+        CommandProfile::ETEX26,
+    )
+    .expect("shipout succeeds");
 
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1896,16 +1872,11 @@ fn deferred_write_does_not_absorb_following_par() {
 
 fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("shipout succeeds");
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+    run_canonical_source(&mut stores, source.as_bytes(), &[]).expect("shipout succeeds");
+    assert_eq!(stores.world().artifact_commits().len(), 1);
     stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored")
 }
