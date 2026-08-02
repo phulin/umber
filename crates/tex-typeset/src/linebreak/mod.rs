@@ -1447,7 +1447,10 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                     && i + 1 < self.nodes.len()
                     && matches!(self.nodes[i + 1], Node::Glue { .. }) =>
                 {
-                    Some((i + 1, i + 1, 0, false, Widths::zero(), self.prefix))
+                    // TeX82 §866's `kern_break` calls `try_break` before
+                    // adding the kern width; §822 then removes that
+                    // discardable kern from the next line's saved prefix.
+                    Some((i + 1, i, 0, false, Widths::zero(), before))
                 }
                 Node::Penalty(penalty) if *penalty < INF_PENALTY => Some((
                     i + 1,
@@ -1473,7 +1476,10 @@ impl<S: TypesetState> Iterator for LegalBreakpoints<'_, S> {
                 )),
                 Node::MathOff(_) if matches!(self.nodes.get(i + 1), Some(Node::Glue { .. })) => {
                     self.auto_breaking = true;
-                    Some((i + 1, i + 1, 0, false, Widths::zero(), self.prefix))
+                    // The same §866 `kern_break` ordering applies to an
+                    // after-math node: its math-surround width belongs to an
+                    // unbroken line, but not to the line ending here.
+                    Some((i + 1, i, 0, false, Widths::zero(), before))
                 }
                 Node::MathOn(_) => {
                     self.auto_breaking = false;

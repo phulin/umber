@@ -1822,6 +1822,8 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     let breakpoints = legal_breakpoints(&universe, &nodes, &params(15));
 
     assert_eq!(breakpoints.first().map(|br| br.position), Some(2));
+    assert_eq!(breakpoints[0].line_width.natural.raw(), 10);
+    assert_eq!(breakpoints[0].next_width.natural.raw(), 1015);
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let empty = universe.freeze_node_list(&[]);
     let breaks = vec![
@@ -1864,6 +1866,30 @@ fn mathoff_breaks_only_before_following_glue_and_zeroes_break_width() {
     let nodes_without_glue = vec![rule(10), Node::MathOff(sp(5)), rule(10)];
     let breakpoints = legal_breakpoints(&universe, &nodes_without_glue, &params(15));
     assert!(!breakpoints.iter().any(|br| br.position == 2));
+}
+
+#[test]
+fn explicit_kern_break_scores_before_adding_the_kern() {
+    // TeX82 §§822/866 tests the break before adding the explicit kern, then
+    // discards that kern while constructing the following line's prefix.
+    let mut universe = Universe::new();
+    let glue = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        rule(10),
+        kern(5),
+        Node::Glue {
+            spec: glue,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        rule(10),
+    ];
+
+    let breakpoints = legal_breakpoints(&universe, &nodes, &params(10));
+
+    assert_eq!(breakpoints[0].position, 2);
+    assert_eq!(breakpoints[0].line_width.natural.raw(), 10);
+    assert_eq!(breakpoints[0].next_width.natural.raw(), 15);
 }
 
 #[test]
