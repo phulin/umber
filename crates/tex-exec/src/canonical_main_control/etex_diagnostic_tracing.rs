@@ -109,6 +109,29 @@ fn middle_restores_the_preceding_math_left_group() {
 }
 
 #[test]
+fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\\tracinggroups=1\n\\setbox0=\\hbox{\\raise1pt\\hbox{}}\n\\moveleft1pt\\hbox{}\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // TeX82 §1083: the raised box is built in restricted horizontal mode.
+    assert!(
+        log.contains("{entering hbox group (level 2) at line 2}"),
+        "{log:?}"
+    );
+    // The moved box is built in vertical mode and remains adjusted.
+    assert!(
+        log.contains("{entering adjusted hbox group (level 1) at line 3}"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
     let (mut stores, mut control) = etex_control();
     register_source(

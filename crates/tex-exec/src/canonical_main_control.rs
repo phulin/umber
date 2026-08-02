@@ -14788,7 +14788,17 @@ fn apply_box_shift(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            let group_kind = if kind == ReplayBoxKind::HBox {
+            // TeX82 §1083 selects `adjusted_hbox_group` only for an hbox
+            // whose append-like box context is being built in vertical
+            // mode. A `\raise`/`\lower` hbox is necessarily reached from
+            // horizontal or math mode and therefore uses `hbox_group`;
+            // `\moveleft`/`\moveright` in vertical mode uses the adjusted
+            // group so migrated adjustments can be appended afterward.
+            let group_kind = if kind == ReplayBoxKind::HBox
+                && matches!(
+                    modes.current_mode(),
+                    Mode::Vertical | Mode::InternalVertical
+                ) {
                 GroupKind::AdjustedHBox
             } else {
                 kind.group_kind()
