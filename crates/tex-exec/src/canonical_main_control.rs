@@ -706,6 +706,11 @@ impl CanonicalMainControl {
         self.command.input_level_count()
     }
 
+    #[cfg(test)]
+    pub(crate) fn testing_push_mode(&mut self, mode: Mode) {
+        self.modes.push(mode).expect("test mode push");
+    }
+
     /// Returns the immutable profile of this command processor.
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {

@@ -1,8 +1,9 @@
 use super::*;
 use tex_command::{
-    AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandProcessor,
-    CommandRuntime, CommandSemanticDiagnostic, CommandState, FontResource, RegisteredSourceKind,
-    ScannedPackingSpec, SourceRegistration,
+    AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandObservation,
+    CommandObserver, CommandProcessor, CommandRuntime, CommandSemanticDiagnostic, CommandState,
+    FontResource, InputTransition, RecoveryKind, RegisteredSourceKind, ScannedPackingSpec,
+    SourceRegistration,
 };
 use tex_state::env::banks::GlueParam;
 use tex_state::glue::Order;
@@ -467,178 +468,182 @@ fn halign_in_unrestricted_horizontal_mode_finishes_paragraph_first() {
 #[test]
 fn halign_head_for_vmode_replay_preserves_command_origin() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let halign = Token::Cs(stores.intern("halign").symbol());
-    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
-    let command = TracedTokenWord::pack(halign, command_origin);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal).expect("test mode push");
-    let mut context = crate::ExecutionContext::new("texput");
+    let (control, observations, _) =
+        observed_alignment_control(&mut stores, "x\\halign{#\\cr\\cr}\\end");
+    let commands = observed_expanded_commands(&observations);
+    let first = commands
+        .iter()
+        .position(|command| command.command == "halign")
+        .unwrap();
+    let par = commands[first + 1..]
+        .iter()
+        .find(|command| command.command == "par_end")
+        .unwrap();
+    let replayed = commands[first + 1..]
+        .iter()
+        .find(|command| command.command == "halign")
+        .unwrap();
 
+    assert_eq!(par.command, "par_end");
     assert_eq!(
-        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
-            .expect("head_for_vmode dispatch"),
-        DispatchAction::Continue
+        replayed.provenance.origin,
+        commands[first].provenance.origin
     );
-    let inserted = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("inserted paragraph read")
-    .expect("inserted paragraph token");
-    let replayed = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("halign replay read")
-    .expect("halign replay token");
-
-    assert_eq!(
-        tex_expand::semantic_token(inserted),
-        Token::Cs(stores.intern("par").symbol())
-    );
-    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
-        stores.origin(inserted.origin())
-    else {
-        panic!("synthetic paragraph should carry inserted provenance");
-    };
-    assert_eq!(
-        inserted_origin.kind(),
-        tex_state::provenance::InsertedOriginKind::Paragraph
-    );
-    assert_eq!(inserted_origin.parent(), command_origin);
-    assert_eq!(replayed, command);
+    assert_eq!(control.active_alignment(), None);
 }
 
 #[test]
 fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let hrule = Token::Cs(stores.intern("hrule").symbol());
-    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
-    let command = TracedTokenWord::pack(hrule, command_origin);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Horizontal).expect("test mode push");
-    let mut context = crate::ExecutionContext::new("texput");
+    let (_, observations, _) = observed_alignment_control(&mut stores, "x\\hrule\\end");
+    let commands = observed_expanded_commands(&observations);
+    let first = commands
+        .iter()
+        .position(|command| command.command == "hrule")
+        .unwrap();
+    let par = commands[first + 1..]
+        .iter()
+        .position(|command| command.command == "par_end")
+        .unwrap();
+    let replayed = commands[first + 1..]
+        .iter()
+        .position(|command| command.command == "hrule")
+        .unwrap();
 
-    assert_eq!(
-        dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
-            .expect("head_for_vmode dispatch"),
-        DispatchAction::Continue
+    assert!(
+        par < replayed,
+        "paragraph must dispatch before the replayed rule"
     );
-    assert!(stores.page_contributions().is_empty());
-
-    let inserted = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("inserted paragraph read")
-    .expect("inserted paragraph token");
     assert_eq!(
-        tex_expand::semantic_token(inserted),
-        Token::Cs(stores.intern("par").symbol())
+        commands[first].provenance.origin,
+        commands[first + 1 + replayed].provenance.origin
     );
-
-    let replayed = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("replayed hrule read")
-    .expect("replayed hrule token");
-    assert_eq!(tex_expand::semantic_token(replayed), hrule);
-    assert_eq!(replayed.origin(), command_origin);
 }
 
 #[test]
 fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recovery() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let halign = Token::Cs(stores.intern("halign").symbol());
-    let command_origin = stores.synthetic_origin(tex_state::provenance::SyntheticOriginKind::Test);
-    let command = TracedTokenWord::pack(halign, command_origin);
-    let mut input = InputStack::new(MemoryInput::new(""));
-    let mut nest = ModeNest::new();
-    nest.push(Mode::RestrictedHorizontal)
-        .expect("test mode push");
-    stores.enter_group_with_kind(tex_state::GroupKind::HBox);
-    let mut context = crate::ExecutionContext::new("texput");
+    let (_, observations, _) =
+        observed_alignment_control(&mut stores, "\\setbox0=\\hbox{\\halign{#\\cr\\cr}\\end");
+    let commands = observed_expanded_commands(&observations);
+    let first = commands
+        .iter()
+        .position(|command| command.command == "halign")
+        .unwrap();
+    let closer = commands[first + 1..]
+        .iter()
+        .position(|command| command.command == "right_brace")
+        .unwrap();
+    let replayed = commands[first + 1..]
+        .iter()
+        .position(|command| command.command == "halign")
+        .unwrap();
 
-    dispatch_delivered_token(&mut nest, command, &mut input, &mut stores, &mut context)
-        .expect("off_save should insert a closing group");
-    let inserted = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("inserted group read")
-    .expect("inserted group token");
-    let replayed = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("halign replay read")
-    .expect("halign replay token");
-
-    assert_eq!(
-        tex_expand::semantic_token(inserted),
-        Token::Char {
-            ch: '}',
-            cat: Catcode::EndGroup,
-        }
+    assert!(
+        closer < replayed,
+        "off_save closer must precede command replay"
     );
-    let tex_state::provenance::OriginRecord::Inserted(inserted_origin) =
-        stores.origin(inserted.origin())
-    else {
-        panic!("off_save token should carry inserted provenance");
-    };
     assert_eq!(
-        inserted_origin.kind(),
-        tex_state::provenance::InsertedOriginKind::ErrorRecovery
+        commands[first].provenance.origin,
+        commands[first + 1 + replayed].provenance.origin
     );
-    assert_eq!(inserted_origin.parent(), command_origin);
-    assert_eq!(replayed, command);
+    assert!(observations.iter().any(|observation| matches!(observation,
+        CommandObservation::Recovery(recovery) if recovery.kind == RecoveryKind::InsertedToken)));
     assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
 }
 
 #[test]
 fn bottom_level_halign_recovery_drops_command_without_growing_input_frames() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\halign"));
-    let mut nest = ModeNest::new();
-    nest.push(Mode::RestrictedHorizontal)
-        .expect("test mode push");
-    let mut context = crate::ExecutionContext::new("texput");
-    let mut delivered = 0;
-    let mut maximum_depth = input.depth();
-
-    while let Some(token) = tex_expand::get_x_token_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-        &mut context,
-    )
-    .expect("recovery token read")
-    {
-        delivered += 1;
-        assert!(delivered <= 4, "halign recovery must make bounded progress");
-        dispatch_delivered_token(&mut nest, token, &mut input, &mut stores, &mut context)
-            .expect("halign recovery dispatch");
-        maximum_depth = maximum_depth.max(input.depth());
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control.testing_push_mode(Mode::RestrictedHorizontal);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\halign".to_vec(),
+        ))
+        .expect("register recovery source");
+    let mut observations = AlignmentObservationRecorder::default();
+    let mut maximum_depth = control.input_level_count();
+    for _ in 0..4 {
+        let step = control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("recovery step");
+        maximum_depth = maximum_depth.max(control.input_level_count());
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            break;
+        }
     }
 
-    assert_eq!(delivered, 1, "bottom-level off_save drops the command");
+    assert_eq!(
+        observed_expanded_commands(&observations.0)
+            .iter()
+            .filter(|command| command.command == "halign")
+            .count(),
+        1
+    );
     assert!(
         maximum_depth <= 1,
         "recovery must not retain inserted frames"
     );
+    assert!(
+        !observations
+            .0
+            .iter()
+            .any(|observation| matches!(observation,
+        CommandObservation::Input(input) if input.transition == InputTransition::Recovery))
+    );
     assert!(support::terminal_effect_text(&stores).contains("Extra \\halign"));
+}
+
+#[derive(Default)]
+struct AlignmentObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for AlignmentObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+fn observed_alignment_control(
+    stores: &mut Universe,
+    source: &str,
+) -> (CanonicalMainControl, Vec<CommandObservation>, usize) {
+    let mut control = CanonicalMainControl::tex82_initex(stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register observed alignment source");
+    let mut observations = AlignmentObservationRecorder::default();
+    let mut maximum_depth = control.input_level_count();
+    loop {
+        let step = control
+            .step_with_observer(stores, &mut observations)
+            .expect("alignment source executes");
+        maximum_depth = maximum_depth.max(control.input_level_count());
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            break;
+        }
+    }
+    (control, observations.0, maximum_depth)
+}
+
+fn observed_expanded_commands(
+    observations: &[CommandObservation],
+) -> Vec<&tex_command::CommandDeliveryRecord> {
+    observations
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(command)
+                if command.boundary == tex_command::CommandDeliveryBoundary::Expanded =>
+            {
+                Some(command)
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
