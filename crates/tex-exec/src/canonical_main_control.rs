@@ -21,7 +21,7 @@ use tex_command::{
     ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
     ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    ScannedSetBoxPath, ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -112,6 +112,9 @@ pub struct CanonicalMainControl {
     /// command per `step_once`, so the label it would have jumped to has to
     /// be carried across steps explicitly.
     main_loop_active: bool,
+    /// TeX82's temporary `set_box_allowed:=false` ownership while §1270
+    /// executes assignments after a display alignment or an accent.
+    set_box_forbidden_depth: u8,
     /// The last mode printed by TeX82 §1030's `show_cur_cmd_chr`.
     ///
     /// Zero is not a TeX mode, so `None` is WEB's initial `shown_mode=0`.
@@ -415,6 +418,7 @@ struct CanonicalStepSnapshot {
     active_math_left_boundaries: Vec<bool>,
     active_math_shifts: Vec<MathShiftContext>,
     main_loop_active: bool,
+    set_box_forbidden_depth: u8,
     shown_mode: Option<Mode>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
@@ -441,6 +445,7 @@ impl CanonicalStepSnapshot {
             active_math_left_boundaries: control.active_math_left_boundaries.clone(),
             active_math_shifts: control.active_math_shifts.clone(),
             main_loop_active: control.main_loop_active,
+            set_box_forbidden_depth: control.set_box_forbidden_depth,
             shown_mode: control.shown_mode,
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
@@ -476,6 +481,7 @@ impl CanonicalStepSnapshot {
         control.active_math_left_boundaries = self.active_math_left_boundaries;
         control.active_math_shifts = self.active_math_shifts;
         control.main_loop_active = self.main_loop_active;
+        control.set_box_forbidden_depth = self.set_box_forbidden_depth;
         control.shown_mode = self.shown_mode;
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
@@ -2155,6 +2161,7 @@ impl CanonicalMainControl {
                     self.modes.current_list().display_eq_no().is_some(),
                     &mut self.shown_mode,
                     &mut diagnostics,
+                    self.set_box_forbidden_depth == 0,
                 )?,
                 None if display_alignment_tail => {
                     // TeX82 §1206 runs §1270 `do_assignments` after
@@ -2178,6 +2185,7 @@ impl CanonicalMainControl {
                             false,
                             &mut self.shown_mode,
                             &mut diagnostics,
+                            false,
                         )?,
                         None => ScannedStep::EndOfInput,
                     }
@@ -2426,7 +2434,10 @@ impl CanonicalMainControl {
                     // control's big case routes every code above
                     // `max_non_prefixed_command` to, so this dispatches the
                     // delivered command in place rather than re-fetching it.
-                    match self.nested_step_once(stores, Some(command))? {
+                    self.set_box_forbidden_depth += 1;
+                    let step = self.nested_step_once(stores, Some(command));
+                    self.set_box_forbidden_depth -= 1;
+                    match step? {
                         ReplayStep::Continue => {}
                         ReplayStep::End | ReplayStep::EndOfInput => return Ok(None),
                     }
@@ -3610,6 +3621,7 @@ impl CanonicalMainControl {
                     self.modes.current_list().display_eq_no().is_some(),
                     &mut self.shown_mode,
                     &mut diagnostics,
+                    self.set_box_forbidden_depth == 0,
                 )?,
                 None if display_alignment_tail => match processor
                     .next_do_assignments_command()
@@ -3625,6 +3637,7 @@ impl CanonicalMainControl {
                         false,
                         &mut self.shown_mode,
                         &mut diagnostics,
+                        false,
                     )?,
                     None => ScannedStep::EndOfInput,
                 },
@@ -4434,8 +4447,7 @@ fn report_missing_box(command: &CommandState, stores: &mut Universe) -> Result<(
 }
 
 /// TeX82 §1084's `box_context < box_flag` recovery for `\setbox`.
-fn report_improper_setbox(command: &CommandState, stores: &mut Universe) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+fn report_improper_setbox(context: String, stores: &mut Universe) -> Result<(), ExecError> {
     report_escaped_error(
         stores,
         "Improper ",
@@ -5256,7 +5268,7 @@ enum ScannedStep {
     },
     SetBox {
         target: SetBoxTarget,
-        payload: ScannedBoxShiftPayload,
+        path: ScannedSetBoxPath,
     },
     BeginBox(ScannedBoxConstruction),
     BeginLeaderBox {
@@ -5669,6 +5681,7 @@ fn scan_noalign_body(
             false,
             shown_mode,
             diagnostics,
+            true,
         ),
     }
 }
@@ -5764,6 +5777,7 @@ fn scan_alignment_delivery_step(
                 false,
                 shown_mode,
                 diagnostics,
+                true,
             )
         }
         Some(AlignmentDelivery::Event(event)) => {
@@ -5856,6 +5870,7 @@ fn scan_step(
         display_eq_no,
         shown_mode,
         diagnostics,
+        true,
     )
 }
 
@@ -5893,6 +5908,7 @@ fn dispatch_main_control_command(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
+    set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
     let origin = command.origin();
     dispatch_main_control_command_inner(
@@ -5905,6 +5921,7 @@ fn dispatch_main_control_command(
         display_eq_no,
         shown_mode,
         diagnostics,
+        set_box_allowed,
     )
     .map_err(|error| error.capture_command_origin(origin))
 }
@@ -5920,6 +5937,7 @@ fn dispatch_main_control_command_inner(
     display_eq_no: bool,
     shown_mode: &mut Option<Mode>,
     diagnostics: &mut Vec<PendingDiagnostic>,
+    set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
@@ -6052,6 +6070,7 @@ fn dispatch_main_control_command_inner(
             innermost_group,
             job_is_all_over,
             display_eq_no,
+            set_box_allowed,
         )?;
         if suppress_left_boundary {
             match &mut scanned {
@@ -6381,6 +6400,7 @@ fn scan_command(
     innermost_group: Option<GroupKind>,
     job_is_all_over: bool,
     display_eq_no: bool,
+    set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
     if let Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
@@ -7868,13 +7888,15 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::SetBox) => {
-            let assignment = processor.scan_setbox_assignment().map_err(command_error)?;
+            let assignment = processor
+                .scan_setbox_assignment(set_box_allowed)
+                .map_err(command_error)?;
             Ok(ScannedStep::SetBox {
                 target: SetBoxTarget {
                     index: assignment.index,
                     global,
                 },
-                payload: assignment.payload,
+                path: assignment.path,
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => Ok(ScannedStep::VSplit(
@@ -10103,7 +10125,7 @@ fn applied_mutation_observation(
         // [17.230] exposes the affected eqtb slot as token register 256 to
         // the reference mutation instrumentation.
         ScannedStep::SetBox {
-            payload: ScannedBoxShiftPayload::Construction(construction),
+            path: ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::Construction(construction)),
             ..
         }
         | ScannedStep::BeginBox(construction)
@@ -13956,54 +13978,64 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::SetBox { target, payload } => {
+        ScannedStep::SetBox { target, path } => {
             // §1214's `<Adjust for the setting of \globaldefs>` runs inside
             // `prefixed_command`, before §1241 scans the box, so `global` in
             // §1241's `if global then n:=256+cur_val` is the *effective*
             // scope. Resolving it at `box_end` instead would read
             // `\globaldefs` as the box body left it.
             boxes.pending_setbox = Some(target);
-            match payload {
-                ScannedBoxShiftPayload::Missing => {
+            match path {
+                ScannedSetBoxPath::Forbidden { error_context } => {
                     let _ = boxes.take_box_context(false);
-                    report_improper_setbox(command.state, stores)?;
+                    report_improper_setbox(error_context, stores)?;
                 }
-                ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                    let id = if copy {
-                        stores.box_reg(index)
-                    } else {
-                        stores.take_box_reg_same_level(index)
-                    };
-                    if copy && let Some(id) = id {
-                        stores.pin_survivor(id);
+                ScannedSetBoxPath::Payload(payload) => match payload {
+                    ScannedBoxShiftPayload::Missing => {
+                        let _ = boxes.take_box_context(false);
+                        let context = command.state.output_open_context(&stores.command_context());
+                        report_improper_setbox(context, stores)?;
                     }
-                    let node = crate::assignments::first_box_node(stores, id);
-                    let context = boxes.take_box_context(false);
-                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
-                }
-                ScannedBoxShiftPayload::LastBox => {
-                    let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
-                    let context = boxes.take_box_context(false);
-                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
-                }
-                ScannedBoxShiftPayload::VSplit(split) => {
-                    if split.missing_to {
-                        report_missing_vsplit_to(command.state, stores)?;
+                    ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+                        let id = if copy {
+                            stores.box_reg(index)
+                        } else {
+                            stores.take_box_reg_same_level(index)
+                        };
+                        if copy && let Some(id) = id {
+                            stores.pin_survivor(id);
+                        }
+                        let node = crate::assignments::first_box_node(stores, id);
+                        let context = boxes.take_box_context(false);
+                        box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
-                    let node =
-                        crate::assignments::split_vbox_register(stores, split.index, split.height)?;
-                    let context = boxes.take_box_context(false);
-                    box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
-                }
-                ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
-                    construction,
-                    boxes.pending_setbox.take(),
-                    false,
-                    modes,
-                    stores,
-                    boxes,
-                    command,
-                )?,
+                    ScannedBoxShiftPayload::LastBox => {
+                        let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
+                        let context = boxes.take_box_context(false);
+                        box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                    }
+                    ScannedBoxShiftPayload::VSplit(split) => {
+                        if split.missing_to {
+                            report_missing_vsplit_to(command.state, stores)?;
+                        }
+                        let node = crate::assignments::split_vbox_register(
+                            stores,
+                            split.index,
+                            split.height,
+                        )?;
+                        let context = boxes.take_box_context(false);
+                        box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
+                    }
+                    ScannedBoxShiftPayload::Construction(construction) => begin_replay_box(
+                        construction,
+                        boxes.pending_setbox.take(),
+                        false,
+                        modes,
+                        stores,
+                        boxes,
+                        command,
+                    )?,
+                },
             }
             Ok(ReplayStep::Continue)
         }

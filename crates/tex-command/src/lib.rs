@@ -119,8 +119,8 @@ pub use scanners::{
     ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter,
     ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
     ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedTokenRegisterAssignment, ScannedVSplit,
-    StructuredProvenance, WriteStreamSelector,
+    ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenRegisterAssignment,
+    ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
 pub use state::{

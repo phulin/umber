@@ -83,8 +83,8 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
 
 #[test]
 fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
-    // TeX82 §1084: a non-box command with `box_context < box_flag` is an
-    // improper `\setbox`; the rejected command is backed up for execution.
+    // TeX82 §1084: genuine `scan_box` missing-box recovery backs the
+    // rejected command for execution.
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
@@ -103,6 +103,27 @@ fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
     assert!(stores.box_reg(0).is_none());
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(1), 9);
+}
+
+#[test]
+fn forbidden_setbox_reports_before_reading_the_following_command() {
+    // TeX82 §§1241/1123: `\accent` clears `set_box_allowed` while its
+    // assignment loop runs. The register and optional equals are consumed,
+    // but the following command is still to be read when `error` renders the
+    // context; it subsequently executes once and the destination stays void.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\accent65\setbox0=\count0=7 X\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("Improper \\setbox"), "{terminal}");
+    assert!(stores.box_reg(0).is_none());
+    assert_eq!(stores.count(0), 7);
 }
 
 #[test]

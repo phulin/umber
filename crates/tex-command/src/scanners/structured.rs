@@ -362,10 +362,22 @@ pub struct PdfThreadRequest {
 /// TeX82 §1241 calls §1084's `scan_box` from inside `prefixed_command`, so
 /// the required `make_box` command never returns to §1030's `big_switch` and
 /// must not receive a second main-control command trace.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedSetBoxAssignment {
     pub index: u16,
-    pub payload: ScannedBoxShiftPayload,
+    pub path: ScannedSetBoxPath,
+}
+
+/// The two distinct TeX82 §1241 paths after `\setbox` has scanned its
+/// register and optional equals sign.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScannedSetBoxPath {
+    /// `set_box_allowed` was false, so §1241 calls `error` immediately.
+    /// No box command has been fetched or backed up.
+    Forbidden { error_context: String },
+    /// `set_box_allowed` was true and §1084's ordinary `scan_box` ran.
+    /// A missing payload has therefore already backed up its rejected command.
+    Payload(ScannedBoxShiftPayload),
 }
 
 /// The completed command-owned prefix of a TeX82 box construction.
@@ -2448,14 +2460,25 @@ impl CommandProcessor<'_> {
     ///
     /// TeX.web's `prefixed_command` dispatches `set_box` to §433's
     /// `scan_eight_bit_int` then `scan_optional_equals`, followed immediately
-    /// by §1084's `scan_box`; none of that operand returns to main control.
+    /// by the `set_box_allowed` test. Its false branch reports directly,
+    /// without fetching a box command; its true branch enters §1084's
+    /// `scan_box`. None of the scanned operand returns to main control.
     /// e-TeX 2.6 [49.1241] widens only the target to `scan_register_num` while
     /// retaining the same complete operand ownership and backup transitions.
-    pub fn scan_setbox_assignment(&mut self) -> Result<ScannedSetBoxAssignment, CommandError> {
+    pub fn scan_setbox_assignment(
+        &mut self,
+        set_box_allowed: bool,
+    ) -> Result<ScannedSetBoxAssignment, CommandError> {
         let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
-        let payload = self.scan_box_payload()?;
-        Ok(ScannedSetBoxAssignment { index, payload })
+        let path = if set_box_allowed {
+            ScannedSetBoxPath::Payload(self.scan_box_payload()?)
+        } else {
+            ScannedSetBoxPath::Forbidden {
+                error_context: self.command.output_open_context(&self.state),
+            }
+        };
+        Ok(ScannedSetBoxAssignment { index, path })
     }
 
     /// Scans the register operand of TeX82 §1079's `make_box(box_code)` and

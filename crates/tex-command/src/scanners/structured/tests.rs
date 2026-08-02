@@ -71,6 +71,78 @@ fn diagnostic_text(universe: &Universe) -> String {
 }
 
 #[test]
+fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
+    let scan = |allowed| {
+        let mut command = CommandState::default();
+        push(&mut command, text_tokens("0=x"));
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let (assignment, next, context) = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let assignment = processor
+                .scan_setbox_assignment(allowed)
+                .expect("setbox operand scans");
+            let context = processor.error_context();
+            let next = processor
+                .get_x_token()
+                .expect("following command delivery succeeds")
+                .expect("following command remains input");
+            (assignment, next, context)
+        };
+        (assignment, next, context, recorder.0)
+    };
+
+    let (forbidden, forbidden_next, forbidden_context, forbidden_observations) = scan(false);
+    let ScannedSetBoxPath::Forbidden { error_context } = forbidden.path else {
+        panic!("set_box_allowed=false must bypass scan_box");
+    };
+    assert_eq!(error_context, forbidden_context);
+    assert!(matches!(
+        forbidden_next.meaning(),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    ));
+    let forbidden_backups = forbidden_observations
+        .iter()
+        .filter(|observation| matches!(
+            observation,
+            CommandObservation::Input(record) if record.transition == crate::InputTransition::Backup
+        ))
+        .count();
+
+    let (allowed, allowed_next, allowed_context, allowed_observations) = scan(true);
+    assert_eq!(
+        allowed.path,
+        ScannedSetBoxPath::Payload(ScannedBoxShiftPayload::Missing)
+    );
+    assert!(matches!(
+        allowed_next.meaning(),
+        Meaning::CharToken {
+            ch: 'x',
+            cat: Catcode::Letter
+        }
+    ));
+    let allowed_backups = allowed_observations
+        .iter()
+        .filter(|observation| matches!(
+            observation,
+            CommandObservation::Input(record) if record.transition == crate::InputTransition::Backup
+        ))
+        .count();
+    assert_eq!(allowed_backups, forbidden_backups + 1);
+    assert!(forbidden_context.contains("<recently read> ="));
+    assert!(forbidden_context.contains("<to be read again> 0="));
+    assert!(!allowed_context.contains("<recently read> ="));
+    assert!(allowed_context.contains("<to be read again>"));
+}
+
+#[test]
 fn math_scalar_requests_are_completed_before_replay() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
