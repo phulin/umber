@@ -45,10 +45,6 @@ fn mode_nest_projects_conditional_predicates_across_transitions() {
         tex_command::ConditionalMode::Vertical
     );
     assert!(nest.conditional_state().is_inner());
-
-    let executor = Executor::from_nest(nest.clone());
-    let mut capabilities = tex_command::CommandHostCapabilities::default();
-    executor.install_command_capabilities(&mut capabilities);
 }
 
 #[test]
@@ -327,52 +323,59 @@ fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
 #[test]
 fn high_segment_pgfkeys_call_preserves_second_argument_and_retires_condition() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     stores.intern("low-slot-csname");
     for index in 0..65_536_u32 {
         stores.intern(&format!("padding-{index}"));
     }
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        r"\catcode`\@=11 ",
-        r"\long\def\pgfkeys@@set#1#2{\gdef\result{#2}}",
-        r"\csname low-slot-csname\endcsname ",
-        r"\iftrue\pgfkeys@@set{/pgfplots/table}{second-argument}\fi\end",
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("high-segment macro call inside a conditional should complete");
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            concat!(
+                r"\catcode`\@=11 ",
+                r"\long\def\pgfkeys@@set#1#2{\gdef\result{#2}}",
+                r"\csname low-slot-csname\endcsname ",
+                r"\iftrue\pgfkeys@@set{/pgfplots/table}{second-argument}\fi\end",
+            )
+            .as_bytes()
+            .to_vec(),
+        ))
+        .expect("register high-segment macro source");
+    run_canonical_control_to_end(&mut control, &mut stores);
 
     assert_eq!(macro_text(&stores, "result"), "second-argument");
-    assert!(input.current_condition().is_none());
+    let output = terminal_effect_text(&stores);
+    assert!(!output.contains("incomplete \\if"), "{output}");
 }
 
 #[test]
 fn high_segment_package_let_state_survives_lower_meaning_writes() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     for index in 0..65_536_u32 {
         stores.intern(&format!("package-padding-{index}"));
     }
-    let mut input = InputStack::new(MemoryInput::new(concat!(
-        r"\catcode`\@=11 ",
-        r"\def\markbooktabs{\gdef\booktabsresult{B}}",
-        r"\def\markvoidbox{\gdef\voidboxresult{V}}",
-        r"\def\markenumitem{\gdef\enumitemresult{E}}",
-        r"\def\packagecall{",
-        r"\let\@BTswitch\markbooktabs",
-        r"\let\voidb\markvoidbox",
-        r"\let\enit@resuming\markenumitem",
-        r"\let\relax\relax",
-        r"\@BTswitch\voidb\enit@resuming}",
-        r"\packagecall",
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("high-segment package-local aliases should remain defined");
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            concat!(
+                r"\catcode`\@=11 ",
+                r"\def\markbooktabs{\gdef\booktabsresult{B}}",
+                r"\def\markvoidbox{\gdef\voidboxresult{V}}",
+                r"\def\markenumitem{\gdef\enumitemresult{E}}",
+                r"\def\packagecall{",
+                r"\let\@BTswitch\markbooktabs",
+                r"\let\voidb\markvoidbox",
+                r"\let\enit@resuming\markenumitem",
+                r"\let\relax\relax",
+                r"\@BTswitch\voidb\enit@resuming}",
+                r"\packagecall",
+            )
+            .as_bytes()
+            .to_vec(),
+        ))
+        .expect("register high-segment package source");
+    run_canonical_control_to_end(&mut control, &mut stores);
 
     assert_eq!(macro_text(&stores, "booktabsresult"), "B");
     assert_eq!(macro_text(&stores, "voidboxresult"), "V");
