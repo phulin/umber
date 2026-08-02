@@ -5626,12 +5626,15 @@ impl Universe {
 
     #[must_use]
     pub fn leave_group(&mut self) -> Vec<Token> {
-        self.trace_leaving_group();
+        let trace_context = self.leaving_group_trace_context();
         let (tokens, changed_cells, code_before, code_after, restores) =
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         self.trace_restores(&restores);
+        if let Some((kind, level, entered_line)) = trace_context {
+            self.trace_group_leave(kind, level, entered_line);
+        }
         tokens
     }
 
@@ -5639,13 +5642,16 @@ impl Universe {
         &mut self,
         expected: GroupKind,
     ) -> Result<Vec<Token>, GroupMismatch> {
-        self.trace_leaving_group();
+        let trace_context = self.leaving_group_trace_context();
         let (tokens, changed_cells, code_before, code_after, restores) = self
             .stores
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
         self.trace_restores(&restores);
+        if let Some((kind, level, entered_line)) = trace_context {
+            self.trace_group_leave(kind, level, entered_line);
+        }
         Ok(tokens)
     }
 
@@ -5825,14 +5831,12 @@ impl Universe {
         }
     }
 
-    /// e-TeX 2.6 [19.281]'s `group_trace(true)`, fired against the still-live
-    /// top frame before `unsave` pops it.
-    fn trace_leaving_group(&mut self) {
-        let Some(frame) = self.stores.group_frames().next_back() else {
-            return;
-        };
+    /// Captures the frame fields e-TeX 2.6 [19.282]'s `group_trace(true)`
+    /// needs after `unsave` has restored the enclosing parameter values.
+    fn leaving_group_trace_context(&self) -> Option<(GroupKind, u32, u32)> {
+        let frame = self.stores.group_frames().next_back()?;
         let (kind, entered_line) = (frame.kind(), frame.entered_line());
-        self.trace_group_leave(kind, self.stores.env_group_depth(), entered_line);
+        Some((kind, self.stores.env_group_depth(), entered_line))
     }
 
     fn mark_group_exit_dependencies(

@@ -104,3 +104,36 @@ fn untyped_leave_group_traces_the_live_top_frame() {
         "{leaving simple group (level 1) entered at line 7}\n"
     );
 }
+
+#[test]
+fn locally_enabling_tracinggroups_does_not_trace_its_own_group_exit() {
+    let mut universe = Universe::new();
+    universe.enter_group_with_kind_at_line(GroupKind::SemiSimple, 12);
+    universe.set_int_param(IntParam::TRACING_GROUPS, 1);
+
+    universe
+        .leave_group_with_kind(GroupKind::SemiSimple)
+        .expect("matching group kind");
+
+    // e-TeX [19.282] reaches `group_trace(true)` only after `unsave` has
+    // restored the enclosing zero value of `\tracinggroups`.
+    assert_eq!(routed_log(&universe), "");
+}
+
+#[test]
+fn locally_disabling_tracinggroups_still_traces_its_group_exit() {
+    let mut universe = tracing_universe();
+    universe.enter_group_with_kind_at_line(GroupKind::SemiSimple, 13);
+    universe.set_int_param(IntParam::TRACING_GROUPS, 0);
+    let before_leave = routed_log(&universe).len();
+
+    universe
+        .leave_group_with_kind(GroupKind::SemiSimple)
+        .expect("matching group kind");
+
+    // The restored enclosing value enables the trace at [19.282]'s `done`.
+    assert_eq!(
+        &routed_log(&universe)[before_leave..],
+        "{leaving semi simple group (level 1) entered at line 13}\n"
+    );
+}

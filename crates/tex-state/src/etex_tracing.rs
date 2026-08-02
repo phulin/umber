@@ -43,12 +43,12 @@ impl Universe {
         diagnostic.end(false);
     }
 
-    /// e-TeX 2.6 [19.281]'s `group_trace(true)`, called when
+    /// e-TeX 2.6 [19.282]'s `group_trace(true)`, called when
     /// [`Self::leave_group_with_kind`]/[`Self::leave_group`] closes the
-    /// innermost save level, before the group is actually popped.
+    /// innermost save level after its local values have been restored.
     ///
-    /// `level` and `entered_line` describe the group being closed, i.e. the
-    /// live top-of-stack frame at the moment this is called.
+    /// `level` and `entered_line` were captured from the group being closed
+    /// before restoration popped its frame.
     pub(crate) fn trace_group_leave(&mut self, kind: GroupKind, level: u32, entered_line: u32) {
         if self.int_param(IntParam::TRACING_GROUPS) <= 0 {
             return;
