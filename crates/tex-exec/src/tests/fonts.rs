@@ -936,17 +936,16 @@ fn font_properties_are_inherently_global() {
 #[test]
 fn fontdimen_growth_reports_font_memory_capacity() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\relax \\fontdimen1\\f=1pt \\fontdimen19993\\f=2pt \\fontdimen19994\\f=9pt \\end",
-    ));
-
-    let error = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect_err("font-memory exhaustion is fatal");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\f=cmr10 \relax \fontdimen1\f=1pt \fontdimen19993\f=2pt \fontdimen19994\f=9pt \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert_eq!(
-        error.as_fatal(),
+        control.fatal_error(),
         Some(tex_command::FatalError::overflow("font memory", 20_000))
     );
 
@@ -965,14 +964,13 @@ fn fontdimen_growth_reports_font_memory_capacity() {
 #[test]
 fn font_backed_integer_array_can_extend_and_read_entries() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\a=cmr10 at 1sp \\fontdimen8\\a=0sp \\hyphenchar\\a=128 \\fontdimen85\\a=85sp \\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font-backed integer array setup executes");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\a=cmr10 at 1sp \fontdimen8\a=0sp \hyphenchar\a=128 \fontdimen85\a=85sp \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
     let font = font_meaning(&stores, "a");
     assert_eq!(stores.font_hyphen_char(font), 128);
     assert_eq!(stores.font_parameter_count(font), 85);
@@ -982,17 +980,13 @@ fn font_backed_integer_array_can_extend_and_read_entries() {
 #[test]
 fn grouped_font_backed_integer_array_setup_survives_group_exit() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "{\\global\\font\\a=cmr10 at 1001sp \
-         \\fontdimen8\\a=0sp \\hyphenchar\\a=128 \
-         \\fontdimen85\\a=85sp} \
-         \\message{count=\\the\\hyphenchar\\a,item=\\the\\fontdimen85\\a}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("grouped font-backed integer array setup executes");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"{\global\font\a=cmr10 at 1001sp \fontdimen8\a=0sp \hyphenchar\a=128 \fontdimen85\a=85sp} \message{count=\the\hyphenchar\a,item=\the\fontdimen85\a}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let font = font_meaning(&stores, "a");
     assert_eq!(stores.font_hyphen_char(font), 128);
@@ -1008,14 +1002,13 @@ fn grouped_font_backed_integer_array_setup_survives_group_exit() {
 #[test]
 fn the_fontdimen_reads_the_current_font_selector() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\f=cmr10 \\fontdimen1\\f=1.5pt \\f\\message{slant=\\the\\fontdimen1\\font}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("current-font fontdimen expands");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\f=cmr10 \fontdimen1\f=1.5pt \f\message{slant=\the\fontdimen1\font}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     assert!(terminal_effect_text(&stores).contains("slant=1.5pt"));
 }
@@ -1023,19 +1016,14 @@ fn the_fontdimen_reads_the_current_font_selector() {
 #[test]
 fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
     let mut stores = stores_with_fonts();
-    let mut ok = InputStack::new(MemoryInput::new(
-        "\\font\\a=cmr10 \\fontdimen8\\a=1pt \\end",
-    ));
-    Executor::new()
-        .run(&mut ok, &mut stores)
-        .expect("last loaded font may grow");
-
-    let mut bad = InputStack::new(MemoryInput::new(
-        "\\font\\b=cmtt10 \\fontdimen9\\a=2pt \\end",
-    ));
-    Executor::new()
-        .run(&mut bad, &mut stores)
-        .expect("older font growth failure is recoverable");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_font(&mut control, &mut stores, "cmtt10.tfm", "cmtt10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\a=cmr10 \fontdimen8\a=1pt \font\b=cmtt10 \fontdimen9\a=2pt \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let a = font_meaning(&stores, "a");
     assert_eq!(stores.font_parameter(a, 9).raw(), 0);
@@ -1045,14 +1033,14 @@ fn fontdimen_growth_is_limited_to_most_recently_loaded_font() {
 #[test]
 fn short_tfm_keeps_fontdimen_seven_writable_after_a_later_font_load() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\font\\a=cmmi10 \\font\\b=cmr10 \\fontdimen7\\a=2pt \\message{p7=\\the\\fontdimen7\\a}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("guaranteed fontdimens remain assignable");
+    let mut control = canonical_font_control(&mut stores, CommandProfile::TEX82);
+    register_canonical_font(&mut control, &mut stores, "cmmi10.tfm", "cmmi10.tfm");
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\a=cmmi10 \font\b=cmr10 \fontdimen7\a=2pt \message{p7=\the\fontdimen7\a}\end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
 
     let a = font_meaning(&stores, "a");
     assert_eq!(stores.font_parameter_count(a), 7);
