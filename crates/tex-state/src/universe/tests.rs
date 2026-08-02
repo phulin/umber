@@ -97,6 +97,25 @@ fn pdf_match_capture_state_is_not_serialized_into_formats() {
 }
 
 #[test]
+fn page_insertion_heights_are_checkpointed_live_state_and_forbid_format_dump() {
+    let mut universe = Universe::new();
+    let baseline = universe.snapshot();
+    universe.upsert_page_insertion(crate::page::PageInsertion::new(
+        254,
+        Scaled::from_raw(12 * Scaled::UNITY),
+    ));
+    assert_eq!(
+        universe.page_insertion_height(254),
+        Some(Scaled::from_raw(12 * Scaled::UNITY))
+    );
+    assert_ne!(universe.snapshot().state_hash(), baseline.state_hash());
+    assert_eq!(universe.dump_format(), Err(FormatError::NonEmptyPage));
+    universe.rollback(&baseline);
+    assert_eq!(universe.page_insertion_height(254), None);
+    assert_eq!(universe.snapshot().state_hash(), baseline.state_hash());
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's

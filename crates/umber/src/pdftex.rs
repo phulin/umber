@@ -2659,7 +2659,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_insert_height_reads_live_page_insertion_accounting() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -2716,6 +2715,24 @@ mod tests {
             split_stores.page_insertion_height(254),
             Some(Scaled::from_raw(4 * Scaled::UNITY))
         );
+    }
+
+    #[test]
+    fn canonical_pdf_insert_height_scans_an_expanded_register() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = run_pdf_memory(
+            concat!(
+                "\\vsize=100pt ",
+                "\\count254=1000 \\dimen254=100pt \\skip254=0pt ",
+                "\\def\\insertclass{254}",
+                "\\insert254{\\hbox{\\vrule height6pt depth1pt width0pt}} ",
+                "\\message{expanded=\\pdfinsertht\\insertclass}",
+            ),
+            &mut stores,
+        )
+        .expect("expanded insertion register enquiry");
+        assert!(output.contains("expanded=7.0pt"), "{output}");
     }
 
     #[test]

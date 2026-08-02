@@ -691,6 +691,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
                 self.expand_pdf_file_dump(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
+                self.expand_pdf_insert_height(command)
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original
@@ -1218,6 +1221,20 @@ impl CommandProcessor<'_> {
             use std::fmt::Write as _;
             write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
         }
+        self.push_rendered_text(&rendered, opener.origin());
+        Ok(())
+    }
+
+    /// pdftex.web §1590's `pdf_insert_ht_code` conversion reads the height
+    /// accumulated in the live page-builder insertion record. Missing classes
+    /// use pdfTeX's literal `0pt`; present zero heights use `print_scaled` and
+    /// therefore remain distinguishable as `0.0pt`.
+    fn expand_pdf_insert_height(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let class = self.scan_extended_register_index()?;
+        let rendered = self
+            .host
+            .page_insertion_height(class)
+            .map_or_else(|| "0pt".to_owned(), format_scaled);
         self.push_rendered_text(&rendered, opener.origin());
         Ok(())
     }

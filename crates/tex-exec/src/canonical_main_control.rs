@@ -1070,6 +1070,12 @@ impl CanonicalMainControl {
             .set_last_node(self.last_node_value(stores));
         self.capabilities
             .set_last_node_type(self.last_node_type_value(stores));
+        self.capabilities.set_page_insertion_heights(
+            stores
+                .page_insertions()
+                .iter()
+                .map(|insertion| (insertion.class(), insertion.height())),
+        );
     }
 
     /// TeX82 §424's "Fetch an item in the current node, if appropriate": the
