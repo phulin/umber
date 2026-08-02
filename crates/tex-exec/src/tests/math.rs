@@ -700,77 +700,20 @@ fn mathaccent_skips_relax_before_its_nucleus() {
 
 #[test]
 fn math_group_mismatch_reports_the_closing_token_origin() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
-    stores.enter_group_with_kind(tex_state::GroupKind::SemiSimple);
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Math).expect("test mode push");
-    let mut input = InputStack::new(MemoryInput::new("}"));
-    let token = tex_expand::get_x_token(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-    )
-    .expect("right brace tokenizes")
-    .expect("right brace exists");
-    let err = crate::dispatch::dispatch_delivered_token(
-        &mut nest,
-        token,
-        &mut input,
-        &mut stores,
-        &mut crate::ExecutionContext::new("texput"),
-    )
-    .expect_err("direct dispatch exposes the recoverable math-group mismatch");
+    let stores = super::core::run_canonical_tex82(r"$\begingroup}\end");
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Extra }, or forgotten \\endgroup"));
+    assert!(output.contains("l.1 $\\begingroup}"));
 
-    assert!(matches!(
-        &err,
-        ExecError::ExtraRightBraceOrForgottenEndgroup { .. }
-    ));
-    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
+    let stores = super::core::run_canonical_tex82(r"$\endgroup\end");
+    let output = terminal_effect_text(&stores);
+    assert!(output.contains("Extra \\endgroup"));
+    assert!(output.contains("l.1 $\\endgroup"));
 
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
-    let mut nest = ModeNest::new();
-    nest.push(Mode::Math).expect("test mode push");
-    let mut input = InputStack::new(MemoryInput::new(r"\endgroup"));
-    let token = tex_expand::get_x_token(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(&mut stores),
-    )
-    .expect("endgroup tokenizes")
-    .expect("endgroup exists");
-    let err = crate::dispatch::dispatch_delivered_token(
-        &mut nest,
-        token,
-        &mut input,
-        &mut stores,
-        &mut crate::ExecutionContext::new("texput"),
-    )
-    .expect_err("direct dispatch exposes the recoverable math-group mismatch");
-
-    assert!(matches!(&err, ExecError::EndGroupMismatch { .. }));
-    assert_ne!(err.primary_origin(), Some(OriginId::UNKNOWN));
-
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    Executor::new()
-        .run(&mut InputStack::new(MemoryInput::new(r"$}")), &mut stores)
-        .expect("an extra right brace in math is reported and ignored");
+    let stores = super::core::run_canonical_tex82(r"$}\end");
     assert!(support::terminal_effect_text(&stores).contains("Extra }, or forgotten $"));
 
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    Executor::new()
-        .run(
-            &mut InputStack::new(MemoryInput::new(r"$\begingroup$")),
-            &mut stores,
-        )
-        .expect("off_save inserts endgroup before retrying the dollar");
+    let stores = super::core::run_canonical_tex82(r"$\begingroup$\end");
     assert!(support::terminal_effect_text(&stores).contains("Missing \\endgroup inserted"));
 }
 
@@ -797,23 +740,18 @@ fn post_display_alignment_replay_preserves_following_source_origin() {
 #[test]
 fn equation_number_math_shift_group_restores_before_outer_display_group() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     stores.set_int_param(IntParam::FAM, 9);
     stores.set_count(0, 1);
-    let mut executor = Executor::new();
-    executor
-        .run(
-            &mut InputStack::new(MemoryInput::new(
-                r"\noindent $$\count0=2 a\eqno\count0=3 b$$",
-            )),
-            &mut stores,
-        )
-        .expect("display equation-number subformula should execute");
+    let (stores, control) = run_canonical_math_recovery(
+        stores,
+        CommandProfile::TEX82,
+        r"\noindent $$\count0=2 a\eqno\count0=3 b$$",
+        false,
+    );
 
     assert_eq!(stores.count(0), 1);
     assert_eq!(stores.int_param(IntParam::FAM), 9);
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(control.current_mode(), Mode::Horizontal);
 }
 
 #[test]
@@ -841,53 +779,40 @@ fn equation_number_uses_a_checkpointable_nested_math_level() {
 
 #[test]
 fn equation_number_aftergroup_runs_after_its_nested_math_group_closes() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut executor = Executor::new();
-    executor
-        .run(
-            &mut InputStack::new(MemoryInput::new(
-                r"\def\mark{\global\count1=7}\noindent $$a\eqno\aftergroup\mark b$$",
-            )),
-            &mut stores,
-        )
-        .expect("equation-number aftergroup should execute");
+    let (stores, control) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"\def\mark{\global\count1=7}\noindent $$a\eqno\aftergroup\mark b$$",
+        false,
+    );
 
     assert_eq!(stores.count(1), 7);
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(control.current_mode(), Mode::Horizontal);
     assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
 }
 
 #[test]
 fn equation_number_expands_the_outer_display_closer() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut executor = Executor::new();
-    executor
-        .run(
-            &mut InputStack::new(MemoryInput::new(
-                r"\def\close{$}\noindent $$a\eqno b$\close\count1=7",
-            )),
-            &mut stores,
-        )
-        .expect("expanded display closer should finish the equation number");
+    let (stores, control) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"\def\close{$}\noindent $$a\eqno b$\close\count1=7",
+        false,
+    );
 
     assert_eq!(stores.count(1), 7);
-    assert_eq!(executor.nest().current_mode(), Mode::Horizontal);
+    assert_eq!(control.current_mode(), Mode::Horizontal);
     assert!(!terminal_effect_text(&stores).contains("Display math should end with $$"));
 }
 
 #[test]
 fn equation_number_outside_display_reports_illegal_case_without_starting_math() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"\eqno x$\count0=7"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("non-math eqno recovery should continue");
+    let (stores, _) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"\eqno x$\count0=7",
+        false,
+    );
 
     assert_eq!(stores.count(0), 7);
     let output = support::terminal_effect_text(&stores);
