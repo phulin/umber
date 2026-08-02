@@ -1468,7 +1468,6 @@ fn let_aliased_frozen_endv_finishes_cell_through_do_endv() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-egcq intervening-group frozen end-v recovery"]
 fn futurelet_aliased_frozen_endv_recovers_intervening_group_before_do_endv() {
     let stores = run_boxed_alignment_source(
         "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}",
@@ -1482,9 +1481,30 @@ fn futurelet_aliased_frozen_endv_recovers_intervening_group_before_do_endv() {
 }
 
 #[test]
+fn intervening_group_endv_recovery_replays_identically_after_rollback() {
+    // TeX82 §§1064--1065/1131: `do_endv` backs itself up behind the closer
+    // for every non-align group. The save-stack transition and the backed-up
+    // delimiter must retain identical identity across aggregate rollback.
+    let mut stores = support::stores_with_fonts();
+    let checkpoint = stores.snapshot();
+    let source = "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\setbox0=\\vbox{\\halign{#\\cr x\\capture\\cr}}";
+
+    run_alignment_source_in(&mut stores, source);
+    let first_hash = stores.snapshot().state_hash();
+    let first_output = support::terminal_effect_text(&stores);
+
+    stores.rollback(&checkpoint);
+    run_alignment_source_in(&mut stores, source);
+
+    assert_eq!(stores.snapshot().state_hash(), first_hash);
+    assert_eq!(support::terminal_effect_text(&stores), first_output);
+    assert!(first_output.contains("Missing \\endgroup inserted"));
+}
+
+#[test]
 fn aliased_endv_recovery_continues_through_shifted_void_box() {
     let stores = run_boxed_alignment_source(
-        "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}\\lower1pt\\box1\\global\\count0=7",
+        "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}\\moveleft1pt\\box255\\global\\count0=7",
     );
     let vbox = box_zero_vlist(&stores);
     let rows = vlist_rows(&stores, vbox);

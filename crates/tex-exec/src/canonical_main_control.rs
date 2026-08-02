@@ -5907,11 +5907,18 @@ fn scan_alignment_delivery_step(
                         .map_err(command_error)?;
                     return Ok(ScannedStep::MissingMathShift);
                 }
-                // Replay's structural alignment group is deliberately not a
-                // Universe group: the surrounding box owns that stack slot.
-                // A recovery-opened simple group is the bounded exception
-                // that TeX82 §1131 must close through `off_save` first.
-                if boxes.recovery_simple_group_open {
+                // TeX82 §1131 accepts end-v only when `cur_group=align_group`.
+                // The replay driver tracks align-error's inserted `{`
+                // separately because its structural alignment boundary is
+                // executor-owned. Ordinary `\begingroup` is nevertheless a
+                // real `semi_simple_group` save-stack level, and must close
+                // through §§1064--1065 `off_save` before the same end-v is
+                // replayed. Other intervening groups are intercepted by their
+                // owning mode/box delivery paths before reaching this cell
+                // finish boundary.
+                if boxes.recovery_simple_group_open
+                    || innermost_group == Some(GroupKind::SemiSimple)
+                {
                     return scan_off_save(processor, command, innermost_group);
                 }
                 return Ok(ScannedStep::AlignmentCellFinish { alignment });
