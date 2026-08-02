@@ -624,8 +624,21 @@ fn bare_math_brace_nucleus_owns_both_following_scripts() {
 
 #[test]
 fn canonical_display_entry_publishes_paragraph_geometry() {
-    let stores =
-        super::core::run_canonical_tex82(r"\hsize=100pt \hangindent=20pt \hangafter=1 x$$ $$\end");
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(tex_command::SourceRegistration::new(
+            tex_command::RegisteredSourceKind::Generated,
+            br"\hsize=100pt \hangindent=20pt \hangafter=1 x$$ $$\end".to_vec(),
+        ))
+        .expect("register display geometry source");
+    for _ in 0..128 {
+        control.step(&mut stores).expect("enter canonical display");
+        if control.current_mode() == Mode::DisplayMath {
+            break;
+        }
+    }
+    assert_eq!(control.current_mode(), Mode::DisplayMath);
 
     assert_eq!(
         stores.dimen_param(DimenParam::DISPLAY_WIDTH).raw(),
@@ -639,6 +652,24 @@ fn canonical_display_entry_publishes_paragraph_geometry() {
         stores.dimen_param(DimenParam::PRE_DISPLAY_SIZE),
         Scaled::from_raw(-Scaled::MAX_DIMEN.raw()),
         "a nonempty interrupted paragraph publishes its last visible position"
+    );
+
+    for _ in 0..128 {
+        if control.step(&mut stores).expect("finish canonical display") == MainControlStep::End {
+            break;
+        }
+    }
+    assert_eq!(
+        stores.dimen_param(DimenParam::DISPLAY_WIDTH),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(
+        stores.dimen_param(DimenParam::DISPLAY_INDENT),
+        Scaled::from_raw(0)
+    );
+    assert_eq!(
+        stores.dimen_param(DimenParam::PRE_DISPLAY_SIZE),
+        Scaled::from_raw(0)
     );
 }
 

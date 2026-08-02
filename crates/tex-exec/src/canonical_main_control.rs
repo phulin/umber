@@ -2663,7 +2663,8 @@ impl CanonicalMainControl {
                 if pairing == MathShiftPairing::Paired {
                     self.enter_canonical_display(stores)?;
                 } else {
-                    self.enter_canonical_math(false, stores)?;
+                    self.enter_canonical_math_level(false, stores)?;
+                    schedule_everymath(&mut self.command, stores, false);
                 }
             }
             Mode::Math => {
@@ -2736,7 +2737,7 @@ impl CanonicalMainControl {
             .map_err(command_error)
     }
 
-    fn enter_canonical_math(
+    fn enter_canonical_math_level(
         &mut self,
         display: bool,
         stores: &mut Universe,
@@ -2762,7 +2763,6 @@ impl CanonicalMainControl {
         } else {
             MathShiftContext::Inline
         });
-        schedule_everymath(&mut self.command, stores, display);
         Ok(())
     }
 
@@ -2779,18 +2779,26 @@ impl CanonicalMainControl {
             .map_or(Scaled::from_raw(-Scaled::MAX_DIMEN.raw()), |line| {
                 crate::math::display::pre_display_size(stores, line)
             });
+        // TeX82 §1145 opens `math_shift_group` before these local parameter
+        // definitions, so §283 restores all of them when the display ends.
+        // `\everydisplay` is scheduled only after the definitions are live.
+        self.enter_canonical_math_level(true, stores)?;
         stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
         stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, dimensions.width);
         stores.set_dimen_param(DimenParam::DISPLAY_INDENT, dimensions.indent);
-        stores.set_int_param(
-            IntParam::PRE_DISPLAY_DIRECTION,
-            match paragraph.active_directions.last() {
-                Some(tex_state::node::Direction::BeginL) => 1,
-                Some(tex_state::node::Direction::BeginR) => -1,
-                _ => 0,
-            },
-        );
-        self.enter_canonical_math(true, stores)?;
+        // e-TeX 2.6 [32.1145] adds this definition only in extended mode;
+        // TeX82 compatibility mode has no corresponding save-stack word.
+        if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
+            stores.set_int_param(
+                IntParam::PRE_DISPLAY_DIRECTION,
+                match paragraph.active_directions.last() {
+                    Some(tex_state::node::Direction::BeginL) => 1,
+                    Some(tex_state::node::Direction::BeginR) => -1,
+                    _ => 0,
+                },
+            );
+        }
+        schedule_everymath(&mut self.command, stores, true);
         self.modes
             .current_list_mutation()
             .set_display_interrupt(crate::mode::DisplayInterrupt {

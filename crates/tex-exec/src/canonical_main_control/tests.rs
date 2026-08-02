@@ -1597,6 +1597,40 @@ fn empty_equation_number_checks_math_fonts_on_both_sides() {
     assert!(first_font_error < display_end_error);
     assert!(display_end_error < equation_number_restore);
     assert!(equation_number_restore < second_font_error);
+    assert!(terminal.contains("{restoring \\predisplaydirection=0}"));
+}
+
+#[test]
+fn tex82_display_parameters_are_local_to_the_math_shift_group() {
+    // TeX82 §§1145/1194/283: display parameters are defined after
+    // `push_math(math_shift_group)` and restored in reverse assignment order.
+    // e-TeX's `\predisplaydirection` extension is absent in TeX82 mode.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingrestores=1\tracingonline=1\noindent $$x$$\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    let display_indent = terminal
+        .find("{restoring \\displayindent=0.0pt}")
+        .expect("display indent restore");
+    let display_width = terminal
+        .find("{restoring \\displaywidth=0.0pt}")
+        .expect("display width restore");
+    let pre_display_size = terminal
+        .find("{restoring \\predisplaysize=0.0pt}")
+        .expect("pre-display size restore");
+    let family = terminal
+        .find("{restoring \\fam=0}")
+        .expect("display family restore");
+    assert!(display_indent < display_width);
+    assert!(display_width < pre_display_size);
+    assert!(pre_display_size < family);
+    assert!(!terminal.contains("predisplaydirection"));
 }
 
 #[test]
