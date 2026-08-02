@@ -167,8 +167,11 @@ impl CommandHostCapabilities {
     /// Records a completed host lookup which found no input backing.
     pub fn mark_input_unavailable(&mut self, name: impl Into<String>) {
         let name = name.into();
-        self.input.remove(&name);
-        self.unavailable_input.insert(name);
+        let has_area = name.chars().any(|ch| matches!(ch, '/' | '\\' | ':'));
+        for candidate in input_lookup_candidates(&name, has_area) {
+            self.input.remove(&candidate);
+            self.unavailable_input.insert(candidate);
+        }
     }
 
     /// Installs immutable backing for a non-opening file enquiry.
@@ -345,6 +348,18 @@ impl CommandHostCapabilities {
     }
 }
 
+/// Returns the exact ordered names tried by canonical `\input` lookup.
+/// Keeping acquisition settlement on this same helper prevents an
+/// authoritative answer for a bare name from leaving its bounded TeXinputs
+/// fallback unresolved.
+pub(crate) fn input_lookup_candidates(packed_name: &str, has_area: bool) -> Vec<String> {
+    let mut candidates = vec![packed_name.to_owned()];
+    if !has_area {
+        candidates.push(format!("TeXinputs:{packed_name}"));
+    }
+    candidates
+}
+
 /// A non-owning host-capability boundary for one command-processor operation.
 ///
 /// The mutable borrow makes the capability scope explicit and prevents the
@@ -449,5 +464,18 @@ mod tests {
         capabilities.set_startup_job_name("inputs/annual.report.tex");
 
         assert_eq!(capabilities.job_name, "annual.report");
+    }
+
+    #[test]
+    fn unavailable_bare_input_settles_only_its_canonical_aliases() {
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.mark_input_probe_unavailable("absent.tex");
+        capabilities.mark_input_unavailable("absent.tex");
+
+        assert!(capabilities.input_resource_is_unavailable("absent.tex"));
+        assert!(capabilities.input_resource_is_unavailable("TeXinputs:absent.tex"));
+        assert!(!capabilities.input_resource_is_unavailable("other.tex"));
+        assert!(capabilities.input_probe_is_unavailable("absent.tex"));
+        assert!(!capabilities.input_probe_is_unavailable("TeXinputs:absent.tex"));
     }
 }

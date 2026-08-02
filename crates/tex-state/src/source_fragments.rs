@@ -527,6 +527,33 @@ impl FragmentStore {
         })
     }
 
+    /// Rematches detached generated backing to one immutable editor fragment.
+    #[must_use]
+    pub fn root_span_for_generated_bytes(
+        &self,
+        bytes: &[u8],
+        range: Range<u64>,
+    ) -> Option<RootSpanId> {
+        if range.start > range.end || range.end > bytes.len() as u64 {
+            return None;
+        }
+        for slot in 0..self.fragments.len {
+            let fragment = self.fragments.get(slot)?;
+            if self.bytes(fragment.id)? != bytes {
+                continue;
+            }
+            let start = u32::try_from(range.start).ok()?;
+            let end = u32::try_from(range.end).ok()?;
+            return Some(RootSpanId {
+                piece: PieceId(fragment.id),
+                start,
+                end,
+                content: ContentHash::from_bytes(bytes.get(start as usize..end as usize)?),
+            });
+        }
+        None
+    }
+
     pub(crate) fn direct_root_span_id(&self, origin: crate::token::OriginId) -> Option<RootSpanId> {
         let span = direct_fragment_span(origin, self)?;
         let (fragment_id, fragment) = self.fragment_at(span.lo())?;

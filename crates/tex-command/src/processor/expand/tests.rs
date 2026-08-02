@@ -1299,6 +1299,37 @@ fn input_uses_only_capability_registered_backing_and_returns_to_parent() {
 }
 
 #[test]
+fn unavailable_expandable_input_carries_its_triggering_origin() {
+    let mut command = CommandState::default();
+    let parent = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\input absent".as_slice()),
+        ))
+        .expect("parent registers");
+    command
+        .open_registered_source(parent)
+        .expect("parent opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut capabilities = CommandHostCapabilities::default();
+    capabilities.mark_input_unavailable("absent.tex");
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let error = processor
+        .get_x_token()
+        .expect_err("authoritatively unavailable input is fatal in nonstop mode");
+    let (error, origin) = match error {
+        CommandError::AtOrigin { error, origin } => (error, origin),
+        other => panic!("expandable input error lacks its delivery origin: {other:?}"),
+    };
+    assert!(matches!(*error, CommandError::Fatal(_)));
+    assert_ne!(origin, OriginId::UNKNOWN);
+}
+
+#[test]
 fn recursive_input_during_filename_scan_inserts_frozen_relax_before_restored_input() {
     // TeX82 §§378/527: a recursively expanded `\input` cannot start another
     // filename scan. It is restored beneath inaccessible `frozen_relax`, so

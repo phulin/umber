@@ -243,17 +243,15 @@ fn engine_diagnostic_preserves_atomic_root_utf8_location() {
             request.key().clone(),
         )])
         .expect("unavailable input");
+    let expected = Some(CompileSourceLocation {
+        file: "/job/main.tex".into(),
+        byte_start: 5,
+        byte_end: 11,
+        line: 2,
+        column: 3,
+    });
     let diagnostic = compile_diagnostic(&mut session);
-    assert_eq!(
-        diagnostic.location,
-        Some(CompileSourceLocation {
-            file: "/job/main.tex".into(),
-            byte_start: 5,
-            byte_end: 11,
-            line: 2,
-            column: 3,
-        })
-    );
+    assert_eq!(diagnostic.location, expected);
 }
 
 #[test]
@@ -270,17 +268,15 @@ fn engine_diagnostic_preserves_included_file_location() {
             request.key().clone(),
         )])
         .expect("unavailable input");
+    let expected = Some(CompileSourceLocation {
+        file: "/job/child.tex".into(),
+        byte_start: 1,
+        byte_end: 7,
+        line: 1,
+        column: 2,
+    });
     let diagnostic = compile_diagnostic(&mut session);
-    assert_eq!(
-        diagnostic.location,
-        Some(CompileSourceLocation {
-            file: "/job/child.tex".into(),
-            byte_start: 1,
-            byte_end: 7,
-            line: 1,
-            column: 2,
-        })
-    );
+    assert_eq!(diagnostic.location, expected);
 }
 
 #[test]

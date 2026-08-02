@@ -189,6 +189,10 @@ pub struct CanonicalMainControl {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// Source site of the most recent typed resource suspension. This is
+    /// retained outside snapshots so a host protocol no-progress invariant
+    /// can still identify the command whose retry failed to advance.
+    pending_resource_site: Option<tex_state::provenance::DiagnosticSite>,
     /// TeX82 §76's `history=fatal_error_stop`, carrying §93/§94/§95's payload.
     ///
     /// `succumb` ends the job through §81's `jump_out`, which a library engine
@@ -1317,6 +1321,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         error: ExecError,
     ) -> Result<CanonicalStepResult, ExecError> {
+        let error = error.freeze_diagnostic_origin(stores);
         // pdftex.web §1549 reserves both the form object and its resource
         // object before it fetches the box register. Its ext1 void-box error
         // leaves those identities consumed even though the command reports
@@ -1332,6 +1337,29 @@ impl CanonicalMainControl {
         }
         self.rollback_step(snapshot, stores);
         match error {
+            ExecError::Captured {
+                error,
+                site,
+                frozen,
+            } => match *error {
+                ExecError::MissingCanonicalInput { name } => {
+                    self.pending_resource_site = Some(site);
+                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+                        name,
+                    }))
+                }
+                ExecError::MissingCanonicalInputProbe { name } => {
+                    self.pending_resource_site = Some(site);
+                    Ok(CanonicalStepResult::Suspended(
+                        CanonicalResourceNeed::InputProbe { name },
+                    ))
+                }
+                error => Err(ExecError::Captured {
+                    error: Box::new(error),
+                    site,
+                    frozen,
+                }),
+            },
             ExecError::MissingCanonicalInput { name } => Ok(CanonicalStepResult::Suspended(
                 CanonicalResourceNeed::Input { name },
             )),
@@ -1346,6 +1374,12 @@ impl CanonicalMainControl {
             )),
             error => Err(error),
         }
+    }
+
+    /// Returns the command site retained for the most recent resource need.
+    #[must_use]
+    pub fn pending_resource_site(&self) -> Option<tex_state::provenance::DiagnosticSite> {
+        self.pending_resource_site.clone()
     }
 
     /// Drains committed canonical shipout receipts in artifact order.
@@ -1955,6 +1989,9 @@ impl CanonicalMainControl {
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
+                    if matches!(error, ExecError::Captured { .. }) {
+                        return self.finish_failed_step(snapshot, stores, error);
+                    }
                     self.commit_step(snapshot);
                     return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
                 }
@@ -5736,6 +5773,33 @@ fn scan_step(
 ///   token>; goto reswitch; end`.
 #[allow(clippy::too_many_arguments)] // carries command-owned replay facts
 fn dispatch_main_control_command(
+    processor: &mut CommandProcessor<'_>,
+    command: tex_command::CurrentCommand,
+    mode: Mode,
+    boxes: &ReplayBoxes,
+    innermost_group: Option<GroupKind>,
+    job_is_all_over: bool,
+    display_eq_no: bool,
+    shown_mode: &mut Option<Mode>,
+    diagnostics: &mut Vec<PendingDiagnostic>,
+) -> Result<ScannedStep, ExecError> {
+    let origin = command.origin();
+    dispatch_main_control_command_inner(
+        processor,
+        command,
+        mode,
+        boxes,
+        innermost_group,
+        job_is_all_over,
+        display_eq_no,
+        shown_mode,
+        diagnostics,
+    )
+    .map_err(|error| error.capture_command_origin(origin))
+}
+
+#[allow(clippy::too_many_arguments)] // carries command-owned replay facts
+fn dispatch_main_control_command_inner(
     processor: &mut CommandProcessor<'_>,
     mut command: tex_command::CurrentCommand,
     mode: Mode,
@@ -16684,6 +16748,9 @@ fn report_font_parameter_recovery(
 /// until it is explicitly handled.
 fn command_error(error: CommandError) -> ExecError {
     match error {
+        CommandError::AtOrigin { error, origin } => {
+            command_error(*error).capture_command_origin(origin)
+        }
         CommandError::MissingInput(name) => ExecError::MissingCanonicalInput { name },
         CommandError::MissingInputProbe(name) => ExecError::MissingCanonicalInputProbe { name },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),

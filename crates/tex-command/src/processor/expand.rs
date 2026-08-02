@@ -1155,7 +1155,9 @@ impl CommandProcessor<'_> {
             );
             return Ok(());
         }
-        let _input = self.open_registered_input()?;
+        let _input = self
+            .open_registered_input()
+            .map_err(|error| error.at_origin_unless_resource(opener.origin()))?;
         observe!(
             self,
             CommandObservation::Effect(EffectRecord {

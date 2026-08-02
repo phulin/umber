@@ -132,7 +132,9 @@ pub use page::{
     PageFireUp, PageInteger,
 };
 pub use provenance::ParagraphOriginResolver;
-pub use provenance_resolver::{ProvenanceResolver, ResolvedSourceLocation};
+pub use provenance_resolver::{
+    DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
+};
 pub use pure_memo::{
     MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphLineProvenance,
     ParagraphOpportunityMetric, ParagraphOpportunityStats, ParagraphProvenanceNode,

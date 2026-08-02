@@ -48,7 +48,7 @@ pub use checkpoint::{
     EditorRestoreError, EngineBoundary, EngineCheckpoint, EngineRestoreError, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage, dispatch_delivered_token};
-pub use error::ExecError;
+pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use executor::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
     ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,

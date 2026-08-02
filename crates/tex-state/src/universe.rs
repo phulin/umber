@@ -3328,6 +3328,23 @@ impl Universe {
         None
     }
 
+    /// Resolves arena-independent editor backing captured before provenance
+    /// rollback against a live revision layout.
+    #[must_use]
+    pub fn resolve_root_span(
+        &self,
+        span: crate::RootSpanId,
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> crate::LayoutResolvedOrigin {
+        fragments
+            .source_span_for_root(span)
+            .and_then(|span| {
+                crate::source_fragments::resolve_fragment_span(span, fragments, layout)
+            })
+            .unwrap_or(crate::LayoutResolvedOrigin::Unknown)
+    }
+
     /// Recreates a diagnostic source origin from validated stable root identity.
     #[doc(hidden)]
     pub fn origin_for_root_span(&mut self, span: crate::RootSpanId) -> Option<OriginId> {

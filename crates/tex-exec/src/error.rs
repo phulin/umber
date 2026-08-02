@@ -15,6 +15,18 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::Mode;
 
+/// Arena-independent source evidence frozen before a failed canonical step
+/// rolls speculative provenance back.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FrozenDiagnosticOrigin {
+    Root(tex_state::RootSpanId),
+    Generated {
+        span: tex_state::DetachedGeneratedSourceSpan,
+        fallback: tex_state::ResolvedSourceLocation,
+    },
+    Resolved(tex_state::ResolvedSourceLocation),
+}
+
 #[derive(Debug)]
 pub enum ExecError {
     ExecutionAlreadyTerminated,
@@ -31,6 +43,7 @@ pub enum ExecError {
     Captured {
         error: Box<ExecError>,
         site: DiagnosticSite,
+        frozen: Option<FrozenDiagnosticOrigin>,
     },
     Expand(ExpandError),
     Lex(LexError),
@@ -785,6 +798,34 @@ impl ExecError {
         }
     }
 
+    /// Attaches the command delivery which owns a failed canonical step when
+    /// the error did not already identify a more specific source origin.
+    /// Scanner and expansion errors keep their nested diagnostic site; only
+    /// an originless boundary error inherits the triggering command span.
+    pub(crate) fn capture_command_origin(self, origin: OriginId) -> Self {
+        if matches!(
+            self,
+            Self::NeedResource(_)
+                | Self::MissingCanonicalFont { .. }
+                | Self::MissingCanonicalPdfImage { .. }
+        ) {
+            return self;
+        }
+        let inherited = self.diagnostic_site();
+        if inherited.primary_origin().is_some() {
+            return self;
+        }
+        Self::Captured {
+            error: Box::new(self),
+            site: DiagnosticSite::new(
+                Some(origin),
+                inherited.related().iter().copied(),
+                inherited.expansion_head(),
+            ),
+            frozen: None,
+        }
+    }
+
     pub(crate) fn capture(self, input: &tex_lex::InputStack) -> Self {
         if matches!(self, Self::Captured { .. } | Self::NeedResource(_)) {
             return self;
@@ -794,6 +835,7 @@ impl ExecError {
             return Self::Captured {
                 error: Box::new(self),
                 site: inherited,
+                frozen: None,
             };
         }
         let site =
@@ -804,7 +846,38 @@ impl ExecError {
             Self::Captured {
                 error: Box::new(self),
                 site,
+                frozen: None,
             }
+        }
+    }
+
+    /// Freezes the primary diagnostic origin without retaining speculative
+    /// provenance arena entries past rollback.
+    pub(crate) fn freeze_diagnostic_origin(mut self, stores: &Universe) -> Self {
+        if let Self::Captured { site, frozen, .. } = &mut self
+            && frozen.is_none()
+            && let Some(origin) = site.primary_origin()
+        {
+            let resolver = ProvenanceResolver::new(stores);
+            *frozen = stores
+                .root_span_for_origin(origin)
+                .map(FrozenDiagnosticOrigin::Root)
+                .or_else(|| {
+                    let fallback = resolver.resolve_origin(origin)?;
+                    Some(match resolver.detach_generated_origin(origin) {
+                        Some(span) => FrozenDiagnosticOrigin::Generated { span, fallback },
+                        None => FrozenDiagnosticOrigin::Resolved(fallback),
+                    })
+                });
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn frozen_diagnostic_origin(&self) -> Option<&FrozenDiagnosticOrigin> {
+        match self {
+            Self::Captured { frozen, .. } => frozen.as_ref(),
+            _ => None,
         }
     }
 

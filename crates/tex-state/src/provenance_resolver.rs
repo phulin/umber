@@ -6,6 +6,7 @@
 
 use std::fmt::{self, Write as _};
 use std::path::Path;
+use std::sync::Arc;
 use unicode_width::UnicodeWidthChar;
 
 use crate::Universe;
@@ -36,6 +37,14 @@ pub struct ResolvedSourceLocation {
     pub end: u64,
     pub line: u32,
     pub column: u32,
+}
+
+/// Arena-independent generated-source identity and normalized byte span.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DetachedGeneratedSourceSpan {
+    pub bytes: Arc<[u8]>,
+    pub start: u64,
+    pub end: u64,
 }
 
 impl<'a> ProvenanceResolver<'a> {
@@ -84,6 +93,23 @@ impl<'a> ProvenanceResolver<'a> {
             end: resolved.hi,
             line: display.line_number,
             column: display.column,
+        })
+    }
+
+    /// Detaches generated backing identity before speculative provenance is
+    /// rolled back, allowing an editor layout to rematch the immutable bytes.
+    #[must_use]
+    pub fn detach_generated_origin(
+        &self,
+        origin: OriginId,
+    ) -> Option<DetachedGeneratedSourceSpan> {
+        let resolved = self.resolve_to_source(origin)?;
+        let region = self.universe.source_region(resolved.source.source())?;
+        let source = self.universe.generated_source(region.backing)?;
+        Some(DetachedGeneratedSourceSpan {
+            bytes: Arc::from(source.bytes()),
+            start: resolved.source.byte_offset(),
+            end: resolved.hi,
         })
     }
 

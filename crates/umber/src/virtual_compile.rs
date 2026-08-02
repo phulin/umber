@@ -785,6 +785,26 @@ impl RetainedCandidate {
 }
 
 impl RetainedExecution {
+    fn resolve_frozen_diagnostic_primary(
+        &self,
+        frozen: &tex_exec::FrozenDiagnosticOrigin,
+    ) -> Option<CompileSourceLocation> {
+        let resolved = match self {
+            RetainedExecution::Initial { session, candidate } => session
+                .resolve_candidate_frozen_diagnostic_primary(candidate, frozen),
+            RetainedExecution::Pending(candidate) => {
+                candidate.resolve_frozen_diagnostic_primary(frozen)
+            }
+        }?;
+        Some(CompileSourceLocation {
+            file: resolved.path,
+            byte_start: resolved.start,
+            byte_end: resolved.end,
+            line: resolved.line,
+            column: resolved.column,
+        })
+    }
+
     fn resolve_diagnostic_site_primary(
         &self,
         site: &tex_state::provenance::DiagnosticSite,
@@ -813,9 +833,14 @@ impl CompileDiagnostic {
         candidate: Option<&RetainedExecution>,
     ) -> Self {
         let location = error
-            .diagnostic_site()
-            .as_ref()
-            .and_then(|site| candidate?.resolve_diagnostic_site_primary(site));
+            .frozen_diagnostic_origin()
+            .and_then(|frozen| candidate?.resolve_frozen_diagnostic_primary(frozen))
+            .or_else(|| {
+                error
+                    .diagnostic_site()
+                    .as_ref()
+                    .and_then(|site| candidate?.resolve_diagnostic_site_primary(site))
+            });
         Self {
             message: error.to_string(),
             location,

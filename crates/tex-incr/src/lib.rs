@@ -396,6 +396,82 @@ impl PendingRevision {
 }
 
 impl RevisionCandidate {
+    #[must_use]
+    pub fn resolve_frozen_diagnostic_primary(
+        &self,
+        frozen: &tex_exec::FrozenDiagnosticOrigin,
+    ) -> Option<ResolvedSourceLocation> {
+        self.resolve_frozen_diagnostic_primary_with_layout(frozen, None)
+    }
+
+    fn resolve_frozen_diagnostic_primary_with_layout(
+        &self,
+        frozen: &tex_exec::FrozenDiagnosticOrigin,
+        root_layout: Option<(&FragmentStore, &EditorLayout)>,
+    ) -> Option<ResolvedSourceLocation> {
+        match frozen {
+            tex_exec::FrozenDiagnosticOrigin::Resolved(location) => Some(location.clone()),
+            tex_exec::FrozenDiagnosticOrigin::Root(span) => {
+                let layout = match &self.kind {
+                    RevisionCandidateKind::Initial { .. } => root_layout,
+                    RevisionCandidateKind::Replacement { setup }
+                    | RevisionCandidateKind::Incremental { setup, .. } => {
+                        Some((&setup.fragments, &setup.next_layout))
+                    }
+                }?;
+                match self.universe.resolve_root_span(*span, layout.0, layout.1) {
+                    LayoutResolvedOrigin::Current {
+                        path,
+                        doc_offset_lo,
+                        doc_offset_hi,
+                        line,
+                        column,
+                    } => Some(ResolvedSourceLocation {
+                        path,
+                        start: doc_offset_lo,
+                        end: doc_offset_hi,
+                        line,
+                        column,
+                    }),
+                    _ => None,
+                }
+            }
+            tex_exec::FrozenDiagnosticOrigin::Generated { span, fallback } => {
+                let layout = match &self.kind {
+                    RevisionCandidateKind::Initial { .. } => root_layout,
+                    RevisionCandidateKind::Replacement { setup }
+                    | RevisionCandidateKind::Incremental { setup, .. } => {
+                        Some((&setup.fragments, &setup.next_layout))
+                    }
+                };
+                let Some((fragments, layout)) = layout else {
+                    return Some(fallback.clone());
+                };
+                let Some(root) = fragments
+                    .root_span_for_generated_bytes(&span.bytes, span.start..span.end)
+                else {
+                    return Some(fallback.clone());
+                };
+                match self.universe.resolve_root_span(root, fragments, layout) {
+                    LayoutResolvedOrigin::Current {
+                        path,
+                        doc_offset_lo,
+                        doc_offset_hi,
+                        line,
+                        column,
+                    } => Some(ResolvedSourceLocation {
+                        path,
+                        start: doc_offset_lo,
+                        end: doc_offset_hi,
+                        line,
+                        column,
+                    }),
+                    _ => Some(fallback.clone()),
+                }
+            }
+        }
+    }
+
     /// Resolves a captured engine diagnostic while this candidate's private
     /// provenance universe and proposed editor layout are still live.
     #[must_use]
@@ -532,7 +608,10 @@ impl RevisionCandidate {
                 }
                 CanonicalStepResult::Suspended(need) => {
                     if answered_needs.contains(&need) {
-                        return Err(SessionError::CanonicalResourceNoProgress { need });
+                        return Err(SessionError::CanonicalResourceNoProgress {
+                            need,
+                            site: self.control.pending_resource_site(),
+                        });
                     }
                     let outcome = {
                         let mut world = CanonicalResourceWorld::new(&mut self.universe);
@@ -796,6 +875,18 @@ impl Session {
     ) -> Option<ResolvedSourceLocation> {
         candidate.resolve_diagnostic_site_primary_with_layout(
             site,
+            Some((&self.fragments, &self.layout)),
+        )
+    }
+
+    #[must_use]
+    pub fn resolve_candidate_frozen_diagnostic_primary(
+        &self,
+        candidate: &RevisionCandidate,
+        frozen: &tex_exec::FrozenDiagnosticOrigin,
+    ) -> Option<ResolvedSourceLocation> {
+        candidate.resolve_frozen_diagnostic_primary_with_layout(
+            frozen,
             Some((&self.fragments, &self.layout)),
         )
     }
@@ -3461,6 +3552,7 @@ pub enum SessionError {
     UnexpectedCanonicalResource,
     CanonicalResourceNoProgress {
         need: CanonicalResourceNeed,
+        site: Option<tex_state::provenance::DiagnosticSite>,
     },
     SourceRegistration(SourceRegistrationError),
     CommandSummary(tex_command::CommandSummaryError),
@@ -3505,7 +3597,7 @@ impl fmt::Display for SessionError {
             Self::UnexpectedCanonicalResource => {
                 f.write_str("canonical resource fulfillment does not match the pending need")
             }
-            Self::CanonicalResourceNoProgress { need } => write!(
+            Self::CanonicalResourceNoProgress { need, .. } => write!(
                 f,
                 "canonical retained host answered {need:?}, but replay suspended on the identical need again before committing progress"
             ),
@@ -3537,6 +3629,15 @@ impl SessionError {
     pub fn diagnostic_site(&self) -> Option<tex_state::provenance::DiagnosticSite> {
         match self {
             Self::Execute(error) => Some(error.diagnostic_site()),
+            Self::CanonicalResourceNoProgress { site, .. } => site.clone(),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn frozen_diagnostic_origin(&self) -> Option<&tex_exec::FrozenDiagnosticOrigin> {
+        match self {
+            Self::Execute(error) => error.frozen_diagnostic_origin(),
             _ => None,
         }
     }

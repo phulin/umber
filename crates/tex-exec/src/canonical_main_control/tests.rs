@@ -5916,6 +5916,39 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
     assert!(stores.input_stream_eof(tex_state::StreamSlot::new(3)));
 }
 
+#[test]
+fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .capabilities_mut()
+        .mark_input_unavailable("absent.tex");
+    register_source(&mut control, br"\input absent");
+    let state_before = stores.testing_state_hash();
+    let provenance_before = stores.provenance_stats();
+
+    let first = control
+        .advance(&mut stores)
+        .expect_err("unavailable input is a captured canonical diagnostic");
+    let first_site = first.diagnostic_site();
+    let first_origin = first_site
+        .primary_origin()
+        .expect("triggering input command has an origin");
+    assert!(first.as_fatal().is_some());
+    assert!(first.frozen_diagnostic_origin().is_some());
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.provenance_stats(), provenance_before);
+
+    let second = control
+        .advance(&mut stores)
+        .expect_err("rolled-back input command retries identically");
+    assert_eq!(second.diagnostic_site().primary_origin(), Some(first_origin));
+    assert!(second.frozen_diagnostic_origin().is_some());
+    assert_eq!(stores.testing_state_hash(), state_before);
+    assert_eq!(stores.provenance_stats(), provenance_before);
+}
+
 /// TeX82 §314's macro arm is `print_ln; print_cs(name)`, and §319
 /// pseudoprints `link(start)` -- the whole macro text -- so a macro level's
 /// context line is `\\a #1->body`, naming the control sequence being expanded

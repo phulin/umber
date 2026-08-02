@@ -3522,10 +3522,7 @@ impl CommandProcessor<'_> {
         file_name.components.apply_default_extension(".tex");
         let has_area = !file_name.components.area.is_empty();
         let packed_name = file_name.packed();
-        let mut attempts = vec![packed_name.clone()];
-        if !has_area {
-            attempts.push(format!("TeXinputs:{packed_name}"));
-        }
+        let attempts = crate::host::input_lookup_candidates(&packed_name, has_area);
 
         let mut unresolved = false;
         for attempted_name in attempts {

@@ -1,6 +1,7 @@
 //! Private command diagnostics and typed resource needs.
 
 use std::panic::Location;
+use tex_state::token::OriginId;
 
 /// The Rust call site that raised an [`CommandError::InputInvariant`].
 ///
@@ -57,6 +58,13 @@ pub enum CommandError {
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and must suspend for a typed host probe.
     MissingInputProbe(String),
+    /// An otherwise-originless command failure annotated by the expandable
+    /// delivery which triggered it. Typed resource suspensions deliberately
+    /// remain unwrapped so the host can retry them.
+    AtOrigin {
+        error: Box<CommandError>,
+        origin: OriginId,
+    },
     /// This expansion slice has not installed the primitive's canonical
     /// scalar handler yet.
     UnsupportedExpandablePrimitive(tex_state::meaning::ExpandablePrimitive),
@@ -83,6 +91,18 @@ impl CommandError {
     #[track_caller]
     pub(crate) fn input_invariant() -> Self {
         Self::InputInvariant(InputInvariantOrigin(Location::caller()))
+    }
+
+    pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
+        if matches!(self, Self::MissingInput(_) | Self::MissingInputProbe(_) | Self::AtOrigin { .. })
+        {
+            self
+        } else {
+            Self::AtOrigin {
+                error: Box::new(self),
+                origin,
+            }
+        }
     }
 }
 
@@ -113,6 +133,7 @@ impl std::fmt::Display for CommandError {
             Self::MissingInputProbe(name) => {
                 write!(formatter, "input enquiry `{name}` is unresolved")
             }
+            Self::AtOrigin { error, .. } => std::fmt::Display::fmt(error, formatter),
             Self::UnsupportedExpandablePrimitive(primitive) => {
                 write!(
                     formatter,
