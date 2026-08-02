@@ -943,9 +943,14 @@ fn break_hlist_with_trace(
 
 fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineBreakTrace]) {
     let mut diagnostic = stores.begin_diagnostic();
+    let mut short_display = crate::pack_report::ShortDisplayRenderer::new();
     for event in trace {
         match event {
             LineBreakTrace::Pass(pass) => {
+                // TeX82 §851 creates the initial active node once per pass
+                // and resets `font_in_short_display` there. Feasible-break
+                // fragments within the pass retain the selected font.
+                short_display.reset();
                 diagnostic.print_nl(match pass {
                     LineBreakPass::First => "@firstpass",
                     LineBreakPass::Second => "@secondpass",
@@ -961,10 +966,8 @@ fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineB
                 demerits,
             } => {
                 if !display.is_empty() {
-                    let rendered = crate::pack_report::short_display_nodes(
-                        diagnostic.state(),
-                        &nodes[display.clone()],
-                    );
+                    let rendered =
+                        short_display.render_nodes(diagnostic.state(), &nodes[display.clone()]);
                     diagnostic.print_nl("").print_rendered(&rendered);
                 }
                 diagnostic.print_nl("@");

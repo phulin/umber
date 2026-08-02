@@ -68,7 +68,10 @@ fn short_display_does_not_skip_following_nodes_for_side_stored_replacement() {
         },
     ];
 
-    assert_eq!(short_display_nodes(&stores, &nodes), "|");
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "|"
+    );
 }
 
 #[test]
@@ -128,7 +131,37 @@ fn short_display_maps_all_node_classes() {
         },
     ];
 
-    assert_eq!(short_display_nodes(&stores, &nodes), "[]| $[][]");
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "[]| $[][]"
+    );
+}
+
+#[test]
+fn short_display_renderer_retains_font_across_fragments_until_reset() {
+    // TeX82 §§174/851: one line-breaking pass initializes
+    // `font_in_short_display` once, then successive feasible-break fragments
+    // omit an unchanged font identifier. The next pass resets it.
+    let stores = Universe::new();
+    let font = tex_state::font::NULL_FONT;
+    let fragment = [Node::Char {
+        font,
+        ch: 'A',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }];
+    let identifier = crate::node_dump::font_identifier(&stores, font);
+    let mut renderer = ShortDisplayRenderer::new();
+
+    assert_eq!(
+        renderer.render_nodes(&stores, &fragment),
+        format!("{identifier} A")
+    );
+    assert_eq!(renderer.render_nodes(&stores, &fragment), "A");
+    renderer.reset();
+    assert_eq!(
+        renderer.render_nodes(&stores, &fragment),
+        format!("{identifier} A")
+    );
 }
 
 #[test]

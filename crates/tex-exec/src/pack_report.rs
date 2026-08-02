@@ -177,17 +177,39 @@ fn origin_text(stores: &Universe) -> String {
 /// discretionary's own pre-break and post-break text followed by skipping its
 /// replacement count.
 fn short_display(stores: &Universe, list: NodeListId) -> String {
-    let mut out = String::new();
-    let mut font = None;
-    append_short_display(stores, list, &mut font, &mut out);
-    out
+    ShortDisplayRenderer::new().render_list(stores, list)
 }
 
-pub(crate) fn short_display_nodes(stores: &Universe, nodes: &[Node]) -> String {
-    let mut out = String::new();
-    let mut font = None;
-    append_short_display_nodes(stores, nodes, &mut font, &mut out);
-    out
+/// TeX82 §174's stateful `short_display` renderer.
+///
+/// `font_in_short_display` is deliberately retained across successive list
+/// fragments until the owning caller resets it. Paragraph tracing uses one
+/// renderer per §851 line-breaking pass; standalone packed-box diagnostics
+/// create a fresh renderer for each box, matching their explicit reset.
+pub(crate) struct ShortDisplayRenderer {
+    font: Option<tex_state::ids::FontId>,
+}
+
+impl ShortDisplayRenderer {
+    pub(crate) const fn new() -> Self {
+        Self { font: None }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.font = None;
+    }
+
+    pub(crate) fn render_nodes(&mut self, stores: &Universe, nodes: &[Node]) -> String {
+        let mut out = String::new();
+        append_short_display_nodes(stores, nodes, &mut self.font, &mut out);
+        out
+    }
+
+    fn render_list(&mut self, stores: &Universe, list: NodeListId) -> String {
+        let mut out = String::new();
+        append_short_display(stores, list, &mut self.font, &mut out);
+        out
+    }
 }
 
 fn append_short_display(
