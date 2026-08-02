@@ -5504,6 +5504,11 @@ fn report_command_trace(
 /// §1025 consumes it with `scan_left_brace` before entering §1030, whereas
 /// split replay delivers it as an explicit step. Suppressing that delivery
 /// also leaves the mode prefix pending for the first command in the routine.
+///
+/// A `\shipout` box constructor is likewise scanner-owned: §§1075/1084 call
+/// `scan_box` from the already-traced `leader_ship` case, so its `\hbox`,
+/// `\vbox`, or `\vtop` never returns to §1030's `reswitch`. Split replay
+/// retains `pending_shipout` across that internal fetch.
 fn report_main_control_command_trace(
     processor: &mut CommandProcessor<'_>,
     mode: Mode,
@@ -5519,7 +5524,16 @@ fn report_main_control_command_trace(
                 ..
             }
         );
-    if boxes.pending_leader.is_none() && !output_routine_opening {
+    let shipout_box_constructor = boxes.pending_shipout
+        && matches!(
+            command.meaning(),
+            Meaning::UnexpandablePrimitive(
+                UnexpandablePrimitive::HBox
+                    | UnexpandablePrimitive::VBox
+                    | UnexpandablePrimitive::VTop
+            )
+        );
+    if boxes.pending_leader.is_none() && !output_routine_opening && !shipout_box_constructor {
         report_command_trace(processor, mode, command, shown_mode);
     }
 }

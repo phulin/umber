@@ -248,6 +248,25 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
 }
 
 #[test]
+fn tracingcommands_does_not_trace_shipout_box_constructor() {
+    // TeX82 §§1030/1075/1084: `\shipout` calls `scan_box` inside its already
+    // traced main-control case. Its constructor is scanner-owned, while a
+    // later standalone constructor returns normally through `reswitch`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingcommands=1\tracingonline=1\shipout\hbox{}\hbox{}\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("{\\shipout}"), "{terminal:?}");
+    assert_eq!(terminal.matches("\\hbox}").count(), 1, "{terminal:?}");
+}
+
+#[test]
 fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
