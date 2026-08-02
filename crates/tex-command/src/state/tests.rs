@@ -10,7 +10,8 @@ use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState};
 use crate::{
     AlignmentCellTemplates, AlignmentIdentity, AlignmentLifecycleError, AlignmentRequest,
-    AlignmentRequestResult, RegisteredSourceKind, SourceNameClass, SourceRegistration,
+    AlignmentRequestResult, RegisteredSourceKind, SourceFramingPolicy, SourceNameClass,
+    SourceRegistration,
 };
 
 fn templates() -> AlignmentCellTemplates {
@@ -337,6 +338,34 @@ fn exhausting_a_named_file_source_queues_exactly_one_close_event() {
         state.take_file_framing_events(),
         vec![FileFramingEvent::Close]
     );
+}
+
+#[test]
+fn externally_framed_named_source_retains_file_identity_without_events() {
+    let mut state = CommandState::default();
+    let source = state
+        .register_source(
+            SourceRegistration::new(RegisteredSourceKind::Generated, b"x\n".to_vec())
+                .with_name("/job/main.tex")
+                .with_framing(SourceFramingPolicy::ExternallyOwned),
+        )
+        .expect("externally framed source registers");
+
+    state
+        .open_registered_source(source)
+        .expect("named source opens as a file");
+    assert!(state.take_file_framing_events().is_empty());
+    let identity = source_level_identity(&state);
+    let crate::input::InputLevel::Source(level) = state.input.levels.last().expect("root level")
+    else {
+        panic!("root must remain a source level");
+    };
+    assert_eq!(level.name_class, SourceNameClass::File);
+
+    state
+        .retire_exhausted_input(identity)
+        .expect("externally framed source retires");
+    assert!(state.take_file_framing_events().is_empty());
 }
 
 #[test]

@@ -1889,6 +1889,11 @@ impl VirtualCompileSession {
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
+                if self.authored_root_name.is_some() {
+                    session.set_root_source_framing(
+                        tex_command::SourceFramingPolicy::ExternallyOwned,
+                    );
+                }
                 session
             });
             let mut candidate = session

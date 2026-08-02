@@ -234,7 +234,15 @@ fn compile_diagnostic(session: &mut VirtualCompileSession) -> CompileDiagnostic 
 #[test]
 fn engine_diagnostic_preserves_atomic_root_utf8_location() {
     let source = "é\n  \\input absent\n";
-    let mut session = session(source);
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        authored_root_name: Some("texput".to_owned()),
+        font_layout_policy: tex_fonts::FontLayoutPolicy::ClassicTfmExact,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("main file");
     let [request] = requests(session.compile_attempt())
         .try_into()
         .expect("one input");
@@ -2945,6 +2953,23 @@ fn native_and_vfs_single_pass_outputs_are_byte_identical() {
     let CompileAttemptResult::Complete(virtual_output) = virtual_session.compile_attempt() else {
         panic!("virtual run should complete");
     };
+    assert_eq!(
+        virtual_output
+            .terminal
+            .windows(b"(texput".len())
+            .filter(|window| *window == b"(texput")
+            .count(),
+        1,
+        "the authored root frame is emitted exactly once"
+    );
+    for transcript in [&virtual_output.terminal, &virtual_output.log] {
+        assert!(
+            !transcript
+                .windows(b"/job/main.tex".len())
+                .any(|window| window == b"/job/main.tex"),
+            "the provenance path must not become a duplicate transcript frame"
+        );
+    }
     assert_eq!(virtual_output, native);
 }
 

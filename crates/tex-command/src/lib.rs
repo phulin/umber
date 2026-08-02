@@ -75,8 +75,8 @@ pub use input::{
     CatcodeQueries, FileFramingEvent, InvalidSourceCharacter, LexerState, LineTerminator,
     MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
     SourceControlSequenceKind, SourceLocation, SourceNameClass, SourceProvenance, SourceRange,
-    SourceRegistration, SourceRegistrationError, SourceScalarRange, SourceStepQueries, SourceToken,
-    SourceTokenizationStep,
+    SourceFramingPolicy, SourceRegistration, SourceRegistrationError, SourceScalarRange,
+    SourceStepQueries, SourceToken, SourceTokenizationStep,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).

@@ -1192,7 +1192,12 @@ impl CommandState {
         let identity = InputLevelId(self.input.next_level_identity);
         self.input.next_level_identity = self.input.next_level_identity.wrapping_add(1);
         let framing_name = match name_class {
-            SourceNameClass::File => registered.name.clone(),
+            SourceNameClass::File
+                if registered.framing == crate::SourceFramingPolicy::Canonical =>
+            {
+                registered.name.clone()
+            }
+            SourceNameClass::File => None,
             SourceNameClass::Scantokens(19) => Some(" ".into()),
             SourceNameClass::Terminal
             | SourceNameClass::ReadStream(_)

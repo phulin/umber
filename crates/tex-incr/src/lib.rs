@@ -12,7 +12,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_command::{
-    CommandProfile, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
+    CommandProfile, RegisteredSourceKind, SourceFramingPolicy, SourceRegistration,
+    SourceRegistrationError,
 };
 use tex_exec::{
     Cancellation, CanonicalMainControl, CanonicalResourceFulfillment, CanonicalResourceHost,
@@ -45,6 +46,7 @@ fn canonical_candidate_control(
     profile: CommandProfile,
     initex: bool,
     emit_dvi: bool,
+    root_framing: SourceFramingPolicy,
 ) -> Result<CanonicalMainControl, SessionError> {
     let mut control = if initex {
         CanonicalMainControl::prepared_initex(profile)
@@ -53,7 +55,9 @@ fn canonical_candidate_control(
     };
     control.set_dvi_output(emit_dvi);
     control.register_root_source(
-        SourceRegistration::new(RegisteredSourceKind::Generated, bytes).with_name(source_path),
+        SourceRegistration::new(RegisteredSourceKind::Generated, bytes)
+            .with_name(source_path)
+            .with_framing(root_framing),
     )?;
     control.flush_pending_file_framing(universe);
     control.capabilities_mut().set_startup_job_name(job_name);
@@ -859,6 +863,7 @@ pub struct Session {
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     utf8_input_as_bytes: bool,
     dvi_output: bool,
+    root_framing: SourceFramingPolicy,
     root_source_is_byte_projection: bool,
     command_profile: CommandProfile,
     initex: bool,
@@ -1008,6 +1013,7 @@ impl Session {
             format_dump_receipt: None,
             utf8_input_as_bytes: false,
             dvi_output: true,
+            root_framing: SourceFramingPolicy::Canonical,
             root_source_is_byte_projection,
             command_profile: CommandProfile::TEX82,
             initex: true,
@@ -1052,6 +1058,19 @@ impl Session {
         );
         self.command_profile = profile;
         self.initex = initex;
+    }
+
+    /// Selects transcript-framing ownership for the editor root.
+    ///
+    /// The source path remains attached to the editor layout and registered
+    /// source for provenance. Only the root's command-owned open/close events
+    /// are affected; resolved included files retain canonical framing.
+    pub fn set_root_source_framing(&mut self, framing: SourceFramingPolicy) {
+        assert!(
+            self.history.is_empty(),
+            "root source framing cannot change after execution starts"
+        );
+        self.root_framing = framing;
     }
 
     /// Selects the character domain already promised by this editor session.
@@ -1181,6 +1200,7 @@ impl Session {
             self.effective_command_profile(),
             self.initex,
             self.dvi_output,
+            self.root_framing,
         )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
@@ -1444,6 +1464,7 @@ impl Session {
             self.effective_command_profile(),
             self.initex,
             self.dvi_output,
+            self.root_framing,
         )?;
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));

@@ -30,6 +30,21 @@ pub enum RegisteredSourceKind {
     ReadLine,
 }
 
+/// Ownership policy for transcript framing of a named source level.
+///
+/// Source identity and diagnostic provenance remain attached to the
+/// registration in both modes. This policy controls only whether the command
+/// machine emits the canonical §537/§362 open and close events.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum SourceFramingPolicy {
+    /// The command machine owns the source's ordinary open and close events.
+    #[default]
+    Canonical,
+    /// A surrounding host frame already represents this source in the
+    /// transcript, so the command machine must not duplicate that frame.
+    ExternallyOwned,
+}
+
 /// tex.web §303's classification of a source input level's `name`.
 ///
 /// TeX82 §303 states its original partition: `name` "is zero if we are reading from
@@ -107,6 +122,7 @@ pub struct SourceRegistration {
     bytes: Arc<[u8]>,
     world_record: Option<InputRecordId>,
     name: Option<Arc<str>>,
+    framing: SourceFramingPolicy,
 }
 
 impl SourceRegistration {
@@ -118,6 +134,7 @@ impl SourceRegistration {
             bytes: bytes.into(),
             world_record: None,
             name: None,
+            framing: SourceFramingPolicy::Canonical,
         }
     }
 
@@ -130,6 +147,7 @@ impl SourceRegistration {
             bytes: content.shared_bytes(),
             world_record: Some(content.record()),
             name: None,
+            framing: SourceFramingPolicy::Canonical,
         }
     }
 
@@ -145,6 +163,13 @@ impl SourceRegistration {
     #[must_use]
     pub fn with_name(mut self, name: impl Into<Arc<str>>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Selects who owns transcript framing for this source.
+    #[must_use]
+    pub fn with_framing(mut self, framing: SourceFramingPolicy) -> Self {
+        self.framing = framing;
         self
     }
 
@@ -170,6 +195,12 @@ impl SourceRegistration {
     #[must_use]
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
+    }
+
+    /// Returns the transcript-framing ownership policy.
+    #[must_use]
+    pub const fn framing(&self) -> SourceFramingPolicy {
+        self.framing
     }
 }
 
@@ -263,6 +294,7 @@ pub(crate) struct RegisteredSource {
     /// [`SourceRegistration`] that produced this backing. See
     /// [`SourceRegistration::with_name`].
     pub(crate) name: Option<Arc<str>>,
+    pub(crate) framing: SourceFramingPolicy,
     descriptor: Arc<SourceDescriptor>,
 }
 
@@ -321,6 +353,7 @@ impl RegisteredSource {
             mode,
             bytes: registration.bytes,
             name: registration.name,
+            framing: registration.framing,
             descriptor: Arc::new(descriptor),
         })
     }

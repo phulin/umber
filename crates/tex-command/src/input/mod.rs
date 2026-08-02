@@ -29,7 +29,7 @@ pub use lines::{
 };
 pub use source::{
     FileFramingEvent, MalformedUnicodeRange, RegisteredSourceKind, SourceNameClass,
-    SourceRegistration, SourceRegistrationError,
+    SourceFramingPolicy, SourceRegistration, SourceRegistrationError,
 };
 pub use tokenizer::{
     CatcodeQueries, InvalidSourceCharacter, LexerState, SourceControlSequenceKind,

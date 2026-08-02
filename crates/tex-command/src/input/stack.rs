@@ -309,7 +309,11 @@ impl CommandState {
                 self.input.force_eof = false;
             }
             let framed = match name_class {
-                SourceNameClass::File => source.cursor.backing.name.is_some(),
+                SourceNameClass::File => {
+                    source.cursor.backing.name.is_some()
+                        && source.cursor.backing.framing
+                            == crate::SourceFramingPolicy::Canonical
+                }
                 SourceNameClass::Scantokens(19) => true,
                 SourceNameClass::Terminal
                 | SourceNameClass::ReadStream(_)
