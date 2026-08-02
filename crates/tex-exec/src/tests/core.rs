@@ -2378,15 +2378,9 @@ fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
 
 #[test]
 fn recoverable_assignment_error_inside_box_preserves_box_ownership() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\setbox0=\\hbox{\\afterassignment\\relax\\advance\\prevdepth\\undefined\\vbox{\\hrule height2pt}}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("improper arithmetic target recovers inside the box scanner");
+    );
 
     let box0 = stores
         .box_reg(0)
@@ -2418,10 +2412,7 @@ fn last_box_assignment_replays_with_identical_state_hash() {
     let checkpoint = stores.snapshot();
     let source = "\\setbox0=\\hbox{\\raise2pt\\hbox to7pt{}\\global\\setbox1=\\lastbox}";
 
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("first lastbox execution");
+    stores = run_canonical_tex82_with_universe(stores, source);
     let first_box = stores.box_reg(1).expect("global lastbox destination");
     let [Node::HList(first_node)] = stores.nodes(first_box).testing_decoded() else {
         panic!("lastbox destination should contain an hbox");
@@ -2429,27 +2420,19 @@ fn last_box_assignment_replays_with_identical_state_hash() {
     assert_eq!(first_node.shift.raw(), 0, "lastbox clears box shift");
     let first_hash = stores.snapshot().state_hash();
     stores.rollback(&checkpoint);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("replayed lastbox execution");
+    stores = run_canonical_tex82_with_universe(stores, source);
 
     assert_eq!(stores.snapshot().state_hash(), first_hash);
 }
 
 #[test]
 fn control_space_uses_space_skip_without_space_factor_scaling() {
-    let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\relax \\f\
          \\fontdimen2\\f=10pt \\fontdimen3\\f=2pt \\fontdimen4\\f=3pt \
          \\spaceskip=20pt \\xspaceskip=30pt \
          \\setbox0=\\hbox{A\\spacefactor=3000\\ B}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("control space executes");
+    );
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
     let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0).testing_decoded() else {
@@ -2477,16 +2460,11 @@ fn sentence_space_preserves_xspaceskip_and_spaceskip_node_subtypes() {
     // TeX82 §§182/1042: a nonzero `\xspaceskip` has its own node subtype;
     // when it is zero, sentence spacing falls back to scaled `\spaceskip`
     // and retains that distinct subtype for `show_node_list`.
-    let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         r"\font\f=cmr10 \relax \f\spaceskip=20pt plus 2pt minus 3pt
           \xspaceskip=30pt \setbox0=\hbox{A\spacefactor=3000{} B}\xspaceskip=0pt
           \setbox1=\hbox{A\spacefactor=3000{} B}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("sentence spaces execute");
+    );
 
     let glue = |stores: &Universe, register| {
         let root = stores.box_reg(register).expect("box is assigned");
@@ -2517,18 +2495,8 @@ fn sentence_space_preserves_xspaceskip_and_spaceskip_node_subtypes() {
 
 #[test]
 fn invalid_space_factor_reports_and_preserves_the_previous_value() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-
-    Executor::new()
-        .run(
-            &mut InputStack::new(MemoryInput::new(
-                r"\noindent\spacefactor=2000\spacefactor=0\count0=\spacefactor",
-            )),
-            &mut stores,
-        )
-        .expect("bad space factor should be recoverable");
+    let stores =
+        run_canonical_tex82(r"\noindent\spacefactor=2000\spacefactor=0\count0=\spacefactor");
 
     assert_eq!(stores.count(0), 2000);
     assert!(support::terminal_effect_text(&stores).contains("Bad space factor (0)"));
@@ -2536,14 +2504,9 @@ fn invalid_space_factor_reports_and_preserves_the_previous_value() {
 
 #[test]
 fn adjacent_cmr10_characters_emit_tfm_kern() {
-    let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\relax \\f \\everypar{\\penalty10000}\\setbox0=\\vbox{Yo\\par}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font kern program executes");
+    );
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
     let [Node::VList(box_node)] = stores.nodes(box0).testing_decoded() else {
@@ -2577,14 +2540,9 @@ fn adjacent_cmr10_characters_emit_tfm_kern() {
 
 #[test]
 fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
-    let mut stores = stores_with_fonts();
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\relax \\f \\setbox0=\\hbox{first}\\setbox1=\\hbox{{f}irst}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("grouped ligature boundary executes");
+    );
 
     let ligated = stores.box_reg(0).expect("ligated box should be assigned");
     let grouped = stores.box_reg(1).expect("grouped box should be assigned");
@@ -2616,15 +2574,9 @@ fn literal_groups_break_ligature_runs_and_preserve_natural_width() {
 
 #[test]
 fn appended_box_resets_space_factor_before_sentence_punctuation() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82_with_fonts(
         "\\font\\f=cmr10 \\relax \\f \\sfcode46=3000 A\\hbox{}.\\message{S=\\the\\spacefactor}\\end",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("box and following punctuation execute");
+    );
 
     let output = terminal_effect_text(&stores);
     assert!(output.contains("S=3000"), "unexpected output: {output:?}");
