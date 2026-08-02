@@ -965,6 +965,13 @@ pub(crate) fn barrier(
     if *cell_slot == new_word {
         if cell_id.is_global() {
             journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
+        } else if *stamp_slot < epoch {
+            // TeX82 §§278/283 and §1194: `eq_word_define` saves the outer
+            // value on the first assignment at a new group level even when
+            // the replacement word is equal. The save-stack record remains
+            // observable through `\tracingrestores` when that group ends.
+            journal.push_undo(UndoRec::new(cell_id, *cell_slot, new_word));
+            *stamp_slot = epoch;
         }
         return;
     }

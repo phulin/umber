@@ -1568,7 +1568,10 @@ fn empty_equation_number_checks_math_fonts_on_both_sides() {
     control
         .set_fuel_limit(10_000)
         .expect("bounded canonical fuel");
-    register_source(&mut control, br"$$\eqno^{}$\end");
+    register_source(
+        &mut control,
+        br"\tracingrestores=1\tracingonline=1$$\eqno^{}$\end",
+    );
 
     run_to_end(&mut control, &mut stores);
 
@@ -1588,8 +1591,12 @@ fn empty_equation_number_checks_math_fonts_on_both_sides() {
     let second_font_error = terminal
         .rfind("Math formula deleted: Insufficient symbol fonts")
         .expect("display font error");
+    let equation_number_restore = terminal
+        .find("{restoring \\fam=-1}")
+        .expect("equation-number family restore");
     assert!(first_font_error < display_end_error);
-    assert!(display_end_error < second_font_error);
+    assert!(display_end_error < equation_number_restore);
+    assert!(equation_number_restore < second_font_error);
 }
 
 #[test]

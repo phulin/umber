@@ -427,6 +427,26 @@ fn parameter_journal_records_use_parameter_bank_tags() {
 }
 
 #[test]
+fn first_same_value_local_write_at_new_group_level_is_restored() {
+    let mut env = Env::new();
+    let param = IntParam::FAM;
+    env.set_int_param(param, -1);
+    env.enter_group();
+
+    env.set_int_param(param, -1);
+    let (_, _, _, restores) = env.leave_group_observing_meanings();
+
+    assert_eq!(env.int_param(param), -1);
+    assert_eq!(restores.len(), 1);
+    assert_eq!(
+        restores[0].cell(),
+        CellId::new(BankTag::IntParam, u32::from(param.raw()))
+    );
+    assert_eq!(restores[0].old(), u64::from((-1_i32) as u32));
+    assert!(!restores[0].is_retaining());
+}
+
+#[test]
 fn parameter_global_sets_tag_journal_records() {
     let mut env = Env::new();
     let start = env.journal_pos();
