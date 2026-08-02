@@ -109,6 +109,7 @@ fn short_display_maps_all_node_classes() {
             kind: GlueKind::Normal,
             leader: None,
         },
+        Node::Direction(tex_state::node::Direction::BeginL),
         Node::MathOn(Scaled::from_raw(0)),
         Node::Mark {
             class: 0,
@@ -133,7 +134,29 @@ fn short_display_maps_all_node_classes() {
 
     assert_eq!(
         ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
-        "[]| $[][]"
+        "[]| []$[][]"
+    );
+}
+
+#[test]
+fn etex_direction_nodes_follow_short_display_subtypes_without_mutation() {
+    let stores = Universe::new();
+    let nodes = [
+        Node::Direction(tex_state::node::Direction::BeginM),
+        Node::Direction(tex_state::node::Direction::EndM),
+        Node::Direction(tex_state::node::Direction::BeginL),
+        Node::Direction(tex_state::node::Direction::EndL),
+        Node::Direction(tex_state::node::Direction::BeginR),
+        Node::Direction(tex_state::node::Direction::EndR),
+    ];
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "$$[][][][]"
+    );
+    assert_eq!(
+        nodes[2],
+        Node::Direction(tex_state::node::Direction::BeginL)
     );
 }
 

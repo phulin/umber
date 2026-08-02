@@ -178,10 +178,11 @@ fn origin_text(stores: &Universe) -> String {
 ///
 /// Characters print as themselves, prefixed by their font's identifier
 /// whenever the font changes; everything with internal structure collapses to
-/// a placeholder. §175 fixes each placeholder: `[]` for a box-like node, `|`
-/// for a rule, a space for non-zero glue, `$` for a math node, and a
-/// discretionary's own pre-break and post-break text followed by skipping its
-/// replacement count.
+/// a placeholder. TeX82 §175 fixes each placeholder: `[]` for a box-like
+/// node, `|` for a rule, a space for non-zero glue, `$` for a math node, and
+/// a discretionary's own pre-break and post-break text followed by skipping
+/// its replacement count. e-TeX 2.6's §175 change prints its L/R direction
+/// subtypes as `[]` instead of ordinary math `$` markers.
 fn short_display(stores: &Universe, list: NodeListId) -> String {
     ShortDisplayRenderer::new().render_list(stores, list)
 }
@@ -259,7 +260,12 @@ fn append_short_display_nodes(
                     out.push(' ');
                 }
             }
-            Node::MathOn(_) | Node::MathOff(_) => out.push('$'),
+            Node::MathOn(_)
+            | Node::MathOff(_)
+            | Node::Direction(
+                tex_state::node::Direction::BeginM | tex_state::node::Direction::EndM,
+            ) => out.push('$'),
+            Node::Direction(_) => out.push_str("[]"),
             Node::Disc { pre, post, .. } => {
                 append_short_display(stores, *pre, font_in_short_display, out);
                 append_short_display(stores, *post, font_in_short_display, out);
