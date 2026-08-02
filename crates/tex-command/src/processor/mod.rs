@@ -165,6 +165,13 @@ impl<'a> CommandProcessor<'a> {
     /// This must run before operand scanning because restricted scanners can
     /// report recoverable errors of their own before the command completes.
     pub fn print_command_trace(&mut self, command: PrintCommand) {
+        // TeX82 §537 prints an input file's opening before reading its
+        // first line; §§299/1030 trace only after the resulting command
+        // has been fetched. Host-neutral input queues the framing transition,
+        // so commit every transition already reached at this exact fetch
+        // boundary before printing the trace. A close reached later during
+        // expansion remains queued behind any earlier diagnostic.
+        self.command.render_file_framing_events(&mut self.state);
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let command = print_cmd_chr_text(&self.state, command);
         let mode_prefix = self.command_trace_mode_prefix.take();

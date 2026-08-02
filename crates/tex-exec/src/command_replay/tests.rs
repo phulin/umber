@@ -2201,6 +2201,41 @@ fn canonical_openin_read_and_closein_use_registered_immutable_input() {
 }
 
 #[test]
+fn canonical_input_open_framing_precedes_first_command_trace() {
+    // TeX82 §537 prints `(name` before it reads the new file's first line;
+    // §§299/1030 therefore cannot trace that line's command first.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"\n"[..]))
+            .with_name("child.tex"),
+    );
+    register_source(
+        &mut control,
+        br"\tracingcommands=1\tracingonline=1\input child\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = transcript_text(&universe);
+    let open = output.find("(child.tex").expect("input opening is traced");
+    let par = output.find("{\\par}").expect("blank line delivers par");
+    let close = output[open..]
+        .find(')')
+        .map(|offset| open + offset)
+        .expect("input closing is traced");
+    assert!(
+        open < par,
+        "file opening must precede its first command: {output}"
+    );
+    assert!(
+        par < close,
+        "file closing reached later must remain after that command: {output}"
+    );
+}
+
+#[test]
 fn canonical_filename_scan_endinput_is_inherited_by_the_new_source_first_line() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
