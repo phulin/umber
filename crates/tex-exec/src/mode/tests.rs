@@ -3,7 +3,7 @@ use super::{
     ExecError, IncompleteFraction, Mode, ModeLevelSummary, ModeNest,
 };
 use std::sync::Arc;
-use tex_command::FatalError;
+use tex_command::{ConditionalMode, FatalError};
 use tex_state::Universe;
 use tex_state::ids::{FontId, GlueId, NodeListId};
 use tex_state::math::FractionThickness;
@@ -128,32 +128,32 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
     for (mode, family, inner, horizontal_space_factor) in [
         (
             Mode::Vertical,
-            tex_expand::EngineMode::Vertical,
+            ConditionalMode::Vertical,
             false,
             false,
         ),
         (
             Mode::InternalVertical,
-            tex_expand::EngineMode::Vertical,
+            ConditionalMode::Vertical,
             true,
             false,
         ),
         (
             Mode::Horizontal,
-            tex_expand::EngineMode::Horizontal,
+            ConditionalMode::Horizontal,
             false,
             true,
         ),
         (
             Mode::RestrictedHorizontal,
-            tex_expand::EngineMode::Horizontal,
+            ConditionalMode::Horizontal,
             true,
             true,
         ),
-        (Mode::Math, tex_expand::EngineMode::Math, true, false),
+        (Mode::Math, ConditionalMode::Math, true, false),
         (
             Mode::DisplayMath,
-            tex_expand::EngineMode::Math,
+            ConditionalMode::Math,
             false,
             false,
         ),
@@ -161,10 +161,11 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
         let mut nest = ModeNest::new();
         nest.push(mode).expect("test mode push");
         let list = nest.current_list();
+        let conditional_state = nest.conditional_state();
 
         assert_eq!(nest.current_mode(), mode);
-        assert_eq!(mode.engine_mode(), family);
-        assert_eq!(mode.is_inner(), inner);
+        assert_eq!(conditional_state.mode(), family);
+        assert_eq!(conditional_state.is_inner(), inner);
         assert!(list.is_empty());
         assert_eq!(
             list.raw_space_factor(),
