@@ -1,12 +1,52 @@
 use super::*;
 use crate::mode::PendingHChar;
 use crate::tests::support::TestRecorder;
+use crate::{CanonicalMainControl, MainControlStep};
+use std::sync::Arc;
+use tex_command::{FontResource, RegisteredSourceKind, SourceRegistration};
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
 use tex_state::node::Node;
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::TracedTokenWord;
 use tex_state::{EffectRecord, PrintSink};
+
+fn canonical_control_with_cmr10(stores: &mut Universe, source: &str) -> CanonicalMainControl {
+    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
+    let mut control = CanonicalMainControl::tex82_initex(stores);
+    stores
+        .world_mut()
+        .set_memory_file("cmr10.tfm", CMR10.to_vec())
+        .expect("seed cmr10");
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut stores.input_open_context(),
+        std::path::Path::new("cmr10.tfm"),
+    )
+    .expect("read cmr10 fixture");
+    control.capabilities_mut().register_font(
+        "cmr10.tfm",
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source.as_bytes()),
+        ))
+        .expect("register canonical source");
+    control
+}
+
+fn run_canonical_to_input_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
+    loop {
+        match control.step(stores).expect("canonical program executes") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+}
 
 #[test]
 fn legacy_tex82_section_581_warns_only_for_positive_tracing_lost_chars() {
@@ -761,22 +801,13 @@ fn accent_delta_rounds_half_scaled_points_like_tex82() {
 
 #[test]
 fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f \\accent19 E"));
-    let mut executor = crate::Executor::new();
+    let mut control =
+        canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f \\accent19 E");
+    run_canonical_to_input_end(&mut control, &mut stores);
 
-    executor
-        .run(&mut input, &mut stores)
-        .expect("paragraph-leading accent should execute");
-
-    assert_eq!(executor.nest().current_mode(), crate::Mode::Horizontal);
-    let nodes = executor.nest().current_list().nodes();
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    let nodes = control.current_list().nodes();
     assert!(
         matches!(
             nodes,
@@ -808,17 +839,9 @@ fn paragraph_leading_accent_is_replayed_after_entering_horizontal_mode() {
 
 #[test]
 fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let pending: Vec<_> = "in-line"
@@ -860,17 +883,9 @@ fn unrestricted_reconstitution_inserts_null_disc_after_font_hyphen() {
 fn literal_hyphen_omits_discretionary_in_restricted_horizontal_mode() {
     // TeX82 §1035 inserts the null discretionary after a font hyphen only
     // when `mode>0`; restricted horizontal mode has the negative mode value.
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let mut nest = ModeNest::new();
@@ -894,17 +909,9 @@ fn literal_hyphen_omits_discretionary_in_restricted_horizontal_mode() {
 
 #[test]
 fn hyphenation_inside_ff_ligature_preserves_the_unbroken_ligature() {
-    const CMR10: &[u8] = include_bytes!("../../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     let mut stores = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
-    crate::install_unexpandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file("cmr10.tfm", CMR10.to_vec())
-        .expect("seed cmr10");
-    let mut input = InputStack::new(MemoryInput::new("\\font\\f=cmr10 \\relax \\f"));
-    crate::Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font selection should execute");
+    let mut control = canonical_control_with_cmr10(&mut stores, "\\font\\f=cmr10 \\relax \\f");
+    run_canonical_to_input_end(&mut control, &mut stores);
     stores.add_hyphenation_exception(ExceptionSpec {
         word: "difference".to_owned(),
         positions: vec![3],
