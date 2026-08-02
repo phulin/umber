@@ -66,7 +66,11 @@ print channel of its own outside the borrowed
   streams need `open_registered_source_as` (`umber2-johp.245`). It also owns
   `SourceRegistration::with_name` (§537's `a_make_name_string`) and
   `FileFramingEvent`, the queued `Open`/`Close` record of when a named `File`
-  level or traced `\scantokens` pseudo-file opened or exhausted. The queue exists because the input stack is reached
+  level or traced `\scantokens` pseudo-file opened or exhausted. Named `File`
+  levels are command-framed by default; the explicit
+  `SourceFramingPolicy::ExternallyOwned` exception preserves an authored root's
+  `File` identity while suppressing duplicate events when its surrounding host
+  wrapper already owns that transcript frame. The queue exists because the input stack is reached
   from places that hold no `Universe`; `CommandState::render_file_framing_events`
   prints it as tex.web's `(name`/`)` bracketing through
   `tex_state::file_framing`, and the processor drains it the instant a source
