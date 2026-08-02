@@ -234,6 +234,7 @@ fn summary_rejects_each_scanner_episode() {
             ScannerStatus::Aligning(AlignmentScanContext {
                 alignment: AlignmentId(1),
                 builder: TokenBuilderId(2),
+                owner: None,
                 warning: ScannerWarning(1),
             }),
             CommandSummaryError::AlignmentScan,

@@ -8085,6 +8085,7 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
     control.active_alignment = Some(ActiveReplayAlignment {
         identity: outer,
         kind: AlignmentKind::HAlign,
+        owner: None,
         packing: crate::mode::AlignmentPackSpec::Natural,
         columns: Vec::new(),
         repeat_start: None,
@@ -8107,7 +8108,10 @@ fn nested_alignment_begin_suspends_the_outer_replay_context() {
     control.next_alignment_identity = 2;
 
     apply_scanned_step(
-        ScannedStep::BeginAlignment { vertical: false },
+        ScannedStep::BeginAlignment {
+            vertical: false,
+            owner: None,
+        },
         &mut universe,
         &mut control.modes,
         &mut control.next_alignment_identity,
@@ -8179,7 +8183,10 @@ fn fin_align_missing_groups_report_align1_and_align0_confusion() {
         let mut control = CommandReplayControl::tex82_initex(&mut universe);
 
         apply_scanned_step(
-            ScannedStep::BeginAlignment { vertical: false },
+            ScannedStep::BeginAlignment {
+                vertical: false,
+                owner: None,
+            },
             &mut universe,
             &mut control.modes,
             &mut control.next_alignment_identity,

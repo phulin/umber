@@ -2045,7 +2045,7 @@ impl CommandProcessor<'_> {
         if let Some((kind, warning_index)) = match &status {
             ScannerStatus::Defining(context) => Some(("definition", context.target)),
             ScannerStatus::Matching(context) => Some(("use", Some(context.macro_name))),
-            ScannerStatus::Aligning(_) => Some(("preamble", None)),
+            ScannerStatus::Aligning(context) => Some(("preamble", context.owner)),
             ScannerStatus::Absorbing(context) => Some(("text", context.owner)),
             ScannerStatus::Normal | ScannerStatus::Skipping(_) => None,
         } {
@@ -4456,6 +4456,7 @@ mod tests {
                 ScannerStatus::Aligning(AlignmentScanContext {
                     alignment: AlignmentId(4),
                     builder: TokenBuilderId(5),
+                    owner: None,
                     warning,
                 }),
                 vec![
@@ -4554,6 +4555,7 @@ mod tests {
             ScannerStatus::Aligning(AlignmentScanContext {
                 alignment: AlignmentId(4),
                 builder: TokenBuilderId(5),
+                owner: None,
                 warning: ScannerWarning(17),
             }),
             |command| {

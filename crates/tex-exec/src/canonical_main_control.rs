@@ -308,6 +308,9 @@ impl ReplayBoxKind {
 struct ActiveReplayAlignment {
     identity: AlignmentIdentity,
     kind: AlignmentKind,
+    /// TeX82 §774's `save_cs_ptr`: the delivered control sequence whose
+    /// meaning began this alignment, retained for §338 runaway diagnostics.
+    owner: Option<tex_state::interner::Symbol>,
     /// TeX82 §645's `scan_spec` result, kept from `init_align` until §805
     /// packages the preamble prototype box with it.
     packing: AlignmentPackSpec,
@@ -5269,6 +5272,7 @@ enum ScannedStep {
     BeginShipout,
     BeginAlignment {
         vertical: bool,
+        owner: Option<tex_state::interner::Symbol>,
     },
     AlignmentPreambleOpening {
         alignment: AlignmentIdentity,
@@ -5568,9 +5572,9 @@ fn scan_replay_step(
                 }
                 Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing })
             }
-            AlignmentPreamblePhase::Start => {
+            AlignmentPreamblePhase::Start { owner } => {
                 processor
-                    .begin_alignment_preamble_scan()
+                    .begin_alignment_preamble_scan(owner)
                     .map_err(command_error)?;
                 Ok(ScannedStep::AlignmentPreambleStart { alignment })
             }
@@ -5628,10 +5632,14 @@ fn scan_replay_step(
 #[derive(Clone, Copy)]
 enum AlignmentPreamblePhase {
     Opening,
-    Start,
+    Start {
+        owner: Option<tex_state::interner::Symbol>,
+    },
     CellOpening,
     NextCellOpening,
-    AlignPeek { after_noalign: bool },
+    AlignPeek {
+        after_noalign: bool,
+    },
     NoAlignBody,
     CellDelivery,
 }
@@ -5643,7 +5651,12 @@ fn alignment_preamble(
     if active.preamble_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::Opening))
     } else if active.preamble_start_pending {
-        Some((active.identity, AlignmentPreamblePhase::Start))
+        Some((
+            active.identity,
+            AlignmentPreamblePhase::Start {
+                owner: active.owner,
+            },
+        ))
     } else if active.cell_opening_pending {
         Some((active.identity, AlignmentPreamblePhase::CellOpening))
     } else if active.next_cell_opening_pending {
@@ -8237,7 +8250,10 @@ fn scan_command(
             {
                 scan_off_save(processor, command, innermost_group)
             } else {
-                Ok(ScannedStep::BeginAlignment { vertical: false })
+                Ok(ScannedStep::BeginAlignment {
+                    vertical: false,
+                    owner: command.control_sequence(),
+                })
             }
         }
         // Only `hmode+valign` reaches here: §1090 lists `vmode+valign` (unlike
@@ -8251,7 +8267,10 @@ fn scan_command(
             {
                 scan_off_save(processor, command, innermost_group)
             } else {
-                Ok(ScannedStep::BeginAlignment { vertical: true })
+                Ok(ScannedStep::BeginAlignment {
+                    vertical: true,
+                    owner: command.control_sequence(),
+                })
             }
         }
         // TeX82 §1096: `hmode+par_end` first runs `off_save` when
@@ -14924,7 +14943,7 @@ fn apply_scanned_step(
             }
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::BeginAlignment { vertical } => {
+        ScannedStep::BeginAlignment { vertical, owner } => {
             // TeX82 §774's display-math entry accepts an alignment only when
             // the current formula is empty. `flush_math` owns both the
             // material and an incomplete fraction before `push_nest` opens
@@ -14973,6 +14992,7 @@ fn apply_scanned_step(
                 } else {
                     AlignmentKind::HAlign
                 },
+                owner,
                 packing: AlignmentPackSpec::Natural,
                 columns: Vec::new(),
                 repeat_start: None,

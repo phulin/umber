@@ -54,7 +54,7 @@ fn scan_alignment_preamble(
             .scan_alignment_preamble_opening()
             .expect("alignment packing specification should scan");
         processor
-            .begin_alignment_preamble_scan()
+            .begin_alignment_preamble_scan(None)
             .expect("alignment preamble should scan");
         packing
     };
@@ -2560,17 +2560,40 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     // `aligning` scanner status, so an `\outer` macro reports as a forbidden
     // control sequence rather than as an exhausted file.
     let output = support::terminal_effect_text_unbroken(&stores);
-    // XFAIL(umber2-icte): canonical preamble recovery currently loses the
-    // surviving `\halign` control-sequence name while rendering this one
-    // diagnostic. Keep the recovery class asserted until that follow-up can
-    // restore the stronger legacy text.
     assert!(
-        output.contains("Forbidden control sequence found while scanning preamble of ."),
+        output.contains("Forbidden control sequence found while scanning preamble of \\halign."),
         "{output}"
     );
     assert!(steps < 1_000, "recovery must make bounded progress");
     assert!(stores.input_summary().is_empty());
     assert!(stores.env_journal_bytes_since(&before) < 100_000);
+}
+
+#[test]
+fn runaway_preamble_names_delivered_alignment_control_sequence() {
+    for (source, expected) in [
+        (
+            r#"
+                \outer\def\lo{}
+                \let\grid=\halign
+                \grid{{\span\ifcase3 \lo#\cr............89{}\cr}
+            "#,
+            "Forbidden control sequence found while scanning preamble of \\grid.",
+        ),
+        (
+            r#"
+                \outer\def\lo{}
+                \hbox{\valign{{\span\ifcase3 \lo#\cr............89{}\cr}}
+            "#,
+            "Forbidden control sequence found while scanning preamble of \\valign.",
+        ),
+    ] {
+        let mut stores = support::stores_with_fonts();
+        tex_command::install_tex82_expandable_primitives(&mut stores);
+        let _ = run_pathological_alignment_source(&mut stores, source, 1_000, None);
+        let output = support::terminal_effect_text_unbroken(&stores);
+        assert!(output.contains(expected), "{output}");
+    }
 }
 
 #[test]

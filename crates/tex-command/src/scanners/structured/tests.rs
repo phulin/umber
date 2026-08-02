@@ -1989,7 +1989,7 @@ fn alignment_preamble_opening_scans_the_scan_spec_clause() {
                 .unwrap_or_else(|_| panic!("scan_spec accepts `{body}`"));
             assert_eq!(packing, expected, "`{body}` packing specification");
             processor
-                .begin_alignment_preamble_scan()
+                .begin_alignment_preamble_scan(None)
                 .unwrap_or_else(|_| panic!("`{body}` preamble scans"));
         }
         let preamble = command
@@ -2060,7 +2060,7 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
         processor
-            .begin_alignment_preamble_scan()
+            .begin_alignment_preamble_scan(None)
             .expect("preamble scans");
     }
 
@@ -2152,7 +2152,7 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
         processor
-            .begin_alignment_preamble_scan()
+            .begin_alignment_preamble_scan(None)
             .expect("preamble scans");
     }
 
@@ -2243,7 +2243,7 @@ fn assert_missing_preamble_parameter(
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
         processor
-            .begin_alignment_preamble_scan()
+            .begin_alignment_preamble_scan(None)
             .expect("missing parameter recovers through the v-template");
     }
     let preamble = command

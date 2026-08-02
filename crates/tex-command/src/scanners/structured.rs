@@ -3064,7 +3064,10 @@ impl CommandProcessor<'_> {
     /// `get_preamble_token` retires that backup.  The status therefore belongs
     /// to the command-owned input transition, rather than to executor replay
     /// or the preamble parser.
-    pub fn begin_alignment_preamble_scan(&mut self) -> Result<(), CommandError> {
+    pub fn begin_alignment_preamble_scan(
+        &mut self,
+        owner: Option<tex_state::interner::Symbol>,
+    ) -> Result<(), CommandError> {
         // TeX82 §776's `@<Scan the preamble...@>` opens with the comment
         // "at this point, |cur_cmd=left_brace|": `scan_spec` has already
         // consumed the opener, so this must not fetch another token. A raw
@@ -3083,6 +3086,7 @@ impl CommandProcessor<'_> {
                 .begin_scanner_status(ScannerStatus::Aligning(AlignmentScanContext {
                     alignment: AlignmentId(alignment.raw()),
                     builder: TokenBuilderId(0),
+                    owner,
                     warning: ScannerWarning(0),
                 }));
         self.observe_scanner_status_transition(

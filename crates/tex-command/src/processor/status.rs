@@ -216,6 +216,9 @@ pub(crate) struct MatchingContext {
 pub(crate) struct AlignmentScanContext {
     pub(crate) alignment: AlignmentId,
     pub(crate) builder: TokenBuilderId,
+    /// TeX82 §774's saved `cs_ptr`, installed as §776's
+    /// `warning_index` for the duration of the preamble scan.
+    pub(crate) owner: Option<Symbol>,
     pub(crate) warning: ScannerWarning,
 }
 
@@ -317,6 +320,7 @@ mod tests {
                 ScannerStatus::Aligning(AlignmentScanContext {
                     alignment: AlignmentId(2),
                     builder: TokenBuilderId(3),
+                    owner: None,
                     warning,
                 }),
                 RunawayKind::AlignmentPreamble,
