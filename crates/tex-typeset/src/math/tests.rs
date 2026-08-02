@@ -118,6 +118,38 @@ fn undefined_family_discards_only_the_offending_math_character() {
 }
 
 #[test]
+fn missing_family_character_discards_only_the_offending_math_character() {
+    // TeX82 §§722--724's `fetch` diagnoses a character absent from a defined
+    // family font, empties only that field, and converts the sibling noads.
+    let mut universe = setup_universe();
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(noad(NoadClass::Ord, 'a')),
+        Node::MathNoad(noad(NoadClass::Ord, '\u{7f}')),
+        Node::MathNoad(noad(NoadClass::Ord, 'b')),
+    ]);
+    let params = MathParams::read(&universe);
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(!layout.recovered());
+    assert!(layout.conversion_events().iter().any(|event| matches!(
+        event,
+        MathConversionEvent::MissingCharacter {
+            character: '\u{7f}',
+            ..
+        }
+    )));
+    let characters = layout
+        .logical_nodes(layout.root())
+        .into_iter()
+        .filter_map(|node| match node {
+            MathNode::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(characters, ['a', 'b']);
+}
+
+#[test]
 fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() {
     let woff2 = include_bytes!("../../../tex-fonts/tests/fixtures/stix-two-math.woff2");
     let web = parse_stix_math(FontContainer::Woff2, woff2.to_vec());

@@ -1564,9 +1564,9 @@ fn inline_math_finishing_emits_mathsurround_markers_and_penalties() {
 /// surrounding formula. See umber2-e51h.63.7 for the missing conversion-event
 /// boundary needed to make the warning observable outside `tex-typeset`.
 #[test]
-#[ignore = "umber2-h3gp: canonical math lowering retains a missing glyph operand"]
 fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
-    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"007f b");
+    // TeX82 §445 recognizes uppercase A--F in hexadecimal constants.
+    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"007F b");
     let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
@@ -1589,9 +1589,9 @@ fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
 /// TeX82 §§722--723: selecting nullfont through an undefined family resets
 /// only that math field to empty and continues converting its siblings.
 #[test]
-#[ignore = "umber2-h3gp: canonical math lowering retains an undefined-family operand"]
 fn undefined_math_family_reports_error_and_omits_only_character() {
-    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"0f61 b");
+    // TeX82 §445 recognizes uppercase A--F in hexadecimal constants.
+    let (mut stores, executor) = run_math_source_with_text_math_fonts("$a\\mathchar\"0F61 b");
     let list = unfinished_math_list(&mut stores, &executor);
 
     let nodes = crate::math::finish_math_list_node(&mut stores, list, false);
