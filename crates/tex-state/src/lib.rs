@@ -72,6 +72,7 @@ pub mod meaning;
 pub mod measurement;
 pub mod memo;
 pub mod node;
+pub mod node_sequence;
 pub mod node_arena;
 pub mod page;
 mod pdf;

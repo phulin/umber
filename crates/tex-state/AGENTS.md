@@ -67,6 +67,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/memo/tests.rs`: Cold/fork/rollback Cross-Universe memo import, provenance stripping, corruption, bounds, kind, and semantic round-trip tests.
 - `src/measurement.rs`: `profiling-stats` process-local allocation-owner counters used by dedicated profiling builds.
 - `src/node.rs`: Immutable TeX node, box, glue, kern, penalty, rule, whatsit, math-list, discretionary, and list-field model.
+- `src/node_sequence.rs`: Paired semantic and TeX-physical transient node sequences with semantic-only equality.
 - `src/node_arena.rs`: Compact-node module boundary and deliberately narrow re-exports.
 - `src/node_arena/arena.rs`: Epoch arena facade and reusable owned node-list builder.
 - `src/node_arena/copy.rs`: Private compact-to-compact span copying and typed child-patch descriptions.
