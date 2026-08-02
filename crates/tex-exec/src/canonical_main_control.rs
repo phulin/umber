@@ -193,6 +193,13 @@ pub struct CanonicalMainControl {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// A committed artifact prefix waiting for the outer main-control owner.
+    ///
+    /// TeX82 §§1025--1026 may execute several `ship_out` calls while an
+    /// output routine owns the input, mode, and save-stack continuations.
+    /// Those commits form one outer completion and cannot publish a durable
+    /// checkpoint until the routine and every other nested builder unwind.
+    pending_shipout_boundary: bool,
     /// Source site of the most recent typed resource suspension. This is
     /// retained outside snapshots so a host protocol no-progress invariant
     /// can still identify the command whose retry failed to advance.
@@ -427,6 +434,7 @@ struct CanonicalStepSnapshot {
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
+    pending_shipout_boundary: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -454,6 +462,7 @@ impl CanonicalStepSnapshot {
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
+            pending_shipout_boundary: control.pending_shipout_boundary,
             job: control.job.clone(),
             universe: stores.snapshot(),
         }
@@ -490,6 +499,7 @@ impl CanonicalStepSnapshot {
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
+        control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.job = self.job;
     }
 
@@ -793,6 +803,7 @@ impl CanonicalMainControl {
         checkpoint.restore_canonical_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
+        self.pending_shipout_boundary = false;
         Ok(())
     }
 
@@ -1457,6 +1468,21 @@ impl CanonicalMainControl {
         std::mem::take(&mut self.completed_boundaries)
     }
 
+    /// Records newly committed artifacts and releases their one outermost
+    /// checkpoint boundary only after all continuation-owning work unwinds.
+    fn finish_shipout_publication(&mut self, artifact_count: usize, stores: &Universe) {
+        self.pending_shipout_boundary |= stores.world().artifact_commits().len() != artifact_count;
+        if self.pending_shipout_boundary
+            && !self.boxes.output_routine_active
+            && self.modes.depth() == 1
+            && stores.execution_group_depth() == 0
+        {
+            self.completed_boundaries
+                .push(crate::EngineBoundary::ShipoutComplete);
+            self.pending_shipout_boundary = false;
+        }
+    }
+
     /// Returns the replay projection of TeX's current execution mode.
     #[must_use]
     pub fn current_mode(&self) -> Mode {
@@ -1847,10 +1873,7 @@ impl CanonicalMainControl {
             }
             self.page_output_observations.clear();
         }
-        if stores.world().artifact_commits().len() != artifact_count {
-            self.completed_boundaries
-                .push(crate::EngineBoundary::ShipoutComplete);
-        }
+        self.finish_shipout_publication(artifact_count, stores);
         Ok(applied)
     }
 
@@ -2372,10 +2395,7 @@ impl CanonicalMainControl {
         }
         self.fire_pending_page_output(stores)?;
         self.page_output_observations.clear();
-        if stores.world().artifact_commits().len() != artifact_count {
-            self.completed_boundaries
-                .push(crate::EngineBoundary::ShipoutComplete);
-        }
+        self.finish_shipout_publication(artifact_count, stores);
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1

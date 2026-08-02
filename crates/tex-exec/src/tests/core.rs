@@ -4642,7 +4642,6 @@ fn expandable_output_tail_cannot_consume_following_float_group() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-9hz6 canonical nested shipouts publish two post-output checkpoints"]
 fn output_routine_emits_one_checkpoint_only_after_teardown() {
     let source = "\\output={\\advance\\count0 by 1 \\
                   \\global\\advance\\count1 by 1 \\shipout\\hbox{}\\shipout\\box255}
@@ -4694,6 +4693,44 @@ fn output_routine_emits_one_checkpoint_only_after_teardown() {
         .restore_checkpoint(checkpoint, &mut stores)
         .expect("post-output checkpoint restores");
     assert_eq!(stores.count(1), 21);
+}
+
+#[test]
+fn shipout_without_output_routine_publishes_at_its_own_quiescent_boundary() {
+    let source = "\\shipout\\hbox{}\\count2=7";
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical source");
+    let mut checkpoints = Vec::new();
+    loop {
+        let step = control.step(&mut stores).expect("canonical shipout step");
+        for boundary in control.take_completed_boundaries() {
+            checkpoints.push(
+                control
+                    .capture_checkpoint(boundary, &mut stores, ExecutionBudgetCounters::default())
+                    .expect("direct shipout boundary is immediately quiescent"),
+            );
+        }
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            break;
+        }
+    }
+
+    let shipouts = checkpoints
+        .iter()
+        .filter(|checkpoint| checkpoint.boundary() == EngineBoundary::ShipoutComplete)
+        .collect::<Vec<_>>();
+    assert_eq!(shipouts.len(), 1);
+    assert_eq!(shipouts[0].mode_summary().levels().len(), 1);
+    control
+        .restore_checkpoint(shipouts[0], &mut stores)
+        .expect("direct shipout checkpoint restores");
+    assert_eq!(stores.count(2), 0, "checkpoint precedes the next command");
 }
 
 #[test]
