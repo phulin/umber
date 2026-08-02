@@ -2349,7 +2349,7 @@ fn post_line_break_closes_and_resumes_open_tex_xet_segments() {
 }
 
 #[test]
-fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
+fn post_line_break_retains_materialized_unbroken_discretionary_replacement_count() {
     let mut universe = Universe::new();
     let zero = universe.intern_glue(GlueSpec::ZERO);
     let empty = universe.freeze_node_list(&[]);
@@ -2397,7 +2397,7 @@ fn post_line_break_clears_materialized_unbroken_discretionary_replacement() {
             Node::Rule { width: Some(second), .. },
             Node::Penalty(10_000),
             Node::Glue { kind: GlueKind::RightSkip, .. },
-        ] if first.raw() == 3 && *retained_replacement == empty && second.raw() == 7
+        ] if first.raw() == 3 && *retained_replacement == replacement && second.raw() == 7
     ));
 }
 

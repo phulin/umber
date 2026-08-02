@@ -208,7 +208,7 @@ fn push_owned_line_segment<S: TypesetState>(
                     kind,
                     pre,
                     post,
-                    replace: empty_list,
+                    replace,
                 });
                 out.extend(state.nodes(replace).into_iter().map(|node| node.to_owned()));
             }

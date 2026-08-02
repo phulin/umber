@@ -48,7 +48,7 @@ fn sink_text(stores: &Universe, terminal: bool) -> String {
 }
 
 #[test]
-fn short_display_does_not_skip_following_nodes_for_side_stored_replacement() {
+fn short_display_skips_materialized_replacement_by_side_list_count() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     let replacement = stores.freeze_node_list(&[Node::Kern {
@@ -61,6 +61,11 @@ fn short_display_does_not_skip_following_nodes_for_side_stored_replacement() {
             pre: empty,
             post: empty,
             replace: replacement,
+        },
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
         },
         Node::Rule {
             width: None,

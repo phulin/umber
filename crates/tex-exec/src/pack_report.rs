@@ -238,7 +238,9 @@ fn append_short_display_nodes(
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
-    for node in nodes {
+    let mut index = 0;
+    while let Some(node) = nodes.get(index) {
+        index += 1;
         match node {
             Node::Char { font, ch, .. } => {
                 append_short_char(stores, *font, *ch, font_in_short_display, out);
@@ -269,12 +271,18 @@ fn append_short_display_nodes(
                 tex_state::node::Direction::BeginM | tex_state::node::Direction::EndM,
             ) => out.push('$'),
             Node::Direction(_) => out.push_str("[]"),
-            Node::Disc { pre, post, .. } => {
+            Node::Disc {
+                pre, post, replace, ..
+            } => {
                 append_short_display(stores, *pre, font_in_short_display, out);
                 append_short_display(stores, *post, font_in_short_display, out);
-                // TeX82 steps past replacement nodes linked after a disc.
-                // Umber stores them in the disc's side list, so iteration over
-                // the containing list must not advance for their count.
+                // TeX82 §174 advances past `replace_count` nodes linked after
+                // the discretionary. Post-line materialization retains the
+                // side list as that count while placing its replacement nodes
+                // directly after the disc in this containing list.
+                index = index
+                    .saturating_add(stores.nodes(*replace).len())
+                    .min(nodes.len());
             }
             // §175's `othercases do_nothing`: kerns, penalties, and the math
             // list nodes that never reach a packed horizontal list.

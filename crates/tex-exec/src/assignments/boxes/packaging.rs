@@ -391,6 +391,7 @@ pub(crate) fn hpack_with_overfull_rule(
 pub(crate) fn hpack_owned_with_overfull_rule(
     stores: &mut Universe,
     nodes: &mut Vec<Node>,
+    mut diagnostic_nodes: Option<&mut Vec<Node>>,
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
@@ -407,6 +408,13 @@ pub(crate) fn hpack_owned_with_overfull_rule(
             height: None,
             depth: None,
         });
+        if let Some(diagnostic_nodes) = diagnostic_nodes.as_deref_mut() {
+            diagnostic_nodes.push(Node::Rule {
+                width: Some(params.overfull_rule),
+                height: None,
+                depth: None,
+            });
+        }
     }
     let children = stores.freeze_node_list_owned(nodes);
     let packed = plan.finish(children);
@@ -416,11 +424,15 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    let diagnostic_box = diagnostic_nodes.map_or(packed.node, |nodes| tex_state::node::BoxNode {
+        children: stores.freeze_node_list(nodes),
+        ..packed.node
+    });
     crate::pack_report::report_pack_diagnostics(
         stores,
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
-        &tex_state::node::Node::HList(packed.node),
+        &tex_state::node::Node::HList(diagnostic_box),
     );
     packed.node
 }

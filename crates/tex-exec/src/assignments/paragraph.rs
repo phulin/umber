@@ -626,9 +626,21 @@ fn break_current_paragraph(
             &mut migrated,
             &mut retained_migrated,
         );
+        // TeX82 §§174/879--882 keeps `replace_count` on an unchosen disc
+        // while `short_display` examines the just-packed line, then the line
+        // itself contains only the already materialized replacement nodes.
+        // Retain the count in the diagnostic view and clear the immutable
+        // production view so later packing and shipout cannot replay it.
+        let mut diagnostic_nodes = broken.nodes.clone();
+        for node in &mut broken.nodes {
+            if let Node::Disc { replace, .. } = node {
+                *replace = empty_list;
+            }
+        }
         let line = hpack_owned_with_overfull_rule(
             stores,
             &mut broken.nodes,
+            Some(&mut diagnostic_nodes),
             PackSpec::Exactly(broken.dimensions.width),
         );
         let mut line = line;
