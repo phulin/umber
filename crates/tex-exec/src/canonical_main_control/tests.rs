@@ -7083,6 +7083,26 @@ fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
 }
 
 #[test]
+fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
+    // TeX82 §§63/298/1236: both commands in the diagnostic are printed via
+    // `print_cmd_chr`/`print_esc`, so neither spelling hardcodes a backslash.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.set_int_param(
+        tex_state::env::banks::IntParam::ESCAPE_CHAR,
+        i32::from(b'|'),
+    );
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, br"\advance\prevdepth\end");
+    run_to_end(&mut control, &mut stores);
+
+    let output = terminal_text(&stores);
+    assert!(
+        output.contains("! You can't use `|prevdepth' after |advance."),
+        "{output}"
+    );
+}
+
+#[test]
 fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
     // TeX82 §§298 and 1236 print the rejected command class, scan no operand,
     // and return through §1269 once. Prefix scope is therefore immaterial,

@@ -12657,10 +12657,16 @@ fn apply_scanned_step(
             // `do_register_command`; §1269's common `done` path still gets
             // to replay a pending `\afterassignment` token.
             let target = tex_command::print_cmd_chr_text(&stores.command_context(), target);
-            let primitive = printed_command(stores, Meaning::UnexpandablePrimitive(primitive));
+            let primitive = stores
+                .primitive_name(Meaning::UnexpandablePrimitive(primitive))
+                .expect("installed arithmetic primitive has a canonical name")
+                .to_owned();
             let context = command.state.output_open_context(&stores.command_context());
             let mut report = stores.print_err("You can't use `");
-            report.print(&target).print("' after ").print(&primitive);
+            report
+                .print(&target)
+                .print("' after ")
+                .print_esc(&primitive);
             report.help(&["I'm forgetting what you said and not changing anything."]);
             report.context(context);
             report.error().jump_out()?;
@@ -15420,22 +15426,6 @@ enum PendingDiagnostic {
     /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
     /// the help: etex.ch prints `' or `\protected'` before `' with `'.
     IrrelevantLongOuterPrefix(tex_command::PrintCommand, String, bool),
-}
-
-/// tex.web §298's `print_cmd_chr` for the meanings the reports above name.
-fn printed_command(stores: &Universe, meaning: Meaning) -> String {
-    match meaning {
-        Meaning::CharToken { ch, .. } => ch.to_string(),
-        Meaning::CountRegister(index) => format!("\\count{index}"),
-        Meaning::DimenRegister(index) => format!("\\dimen{index}"),
-        Meaning::SkipRegister(index) => format!("\\skip{index}"),
-        Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
-        Meaning::ToksRegister(index) => format!("\\toks{index}"),
-        Meaning::Undefined => "undefined".into(),
-        meaning => stores
-            .primitive_name(meaning)
-            .map_or_else(|| "\\relax".into(), |name| format!("\\{name}")),
-    }
 }
 
 /// Prints each report a completed scan owes, in detection order.
