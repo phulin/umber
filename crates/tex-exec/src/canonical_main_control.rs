@@ -13757,7 +13757,7 @@ fn apply_scanned_step(
         }
         ScannedStep::ShowBox { index } => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_showbox(stores, index, context)?;
+            crate::diagnostics::execute_showbox(stores, index, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowLists => {
@@ -13766,7 +13766,7 @@ fn apply_scanned_step(
             // traversing its diagnostic physical projection.
             crate::assignments::flush_pending_hchars(modes, stores, command.fuel)?;
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_showlists(stores, modes, context)?;
+            crate::diagnostics::execute_showlists(stores, modes, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowTokens { tokens } => {

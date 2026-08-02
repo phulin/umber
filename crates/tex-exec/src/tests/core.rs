@@ -4509,8 +4509,13 @@ fn showlists_marks_a_page_held_during_an_output_routine() {
     stores.push_current_page_node(Node::Penalty(0));
     stores.set_output_routine_active(true);
 
-    crate::diagnostics::execute_showlists(&mut stores, &ModeNest::new(), String::new())
-        .expect("showlists");
+    crate::diagnostics::execute_showlists(
+        &mut stores,
+        &ModeNest::new(),
+        String::new(),
+        tex_command::CommandProfile::TEX82,
+    )
+    .expect("showlists");
 
     let log = terminal_effect_text(&stores);
     assert!(

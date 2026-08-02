@@ -164,6 +164,7 @@ fn whatsit_copy_free_display_and_default_output_name_are_subtype_complete() {
         crate::node_dump::DumpConfig {
             breadth: 100,
             depth: 100,
+            profile: tex_command::CommandProfile::TEX82,
         },
     );
     assert_eq!(

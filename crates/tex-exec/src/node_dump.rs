@@ -2,6 +2,7 @@
 
 use std::fmt::Write as _;
 
+use tex_command::CommandProfile;
 use tex_expand::{append_token_show_text, token_text};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
@@ -21,6 +22,7 @@ use tex_state::token_show::append_tex_print_char;
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
     pub(crate) depth: i32,
+    pub(crate) profile: CommandProfile,
 }
 
 impl DumpConfig {
@@ -36,7 +38,13 @@ impl DumpConfig {
         Self {
             breadth: if breadth <= 0 { 5 } else { breadth },
             depth: stores.int_param(IntParam::SHOW_BOX_DEPTH),
+            profile: CommandProfile::TEX82,
         }
+    }
+
+    pub(crate) const fn for_profile(mut self, profile: CommandProfile) -> Self {
+        self.profile = profile;
+        self
     }
 }
 
@@ -850,9 +858,12 @@ fn dump_box(
     match box_node.box_lr {
         tex_state::node::BoxLr::Normal => {}
         tex_state::node::BoxLr::Reversed => out.push_str(", reversed"),
-        // `DList` is an execution-side marker for display-math packaging,
-        // not a TeX82 box subtype. Section 184's `show_node_list` prints a
-        // box's dimensions, glue set, and shift only.
+        // TeX82 §184 has no box subtype to print here. Merged e-TeX §53a
+        // extends hlist subtypes with `dlist`, and its changed node dumper
+        // identifies that subtype as `display`.
+        tex_state::node::BoxLr::DList if config.profile.capabilities().supports_etex() => {
+            out.push_str(", display");
+        }
         tex_state::node::BoxLr::DList => {}
     }
     if depth + 1 >= config.depth {

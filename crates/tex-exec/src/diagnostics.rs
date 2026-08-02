@@ -485,13 +485,18 @@ pub(crate) fn execute_showbox(
     stores: &mut Universe,
     index: u16,
     context: String,
+    profile: tex_command::CommandProfile,
 ) -> Result<(), ExecError> {
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
     let mut text = format!("> \\box{index}=\n");
     if let Some(id) = stores.box_reg(index) {
-        text.push_str(&dump_node_list(stores, id, DumpConfig::read(stores)));
+        text.push_str(&dump_node_list(
+            stores,
+            id,
+            DumpConfig::read(stores).for_profile(profile),
+        ));
     } else {
         text.push_str("void\n");
     }
@@ -602,6 +607,7 @@ pub(crate) fn execute_showlists(
     stores: &mut Universe,
     nest: &ModeNest,
     context: String,
+    profile: tex_command::CommandProfile,
 ) -> Result<(), ExecError> {
     let mut text = String::new();
     let summary = nest.summary();
@@ -639,7 +645,7 @@ pub(crate) fn execute_showlists(
                 text.push_str(&dump_node_slice(
                     stores,
                     &current_page,
-                    DumpConfig::read(stores),
+                    DumpConfig::read(stores).for_profile(profile),
                 ));
                 if stores.page_contents() != PageContents::Empty {
                     text.push_str("total height ");
@@ -660,7 +666,7 @@ pub(crate) fn execute_showlists(
                 text.push_str(&dump_node_slice(
                     stores,
                     &contributions,
-                    DumpConfig::read(stores),
+                    DumpConfig::read(stores).for_profile(profile),
                 ));
             }
         } else if !level.list().physical_nodes().is_empty() {
@@ -670,7 +676,7 @@ pub(crate) fn execute_showlists(
             text.push_str(&dump_node_slice(
                 stores,
                 level.list().physical_nodes(),
-                DumpConfig::read(stores),
+                DumpConfig::read(stores).for_profile(profile),
             ));
         }
         match level.mode() {
@@ -707,7 +713,7 @@ pub(crate) fn execute_showlists(
                     text.push_str(&crate::node_dump::dump_incomplete_fraction(
                         stores,
                         fraction,
-                        DumpConfig::read(stores),
+                        DumpConfig::read(stores).for_profile(profile),
                     ));
                 }
             }

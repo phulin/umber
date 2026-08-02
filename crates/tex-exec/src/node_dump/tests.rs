@@ -35,6 +35,7 @@ fn deferred_write_dump_uses_show_token_list_control_word_separator() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\write*{\\help !}\n",
@@ -58,6 +59,7 @@ fn whatsit_dump_uses_live_escape_character() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "|write-{}\n",
@@ -79,6 +81,7 @@ fn special_dump_prints_eight_bit_payload_as_tex_character_strings() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\special{A^^@^^_^^?^^80^^ff}\n",
@@ -106,6 +109,7 @@ fn ligature_dump_includes_original_character_list() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\f X (ligature ab)\n",
@@ -138,6 +142,7 @@ fn physical_character_nodes_use_tex_eight_bit_print_ascii_spelling() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\f ^^82\n\\f ^^82 (ligature CA)\n",
@@ -187,6 +192,7 @@ fn ligature_dump_marks_left_and_right_boundaries() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\f X (ligature |ab|)\n",
@@ -274,6 +280,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -383,7 +390,8 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
                 &[node],
                 DumpConfig {
                     breadth: 10,
-                    depth: 10
+                    depth: 10,
+                    profile: tex_command::CommandProfile::TEX82,
                 }
             ),
             expected,
@@ -449,7 +457,8 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
                     &[node],
                     DumpConfig {
                         breadth: 10,
-                        depth: 10
+                        depth: 10,
+                        profile: tex_command::CommandProfile::TEX82,
                     }
                 ),
                 format!("{prefix}{expected}\n"),
@@ -530,14 +539,13 @@ fn glue_unit_order_and_sign_matrix_is_exact_and_immutable() {
 }
 
 #[test]
-fn box_lr_projects_only_canonical_node_dump_evidence() {
+fn box_lr_projects_profile_specific_canonical_node_dump_evidence() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     for (box_lr, suffix) in [
         (tex_state::node::BoxLr::Normal, ""),
         (tex_state::node::BoxLr::Reversed, ", reversed"),
-        // TeX82 §184 has no display-list box subtype. `DList` remains an
-        // internal execution marker and projects like an ordinary hbox.
+        // TeX82 §184 has no display-list box subtype.
         (tex_state::node::BoxLr::DList, ""),
     ] {
         let list = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -556,6 +564,26 @@ fn box_lr_projects_only_canonical_node_dump_evidence() {
             format!("\\hbox(0.0+0.0)x0.0{suffix}\n"),
         );
     }
+
+    let display = stores.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
+        width: Scaled::from_raw(0),
+        height: Scaled::from_raw(0),
+        depth: Scaled::from_raw(0),
+        shift: Scaled::from_raw(0),
+        box_lr: tex_state::node::BoxLr::DList,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: empty,
+    }))]);
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            display,
+            DumpConfig::read(&stores).for_profile(tex_command::CommandProfile::ETEX26),
+        ),
+        "\\hbox(0.0+0.0)x0.0, display\n",
+    );
 }
 
 #[test]
@@ -673,6 +701,7 @@ fn explicit_positive_breadth_still_truncates_with_etc() {
     let config = DumpConfig {
         breadth: 2,
         depth: 0,
+        profile: tex_command::CommandProfile::TEX82,
     };
     let text = dump_node_list(&stores, list, config);
     assert_eq!(text, "\\kern 1.0\n\\kern 2.0\netc.\n");
@@ -715,6 +744,7 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -736,6 +766,7 @@ fn unset_box_prints_encoded_column_count_and_glue_fields() {
             DumpConfig {
                 breadth: 100,
                 depth: 0,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\unsetbox(5.0+6.0)x4.0 (2 columns), stretch 2.0fil, shrink 3.0 []\n",
@@ -778,7 +809,17 @@ fn showbox_depth_limits_nested_boxes_at_exact_thresholds() {
     let before_root = stores.nodes(root).to_vec();
     let before_outer = stores.nodes(outer_children).to_vec();
     let before_inner = stores.nodes(inner_children).to_vec();
-    let render = |depth| dump_node_list(&stores, root, DumpConfig { breadth: 5, depth });
+    let render = |depth| {
+        dump_node_list(
+            &stores,
+            root,
+            DumpConfig {
+                breadth: 5,
+                depth,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        )
+    };
 
     assert_eq!(render(-1), "");
     assert_eq!(render(0), "\\hbox(0.0+0.0)x0.0 []\n");
@@ -833,6 +874,7 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
             DumpConfig {
                 breadth: 1,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         )
     };
@@ -886,6 +928,7 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n|\\kern 4.0\n",
@@ -932,6 +975,7 @@ fn discretionary_dump_retains_the_physical_replacement_span() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -994,6 +1038,7 @@ fn diagnostic_box_reorders_boundary_disc_and_retains_multi_disc_spans() {
             DumpConfig {
                 breadth: 10,
                 depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -1027,7 +1072,8 @@ fn etex_mlr_boundaries_dump_with_exact_identity() {
             list,
             DumpConfig {
                 breadth: 10,
-                depth: 10
+                depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
             }
         ),
         "\\beginM\n\\endM\n\\beginL\n\\endL\n\\beginR\n\\endR\n"
@@ -1081,6 +1127,7 @@ fn pdftex_insertion_and_numbered_mark_dump_exact_identity_in_source_order() {
     let config = DumpConfig {
         breadth: 100,
         depth: 100,
+        profile: tex_command::CommandProfile::TEX82,
     };
     assert_eq!(dump_node_list(&stores, source, config), expected);
     assert_eq!(
@@ -1128,6 +1175,7 @@ fn mark_dump_prints_token_list_once() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\mark{A}\n\\mark{\\foo}\n\\mark{}\n"
@@ -1175,6 +1223,7 @@ fn insertion_node_dump_prints_all_web_fields() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -1222,6 +1271,7 @@ fn etex_numbered_mark_dump_renders_dense_and_sparse_boundary_classes_exactly() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\mark{x}\n\\marks255{x}\n\\marks256{x}\n"
@@ -1306,6 +1356,7 @@ fn showlists_renders_all_math_noad_variants_and_empty_fields() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(
@@ -1357,6 +1408,7 @@ fn showlists_depth_cutoff_prints_nonempty_math_field_marker() {
             DumpConfig {
                 breadth: 100,
                 depth: 0,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\mathord [] []\n",
@@ -1388,6 +1440,7 @@ fn math_dump_distinguishes_empty_submlist() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         "\\mathord\n\\mathord\n.{}\n",
@@ -1423,6 +1476,7 @@ fn math_dump_depth_and_choice_arms() {
             DumpConfig {
                 breadth: 100,
                 depth: 0,
+                profile: tex_command::CommandProfile::TEX82,
             },
         ),
         concat!(

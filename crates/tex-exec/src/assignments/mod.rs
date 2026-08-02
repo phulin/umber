@@ -2434,7 +2434,12 @@ fn execute_prefixed_command(
                 reject_all_prefixes(prefixes)?;
                 let index = scan_register_index(input, stores, execution, command.traced)?;
                 let context = diagnostics::show_context(stores, &input.summary());
-                diagnostics::execute_showbox(stores, index, context)?;
+                diagnostics::execute_showbox(
+                    stores,
+                    index,
+                    context,
+                    tex_command::CommandProfile::TEX82,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowThe => {
@@ -2470,7 +2475,12 @@ fn execute_prefixed_command(
             UnexpandablePrimitive::ShowLists => {
                 reject_all_prefixes(prefixes)?;
                 let context = diagnostics::show_context(stores, &input.summary());
-                diagnostics::execute_showlists(stores, nest, context)?;
+                diagnostics::execute_showlists(
+                    stores,
+                    nest,
+                    context,
+                    tex_command::CommandProfile::TEX82,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Uppercase => {
