@@ -3930,18 +3930,11 @@ fn writable_page_scalars_read_after_page_freeze() {
 
 #[test]
 fn insert_node_captures_split_parameters_and_natural_size() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_tex82_current_list(
         "\\count7=1000 \\dimen7=100pt \
          \\splittopskip=9pt \\splitmaxdepth=3pt \\floatingpenalty=77 \
          \\insert7{\\vskip2pt\\hrule height5pt depth1pt}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("\\insert captures parameters");
+    );
 
     let insert = stores
         .current_page_nodes()
@@ -3975,18 +3968,11 @@ fn insert_node_captures_split_parameters_and_natural_size() {
 
 #[test]
 fn insert_node_snapshots_body_local_split_parameters_before_scope_restoration() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let (stores, _) = run_canonical_tex82_current_list(concat!(
         "\\splittopskip=1pt \\splitmaxdepth=2pt \\floatingpenalty=3 ",
         "\\insert7{\\splittopskip=9pt \\splitmaxdepth=4pt ",
         "\\floatingpenalty=77 \\hrule height5pt}"
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("locally parameterized insertion executes");
+    ));
 
     let (split_top_skip, split_max_depth, floating_penalty) = stores
         .current_page_nodes()
@@ -4020,17 +4006,10 @@ fn insert_node_snapshots_body_local_split_parameters_before_scope_restoration() 
 
 #[test]
 fn vertical_list_preserves_structured_mark_penalty_and_material_order() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let (stores, _) = run_canonical_tex82_current_list(concat!(
         "\\setbox0=\\vbox{\\mark{A}\\penalty11\\kern2pt",
         "\\hrule height3pt\\insert7{\\penalty22}\\mark{B}\\penalty33}"
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("ordered vertical material executes");
+    ));
 
     let root = stores.box_reg(0).expect("box0");
     let [Node::VList(vbox)] = stores.nodes(root).testing_decoded() else {
@@ -4060,16 +4039,9 @@ fn vertical_list_preserves_structured_mark_penalty_and_material_order() {
 
 #[test]
 fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_tex82_current_list(
         "\\setbox0=\\vbox{\\hbox{\\vadjust{\\penalty123}}}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("explicit hbox adjustment migrates");
+    );
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
@@ -4085,15 +4057,9 @@ fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
 
 #[test]
 fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_tex82_current_list(
         "\\setbox10=\\vbox to8192pt{\\hbox{\\hbox{\\vadjust{A}}}}%\n\\vrule\\unhbox10\\hrule",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("incompatible unboxing recovers without moving nested adjustment material");
+    );
 
     let root = stores
         .box_reg(10)
@@ -4123,16 +4089,9 @@ fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
 
 #[test]
 fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_tex82_current_list(
         "\\overfullrule=5pt \\setbox0=\\hbox to -10pt{}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("empty negative-width hbox packs");
+    );
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
@@ -4144,14 +4103,7 @@ fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
 
 #[test]
 fn vertical_mode_discretionary_hyphen_starts_a_paragraph() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\-\\par}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("discretionary paragraph executes");
+    let (stores, _) = run_canonical_tex82_current_list("\\setbox0=\\vbox{\\-\\par}");
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
