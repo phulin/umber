@@ -2945,7 +2945,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_ximage_bbox_matches_page_box_indices_raster_and_catcodes() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -2976,16 +2975,16 @@ mod tests {
                 ),
             )
             .expect("register raster metadata");
+        let checkpoint = stores.snapshot();
+        let initial_object = stores.pdf_next_object_id();
+        const SOURCE: &str = concat!(
+            "\\message{bbox=[\\pdfximagebbox7 1]/[\\pdfximagebbox7 2]/",
+            "[\\pdfximagebbox7 3]/[\\pdfximagebbox7 4]}",
+            "\\message{raster=[\\pdfximagebbox8 1]/[\\pdfximagebbox8 4]}",
+        );
 
-        let output = run_pdf_memory(
-            concat!(
-                "\\message{bbox=[\\pdfximagebbox7 1]/[\\pdfximagebbox7 2]/",
-                "[\\pdfximagebbox7 3]/[\\pdfximagebbox7 4]}",
-                "\\message{raster=[\\pdfximagebbox8 1]/[\\pdfximagebbox8 4]}",
-            ),
-            &mut stores,
-        )
-        .expect("pdfTeX image bounding-box enquiries");
+        let output =
+            run_pdf_memory(SOURCE, &mut stores).expect("pdfTeX image bounding-box enquiries");
         assert!(
             output.contains("bbox=[0.0pt]/[0.0pt]/[10.00037pt]/[4.99968pt]"),
             "{output}"
@@ -3017,10 +3016,18 @@ mod tests {
                 ..
             }
         )));
+        assert_eq!(stores.pdf_next_object_id(), initial_object);
+        let completed_hash = stores.testing_state_hash();
+
+        stores.rollback(&checkpoint);
+        let replay = run_pdf_memory(SOURCE, &mut stores)
+            .expect("checkpoint replay reads the same detached metadata");
+        assert_eq!(replay, output);
+        assert_eq!(stores.testing_state_hash(), completed_hash);
+        assert_eq!(stores.pdf_next_object_id(), initial_object);
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdf_ximage_bbox_rejects_missing_objects_and_bad_indices() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);

@@ -1114,6 +1114,66 @@ fn rendered(processor: &mut CommandProcessor<'_>) -> String {
     text
 }
 
+#[test]
+fn pdf_ximage_bbox_reads_typed_metadata_without_allocating() {
+    // pdftex.web §470 scans the existing ximage identity and coordinate in
+    // that order, then renders the detached page-box value as a dimension.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let bbox = install_expandable(
+        &mut universe,
+        "pdfximagebbox",
+        ExpandablePrimitive::PdfXImageBBox,
+    );
+    let id = tex_state::PdfExternalImageId::new(7).expect("image id");
+    universe
+        .register_pdf_external_image(
+            id,
+            tex_state::PdfExternalImageMetadata::PdfPage {
+                total_pages: 1,
+                page_box: tex_state::PdfPageBox {
+                    left: Scaled::from_raw(-2),
+                    bottom: Scaled::from_raw(3),
+                    right: Scaled::from_raw(10),
+                    top: Scaled::from_raw(20),
+                },
+                rotation: tex_state::PdfPageRotation::None,
+                page: 1,
+                has_page_group: false,
+                pdf_version: (1, 4),
+            },
+        )
+        .expect("register detached metadata");
+    let initial_object = universe.pdf_next_object_id();
+    let initial_hash = universe.testing_state_hash();
+    let mut input = vec![traced(Token::Cs(bbox))];
+    input.extend("7 3".chars().map(|ch| {
+        traced(Token::Char {
+            ch,
+            cat: if ch == ' ' {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            },
+        })
+    }));
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(input)),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert_eq!(rendered(&mut processor), "0.00015pt");
+    }
+    assert_eq!(universe.pdf_next_object_id(), initial_object);
+    assert_eq!(universe.testing_state_hash(), initial_hash);
+}
+
 fn diagnostic_text(universe: &Universe) -> String {
     universe
         .world()

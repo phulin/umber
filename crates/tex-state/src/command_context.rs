@@ -505,6 +505,16 @@ impl CommandContext<'_> {
             .map(|record| record.page_object())
     }
 
+    /// Reads detached external-image metadata without exposing the PDF ledger
+    /// or granting allocation authority to the command processor.
+    #[must_use]
+    pub fn pdf_external_image(
+        &self,
+        id: crate::PdfExternalImageId,
+    ) -> Option<crate::PdfExternalImageMetadata> {
+        self.universe.pdf_external_image(id)
+    }
+
     /// Reads e-TeX's live group enquiries without exposing group ownership.
     #[must_use]
     pub fn current_group_values(&self) -> (i32, i32) {

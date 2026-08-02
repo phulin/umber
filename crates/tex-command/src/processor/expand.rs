@@ -694,6 +694,32 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
                 self.expand_pdf_insert_height(command)
             }
+            // pdftex.web §470's `pdf_ximage_bbox_code` conversion scans an
+            // existing image object before its one-based page-box coordinate.
+            // The enquiry reads detached metadata only; it never reserves an
+            // image or writer object while expanding.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfXImageBBox) => {
+                let object = self.scan_integer()?.value;
+                let id = u32::try_from(object)
+                    .ok()
+                    .and_then(|raw| tex_state::PdfExternalImageId::new(raw).ok());
+                let Some(metadata) = id.and_then(|id| self.state.pdf_external_image(id)) else {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (ext1): cannot find referenced object.",
+                    ));
+                };
+                let index = self.scan_integer()?.value;
+                let Some(coordinate) = u8::try_from(index)
+                    .ok()
+                    .and_then(|index| metadata.bbox_coordinate(index))
+                else {
+                    return Err(CommandError::PdfNavigation(
+                        "pdfTeX error (pdfximagebbox): invalid parameter.",
+                    ));
+                };
+                self.push_rendered_text(&format_scaled(coordinate), command.origin());
+                Ok(())
+            }
             // pdftex.web §1549's `pdf_xform_name_code` conversion scans a
             // form object number and prints its independent resource identity.
             // Unknown object numbers produce zero, matching the other PDF
