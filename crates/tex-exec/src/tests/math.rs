@@ -1,5 +1,10 @@
 use super::support::{stores_with_fonts, terminal_effect_text};
 use super::*;
+use tex_command::{
+    CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration,
+    install_etex_expandable_primitives, install_tex82_expandable_primitives,
+};
+use tex_state::InputOpenState;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathListNode, MathNoad, NoadClass,
     NoadKind,
@@ -19,15 +24,13 @@ fn null_math_fonts_are_insufficient_for_formula_conversion() {
 
 #[test]
 fn missing_extension_fonts_are_distinguished_after_symbol_fonts_validate() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_math_recovery(
+        stores_with_fonts(),
+        CommandProfile::TEX82,
         r"\font\sym=cmsy10 \relax
           \textfont2=\sym \scriptfont2=\sym \scriptscriptfont2=\sym \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("symbol font assignments execute");
+        true,
+    );
 
     assert_eq!(
         crate::math::testing_math_font_failure(&stores),
@@ -40,17 +43,14 @@ fn missing_extension_fonts_are_distinguished_after_symbol_fonts_validate() {
 /// diagnostic is recoverable: following input still executes normally.
 #[test]
 fn display_exit_deletes_formula_when_extension_font_is_missing() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, _) = run_canonical_math_recovery(
+        stores_with_fonts(),
+        CommandProfile::TEX82,
         r"\font\sym=cmsy10 \relax
           \textfont2=\sym \scriptfont2=\sym \scriptscriptfont2=\sym
           \count0=0 $$x$$ \count0=73 \end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("extension-font deletion recovers and continues");
+        true,
+    );
 
     let transcript = terminal_effect_text(&stores);
     assert!(transcript.contains("Math formula deleted: Insufficient extension fonts"));
@@ -71,19 +71,16 @@ fn char_primitive_scans_as_a_direct_math_field() {
 
 #[test]
 fn mathchar_command_outside_math_inserts_math_shift_and_retries() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r#"\mathchardef\circ="020E \circ"#));
-    let mut executor = Executor::new();
+    let (stores, control) = run_canonical_math_recovery(
+        stores_with_fonts(),
+        CommandProfile::TEX82,
+        r#"\mathchardef\circ="020E \circ"#,
+        false,
+    );
 
-    executor
-        .run(&mut input, &mut stores)
-        .expect("math character recovery executes");
-
-    assert_eq!(executor.nest().current_mode(), Mode::Math);
+    assert_eq!(control.current_mode(), Mode::Math);
     assert!(terminal_effect_text(&stores).contains("Missing $ inserted"));
-    assert_eq!(math_nodes(&stores, &executor).len(), 1);
+    assert_eq!(control.current_list().nodes().len(), 1);
 }
 
 #[test]
@@ -162,18 +159,13 @@ fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
 
 #[test]
 fn raw_font_character_dimensions_in_math_do_not_scan_operands() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, control) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::ETEX26,
         r"$\fontcharwd a\fontcharht b\fontchardp c\fontcharic d",
-    ));
-    let mut executor = Executor::new();
-    executor
-        .run(&mut input, &mut stores)
-        .expect("raw e-TeX dimension recovery executes");
-    let nodes = math_nodes(&stores, &executor);
+        false,
+    );
+    let nodes = control.current_list().nodes();
 
     assert_eq!(
         nodes.len(),
@@ -195,34 +187,73 @@ fn raw_font_character_dimensions_in_math_do_not_scan_operands() {
 
 #[test]
 fn vertical_skip_in_math_inserts_math_shift_and_retries() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\vfill"));
-    let mut executor = Executor::new();
+    let (stores, control) = run_canonical_math_recovery(
+        crate::test_harness::universe_with_plain_catcodes(),
+        CommandProfile::TEX82,
+        r"$\vfill",
+        false,
+    );
 
-    executor
-        .run(&mut input, &mut stores)
-        .expect("vfill exits math and retries vertically");
-
-    assert_eq!(executor.nest().current_mode(), Mode::Vertical);
+    assert_eq!(control.current_mode(), Mode::Vertical);
     assert!(terminal_effect_text(&stores).contains("Missing $ inserted"));
 }
 
 #[test]
 fn end_in_math_inserts_math_shift_and_retries() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$x\end"));
-    let mut executor = Executor::new();
+    let (stores, control) =
+        run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, r"$x\end", false);
 
-    let stats = executor
-        .run(&mut input, &mut stores)
-        .expect("end exits math before ending the job");
+    assert_ne!(control.current_mode(), Mode::Math);
+    assert_eq!(stores.world().artifact_commits().len(), 1);
+}
 
-    assert_ne!(executor.nest().current_mode(), Mode::Math);
-    assert_eq!(stats.shipped_artifacts.len(), 1);
+fn run_canonical_math_recovery(
+    mut stores: Universe,
+    profile: CommandProfile,
+    source: &str,
+    register_symbol_font: bool,
+) -> (Universe, CanonicalMainControl) {
+    let mut control = match profile {
+        CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(&mut stores),
+        CommandProfile::ETEX26 => {
+            install_tex82_expandable_primitives(&mut stores);
+            install_unexpandable_primitives(&mut stores);
+            install_etex_expandable_primitives(&mut stores);
+            install_etex_unexpandable_primitives(&mut stores);
+            CanonicalMainControl::prepared_initex(profile)
+        }
+        _ => panic!("math recovery helper supports TeX82 and e-TeX only"),
+    };
+    if register_symbol_font {
+        let metrics = tex_state::InputReadState::read_input_file(
+            &mut stores.input_open_context(),
+            std::path::Path::new("cmsy10.tfm"),
+        )
+        .expect("seeded symbol font fixture reads through the world");
+        control.capabilities_mut().register_font(
+            "cmsy10.tfm",
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
+        );
+    }
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical math-recovery source");
+    for _ in 0..1024 {
+        if control
+            .step(&mut stores)
+            .expect("canonical math-recovery step")
+            != MainControlStep::Continue
+        {
+            return (stores, control);
+        }
+    }
+    panic!("canonical math-recovery source did not stop consuming input");
 }
 
 #[test]
