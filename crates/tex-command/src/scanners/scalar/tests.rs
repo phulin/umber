@@ -1,7 +1,7 @@
 use tex_state::Universe;
 use tex_state::meaning::Meaning;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{EffectRecord, PrintSink};
+use tex_state::{EffectRecord, PenaltyArrayKind, PrintSink};
 
 use super::*;
 use crate::input::{
@@ -4040,6 +4040,41 @@ fn internal_register_sources_recover_missing_negative_and_above_eight_bit_indexe
     });
     assert_eq!(value, InternalValue::Integer(73));
     assert_eq!(following, 42);
+}
+
+#[test]
+fn etex_penalty_arrays_scan_their_index_as_internal_integers() {
+    use tex_state::meaning::UnexpandablePrimitive as P;
+
+    let cases = [
+        (
+            "interlinepenalties",
+            P::InterLinePenalties,
+            PenaltyArrayKind::InterLine,
+        ),
+        ("clubpenalties", P::ClubPenalties, PenaltyArrayKind::Club),
+        ("widowpenalties", P::WidowPenalties, PenaltyArrayKind::Widow),
+        (
+            "displaywidowpenalties",
+            P::DisplayWidowPenalties,
+            PenaltyArrayKind::DisplayWidow,
+        ),
+    ];
+    for (name, primitive, kind) in cases {
+        let mut universe = crate::test_harness::universe();
+        universe.set_penalty_array(kind, &[101, -202], false);
+        for (selector, expected) in [("-1", 0), ("0", 2), ("1", 101), ("5", -202)] {
+            let target = internal_primitive(&mut universe, name, primitive);
+            let tokens = std::iter::once(target)
+                .chain(selector.chars().map(char_token))
+                .collect();
+            assert_eq!(
+                scan_internal_with(&mut universe, tokens, |_| {}),
+                InternalValue::Integer(expected),
+                "{name} index {selector}"
+            );
+        }
+    }
 }
 
 #[test]

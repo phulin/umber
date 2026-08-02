@@ -9,7 +9,7 @@ use tex_state::scaled::{
     scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token};
-use tex_state::{BoxDimension, PrepareMagDiagnostic};
+use tex_state::{BoxDimension, PenaltyArrayKind, PrepareMagDiagnostic};
 
 use crate::observation::canonical_names::glue_order_name;
 use crate::scanners::RestrictedIntegerClass;
@@ -2136,6 +2136,27 @@ impl CommandProcessor<'_> {
                     _ => unreachable!("outer match restricts primitive"),
                 };
                 InternalValue::Dimension(self.state.paragraph_shape_dimension(line, width))
+            }
+            // e-TeX 2.6 penalties module's "Fetch a penalties array
+            // element" extends TeX82 §423's `set_shape` internal-value
+            // branch. The selector is a full `scan_int`: zero returns the
+            // array length, negative values return zero, and positive values
+            // beyond the array repeat its final element.
+            Meaning::UnexpandablePrimitive(
+                primitive @ (UnexpandablePrimitive::InterLinePenalties
+                | UnexpandablePrimitive::ClubPenalties
+                | UnexpandablePrimitive::WidowPenalties
+                | UnexpandablePrimitive::DisplayWidowPenalties),
+            ) => {
+                let kind = match primitive {
+                    UnexpandablePrimitive::InterLinePenalties => PenaltyArrayKind::InterLine,
+                    UnexpandablePrimitive::ClubPenalties => PenaltyArrayKind::Club,
+                    UnexpandablePrimitive::WidowPenalties => PenaltyArrayKind::Widow,
+                    UnexpandablePrimitive::DisplayWidowPenalties => PenaltyArrayKind::DisplayWidow,
+                    _ => unreachable!("outer match restricts penalty-array primitives"),
+                };
+                let index = self.scan_integer()?.value;
+                InternalValue::Integer(self.state.penalty_array_value(kind, index))
             }
             // e-TeX 2.6 etex.ch [17.5363--5404] extracts one component from
             // `scan_normal_glue`.  The nested ordinary-glue scanner owns all

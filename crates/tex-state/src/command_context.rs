@@ -219,6 +219,12 @@ impl CommandContext<'_> {
         self.universe.paragraph_shape_dimension(line, width)
     }
 
+    /// Reads one e-TeX penalty-array element using its numeric enquiry rule.
+    #[must_use]
+    pub fn penalty_array_value(&self, kind: crate::PenaltyArrayKind, index: i32) -> i32 {
+        self.universe.penalty_array_value(kind, index)
+    }
+
     /// Interns a control-sequence spelling without assigning it a meaning.
     ///
     /// This is TeX82 §259's `id_lookup` with `no_new_control_sequence` clear:
