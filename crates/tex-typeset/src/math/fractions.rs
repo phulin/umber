@@ -1,6 +1,7 @@
+use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{FractionThickness, MathField, MathFraction};
-use tex_state::node::KernKind;
-use tex_state::scaled::Scaled;
+use tex_state::node::{KernKind, Sign};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::delimiters::make_delimiter;
 use super::{
@@ -182,7 +183,7 @@ fn fraction_vlist(
                     sub(shift_up, numerator_depth),
                     sub(denominator.height, shift_down),
                 ),
-                kind: KernKind::Explicit,
+                kind: KernKind::Font,
             },
             MathNode::HList(denominator),
         ])
@@ -192,16 +193,16 @@ fn fraction_vlist(
             MathNode::HList(numerator),
             MathNode::Kern {
                 amount: sub(sub(shift_up, numerator_depth), add(axis_height, delta)),
-                kind: KernKind::Explicit,
+                kind: KernKind::Font,
             },
             MathNode::Rule {
-                width: Some(width),
+                width: None,
                 height: Some(thickness),
                 depth: Some(Scaled::from_raw(0)),
             },
             MathNode::Kern {
                 amount: sub(sub(axis_height, delta), sub(denominator.height, shift_down)),
-                kind: KernKind::Explicit,
+                kind: KernKind::Font,
             },
             MathNode::HList(denominator),
         ])
@@ -225,25 +226,41 @@ fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, widt
     // TeX's rebox changes the width field directly when list_ptr(b)=null.
     // Materializing centering nodes in that case turns an empty box into a
     // nonempty one and can force an otherwise-dead DVI cursor movement.
-    if slack.raw() != 0
-        && !boxed.list.is_empty()
-        && matches!(boxed.axis, super::BoxAxis::Horizontal)
-    {
-        let left = Scaled::from_raw(tex_arith::half(slack.raw()));
-        let right = sub(slack, left);
-        let left_node = (left.raw() != 0).then_some(MathNode::Kern {
-            amount: left,
-            kind: KernKind::Explicit,
-        });
-        let right_node = (right.raw() != 0).then_some(MathNode::Kern {
-            amount: right,
-            kind: KernKind::Explicit,
-        });
-        let nodes = left_node
-            .into_iter()
-            .chain([MathNode::Sequence(boxed.list)])
-            .chain(right_node);
-        boxed.list = ctx.layout.hlist(nodes);
+    if slack.raw() != 0 && !boxed.list.is_empty() {
+        // TeX82 §715's `rebox` packages `ss_glue`, the original payload, and
+        // another `ss_glue` to the requested exact width.  Keep the glue and
+        // glue-set metadata semantic: shipout may resolve their movement, but
+        // `\showlists` must still see the canonical nodes.
+        let payload = if matches!(boxed.axis, super::BoxAxis::Vertical) {
+            ctx.layout.hlist([MathNode::VList(boxed.clone())])
+        } else {
+            boxed.list
+        };
+        let ss_glue = MathNode::Glue {
+            spec: GlueSpec {
+                width: Scaled::from_raw(0),
+                stretch: Scaled::from_raw(Scaled::UNITY),
+                stretch_order: Order::Fil,
+                shrink: Scaled::from_raw(Scaled::UNITY),
+                shrink_order: Order::Fil,
+            },
+            kind: tex_state::node::GlueKind::Normal,
+            leader: None,
+        };
+        boxed.list = ctx
+            .layout
+            .hlist([ss_glue.clone(), MathNode::Sequence(payload), ss_glue]);
+        boxed.axis = super::BoxAxis::Horizontal;
+        boxed.glue_set = GlueSetRatio::from_scaled_ratio(
+            Scaled::from_raw(slack.raw().abs()),
+            Scaled::from_raw(2 * Scaled::UNITY),
+        );
+        boxed.glue_sign = if slack.raw() > 0 {
+            Sign::Stretching
+        } else {
+            Sign::Shrinking
+        };
+        boxed.glue_order = Order::Fil;
     }
     boxed.width = width;
 }

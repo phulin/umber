@@ -136,7 +136,7 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     );
     assert_eq!(
         math_layout_digest(&web_layouts),
-        "b95211af3329fc6cfba5e959b6ec9d628f760c37dcd5b893bc0ad78bfe46cefa"
+        "38b3ce8d9e6c2e818c560064e8bcb460f0010eef6a3ad141d5329671d0c68734"
     );
 }
 
@@ -866,35 +866,46 @@ fn mu_glue_kern_signed_rounding_and_rebox_boundaries() {
     assert_eq!((glue.width, glue.stretch), (sc(-32_768), sc(32_768)));
     assert_eq!(glue.shrink, sc(-77), "infinite-order mu is not scaled");
 
-    // TeX.web §§715 (tex.web:14066--14085): empty and already-exact
-    // boxes gain no material, while odd positive and negative slack is split
-    // with TeX's half() rule and the remainder on the right.
+    // TeX.web §§715 (tex.web:14066--14085): empty and already-exact boxes gain
+    // no material. Other nonempty boxes retain two `ss_glue` nodes and the
+    // exact hpack glue setting instead of materializing their movement.
     let universe = setup_universe();
     let params = MathParams::read(&universe);
-    for (source, target, empty, expected_kerns) in [
-        (0, 7, true, vec![]),
-        (11, 11, false, vec![11]),
-        (11, 18, false, vec![4, 11, 3]),
-        (11, 4, false, vec![-3, 11, -4]),
+    for (source, target, empty, expected_sign, expected_ratio) in [
+        (0, 7, true, Sign::Normal, GlueSetRatio::ZERO),
+        (11, 11, false, Sign::Normal, GlueSetRatio::ZERO),
+        (
+            11,
+            18,
+            false,
+            Sign::Stretching,
+            GlueSetRatio::from_scaled_ratio(sc(7), sc(2 * Scaled::UNITY)),
+        ),
+        (
+            11,
+            4,
+            false,
+            Sign::Shrinking,
+            GlueSetRatio::from_scaled_ratio(sc(7), sc(2 * Scaled::UNITY)),
+        ),
     ] {
         let (layout, boxed) =
             fractions::test_rebox(&universe, &params, sc(source), sc(target), empty);
         assert_eq!(boxed.width, sc(target));
-        let actual = list_nodes(&layout, boxed.list)
-            .into_iter()
-            .flat_map(|node| match node {
-                MathNode::Kern { amount, .. } => vec![amount.raw()],
-                MathNode::Sequence(list) => list_nodes(&layout, *list)
-                    .into_iter()
-                    .map(|nested| match nested {
-                        MathNode::Kern { amount, .. } => amount.raw(),
-                        _ => panic!("expected source kern, got {nested:?}"),
-                    })
-                    .collect(),
-                _ => panic!("expected rebox kern or source sequence, got {node:?}"),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(actual, expected_kerns);
+        assert_eq!(boxed.glue_sign, expected_sign);
+        assert_eq!(boxed.glue_set, expected_ratio);
+        let nodes = list_nodes(&layout, boxed.list);
+        if empty || source == target {
+            assert!(
+                nodes
+                    .iter()
+                    .all(|node| !matches!(node, MathNode::Glue { .. }))
+            );
+        } else {
+            assert!(
+                matches!(nodes.as_slice(), [MathNode::Glue { spec: left, .. }, MathNode::Kern { amount, .. }, MathNode::Glue { spec: right, .. }] if *amount == sc(source) && left == right && left.stretch == sc(Scaled::UNITY) && left.shrink == sc(Scaled::UNITY) && left.stretch_order == Order::Fil && left.shrink_order == Order::Fil)
+            );
+        }
     }
 }
 
@@ -938,10 +949,29 @@ fn make_fraction_uses_default_rule_and_delimiter_target() {
     assert_eq!(vlist.height, sc(26));
     assert_eq!(vlist.depth, sc(18));
     let vnodes = list_nodes(&hlist, vlist.list);
-    let [_, _, rule, _, _] = vnodes.as_slice() else {
+    let [_, _, _, _, _] = vnodes.as_slice() else {
         panic!("expected fraction stack")
     };
-    assert!(matches!(rule, MathNode::Rule { height: Some(thickness), .. } if *thickness == sc(4)));
+    assert!(matches!(
+        vnodes.as_slice(),
+        [
+            _,
+            MathNode::Kern {
+                kind: KernKind::Font,
+                ..
+            },
+            MathNode::Rule {
+                width: None,
+                height: Some(thickness),
+                ..
+            },
+            MathNode::Kern {
+                kind: KernKind::Font,
+                ..
+            },
+            _
+        ] if *thickness == sc(4)
+    ));
 }
 
 #[test]
