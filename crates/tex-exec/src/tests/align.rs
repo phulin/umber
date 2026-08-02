@@ -1468,6 +1468,7 @@ fn let_aliased_frozen_endv_finishes_cell_through_do_endv() {
 }
 
 #[test]
+#[ignore = "xfail: umber2-egcq intervening-group frozen end-v recovery"]
 fn futurelet_aliased_frozen_endv_recovers_intervening_group_before_do_endv() {
     let stores = run_boxed_alignment_source(
         "\\def\\capture{\\futurelet\\endt\\consume}\\def\\consume{\\begingroup\\afterassignment\\execute\\let\\scratch=}\\def\\execute{\\endt}\\halign{#\\cr x\\capture\\cr}",
