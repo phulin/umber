@@ -836,22 +836,28 @@ fn v_template_macros_expand_when_the_cell_finishes() {
 
 #[test]
 fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_boxed_alignment_source(
         "\\halign{#&#\\cr \\futurelet\\x\\missing&a\\cr}",
-    ));
+    );
+    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
+    let cells = row_cells(&stores, rows[0]);
 
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("undefined futurelet token recovers without unwinding alignment");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cell_text(&stores, cells[0]), "");
+    assert_eq!(cell_text(&stores, cells[1]), "a");
 
     // TeX82 §370 puts the offending name in §82's context display, not in
     // the message text.
     let text = support::terminal_effect_text(&stores);
-    assert!(text.contains("! Undefined control sequence."));
-    assert!(text.contains("\\missing"));
+    let diagnostic = text
+        .find("! Undefined control sequence.")
+        .expect("futurelet lookahead should report the undefined command");
+    let context = text
+        .find("\\missing")
+        .expect("the undefined command should appear in the context display");
+    assert!(diagnostic < context, "{text}");
+    assert!(!text.contains("Misplaced alignment tab character &"), "{text}");
 }
 
 #[test]
