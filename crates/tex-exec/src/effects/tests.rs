@@ -581,6 +581,47 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
 }
 
 #[test]
+fn deferred_write_expansion_publishes_direct_the_delivery() {
+    // TeX82 §§478 and 1370: shipout expands deferred write text through the
+    // active canonical command episode. Although §478 handles `\the`
+    // directly inside `scan_toks`, its expanded delivery must still precede
+    // the token-list splice produced from the scanned register value.
+    let (_, _, observations) = observed(br"\count0=5 \shipout\hbox{\write16{\the\count0}}\end");
+    let expanded_the: Vec<_> = observations
+        .iter()
+        .enumerate()
+        .filter(|(_, observation)| {
+            matches!(
+                observation,
+                CommandObservation::Command(command)
+                    if command.command == "the"
+                        && command.boundary
+                            == tex_command::CommandDeliveryBoundary::Expanded
+            )
+        })
+        .collect();
+    assert_eq!(
+        expanded_the.len(),
+        1,
+        "shipout-time deferred write expansion publishes `the` exactly once"
+    );
+    let splice = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                CommandObservation::TokenList(record)
+                    if record.transition == "splice" && record.purpose == "the_toks"
+            )
+        })
+        .expect("shipout-time `the` expansion publishes its token-list splice");
+    assert!(
+        expanded_the[0].0 < splice,
+        "expanded `the` delivery precedes its token-list splice"
+    );
+}
+
+#[test]
 fn deferred_write_scanner_diagnostic_survives_shipout_before_later_reports() {
     // TeX82 §§446 and 1370: the opening brace is a vacuous integer, so the
     // nested write expansion reports and inserts zero. The report belongs to
