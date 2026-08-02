@@ -1831,8 +1831,7 @@ fn read_io_source(stem: &str) -> String {
 #[test]
 fn frozen_endwrite_is_internal_but_source_endwrite_stays_undefined() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
+    let _control = CanonicalMainControl::tex82_initex(&mut stores);
 
     let stopper = stores
         .primitive_token("endwrite")
@@ -1876,8 +1875,7 @@ fn frozen_endwrite_is_internal_but_source_endwrite_stays_undefined() {
 #[test]
 fn frozen_write_registration_preserves_sibling_sentinel_boundaries() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
+    let _control = CanonicalMainControl::tex82_initex(&mut stores);
 
     let endwrite = stores.primitive_token("endwrite").expect("endwrite");
     for name in ["cr", "fi", "par"] {
@@ -1908,17 +1906,25 @@ fn format_special_payloads(payloads: &[Vec<u8>]) -> String {
 #[test]
 fn deferred_write_does_not_absorb_following_par() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\x{x\\write10{\\the\\spacefactor}\\par}\\x",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("write followed by par executes");
-
-    assert_eq!(executor.nest().current_mode(), crate::Mode::Vertical);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\def\\x{x\\write10{\\the\\spacefactor}\\par}\\x".to_vec(),
+        ))
+        .expect("register deferred-write source");
+    for _ in 0..1024 {
+        if matches!(
+            control
+                .step(&mut stores)
+                .expect("write followed by par executes"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            assert_eq!(control.current_mode(), crate::Mode::Vertical);
+            return;
+        }
+    }
+    panic!("canonical deferred-write source did not terminate");
 }
 
 fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
@@ -1935,18 +1941,26 @@ fn shipout_artifact_bytes(source: &str) -> Vec<u8> {
 #[test]
 fn shipout_nested_in_box_scan_is_reported_to_driver() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\hbox{\\shipout\\hbox{A}}\\end",
-    ));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("nested shipout succeeds");
-
-    assert_eq!(stats.shipped_artifacts.len(), 1);
-    assert_eq!(stats.dvi_pages.len(), 1);
-    assert_eq!(stores.world().artifact_commits(), stats.shipped_artifacts);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\setbox0=\\hbox{\\shipout\\hbox{A}}\\end".to_vec(),
+        ))
+        .expect("register nested-shipout source");
+    for _ in 0..1024 {
+        if matches!(
+            control.step(&mut stores).expect("nested shipout succeeds"),
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            let pages = control.take_prepared_dvi_pages();
+            assert_eq!(stores.world().artifact_commits().len(), 1);
+            assert_eq!(pages.len(), 1);
+            assert_eq!(stores.world().artifact_commits(), &[pages[0].hash()]);
+            return;
+        }
+    }
+    panic!("canonical nested-shipout source did not terminate");
 }
 
 fn format_output_presence(stores: &Universe, paths: &[&str]) -> String {
