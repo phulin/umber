@@ -2173,7 +2173,7 @@ fn futurelet_assigns_second_token_meaning_and_preserves_order() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-rcyr canonical alignment delivery does not expose frozen endv"]
+#[ignore = "xfail: umber2-fxnf canonical alignment delivery does not expose frozen endv"]
 fn let_copies_frozen_endv_alignment_meaning() {
     let stores = run_canonical_tex82(
         "\\def\\capture{\\afterassignment\\relax\\global\\let\\endv_alias=}\\halign{#\\cr x\\capture\\cr}\\end",
