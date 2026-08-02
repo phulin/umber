@@ -1385,6 +1385,25 @@ fn expand_dump_usage_errors_follow_lex_dump_shape() {
 }
 
 #[test]
+fn expand_dump_source_stays_on_the_canonical_session_boundary() {
+    let source = include_str!("../../src/expand_dump.rs");
+    for forbidden in [
+        "tex_exec::Executor",
+        "tex_lex::InputStack",
+        "use umber::{EngineSession",
+        "try_execute_assignment",
+        "next_expanded_token",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "expand-dump must not regain legacy routing through {forbidden}"
+        );
+    }
+    assert!(source.contains("CanonicalEngineSession::new"));
+    assert!(source.contains("diagnostic_expand_step"));
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");

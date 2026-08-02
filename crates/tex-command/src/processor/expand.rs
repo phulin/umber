@@ -130,6 +130,12 @@ enum ProtectedMacroHandling {
     Preserve,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UndefinedHandling {
+    Diagnose,
+    Preserve,
+}
+
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
@@ -139,6 +145,30 @@ impl CommandProcessor<'_> {
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.apply_error_stop_recovery()?;
         self.get_x_token_from(None, ExpandedFetch::GetXToken)
+    }
+
+    /// Delivers one expanded command to a diagnostic host while preserving
+    /// TeX82 §370's undefined command instead of consuming it after recovery.
+    pub fn get_x_token_preserving_undefined(
+        &mut self,
+    ) -> Result<Option<CurrentCommand>, CommandError> {
+        self.apply_error_stop_recovery()?;
+        self.command.transient.active_expansion_depth += 1;
+        let result = loop {
+            match self.expanded_delivery(
+                None,
+                ExpandedFetch::GetXToken,
+                true,
+                ProtectedMacroHandling::Expand,
+                UndefinedHandling::Preserve,
+            )? {
+                Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
+                Some(CommandReplayDelivery::Completed(_)) => continue,
+                None => break Ok(None),
+            }
+        };
+        self.command.transient.active_expansion_depth -= 1;
+        result
     }
 
     /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
@@ -160,6 +190,7 @@ impl CommandProcessor<'_> {
                 fetch,
                 true,
                 ProtectedMacroHandling::Expand,
+                UndefinedHandling::Diagnose,
             )? {
                 Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
                 Some(CommandReplayDelivery::Completed(_)) => continue,
@@ -300,6 +331,7 @@ impl CommandProcessor<'_> {
                 } else {
                     ProtectedMacroHandling::Expand
                 },
+                UndefinedHandling::Diagnose,
             );
             self.command.transient.active_expansion_depth -= 1;
             let Some(delivery) = result? else {
@@ -413,6 +445,7 @@ impl CommandProcessor<'_> {
             ExpandedFetch::XToken,
             true,
             ProtectedMacroHandling::Expand,
+            UndefinedHandling::Diagnose,
         )
     }
 
@@ -422,6 +455,7 @@ impl CommandProcessor<'_> {
             ExpandedFetch::GetXToken,
             true,
             ProtectedMacroHandling::Expand,
+            UndefinedHandling::Diagnose,
         )
     }
 
@@ -434,6 +468,7 @@ impl CommandProcessor<'_> {
         fetch: ExpandedFetch,
         observe_final: bool,
         protected_macros: ProtectedMacroHandling,
+        undefined: UndefinedHandling,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
             let command = match pending.take() {
@@ -475,7 +510,9 @@ impl CommandProcessor<'_> {
                 }
                 return Ok(Some(CommandReplayDelivery::Command(command)));
             }
-            if !is_expandable_command(&command)
+            if (undefined == UndefinedHandling::Preserve
+                && matches!(command.meaning(), Meaning::Undefined))
+                || !is_expandable_command(&command)
                 || (protected_macros == ProtectedMacroHandling::Preserve
                     && matches!(
                         command.meaning(),

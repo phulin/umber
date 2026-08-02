@@ -368,6 +368,26 @@ pub enum CanonicalStepResult {
     Suspended(CanonicalResourceNeed),
 }
 
+/// One retained diagnostic-expansion operation. Assignments are executed by
+/// canonical main control; every other expanded spelling is returned intact.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CanonicalDiagnosticStep {
+    Token {
+        spelling: TracedTokenWord,
+        meaning: Meaning,
+        control_sequence: Option<tex_state::interner::Symbol>,
+        source_provenance: Option<tex_command::SourceProvenance>,
+    },
+    Assignment,
+    EndOfInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalDiagnosticStepResult {
+    Progress(CanonicalDiagnosticStep),
+    Suspended(CanonicalResourceNeed),
+}
+
 /// All replay-owned state that must move with a bounded canonical operation.
 /// Host capabilities are intentionally absent: their borrow ends before this
 /// checkpoint can be restored.
@@ -1890,6 +1910,61 @@ impl CanonicalMainControl {
                 }
                 self.finish_failed_step(snapshot, stores, error)
             }
+        }
+    }
+
+    /// Expands one command for an analysis host without entering ordinary
+    /// typesetting. TeX82 §1270's command-code partition still routes every
+    /// assignment through §1211 `prefixed_command`; other spellings, including
+    /// undefined control sequences, are returned to the host with provenance.
+    pub fn diagnostic_expand_step(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<CanonicalDiagnosticStepResult, ExecError> {
+        let snapshot = self.snapshot_step(stores);
+        let operation = (|| {
+            self.refresh_host_capabilities(stores);
+            let command = {
+                let mut processor = command_processor(
+                    &mut self.command,
+                    &mut self.runtime,
+                    self.fuel.fuel_mut(),
+                    &mut self.capabilities,
+                    &mut self.operation_observations,
+                    stores,
+                );
+                processor
+                    .get_x_token_preserving_undefined()
+                    .map_err(command_error)?
+            };
+            let Some(command) = command else {
+                return Ok(CanonicalDiagnosticStep::EndOfInput);
+            };
+            if tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
+                self.step_once(stores, Some(command))?;
+                Ok(CanonicalDiagnosticStep::Assignment)
+            } else {
+                Ok(CanonicalDiagnosticStep::Token {
+                    spelling: command.spelling(),
+                    meaning: command.meaning(),
+                    control_sequence: command.control_sequence(),
+                    source_provenance: command.source_provenance(),
+                })
+            }
+        })();
+        match operation {
+            Ok(step) => {
+                self.commit_step(snapshot);
+                Ok(CanonicalDiagnosticStepResult::Progress(step))
+            }
+            Err(error) => match self.finish_failed_step(snapshot, stores, error)? {
+                CanonicalStepResult::Suspended(need) => {
+                    Ok(CanonicalDiagnosticStepResult::Suspended(need))
+                }
+                CanonicalStepResult::Progress(_) => {
+                    unreachable!("diagnostic failure made progress")
+                }
+            },
         }
     }
 

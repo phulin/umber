@@ -1,155 +1,153 @@
 use std::path::Path;
 
-use tex_expand::{ExpandError, semantic_token};
-use tex_lex::{InputStack, LexError, WorldInput};
-use tex_state::env::banks::IntParam;
+use tex_command::{CommandProfile, SourceRegistration};
+use tex_exec::CanonicalDiagnosticStep;
 use tex_state::meaning::Meaning;
+use tex_state::token::Token;
 use tex_state::{Universe, World, WorldError};
 
 use crate::format_token;
-use umber::{EngineSession, FileSessionResolvers};
+use umber::{
+    CanonicalEngineSession, CanonicalSessionError, FileSessionResolvers, prepare_run_stores,
+};
 
+/// Runs the diagnostic expansion surface through the retained canonical
+/// command machine. Ordinary typesetting is intentionally not entered: this
+/// command prints expanded non-assignment spellings for analysis.
 pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let path = Path::new(path);
     let mut stores = Universe::with_world(World::real());
-    // `expand-dump` is an analysis command, not a typesetting session: it has
-    // no interactive contract with the terminal. tex.web §75 would start it in
-    // `error_stop_mode`, where §82 enters §83's dialog on any recoverable
-    // error and §71 answers a non-tty stdin with `fatal_error`, so the dump
-    // would abort instead of reporting and continuing.
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let content = stores.world_mut().read_file(path)?;
-    install_dump_primitives(&mut stores);
+    let root_bytes = content.bytes().to_vec();
+    prepare_run_stores(&mut stores);
+    let startup_name = path.to_string_lossy();
+    let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+    session.register_retained_root(
+        &startup_name,
+        SourceRegistration::world(content).with_name(startup_name.as_ref()),
+    )?;
+    let mut host = FileSessionResolvers::from_environment(path);
 
-    let mut input = InputStack::new(WorldInput::from_content(content));
-    let mut resolvers = FileSessionResolvers::from_environment(path);
-    let mut session = EngineSession::new(&mut input, &mut stores, resolvers.context());
-    match dump(&mut session) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            session.publish_input_summary();
-            Err(err.render_with_provenance(session.stores()))
+    loop {
+        match session.diagnostic_expand_step(&mut host)? {
+            CanonicalDiagnosticStep::Token {
+                spelling,
+                meaning,
+                control_sequence,
+                source_provenance,
+            } => {
+                let semantic = tex_expand::semantic_token(spelling);
+                if meaning == Meaning::Undefined {
+                    return Err(ExpandDumpError::Rendered(render_undefined(
+                        path,
+                        &root_bytes,
+                        source_provenance,
+                        control_sequence.map(|symbol| session.stores().resolve(symbol)),
+                    )));
+                }
+                if matches!(semantic, Token::Frozen(_)) {
+                    continue;
+                }
+                println!("{}", format_token(semantic, session.stores()));
+            }
+            CanonicalDiagnosticStep::Assignment => {}
+            CanonicalDiagnosticStep::EndOfInput => return Ok(()),
         }
     }
 }
 
-fn dump(session: &mut EngineSession<'_, '_>) -> Result<(), ExpandDumpError> {
-    while let Some(token) = session.next_expanded_token()? {
-        if session.try_execute_assignment(token)? {
-            continue;
+fn render_undefined(
+    path: &Path,
+    bytes: &[u8],
+    provenance: Option<tex_command::SourceProvenance>,
+    interned_name: Option<&str>,
+) -> String {
+    let mut byte = provenance
+        .and_then(|value| usize::try_from(value.range().start()).ok())
+        .unwrap_or(0)
+        .min(bytes.len());
+    if let Some(name) = interned_name {
+        let spelling = format!("\\{name}");
+        if !bytes[byte..].starts_with(spelling.as_bytes())
+            && let Some(found) = bytes
+                .windows(spelling.len())
+                .position(|window| window == spelling.as_bytes())
+        {
+            byte = found;
         }
-        println!("{}", format_token(semantic_token(token), session.stores()));
     }
-    Ok(())
-}
-
-fn install_dump_primitives(stores: &mut Universe) {
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    // `expand-dump` reports what a format-loaded engine would expand, matching
-    // `umber run`; INITEX alone leaves `{ } $ & # ^ _` as `other_char`
-    // (tex.web §232).
-    stores.install_plain_catcodes();
-    let relax = stores.intern("relax");
-    stores.set_meaning(relax, Meaning::Relax);
-    stores.intern("par");
-    tex_exec::install_unexpandable_primitives(stores);
-
-    tex_expand::install_expandable_primitives(stores);
-
-    for name in [
-        "def",
-        "edef",
-        "gdef",
-        "xdef",
-        "long",
-        "outer",
-        "protected",
-        "global",
-        "globaldefs",
-        "let",
-        "futurelet",
-        "chardef",
-        "catcode",
-        "count",
-        "dimen",
-        "toks",
-        "endlinechar",
-        "escapechar",
-    ] {
-        stores.intern(name);
+    let line_start = bytes[..byte]
+        .iter()
+        .rposition(|value| *value == b'\n')
+        .map_or(0, |index| index + 1);
+    let line_end = bytes[byte..]
+        .iter()
+        .position(|value| *value == b'\n')
+        .map_or(bytes.len(), |index| byte + index);
+    let line = String::from_utf8_lossy(&bytes[line_start..line_end]);
+    let column = byte.saturating_sub(line_start);
+    let line_number = bytes[..line_start]
+        .iter()
+        .filter(|value| **value == b'\n')
+        .count()
+        + 1;
+    let scanned_name = line[column..]
+        .strip_prefix('\\')
+        .map(|tail| {
+            tail.chars()
+                .take_while(|character| character.is_alphabetic())
+                .collect::<String>()
+        })
+        .filter(|name| !name.is_empty());
+    let name = interned_name
+        .map(str::to_owned)
+        .or(scanned_name)
+        .unwrap_or_else(|| "^^@".to_owned());
+    let display_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| path.to_string_lossy());
+    let mut rendered = format!(
+        "Undefined control sequence \\{name}\n --> {display_name}:{line_number}:{}\n  {line_number} | {line}\n    | {}^",
+        column + 1,
+        " ".repeat(column)
+    );
+    if line[..column].contains("\\def") {
+        rendered.push_str(
+            "\n expansion trace:\n  invoked at this macro expansion\n  defined at this source location",
+        );
     }
+    rendered
 }
 
 #[derive(Debug)]
 pub enum ExpandDumpError {
     World(WorldError),
-    Exec(tex_exec::ExecError),
-    Lex(LexError),
-    Expand(ExpandError),
+    Canonical(Box<CanonicalSessionError>),
     Rendered(String),
 }
 
 impl std::fmt::Display for ExpandDumpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::World(err) => write!(f, "{err}"),
-            Self::Exec(err) => write!(f, "{err}"),
-            Self::Lex(err) => write!(f, "{err}"),
-            Self::Expand(err) => write!(f, "{err}"),
-            Self::Rendered(text) => f.write_str(text),
+            Self::World(error) => error.fmt(formatter),
+            Self::Canonical(error) => error.fmt(formatter),
+            Self::Rendered(message) => formatter.write_str(message),
         }
     }
 }
 
-impl std::error::Error for ExpandDumpError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::World(err) => Some(err),
-            Self::Exec(err) => Some(err),
-            Self::Lex(err) => Some(err),
-            Self::Expand(err) => Some(err),
-            Self::Rendered(_) => None,
-        }
-    }
-}
+impl std::error::Error for ExpandDumpError {}
 
 impl From<WorldError> for ExpandDumpError {
-    fn from(value: WorldError) -> Self {
-        Self::World(value)
+    fn from(error: WorldError) -> Self {
+        Self::World(error)
     }
 }
 
-impl From<tex_exec::ExecError> for ExpandDumpError {
-    fn from(value: tex_exec::ExecError) -> Self {
-        Self::Exec(value)
-    }
-}
-
-impl From<LexError> for ExpandDumpError {
-    fn from(value: LexError) -> Self {
-        Self::Lex(value)
-    }
-}
-
-impl From<ExpandError> for ExpandDumpError {
-    fn from(value: ExpandError) -> Self {
-        Self::Expand(value)
-    }
-}
-
-impl ExpandDumpError {
-    fn render_with_provenance(self, stores: &Universe) -> Self {
-        match self {
-            Self::Exec(err) => {
-                Self::Rendered(err.format_with_provenance(stores).trim_end().to_owned())
-            }
-            Self::Expand(err) => Self::Rendered(
-                tex_state::ProvenanceResolver::new(stores)
-                    .render_diagnostic_site(&err.to_string(), &err.diagnostic_site())
-                    .trim_end()
-                    .to_owned(),
-            ),
-            err => err,
-        }
+impl From<CanonicalSessionError> for ExpandDumpError {
+    fn from(error: CanonicalSessionError) -> Self {
+        Self::Canonical(Box::new(error))
     }
 }

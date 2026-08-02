@@ -39,7 +39,8 @@ pub use assignments::{
     register_unexpandable_primitives, retry_unavailable_stream_open, try_execute_assignment,
 };
 pub use canonical_main_control::{
-    CanonicalMainControl, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
+    CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
+    CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
 };
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,

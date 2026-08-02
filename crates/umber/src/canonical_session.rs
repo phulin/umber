@@ -14,8 +14,9 @@ use tex_command::{
     PdfImageResource, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
-    CanonicalMainControl, CanonicalResourceNeed, CanonicalStepResult, CheckpointSink,
-    EngineBoundary, ExecutionBudgetCounters, MainControlStep,
+    CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
+    CanonicalResourceNeed, CanonicalStepResult, CheckpointSink, EngineBoundary,
+    ExecutionBudgetCounters, MainControlStep,
 };
 use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
@@ -253,6 +254,54 @@ pub struct CanonicalEngineSession<'a> {
 }
 
 impl<'a> CanonicalEngineSession<'a> {
+    /// Advances the retained command machine in analysis mode without
+    /// invoking ordinary typesetting main control.
+    pub fn diagnostic_expand_step(
+        &mut self,
+        host: &mut dyn CanonicalResourceHost,
+    ) -> Result<CanonicalDiagnosticStep, CanonicalSessionError> {
+        let mut declined: u8 = 0;
+        loop {
+            match self.control.diagnostic_expand_step(self.stores)? {
+                CanonicalDiagnosticStepResult::Progress(step) => return Ok(step),
+                CanonicalDiagnosticStepResult::Suspended(need) => {
+                    let outcome = {
+                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        host.fulfill(&mut world, &need)
+                    };
+                    match outcome {
+                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                            self.fulfill(&need, fulfillment)?;
+                            declined = 0;
+                        }
+                        CanonicalResourceOutcome::Unavailable => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                self.mark_unavailable(&need);
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                        CanonicalResourceOutcome::Declined => {
+                            if let Some(fulfillment) = self.same_run_output(&need) {
+                                self.fulfill(&need, fulfillment)?;
+                                declined = 0;
+                            } else {
+                                declined = declined.saturating_add(1);
+                            }
+                        }
+                    }
+                    if declined >= self.no_progress_limit {
+                        return Err(CanonicalSessionError::NoProgress {
+                            need,
+                            attempts: declined,
+                        });
+                    }
+                }
+            }
+        }
+    }
     #[must_use]
     pub fn new(stores: &'a mut Universe, profile: CommandProfile) -> Self {
         Self {

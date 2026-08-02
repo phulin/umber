@@ -397,7 +397,9 @@ impl CurrentCommand {
         }
     }
 
-    pub(crate) const fn source_provenance(&self) -> Option<SourceProvenance> {
+    /// Returns retained physical provenance for diagnostic consumers.
+    #[must_use]
+    pub const fn source_provenance(&self) -> Option<SourceProvenance> {
         self.source_provenance
     }
 
