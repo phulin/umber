@@ -76,6 +76,39 @@ fn disabled_tracinggroups_emits_no_group_diagnostic() {
 }
 
 #[test]
+fn middle_traces_consecutive_math_left_groups() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\\tracinggroups=1\n$\\left.\\middle.\\right.$\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    let leaving = "{leaving math left group (level 2) entered at line 2}";
+    let entering = "{entering math left group (level 2) at line 2}";
+    assert_eq!(log.matches(leaving).count(), 2, "{log:?}");
+    assert_eq!(log.matches(entering).count(), 2, "{log:?}");
+    let middle_boundary = format!("{leaving}\n{entering}");
+    assert!(log.contains(&middle_boundary), "{log:?}");
+}
+
+#[test]
+fn middle_restores_the_preceding_math_left_group() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"$\\left.\\count17=7\\middle.\\global\\count18=\\count17\\right.$\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    assert_eq!(stores.count(17), 0);
+    assert_eq!(stores.count(18), 0);
+}
+
+#[test]
 fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
     let (mut stores, mut control) = etex_control();
     register_source(

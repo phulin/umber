@@ -2890,14 +2890,49 @@ impl CanonicalMainControl {
             }
             MathDelimiterBoundaryKind::Middle => {
                 if canonical_left_group_open(&self.modes, stores) {
+                    // e-TeX 2.6 [48.1191] treats `\middle` as a boundary
+                    // between two consecutive `math_left_group` segments:
+                    // `fin_mlist; unsave; push_math(math_left_group)`.  In
+                    // particular, assignments made since the preceding
+                    // `\left` or `\middle` are restored before the next
+                    // segment starts.
+                    let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+                    let _ = crate::assignments::commit_current_list(
+                        &mut self.modes,
+                        stores,
+                        self.fuel.fuel_mut(),
+                    )?;
+                    let aftergroup =
+                        stores
+                            .leave_group_with_kind(GroupKind::MathLeft)
+                            .map_err(|_| ExecError::MissingToken {
+                                context: "math left group",
+                            })?;
+                    schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
+
+                    stores.enter_group_with_kind_at_line(
+                        GroupKind::MathLeft,
+                        self.command.current_file_line_number(),
+                    );
+                    self.modes.push_at_line(
+                        Mode::Math,
+                        self.command
+                            .current_file_line_number()
+                            .try_into()
+                            .unwrap_or(i32::MAX),
+                    )?;
+                    let segment = stores
+                        .nodes(content)
+                        .into_iter()
+                        .map(|node| node.to_owned());
                     self.modes
                         .current_list_mutation()
-                        .push(Node::MathNoad(MathNoad::new(
+                        .append(segment.chain([Node::MathNoad(MathNoad::new(
                             NoadKind::MiddleDelimiter {
                                 delimiter: boundary.delimiter.code,
                             },
                             MathField::Empty,
-                        )));
+                        ))]));
                 } else {
                     // etex.ch [48.1192] splits §1192's report by noad type.
                     let context = self.command.output_open_context(&stores.command_context());
