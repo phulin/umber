@@ -1100,6 +1100,18 @@ impl CanonicalMainControl {
                 ..
             } => Some(tex_command::LastNodeItem::MuGlue(stores.glue(*spec))),
             Node::Glue { spec, .. } => Some(tex_command::LastNodeItem::Glue(stores.glue(*spec))),
+            // TeX82 keeps a discretionary's no-break replacement nodes in
+            // the surrounding list (§1119), immediately after the disc node.
+            // Umber freezes that physical suffix as the disc's `replace`
+            // child list, so §424's tail enquiry must look through the
+            // container to preserve TeX's physical-tail view.  This is
+            // intentionally distinct from §1105 deletion, which refuses to
+            // remove a discretionary replacement suffix.
+            Node::Disc { replace, .. } => stores
+                .nodes(*replace)
+                .last()
+                .map(|node| node.to_owned())
+                .and_then(|node| Self::classify_last_node(stores, &node)),
             _ => None,
         }
     }

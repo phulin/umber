@@ -10617,6 +10617,35 @@ fn canonical_delete_last_does_not_enter_discretionary_replacement_lists() {
 }
 
 #[test]
+fn lastkern_reads_discretionary_replacement_tail_without_deleting_it() {
+    // TeX82 §§424/1119: replacement nodes physically follow their
+    // discretionary, so the replacement kern is the queried tail even though
+    // §1105's `\unkern` must leave that replacement suffix untouched.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{\discretionary{}{}{A\kern2pt}\unkern\xdef\lk{\the\lastkern}}\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let lk = universe.symbol("lk").expect("macro is interned");
+    let meaning = universe.macro_meaning(lk).expect("lk is a macro");
+    assert_eq!(
+        replay_text(universe.tokens(meaning.replacement_text())),
+        "2.0pt"
+    );
+    let children = box_children(&universe, 0);
+    let [Node::Disc { replace, .. }] = children.as_slice() else {
+        panic!("hbox must retain its discretionary");
+    };
+    assert!(matches!(
+        universe.nodes(*replace).last().map(|node| node.to_owned()),
+        Some(Node::Kern { amount, .. }) if amount == Scaled::from_raw(2 * Scaled::UNITY)
+    ));
+}
+
+#[test]
 fn canonical_delete_last_rejects_prefix_then_executes_without_consuming_following_token() {
     // TeX82 §§1211-1212 diagnose a prefix on this non-prefixed command,
     // discard the prefix, and execute `remove_item` normally. §1105 scans no
