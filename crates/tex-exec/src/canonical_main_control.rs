@@ -77,6 +77,9 @@ pub struct CanonicalMainControl {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     active_discretionaries: Vec<ActiveDiscretionary>,
+    /// TeX82 §1174's `saved(-2)` branch count for each live `\mathchoice`,
+    /// outermost first. e-TeX [49.1292] observes it through `\showgroups`.
+    active_math_choices: Vec<usize>,
     /// Physical glue-store identity plus the canonical pointer source of the
     /// last skip-register definition. The second component is `None` when
     /// scanning allocated a fresh TeX glue node that Umber subsequently
@@ -343,6 +346,7 @@ struct CanonicalStepSnapshot {
     active_alignment: Option<ActiveReplayAlignment>,
     boxes: ReplayBoxes,
     active_discretionaries: Vec<ActiveDiscretionary>,
+    active_math_choices: Vec<usize>,
     main_loop_active: bool,
     shown_mode: Option<Mode>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
@@ -366,6 +370,7 @@ impl CanonicalStepSnapshot {
             active_alignment: control.active_alignment.clone(),
             boxes: control.boxes.clone(),
             active_discretionaries: control.active_discretionaries.clone(),
+            active_math_choices: control.active_math_choices.clone(),
             main_loop_active: control.main_loop_active,
             shown_mode: control.shown_mode,
             completed_replay_episode: control.completed_replay_episode,
@@ -398,6 +403,7 @@ impl CanonicalStepSnapshot {
         control.active_alignment = self.active_alignment;
         control.boxes = self.boxes;
         control.active_discretionaries = self.active_discretionaries;
+        control.active_math_choices = self.active_math_choices;
         control.main_loop_active = self.main_loop_active;
         control.shown_mode = self.shown_mode;
         control.completed_replay_episode = self.completed_replay_episode;
@@ -1422,6 +1428,7 @@ impl CanonicalMainControl {
             },
             &mut self.boxes,
             &self.active_discretionaries,
+            &self.active_math_choices,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -1940,6 +1947,7 @@ impl CanonicalMainControl {
             },
             &mut self.boxes,
             &self.active_discretionaries,
+            &self.active_math_choices,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -2409,10 +2417,28 @@ impl CanonicalMainControl {
                 // them backs the opening brace up a second time (an extra
                 // `backed_up` input level TeX never pushes) and reorders
                 // every input level the branch body itself opens.
-                let display = self.execute_math_choice_branch(stores)?;
-                let text = self.execute_math_choice_branch(stores)?;
-                let script = self.execute_math_choice_branch(stores)?;
-                let script_script = self.execute_math_choice_branch(stores)?;
+                self.active_math_choices.push(0);
+                let branches = (|| {
+                    let display = self.execute_math_choice_branch(stores)?;
+                    *self
+                        .active_math_choices
+                        .last_mut()
+                        .expect("live math choice") = 1;
+                    let text = self.execute_math_choice_branch(stores)?;
+                    *self
+                        .active_math_choices
+                        .last_mut()
+                        .expect("live math choice") = 2;
+                    let script = self.execute_math_choice_branch(stores)?;
+                    *self
+                        .active_math_choices
+                        .last_mut()
+                        .expect("live math choice") = 3;
+                    let script_script = self.execute_math_choice_branch(stores)?;
+                    Ok::<_, ExecError>((display, text, script, script_script))
+                })();
+                self.active_math_choices.pop();
+                let (display, text, script, script_script) = branches?;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathChoice(MathChoice {
@@ -3293,6 +3319,7 @@ impl CanonicalMainControl {
                     &self.active_alignment,
                     &self.boxes,
                     &self.active_discretionaries,
+                    &self.active_math_choices,
                 )),
             },
             scanned => scanned,
@@ -3360,6 +3387,7 @@ impl CanonicalMainControl {
             },
             &mut self.boxes,
             &self.active_discretionaries,
+            &self.active_math_choices,
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok()
@@ -11065,6 +11093,7 @@ fn detached_showgroups(
     active_alignment: &Option<ActiveReplayAlignment>,
     boxes: &ReplayBoxes,
     active_discretionaries: &[ActiveDiscretionary],
+    active_math_choices: &[usize],
 ) -> crate::diagnostics::ShowGroupsDiagnostic {
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
@@ -11079,6 +11108,7 @@ fn detached_showgroups(
     let mut align_level = 0usize;
     let mut box_index = 0usize;
     let mut discretionary_index = 0usize;
+    let mut math_choice_index = 0usize;
     let align_kind = active_alignment.as_ref().map(|active| active.kind);
     let mut rendered = Vec::with_capacity(frames.len());
     for (index, frame) in frames.into_iter().enumerate() {
@@ -11110,7 +11140,17 @@ fn detached_showgroups(
                 discretionary_index = discretionary_index.saturating_add(1);
                 format!("\\discretionary{}{{", "{}".repeat(completed))
             }
-            GroupKind::MathChoice => "\\mathchoice{".to_owned(),
+            GroupKind::MathChoice => {
+                // The other half of e-TeX [49.1292]'s shared
+                // `disc_group,math_choice_group` case uses §1174's saved
+                // count in exactly the same way as a discretionary.
+                let completed = active_math_choices
+                    .get(math_choice_index)
+                    .copied()
+                    .unwrap_or(0);
+                math_choice_index = math_choice_index.saturating_add(1);
+                format!("\\mathchoice{}{{", "{}".repeat(completed))
+            }
             GroupKind::MathShift => match mode {
                 Some(Mode::DisplayMath) => "$$".to_owned(),
                 _ => "$".to_owned(),
@@ -11231,6 +11271,7 @@ fn apply_scanned_step(
     command: &mut CommandMachine<'_>,
     boxes: &mut ReplayBoxes,
     active_discretionaries: &[ActiveDiscretionary],
+    active_math_choices: &[usize],
     prepared_dvi_pages: &mut PreparedDviPages,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
@@ -12988,6 +13029,7 @@ fn apply_scanned_step(
                 active_alignment,
                 boxes,
                 active_discretionaries,
+                active_math_choices,
             );
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;

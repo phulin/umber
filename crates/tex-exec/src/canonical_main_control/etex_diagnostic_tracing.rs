@@ -149,6 +149,23 @@ fn showgroups_discretionary_opener_includes_completed_parts() {
 }
 
 #[test]
+fn showgroups_mathchoice_opener_includes_completed_branches() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1$\\mathchoice{}{}{\\showgroups}{}$\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("(\\mathchoice{}{}{)"),
+        "third-branch opener missing from {log:?}"
+    );
+}
+
+#[test]
 fn tracingassigns_reports_into_reassigning_and_changing_for_count_registers() {
     let (mut stores, mut control) = etex_control();
     register_source(
