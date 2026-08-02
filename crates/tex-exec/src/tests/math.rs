@@ -1106,7 +1106,6 @@ fn penalty_builds_ordinary_list_material_in_display_math() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.49.1 canonical post-display resume commits two pages"]
 fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
     let mut stores = support::stores_with_fonts();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

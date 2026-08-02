@@ -409,6 +409,35 @@ fn output_default_path_prepends_heldovers_ships_and_voids_box255() {
 }
 
 #[test]
+fn output_default_selection_does_not_advance_the_next_page_before_shipout() {
+    // TeX82 §1025's default path performs `ship_out(box(255))` before the
+    // page builder resumes. A forced break already waiting behind the selected
+    // page must therefore remain a contribution until its caller ships `page`.
+    let mut stores = Universe::new();
+    let fire = push_simple_page(&mut stores);
+    stores.append_page_contribution(rule(7));
+    stores.append_page_contribution(Node::Penalty(-10_000));
+
+    let selected = select_pending_page_output(&mut stores, fire, String::new())
+        .expect("white-box operation succeeds");
+
+    assert!(matches!(
+        selected,
+        SelectedPageOutput::Default(Node::VList(_))
+    ));
+    assert!(stores.page_fire_up().is_none());
+    assert_eq!(stores.page_contributions().len(), 2);
+    assert!(matches!(
+        stores.page_contribution_front(),
+        Some(Node::Rule { .. })
+    ));
+    assert!(matches!(
+        stores.page_contributions().back(),
+        Some(Node::Penalty(-10_000))
+    ));
+}
+
+#[test]
 fn output_deadcycle_limit_reports_and_uses_default_path() {
     let mut stores = crate::test_harness::universe();
     let output = nonempty_tokens(&mut stores);

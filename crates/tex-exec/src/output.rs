@@ -46,7 +46,6 @@ pub(crate) fn select_pending_page_output(
         prepend_output_heldover(stores, Vec::new());
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
-        build_page(stores)?;
         return Ok(SelectedPageOutput::Default(page));
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
@@ -55,7 +54,6 @@ pub(crate) fn select_pending_page_output(
         prepend_output_heldover(stores, Vec::new());
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
-        build_page(stores)?;
         return Ok(SelectedPageOutput::Default(page));
     }
     stores.record_output_routine_execution();
