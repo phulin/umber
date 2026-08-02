@@ -245,9 +245,8 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
 
 #[test]
 fn paragraph_hyphenation_preserves_existing_chars_when_no_break_is_found() {
-    let mut stores = super::core::run_canonical_tex82_with_fonts(
-        "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
-    );
+    let mut stores =
+        super::core::run_canonical_tex82_with_fonts("\\font\\tenrm=cmr10 \\relax \\tenrm \\end");
     let font = stores.current_font();
     let word = vec![
         tex_state::node::Node::Char {
@@ -1099,8 +1098,8 @@ fn run_canonical_paragraph_program_with_profile(
     let mut control = match profile {
         CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(&mut stores),
         CommandProfile::ETEX26 => {
-            tex_expand::install_expandable_primitives(&mut stores);
-            tex_expand::install_etex_expandable_primitives(&mut stores);
+            tex_command::install_tex82_expandable_primitives(&mut stores);
+            tex_command::install_etex_expandable_primitives(&mut stores);
             install_unexpandable_primitives(&mut stores);
             install_etex_unexpandable_primitives(&mut stores);
             CanonicalMainControl::prepared_initex(profile)
@@ -1132,7 +1131,10 @@ fn run_canonical_paragraph_program_with_profile(
         if control.step(&mut stores).expect("canonical paragraph step") == MainControlStep::End {
             break;
         }
-        assert!(steps < 4096, "canonical paragraph source did not terminate");
+        assert!(
+            steps < 65_536,
+            "canonical paragraph source did not terminate"
+        );
     }
 
     let mut dvi = tex_out::dvi::DviStreamWriter::new(Vec::new());
@@ -1289,7 +1291,10 @@ fn deterministic_message_effects_replay_in_original_order() {
         .world()
         .memory_terminal_output()
         .expect("canonical messages reach the terminal in order");
-    assert_eq!(String::from_utf8_lossy(terminal).matches("visible").count(), 3);
+    assert_eq!(
+        String::from_utf8_lossy(terminal).matches("visible").count(),
+        3
+    );
     let stats = stores.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0, "{stats:?}");
     assert_eq!(stats.paragraph_eligible_regions, 0, "{stats:?}");
@@ -1336,65 +1341,54 @@ fn direct_batch_executor_does_not_arm_incremental_barrier_tracking() {
 
 #[test]
 fn randomized_pretolerance_cache_differential_matches_disabled_kernel() {
-    let mut disabled = crate::test_harness::universe_with_plain_catcodes();
-    let glue = disabled.intern_glue(tex_state::glue::GlueSpec {
-        width: Scaled::from_raw(4),
-        stretch: Scaled::from_raw(2),
-        ..tex_state::glue::GlueSpec::ZERO
-    });
-    let mut enabled = disabled.clone();
-    enabled.enable_pure_memo(pretolerance_memo_config());
     let mut seed = 0x9e37_79b9_u32;
+    let mut source = String::from("\\font\\tenrm=cmr10 \\tenrm ");
 
-    for case in 0..128 {
+    for _case in 0..128 {
         seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        let mut nodes = Vec::new();
+        let mut paragraph = String::new();
         for index in 0..(8 + seed as usize % 40) {
             if index % 2 == 0 {
-                nodes.push(Node::Rule {
-                    width: Some(Scaled::from_raw(1 + ((seed >> (index % 16)) as i32 & 31))),
-                    height: Some(Scaled::from_raw(1)),
-                    depth: Some(Scaled::from_raw(0)),
-                });
+                let width = 1 + ((seed >> (index % 16)) as i32 & 31);
+                paragraph.push_str(&format!("\\vrule width{width}sp height1sp depth0sp"));
             } else {
-                nodes.push(Node::Glue {
-                    spec: glue,
-                    kind: GlueKind::Normal,
-                    leader: None,
-                });
+                paragraph.push_str("\\hskip4sp plus2sp ");
             }
         }
-        nodes.push(Node::Penalty(-10_000));
-        let params = tex_typeset::linebreak::LineBreakParams {
-            pdf_adjust_spacing: 0,
-            expansion_steps: None,
-            pdf_protrude_chars: 0,
-            pretolerance: 10_000,
-            tolerance: 1_000 + (seed % 9_000) as i32,
-            line_penalty: (seed % 100) as i32,
-            hyphen_penalty: 50,
-            ex_hyphen_penalty: 50,
-            adj_demerits: (seed % 1_000) as i32,
-            double_hyphen_demerits: 1_000,
-            final_hyphen_demerits: 500,
-            emergency_stretch: Scaled::from_raw((seed % 20) as i32),
-            looseness: 0,
-            last_line_fit: 0,
-            left_skip: tex_state::glue::GlueSpec::ZERO,
-            right_skip: tex_state::glue::GlueSpec::ZERO,
-            par_fill_skip: tex_state::glue::GlueSpec::ZERO,
-            shape: tex_typeset::linebreak::LineShape::natural(Scaled::from_raw(
-                30 + (seed % 300) as i32,
-            )),
-        };
-        let expected = crate::cached_pretolerance_plan(&mut disabled, &nodes, &params);
-        let actual = crate::cached_pretolerance_plan(&mut enabled, &nodes, &params);
-        assert_eq!(actual, expected, "random differential case {case}");
-        assert_eq!(
-            crate::cached_pretolerance_plan(&mut enabled, &nodes, &params),
-            expected,
-            "random cached differential case {case}"
-        );
+        let hsize = 30 + seed % 300;
+        let tolerance = 1_000 + seed % 9_000;
+        let line_penalty = seed % 100;
+        let adj_demerits = seed % 1_000;
+        let emergency_stretch = seed % 20;
+        source.push_str(&format!(
+            "\\hsize={hsize}sp \\pretolerance=10000 \\tolerance={tolerance} \
+             \\linepenalty={line_penalty} \\hyphenpenalty=50 \\exhyphenpenalty=50 \
+             \\adjdemerits={adj_demerits} \\doublehyphendemerits=1000 \
+             \\finalhyphendemerits=500 \\emergencystretch={emergency_stretch}sp \
+             {paragraph}\\par {paragraph}\\par "
+        ));
     }
-    assert!(enabled.pure_memo_stats().hits >= 128);
+    source.push_str("\\vfill\\eject\\end");
+
+    let run = |enabled: bool| {
+        let (mut stores, dvi, steps) = run_canonical_paragraph_program(&source, |stores| {
+            if enabled {
+                stores.enable_pure_memo(pretolerance_memo_config());
+            }
+        });
+        let hash = stores.snapshot().state_hash();
+        let effects = stores.world().effect_records().to_vec();
+        (steps, dvi, hash, effects, stores.pure_memo_stats())
+    };
+
+    let (disabled_steps, disabled_dvi, disabled_hash, disabled_effects, _) = run(false);
+    let (enabled_steps, enabled_dvi, enabled_hash, enabled_effects, stats) = run(true);
+    assert_eq!(enabled_steps, disabled_steps);
+    assert_eq!(enabled_dvi, disabled_dvi);
+    assert_eq!(enabled_hash, disabled_hash);
+    assert_eq!(enabled_effects, disabled_effects);
+    assert!(
+        stats.hits >= 128,
+        "expected one cache hit per repeated case: {stats:?}"
+    );
 }
