@@ -1126,6 +1126,35 @@ fn nested_sub_mlist_records_its_structural_hpack() {
 }
 
 #[test]
+fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
+    let mut universe = setup_universe();
+    let empty = universe.freeze_node_list(&[]);
+    let shared = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubMlist(empty),
+    ))]);
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(shared),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(shared),
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert_eq!(
+        layout.hpack_observations().len(),
+        4,
+        "TeX82 Appendix G and §651 perform both nested hpacks for each shared-list occurrence"
+    );
+}
+
+#[test]
 fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);

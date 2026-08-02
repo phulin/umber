@@ -284,6 +284,21 @@ impl MathLayoutBuilder {
         });
     }
 
+    pub(crate) fn take_hpack_observations_since(
+        &mut self,
+        start: usize,
+    ) -> Vec<MathPackObservation> {
+        self.hpack_observations.split_off(start)
+    }
+
+    pub(crate) fn replay_hpack_observations(&mut self, observations: &[MathPackObservation]) {
+        self.hpack_observations.extend_from_slice(observations);
+    }
+
+    pub(crate) fn hpack_observation_count(&self) -> usize {
+        self.hpack_observations.len()
+    }
+
     /// Stores the already-boxed child payload of a source box.
     ///
     /// The owning source box carries authoritative width, height, and depth,

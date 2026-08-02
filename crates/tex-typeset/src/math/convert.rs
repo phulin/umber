@@ -10,9 +10,9 @@ use tex_state::scaled::Scaled;
 
 use super::{
     BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout,
-    MathLayoutBuilder, MathLayoutSink, MathNode, MathParams, MathTypesetState, SpacingKind, Style,
-    StyleFamily, add, boxed_node, delimiters, fractions, left_right_delimiter_target, operators,
-    radicals, scripts, spacing,
+    MathLayoutBuilder, MathLayoutSink, MathNode, MathPackObservation, MathParams, MathTypesetState,
+    SpacingKind, Style, StyleFamily, add, boxed_node, delimiters, fractions,
+    left_right_delimiter_target, operators, radicals, scripts, spacing,
 };
 
 #[cfg(test)]
@@ -91,9 +91,23 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
     style: Style,
     _penalties: bool,
 ) -> FrozenHList {
-    *ctx.converted
+    let converted = ctx
+        .converted
         .get(&(input, style))
         .expect("nested math list was not prepared by the iterative conversion planner")
+        .clone();
+    // TeX82 Appendix G recursively converts every sub-mlist occurrence. The
+    // iterative planner may share its pure node layout, but §651's completed
+    // hpacks are observable effects and must be replayed at every demand.
+    ctx.layout
+        .replay_hpack_observations(&converted.hpack_observations);
+    converted.list
+}
+
+#[derive(Clone)]
+pub(crate) struct ConvertedMlist {
+    list: FrozenHList,
+    hpack_observations: Vec<MathPackObservation>,
 }
 
 fn convert_mlist_uncached<S: MathTypesetState>(
@@ -444,8 +458,16 @@ fn prepare_nested_mlists<S: MathTypesetState>(
     }
 
     for (list, style) in postorder.into_iter().filter(|key| *key != root) {
+        let observation_start = ctx.layout.hpack_observation_count();
         let converted = convert_mlist_uncached(ctx, list, style, false);
-        ctx.converted.insert((list, style), converted);
+        let hpack_observations = ctx.layout.take_hpack_observations_since(observation_start);
+        ctx.converted.insert(
+            (list, style),
+            ConvertedMlist {
+                list: converted,
+                hpack_observations,
+            },
+        );
     }
 }
 
@@ -1029,7 +1051,7 @@ pub(crate) struct Context<'a, S> {
     pub(crate) style: Style,
     pub(crate) mu: Scaled,
     pub(crate) layout: MathLayoutBuilder,
-    pub(crate) converted: AHashMap<(NodeListId, Style), FrozenHList>,
+    pub(crate) converted: AHashMap<(NodeListId, Style), ConvertedMlist>,
     pub(crate) source_lists: AHashMap<(NodeListId, SourceListRole), FrozenHList>,
     pub(crate) conversion_events: RefCell<Vec<MathConversionEvent>>,
     pub(crate) recovered: Cell<bool>,
