@@ -334,6 +334,13 @@ impl CommandContext<'_> {
         self.universe.primitive_name(meaning)
     }
 
+    /// Returns the immutable original meaning registered for a primitive
+    /// spelling, independent of the live control-sequence cell.
+    #[must_use]
+    pub fn primitive_meaning(&self, name: &str) -> Option<Meaning> {
+        self.universe.primitive_meaning(name)
+    }
+
     /// Reads one integer parameter for canonical expandable conversion.
     #[must_use]
     pub fn int_param(&self, param: IntParam) -> i32 {

@@ -52,6 +52,9 @@ pub(crate) enum ConditionalKind {
     IfCsName,
     IfFontChar,
     IfInCsName,
+    IfPdfPrimitive,
+    IfPdfAbsNum,
+    IfPdfAbsDim,
 }
 
 #[allow(dead_code)] // used by pass_text now; evaluation uses the same classifier next
@@ -79,6 +82,9 @@ impl ConditionalKind {
             Self::IfCsName => "ifcsname",
             Self::IfFontChar => "iffontchar",
             Self::IfInCsName => "ifincsname",
+            Self::IfPdfPrimitive => "ifpdfprimitive",
+            Self::IfPdfAbsNum => "ifpdfabsnum",
+            Self::IfPdfAbsDim => "ifpdfabsdim",
         }
     }
 
@@ -105,6 +111,9 @@ impl ConditionalKind {
             ExpandablePrimitive::IfCsName => Self::IfCsName,
             ExpandablePrimitive::IfFontChar => Self::IfFontChar,
             ExpandablePrimitive::IfInCsName => Self::IfInCsName,
+            ExpandablePrimitive::IfPdfPrimitive => Self::IfPdfPrimitive,
+            ExpandablePrimitive::IfPdfAbsNum => Self::IfPdfAbsNum,
+            ExpandablePrimitive::IfPdfAbsDim => Self::IfPdfAbsDim,
             _ => return None,
         })
     }
@@ -402,6 +411,9 @@ impl ConditionalKind {
             Self::IfCsName => 19,
             Self::IfFontChar => 20,
             Self::IfInCsName => 21,
+            Self::IfPdfPrimitive => 22,
+            Self::IfPdfAbsNum => 23,
+            Self::IfPdfAbsDim => 24,
         }
     }
 }
@@ -687,6 +699,32 @@ impl CommandProcessor<'_> {
                 Ok(u8::try_from(u32::from(character))
                     .ok()
                     .is_some_and(|code| self.state.font_char_metrics(font, code).is_some()))
+            }
+            // pdfTeX §57.2 compares the live meaning of the following raw
+            // control sequence with the immutable primitive-table entry of
+            // the same spelling. Aliases and character tokens are false.
+            ConditionalKind::IfPdfPrimitive => {
+                let operand = self.get_next()?.ok_or(CommandError::input_invariant())?;
+                let Some(symbol) = operand.control_sequence() else {
+                    return Ok(false);
+                };
+                let name = self.state.resolve(symbol);
+                Ok(operand.meaning() != Meaning::Undefined
+                    && self.state.primitive_meaning(name) == Some(operand.meaning()))
+            }
+            // pdfTeX §57.3 applies comparison to mathematical magnitudes;
+            // widening first preserves abs(INT_MIN) without overflow.
+            ConditionalKind::IfPdfAbsNum => {
+                let left = i64::from(self.scan_integer()?.value).abs();
+                let relation = self.scan_if_relation("ifpdfabsnum")?;
+                let right = i64::from(self.scan_integer()?.value).abs();
+                Ok(relation.compare(left, right))
+            }
+            ConditionalKind::IfPdfAbsDim => {
+                let left = i64::from(self.scan_dimension()?.value.raw()).abs();
+                let relation = self.scan_if_relation("ifpdfabsdim")?;
+                let right = i64::from(self.scan_dimension()?.value.raw()).abs();
+                Ok(relation.compare(left, right))
             }
             ConditionalKind::IfInCsName | ConditionalKind::IfCase => {
                 Err(CommandError::UnsupportedExpandablePrimitive(match kind {

@@ -649,6 +649,29 @@ impl CommandProcessor<'_> {
                 self.push_rendered_text(".6", command.origin());
                 Ok(())
             }
+            // pdfTeX §57.4 exposes the revision suffix independently of the
+            // integer `\pdftexversion` parameter.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision) => {
+                self.push_rendered_text("27", command.origin());
+                Ok(())
+            }
+            // pdfTeX §57.1 consumes one raw token and, only for a registered
+            // primitive spelling, replays the immutable frozen primitive.
+            // The ordinary expanded loop then dispatches that original
+            // meaning without consulting the shadowable live cell.
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
+                let Some(target) = self.get_next()? else {
+                    return Err(CommandError::input_invariant());
+                };
+                let Some(symbol) = target.control_sequence() else {
+                    return Ok(());
+                };
+                let name = self.state.resolve(symbol);
+                let Some(frozen) = self.state.primitive_token(name) else {
+                    return Ok(());
+                };
+                self.back_input_token(TracedTokenWord::pack(frozen, target.origin()))
+            }
             Meaning::ExpandablePrimitive(
                 primitive @ (ExpandablePrimitive::TopMark
                 | ExpandablePrimitive::FirstMark

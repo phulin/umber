@@ -2190,7 +2190,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn primitive_identity_and_absolute_conditionals_match_pdftex() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -2241,7 +2240,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn primitive_registry_reconstructs_after_format_load_without_unshadowing() {
         let mut source = Universe::default();
         prepare_pdftex_run_stores(&mut source);
