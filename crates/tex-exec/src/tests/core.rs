@@ -6069,7 +6069,7 @@ pub(super) fn run_canonical_tex82_with_fonts(source: &str) -> Universe {
     stores
 }
 
-fn run_canonical_tex82_with_universe(mut stores: Universe, source: &str) -> Universe {
+pub(super) fn run_canonical_tex82_with_universe(mut stores: Universe, source: &str) -> Universe {
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     run_registered_canonical_tex82(&mut control, &mut stores, source);
     stores

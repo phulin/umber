@@ -173,13 +173,7 @@ fn etex_register_definitions_recover_bad_codes_to_register_zero() {
 
 #[test]
 fn dimension_assignment_reports_recoverable_scanner_diagnostic() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\mag=40000 \\dimen0=1truept"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("dimension assignment executes");
+    let stores = super::core::run_canonical_tex82("\\mag=40000 \\dimen0=1truept \\end");
 
     assert_eq!(stores.mag(), 1000);
     assert_eq!(stores.prepared_mag(), Some(1000));
@@ -192,36 +186,23 @@ fn dimension_assignment_reports_recoverable_scanner_diagnostic() {
 
 #[test]
 fn dimension_arithmetic_reports_recoverable_scanner_diagnostic() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\mag=1200 \\dimen0=0pt \\dimen1=1truept \\mag=2000 \\advance\\dimen0 by 1truept",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("dimension arithmetic executes");
+    let stores = super::core::run_canonical_tex82(
+        "\\mag=1200 \\dimen0=0pt \\dimen1=1truept \\mag=2000 \\advance\\dimen0 by 1truept \\end",
+    );
 
     assert_eq!(stores.mag(), 1200);
     assert_eq!(stores.prepared_mag(), Some(1200));
     assert_eq!(stores.dimen(0).raw(), 54_613);
-    assert!(
-        terminal_effect_text(&stores)
-            .contains("! Incompatible magnification (2000); the previous value will be retained.")
-    );
+    assert!(terminal_effect_text(&stores).contains(
+        "! Incompatible magnification (2000);\n the previous value will be retained (1200)."
+    ));
 }
 
 #[test]
 fn chardef_and_mathchardef_are_internal_integers() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\chardef\\A=65 \\mathchardef\\M=\"7132 \\count0=\\A \\count1=\\M",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("character definitions execute");
+    let stores = super::core::run_canonical_tex82(
+        "\\chardef\\A=65 \\mathchardef\\M=\"7132 \\count0=\\A \\count1=\\M \\end",
+    );
 
     assert_eq!(stores.count(0), 65);
     assert_eq!(stores.count(1), 0x7132);
@@ -229,15 +210,9 @@ fn chardef_and_mathchardef_are_internal_integers() {
 
 #[test]
 fn restricted_character_definitions_report_and_substitute_zero() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\chardef\\A=256 \\mathchardef\\M=32768 \\count0=\\A \\count1=\\M",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("bad restricted codes are recoverable TeX errors");
+    let stores = super::core::run_canonical_tex82(
+        "\\chardef\\A=256 \\mathchardef\\M=32768 \\count0=\\A \\count1=\\M \\end",
+    );
 
     assert_eq!(stores.count(0), 0);
     assert_eq!(stores.count(1), 0);
@@ -248,17 +223,10 @@ fn restricted_character_definitions_report_and_substitute_zero() {
 
 #[test]
 fn the_renders_chardef_and_mathchardef_as_internal_integers() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = super::core::run_canonical_tex82(
         "\\chardef\\A=65 \\mathchardef\\M=32767 \
-         \\edef\\result{\\the\\A/\\the\\M}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("the renders character definitions");
+         \\edef\\result{\\the\\A/\\the\\M} \\end",
+    );
 
     let result = stores.symbol("result").expect("result macro");
     let result = stores.macro_meaning(result).expect("result meaning");
@@ -276,14 +244,8 @@ fn the_renders_chardef_and_mathchardef_as_internal_integers() {
 #[test]
 fn the_non_internal_target_reports_and_substitutes_zero() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     stores.set_count(0, 7);
-    let mut input = InputStack::new(MemoryInput::new("\\count0=\\the e%"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("invalid the target is recoverable");
+    let stores = super::core::run_canonical_tex82_with_universe(stores, "\\count0=\\the e%\n\\end");
 
     assert_eq!(stores.count(0), 0);
     let output = terminal_effect_text(&stores);
@@ -293,28 +255,15 @@ fn the_non_internal_target_reports_and_substitutes_zero() {
 
 #[test]
 fn register_definition_target_terminates_its_own_number_scan() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\skipdef\\s100\\s=7pt "));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("register alias should terminate its definition scan");
+    let stores = super::core::run_canonical_tex82("\\skipdef\\s100\\s=7pt \\end");
 
     assert_eq!(stores.glue(stores.skip(100)).width.raw(), 7 * 65_536);
 }
 
 #[test]
 fn parshape_is_an_internal_integer_equal_to_its_line_count() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\parshape=2 1pt 2pt 3pt 4pt \\count0=\\parshape",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("parshape should scan as an internal integer");
+    let stores =
+        super::core::run_canonical_tex82("\\parshape=2 1pt 2pt 3pt 4pt \\count0=\\parshape \\end");
 
     assert_eq!(stores.count(0), 2);
 }
