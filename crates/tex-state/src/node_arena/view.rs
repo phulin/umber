@@ -678,7 +678,10 @@ impl NodeStorage {
                             .collect(),
                     );
                 }
-                NodeRef::HList(node) | NodeRef::VList(node) => children.push(node.children),
+                NodeRef::HList(node) | NodeRef::VList(node) => {
+                    children.push(node.children);
+                    children.extend(node.diagnostic_children);
+                }
                 NodeRef::Glue {
                     leader: Some(crate::node::LeaderPayload::HList(node)),
                     ..

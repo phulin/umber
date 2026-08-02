@@ -767,6 +767,7 @@ fn dump_box(
     _context: ListContext,
     out: &mut String,
 ) {
+    let children = box_node.diagnostic_children.unwrap_or(box_node.children);
     let _ = write!(
         out,
         "\\{}({}+{})x{}",
@@ -789,7 +790,7 @@ fn dump_box(
         tex_state::node::BoxLr::DList => out.push_str(", display"),
     }
     if depth + 1 >= config.depth {
-        if !stores.nodes(box_node.children).is_empty() {
+        if !stores.nodes(children).is_empty() {
             out.push_str(" []");
         }
         out.push('\n');
@@ -803,7 +804,7 @@ fn dump_box(
     };
     dump_list(
         stores,
-        box_node.children,
+        children,
         config,
         depth + 1,
         child_context,

@@ -117,6 +117,7 @@ pub(super) struct FormatBoxNode {
     glue_sign: Sign,
     glue_order: Order,
     children: FormatListKey,
+    diagnostic_children: Option<FormatListKey>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -291,7 +292,12 @@ impl FormatNode {
                 leader: Some(leader),
                 ..
             } => leader.remap_list_keys(keys),
-            Self::HList(node) | Self::VList(node) => remap(&mut node.children),
+            Self::HList(node) | Self::VList(node) => {
+                remap(&mut node.children);
+                if let Some(children) = &mut node.diagnostic_children {
+                    remap(children);
+                }
+            }
             Self::Unset(node) => remap(&mut node.children),
             Self::Disc {
                 pre, post, replace, ..
@@ -605,6 +611,11 @@ impl FormatLeaderPayload {
                 node.children = *keys
                     .get(&node.children)
                     .expect("captured leader child key must be present");
+                if let Some(children) = &mut node.diagnostic_children {
+                    *children = *keys
+                        .get(children)
+                        .expect("captured leader diagnostic child key must be present");
+                }
             }
             Self::Rule { .. } => {}
         }
@@ -633,6 +644,7 @@ impl FormatBoxNode {
             glue_sign: node.glue_sign,
             glue_order: node.glue_order,
             children: key(stores, node.children, roots),
+            diagnostic_children: node.diagnostic_children.map(|id| key(stores, id, roots)),
         }
     }
 
@@ -647,6 +659,10 @@ impl FormatBoxNode {
             glue_sign: self.glue_sign,
             glue_order: self.glue_order,
             children: list_id(ids, self.children)?,
+            diagnostic_children: self
+                .diagnostic_children
+                .map(|id| list_id(ids, id))
+                .transpose()?,
         })
     }
 }

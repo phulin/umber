@@ -13,6 +13,7 @@ pub(crate) enum ChildPatch {
     Box {
         row: usize,
         child: NodeListId,
+        diagnostic_child: Option<NodeListId>,
     },
     Unset {
         row: usize,
@@ -55,8 +56,11 @@ pub(crate) enum ChildPatch {
 impl ChildPatch {
     pub(crate) fn remap(mut self, mut map: impl FnMut(NodeListId) -> NodeListId) -> Self {
         match &mut self {
-            Self::Box { child, .. }
-            | Self::Unset { child, .. }
+            Self::Box { child, diagnostic_child, .. } => {
+                *child = map(*child);
+                if let Some(child) = diagnostic_child { *child = map(*child); }
+            }
+            Self::Unset { child, .. }
             | Self::Leader { child, .. }
             | Self::Insertion { child, .. }
             | Self::MathList { child, .. }
@@ -121,6 +125,7 @@ impl NodeStorage {
                     pending.push(ChildPatch::Box {
                         row: row as usize,
                         child: source.storage.boxes.rows[side].children,
+                        diagnostic_child: source.storage.boxes.rows[side].diagnostic_children,
                     });
                     NodeWord::sidecar(word.tag(), row)
                 }

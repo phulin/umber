@@ -365,7 +365,7 @@ impl AdjustNode {
 }
 
 /// A TeX box node payload shared by hlist and vlist nodes.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct BoxNode {
     pub width: Scaled,
     pub height: Scaled,
@@ -378,6 +378,7 @@ pub struct BoxNode {
     pub glue_sign: Sign,
     pub glue_order: Order,
     pub children: NodeListId,
+    pub diagnostic_children: Option<NodeListId>,
 }
 
 impl BoxNode {
@@ -394,7 +395,22 @@ impl BoxNode {
             glue_sign: fields.glue_sign,
             glue_order: fields.glue_order,
             children: fields.children,
+            diagnostic_children: None,
         }
+    }
+}
+
+impl PartialEq for BoxNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.depth == other.depth
+            && self.shift == other.shift
+            && self.box_lr == other.box_lr
+            && self.glue_set == other.glue_set
+            && self.glue_sign == other.glue_sign
+            && self.glue_order == other.glue_order
+            && self.children == other.children
     }
 }
 
