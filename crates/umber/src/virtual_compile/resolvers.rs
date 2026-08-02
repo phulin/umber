@@ -3,15 +3,12 @@ use std::path::Path;
 
 use tex_exec::{
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
-    CanonicalResourceOutcome, CanonicalResourceWorld, FontResolver, PdfImageRequest,
-    PdfImageResolver,
+    CanonicalResourceOutcome, CanonicalResourceWorld, PdfImageRequest,
 };
-use tex_expand::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
     FontPurposes, FontRequest, FontRequestKey, LegacyEncodingMap, OpenTypeFont, VariationSelection,
 };
-use tex_lex::WorldInput;
 use tex_state::scaled::Scaled;
 use tex_state::{
     FileContent, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputReadState,
@@ -30,6 +27,24 @@ pub(super) struct VirtualRunResolvers<'a> {
     image: VirtualImageResolver<'a>,
     request_index: u64,
 }
+
+enum HostLookup<T> {
+    Available(T),
+    Unavailable,
+    NeedResource,
+}
+
+impl<T> HostLookup<T> {
+    fn map<U>(self, operation: impl FnOnce(T) -> U) -> HostLookup<U> {
+        match self {
+            Self::Available(value) => HostLookup::Available(operation(value)),
+            Self::Unavailable => HostLookup::Unavailable,
+            Self::NeedResource => HostLookup::NeedResource,
+        }
+    }
+}
+
+type HostResult<T> = Result<HostLookup<T>, String>;
 
 pub(super) struct FontResolutionPolicy<'a> {
     pub accepted_containers: AcceptedFontContainers,
@@ -142,51 +157,49 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
             CanonicalResourceNeed::Font { request } => world
                 .with_input_read_state(|input| {
                     self.font
-                        .open_font(input, Path::new(&request.name), request_index)
+                        .open_canonical_font(input, Path::new(&request.name), request_index)
                 })
                 .map(|lookup| {
                     lookup.map(|source| CanonicalResourceFulfillment::Font {
                         request: request.clone(),
-                        resource: Box::new(match source {
-                            tex_exec::FontSource::Tfm { metrics, opentype } => {
-                                tex_command::FontResource::Tfm { metrics, opentype }
-                            }
-                            tex_exec::FontSource::MappedTfm {
-                                metrics,
-                                opentype,
-                                encoding_map,
-                            } => tex_command::FontResource::MappedTfm {
-                                metrics,
-                                opentype,
-                                encoding_map,
-                            },
-                            tex_exec::FontSource::ClassicTfmFallback { metrics } => {
-                                tex_command::FontResource::ClassicTfmFallback { metrics }
-                            }
-                            tex_exec::FontSource::OpenType(selection) => {
-                                tex_command::FontResource::OpenType(selection)
-                            }
-                        }),
+                        resource: Box::new(source),
                     })
                 }),
             CanonicalResourceNeed::PdfImage { request } => world
                 .with_input_read_state(|input| {
-                    self.image
-                        .open_image(input, &legacy_image_request(request), request_index)
+                    self.image.open_canonical_image(
+                        input,
+                        &legacy_image_request(request),
+                        request_index,
+                    )
                 })
                 .map(|lookup| {
-                    lookup.map(|source| CanonicalResourceFulfillment::PdfImage {
+                    lookup.map(|resource| CanonicalResourceFulfillment::PdfImage {
                         request: request.clone(),
-                        resource: Box::new(tex_command::PdfImageResource::Available(source)),
+                        resource: Box::new(resource),
                     })
                 }),
         };
         match result {
-            Ok(ResourceLookup::Available(fulfillment)) => {
+            Ok(HostLookup::Available(fulfillment)) => {
                 CanonicalResourceOutcome::Fulfilled(fulfillment)
             }
-            Ok(ResourceLookup::Unavailable) => CanonicalResourceOutcome::Unavailable,
-            Ok(ResourceLookup::NeedResource(_)) | Err(_) => CanonicalResourceOutcome::Declined,
+            Ok(HostLookup::Unavailable) => CanonicalResourceOutcome::Unavailable,
+            Ok(HostLookup::NeedResource) => CanonicalResourceOutcome::Declined,
+            Err(error) => {
+                match need {
+                    CanonicalResourceNeed::Input { .. } => {
+                        self.input.record_fatal(CompileError::World(error))
+                    }
+                    CanonicalResourceNeed::Font { .. } => {
+                        self.font.files.record_fatal(CompileError::Font(error))
+                    }
+                    CanonicalResourceNeed::PdfImage { .. } => {
+                        self.image.files.record_fatal(CompileError::Output(error))
+                    }
+                }
+                CanonicalResourceOutcome::Declined
+            }
         }
     }
 }
@@ -219,29 +232,40 @@ struct VirtualImageResolver<'a> {
     cache: HashMap<PdfImageRequest, PdfExternalImageSource>,
 }
 
-impl PdfImageResolver for VirtualImageResolver<'_> {
-    fn open_image(
+impl VirtualImageResolver<'_> {
+    fn open_canonical_image(
         &mut self,
         input: &mut dyn InputReadState,
         request: &PdfImageRequest,
         request_index: u64,
-    ) -> ResourceResult<PdfExternalImageSource> {
+    ) -> HostResult<tex_command::PdfImageResource> {
         if let Some(source) = self.cache.get(request) {
-            return Ok(ResourceLookup::Available(source.clone()));
+            return Ok(HostLookup::Available(
+                tex_command::PdfImageResource::Available(source.clone()),
+            ));
         }
         match self
             .files
             .open(input, FileKind::Image, &request.name, request_index)?
         {
-            ResourceLookup::Available(content) => {
-                let source = parse_image(&content, request)?;
+            HostLookup::Available(content) => {
+                let source = match parse_image(&content, request) {
+                    Ok(source) => source,
+                    Err(error) => {
+                        return Ok(HostLookup::Available(
+                            tex_command::PdfImageResource::Invalid(error),
+                        ));
+                    }
+                };
                 if content.origin() == InputOrigin::External {
                     self.cache.insert(request.clone(), source.clone());
                 }
-                Ok(ResourceLookup::Available(source))
+                Ok(HostLookup::Available(
+                    tex_command::PdfImageResource::Available(source),
+                ))
             }
-            ResourceLookup::Unavailable => Ok(ResourceLookup::Unavailable),
-            ResourceLookup::NeedResource(need) => Ok(ResourceLookup::NeedResource(need)),
+            HostLookup::Unavailable => Ok(HostLookup::Unavailable),
+            HostLookup::NeedResource => Ok(HostLookup::NeedResource),
         }
     }
 }
@@ -440,7 +464,7 @@ impl<'a> VirtualFileResolver<'a> {
         kind: FileKind,
         original_name: &str,
         request_index: u64,
-    ) -> ResourceResult<FileContent> {
+    ) -> HostResult<FileContent> {
         self.open_classified(
             input,
             kind,
@@ -457,12 +481,12 @@ impl<'a> VirtualFileResolver<'a> {
         original_name: &str,
         request_index: u64,
         intent: FileOpenIntent,
-    ) -> ResourceResult<FileContent> {
+    ) -> HostResult<FileContent> {
         let requested = match RequestedFile::parse(kind, original_name) {
             Ok(requested) => requested,
             Err(error) => {
                 if intent == FileOpenIntent::Probe {
-                    return Ok(ResourceLookup::Unavailable);
+                    return Ok(HostLookup::Unavailable);
                 }
                 let failure = CompileError::InvalidRequestedPath {
                     name: original_name.to_owned(),
@@ -477,7 +501,7 @@ impl<'a> VirtualFileResolver<'a> {
             RequestedFile::Remote { key, .. } => Path::new(key.name()),
         };
         if let Some(content) = self.read_pending_output(input, pending_path)? {
-            return Ok(ResourceLookup::Available(content));
+            return Ok(HostLookup::Available(content));
         }
 
         match requested {
@@ -485,21 +509,21 @@ impl<'a> VirtualFileResolver<'a> {
                 let Some(file) = self.snapshot_file(&path)? else {
                     self.record_missing(input, &path, intent)?;
                     if intent == FileOpenIntent::Probe {
-                        return Ok(ResourceLookup::Unavailable);
+                        return Ok(HostLookup::Unavailable);
                     }
                     let failure = CompileError::UnavailableAbsoluteUserFile(path.to_string());
                     self.record_fatal(failure.clone());
                     return Err(failure.to_string());
                 };
                 self.read_snapshot(input, file, intent)
-                    .map(ResourceLookup::Available)
+                    .map(HostLookup::Available)
             }
             RequestedFile::Remote { user_path, key } => {
                 let missing_user_path = if let Some(user_path) = user_path {
                     if let Some(file) = self.snapshot_file(&user_path)? {
                         return self
                             .read_snapshot(input, file, intent)
-                            .map(ResourceLookup::Available);
+                            .map(HostLookup::Available);
                     }
                     Some(user_path)
                 } else {
@@ -518,13 +542,13 @@ impl<'a> VirtualFileResolver<'a> {
                     };
                     return self
                         .read_snapshot(input, file, intent)
-                        .map(ResourceLookup::Available);
+                        .map(HostLookup::Available);
                 }
                 if self.unavailable.contains(&key) {
                     if let Some(path) = &missing_user_path {
                         self.record_missing(input, path, intent)?;
                     }
-                    return Ok(ResourceLookup::Unavailable);
+                    return Ok(HostLookup::Unavailable);
                 }
                 let request = FileRequest::new(key.clone(), original_name);
                 if self.seen.insert(key.clone()) {
@@ -542,9 +566,7 @@ impl<'a> VirtualFileResolver<'a> {
                     let (probe_index, _) = self.probes.swap_remove(position);
                     self.misses.push((probe_index, request));
                 }
-                Ok(ResourceLookup::NeedResource(ResourceNeed::new(
-                    request_index,
-                )))
+                Ok(HostLookup::NeedResource)
             }
         }
     }
@@ -635,55 +657,6 @@ const fn dependency_access(intent: FileOpenIntent) -> InputDependencyAccess {
     }
 }
 
-impl InputResolver for VirtualFileResolver<'_> {
-    fn open_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<Box<dyn tex_lex::InputSource>> {
-        self.open(input, FileKind::TexInput, name, request_index)
-            .map(|lookup| {
-                lookup.map(|content| {
-                    Box::new(WorldInput::from_content(content)) as Box<dyn tex_lex::InputSource>
-                })
-            })
-    }
-
-    fn input_file_size(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<u64> {
-        self.open_classified(
-            input,
-            FileKind::TexInput,
-            name,
-            request_index,
-            FileOpenIntent::Probe,
-        )
-        .map(|lookup| {
-            lookup.map(|content| u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
-        })
-    }
-
-    fn open_stream_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        self.open_classified(
-            input,
-            FileKind::TexInput,
-            name,
-            request_index,
-            FileOpenIntent::Probe,
-        )
-    }
-}
-
 struct VirtualFontResolver<'a> {
     files: VirtualFileResolver<'a>,
     resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
@@ -717,13 +690,13 @@ impl<'a> VirtualFontResolver<'a> {
     }
 }
 
-impl FontResolver for VirtualFontResolver<'_> {
-    fn open_font(
+impl VirtualFontResolver<'_> {
+    fn open_canonical_font(
         &mut self,
         input: &mut dyn InputReadState,
         path: &Path,
         request_index: u64,
-    ) -> ResourceResult<tex_exec::FontSource> {
+    ) -> HostResult<tex_command::FontResource> {
         let Some(name) = path.to_str() else {
             let failure = CompileError::InvalidRequestedPath {
                 name: path.display().to_string(),
@@ -742,14 +715,14 @@ impl FontResolver for VirtualFontResolver<'_> {
             return tfm
                 .expect("classic selection has a TFM request")
                 .map(|lookup| {
-                    lookup.map(|metrics| tex_exec::FontSource::Tfm {
+                    lookup.map(|metrics| tex_command::FontResource::Tfm {
                         metrics,
                         opentype: None,
                     })
                 });
         }
         let tfm_content = match tfm {
-            Some(Ok(ResourceLookup::Available(metrics))) => Some(metrics),
+            Some(Ok(HostLookup::Available(metrics))) => Some(metrics),
             Some(other) => return other.map(|lookup| lookup.map(|_| unreachable!())),
             None => None,
         };
@@ -769,18 +742,16 @@ impl FontResolver for VirtualFontResolver<'_> {
             if self.unavailable_fonts.contains(&key) {
                 return if let Some(metrics) = tfm_content {
                     match self.fallback {
-                        FontMappingFallbackPolicy::ClassicTfmExact => {
-                            Ok(ResourceLookup::Available(
-                                tex_exec::FontSource::ClassicTfmFallback { metrics },
-                            ))
-                        }
+                        FontMappingFallbackPolicy::ClassicTfmExact => Ok(HostLookup::Available(
+                            tex_command::FontResource::ClassicTfmFallback { metrics },
+                        )),
                         FontMappingFallbackPolicy::Error => Err(format!(
                             "no OpenType mapping resource for {logical_name} with TFM identity {}",
                             metrics.hash().hex()
                         )),
                     }
                 } else {
-                    Ok(ResourceLookup::Unavailable)
+                    Ok(HostLookup::Unavailable)
                 };
             }
             self.font_misses.entry(key.clone()).or_insert_with(|| {
@@ -793,9 +764,7 @@ impl FontResolver for VirtualFontResolver<'_> {
                     },
                 )
             });
-            return Ok(ResourceLookup::NeedResource(ResourceNeed::new(
-                request_index,
-            )));
+            return Ok(HostLookup::NeedResource);
         };
         let mapped_bundle = self
             .font_responses
@@ -839,13 +808,15 @@ impl FontResolver for VirtualFontResolver<'_> {
                         .clone(),
                 )
                 .map_err(str::to_owned)?;
-                Ok(ResourceLookup::Available(tex_exec::FontSource::MappedTfm {
-                    metrics,
-                    opentype: selection,
-                    encoding_map,
-                }))
+                Ok(HostLookup::Available(
+                    tex_command::FontResource::MappedTfm {
+                        metrics,
+                        opentype: selection,
+                        encoding_map,
+                    },
+                ))
             }
-            None => Ok(ResourceLookup::Available(tex_exec::FontSource::OpenType(
+            None => Ok(HostLookup::Available(tex_command::FontResource::OpenType(
                 selection,
             ))),
         }
@@ -856,7 +827,9 @@ impl FontResolver for VirtualFontResolver<'_> {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{FileOpenIntent, VirtualFileResolver, parse_pdf_image, pixels_to_scaled};
+    use super::{
+        FileOpenIntent, HostLookup, VirtualFileResolver, parse_pdf_image, pixels_to_scaled,
+    };
     use crate::{
         CompileAttemptResult, EngineMode, FileKind, ResolvedFile, ResourceRequest,
         ResourceResponse, SessionOptions, VirtualCompileSession,
@@ -865,7 +838,6 @@ mod tests {
         Dictionary as FixtureDictionary, PdfFixture, array, name, reference,
     };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
-    use tex_expand::{ResourceLookup, ResourceNeed};
     use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
     use umber_vfs::{VfsLimits, VirtualFs};
 
@@ -894,7 +866,7 @@ mod tests {
                     FileOpenIntent::Probe,
                 )
                 .expect("probe lookup"),
-            ResourceLookup::NeedResource(need) if need == ResourceNeed::new(7)
+            HostLookup::NeedResource
         ));
         assert!(matches!(
             resolver
@@ -906,7 +878,7 @@ mod tests {
                     FileOpenIntent::Required,
                 )
                 .expect("required lookup"),
-            ResourceLookup::NeedResource(need) if need == ResourceNeed::new(9)
+            HostLookup::NeedResource
         ));
         assert!(resolver.probes.is_empty());
         assert_eq!(resolver.misses.len(), 1);

@@ -10,6 +10,30 @@ use tex_state::{FormatError, Universe, World};
 
 use super::*;
 
+#[test]
+fn virtual_compile_production_sources_stay_on_the_canonical_retained_boundary() {
+    let driver = include_str!("../virtual_compile.rs");
+    let resolvers = include_str!("resolvers.rs");
+    for (source_name, source) in [("driver", driver), ("resolvers", resolvers)] {
+        for forbidden in [
+            "tex_exec::Executor",
+            "tex_lex::InputStack",
+            "tex_expand::InputResolver",
+            "tex_expand::ResourceLookup",
+            "FontResolver for",
+            "PdfImageResolver for",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "virtual {source_name} must not regain legacy execution through {forbidden}"
+            );
+        }
+    }
+    assert!(driver.contains("drive_with_resource_resolvers(&mut resolvers"));
+    assert!(resolvers.contains("impl CanonicalResourceHost for VirtualRunResolvers"));
+    assert!(resolvers.contains("CanonicalResourceFulfillment::world_input"));
+}
+
 const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
@@ -4509,15 +4533,15 @@ fn cache_clear_preserves_the_latest_accepted_editor_root() {
 #[test]
 fn persistent_session_accepts_multiple_revision_checked_patches() {
     let original = "\\shipout\\vbox{\\hrule height 1pt}\\end";
-    let mut session = session(original);
-    let CompileAttemptResult::Complete(first) = session.compile_attempt() else {
+    let mut incremental = session(original);
+    let CompileAttemptResult::Complete(first) = incremental.compile_attempt() else {
         panic!("initial revision should complete");
     };
-    assert_eq!(session.revision(), Some(RevisionId::new(1)));
+    assert_eq!(incremental.revision(), Some(RevisionId::new(1)));
 
-    let first_hash = session.content_hash().expect("accepted hash");
+    let first_hash = incremental.content_hash().expect("accepted hash");
     let one = original.find("1pt").expect("height");
-    session
+    incremental
         .apply_patch(SourcePatch {
             next_revision: RevisionId::new(2),
             base_revision: RevisionId::new(1),
@@ -4526,14 +4550,14 @@ fn persistent_session_accepts_multiple_revision_checked_patches() {
             replacement: "2".to_owned(),
         })
         .expect("first patch");
-    let CompileAttemptResult::Complete(second) = session.compile_attempt() else {
+    let CompileAttemptResult::Complete(second) = incremental.compile_attempt() else {
         panic!("second revision should complete");
     };
     assert_ne!(first.dvi, second.dvi);
-    assert_eq!(session.revision(), Some(RevisionId::new(2)));
+    assert_eq!(incremental.revision(), Some(RevisionId::new(2)));
 
-    let second_hash = session.content_hash().expect("second hash");
-    session
+    let second_hash = incremental.content_hash().expect("second hash");
+    incremental
         .apply_patch(SourcePatch {
             next_revision: RevisionId::new(3),
             base_revision: RevisionId::new(2),
@@ -4542,13 +4566,22 @@ fn persistent_session_accepts_multiple_revision_checked_patches() {
             replacement: "3".to_owned(),
         })
         .expect("second patch");
-    assert!(matches!(
-        session.compile_attempt(),
-        CompileAttemptResult::Complete(_)
-    ));
-    assert_eq!(session.revision(), Some(RevisionId::new(3)));
+    let CompileAttemptResult::Complete(third) = incremental.compile_attempt() else {
+        panic!("third revision should complete");
+    };
+    assert_eq!(incremental.revision(), Some(RevisionId::new(3)));
 
-    let stale = session.apply_patch(SourcePatch {
+    let final_source = original.replacen("1pt", "3pt", 1);
+    let mut cold_session = session(&final_source);
+    let CompileAttemptResult::Complete(cold) = cold_session.compile_attempt() else {
+        panic!("cold final revision should complete");
+    };
+    assert_eq!(
+        third, cold,
+        "retained multi-run output must equal cold output"
+    );
+
+    let stale = incremental.apply_patch(SourcePatch {
         next_revision: RevisionId::new(4),
         base_revision: RevisionId::new(2),
         expected_hash: second_hash,
