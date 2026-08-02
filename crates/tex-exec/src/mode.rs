@@ -112,7 +112,7 @@ impl ModeNest {
 /// The list-under-construction owned by one mode level.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModeList {
-    nodes: Arc<Vec<Node>>,
+    sequence: tex_state::node_sequence::NodeSequence,
     align_state: Option<AlignState>,
     incomplete_fraction: Option<IncompleteFraction>,
     display_interrupt: Option<DisplayInterrupt>,
@@ -131,24 +131,29 @@ pub struct ModeList {
 impl ModeList {
     #[must_use]
     pub fn nodes(&self) -> &[Node] {
-        &self.nodes
+        self.sequence.semantic()
+    }
+
+    #[must_use]
+    pub fn physical_nodes(&self) -> &[Node] {
+        self.sequence.physical()
     }
 
     pub fn take_nodes(&mut self) -> Vec<Node> {
-        Arc::try_unwrap(std::mem::take(&mut self.nodes)).unwrap_or_else(|shared| (*shared).clone())
+        std::mem::take(&mut self.sequence).take().0
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.sequence.semantic().is_empty()
     }
 
     pub fn push(&mut self, node: Node) {
-        Arc::make_mut(&mut self.nodes).push(node);
+        self.sequence.push_mirrored(node);
     }
 
     pub fn append(&mut self, nodes: impl IntoIterator<Item = Node>) {
-        Arc::make_mut(&mut self.nodes).extend(nodes);
+        self.sequence.extend_mirrored(nodes);
     }
 
     /// Mutates one pre-existing node without allowing the mutable reference to
@@ -158,7 +163,7 @@ impl ModeList {
         index: usize,
         mutate: impl FnOnce(&mut Node) -> R,
     ) -> Option<R> {
-        Arc::make_mut(&mut self.nodes).get_mut(index).map(mutate)
+        self.sequence.mutate_semantic(|nodes| nodes.get_mut(index).map(mutate))
     }
 
     #[cfg(test)]
@@ -166,7 +171,7 @@ impl ModeList {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
     ) -> R {
-        mutate(Arc::make_mut(&mut self.nodes))
+        self.sequence.mutate_semantic(mutate)
     }
 
     #[cfg(test)]
@@ -177,7 +182,7 @@ impl ModeList {
         second: Option<Node>,
         third: Option<Node>,
     ) {
-        let target = Arc::make_mut(&mut self.nodes);
+        self.sequence.mutate_semantic(|target| {
         target.reserve(
             usize::from(insertion.is_some())
                 + 1
@@ -194,11 +199,12 @@ impl ModeList {
         if let Some(node) = third {
             target.push(node);
         }
+        });
     }
 
     pub(crate) fn begin_pending_hchars(&mut self, font: FontId, ch: char, origin: OriginId) {
         debug_assert!(self.pending_hchars.is_none());
-        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes.len()));
+        self.pending_hchars = Some(PendingHRun::new(font, ch, origin, self.nodes().len()));
     }
 
     pub(crate) fn pending_hchars(&self) -> Option<&PendingHRun> {
@@ -289,12 +295,13 @@ impl ModeList {
     /// removed box also loses any raise/lower shift before it is used in its
     /// new box context, matching TeX82's `shift_amount(cur_box) := 0`.
     pub fn take_last_box(&mut self) -> Option<Node> {
-        match self.nodes.last() {
+        match self.nodes().last() {
             Some(Node::HList(_)) | Some(Node::VList(_)) => {}
             _ => return None,
         }
-        let mut node = Arc::make_mut(&mut self.nodes)
-            .pop()
+        let mut node = self
+            .sequence
+            .mutate_semantic(|nodes| nodes.pop())
             .expect("tail was just inspected");
         match &mut node {
             Node::HList(box_node) | Node::VList(box_node) => {
@@ -306,14 +313,15 @@ impl ModeList {
     }
 
     pub fn pop_last_node(&mut self) -> Option<Node> {
-        Arc::make_mut(&mut self.nodes).pop()
+        self.sequence.mutate_semantic(|nodes| nodes.pop())
     }
 
     pub(crate) fn remove_node_range(
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Node> {
-        Arc::make_mut(&mut self.nodes).drain(range).collect()
+        self.sequence
+            .mutate_semantic(|nodes| nodes.drain(range).collect())
     }
 
     /// Mutates the tail node without allowing its mutable reference to escape.
@@ -321,7 +329,8 @@ impl ModeList {
         &mut self,
         mutate: impl FnOnce(&mut Node) -> R,
     ) -> Option<R> {
-        Arc::make_mut(&mut self.nodes).last_mut().map(mutate)
+        self.sequence
+            .mutate_semantic(|nodes| nodes.last_mut().map(mutate))
     }
 
     #[must_use]
@@ -387,7 +396,7 @@ impl ModeList {
         // A display alignment owns the whole display-mode list: §1206 permits
         // assignments before the closing `$$`, but no additional material.
         debug_assert!(!self.display_alignment);
-        debug_assert!(self.nodes.is_empty());
+        debug_assert!(self.nodes().is_empty());
         self.append(nodes);
         self.prev_depth = prev_depth;
         self.display_alignment = true;
@@ -463,7 +472,7 @@ impl ModeListMutation<'_> {
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Node) -> R,
     ) -> Option<R> {
-        if let Some(index) = self.list.nodes.len().checked_sub(1) {
+        if let Some(index) = self.list.nodes().len().checked_sub(1) {
             self.record_node(index);
         }
         self.list.with_last_node_mut(mutate)
@@ -591,7 +600,7 @@ impl ModeListMutation<'_> {
 
     fn record_node(&mut self, index: usize) {
         if let Some(journal) = &mut self.journal
-            && let Some(node) = self.list.nodes.get(index)
+            && let Some(node) = self.list.nodes().get(index)
         {
             journal.record_node(index, node.clone());
         }
@@ -599,7 +608,7 @@ impl ModeListMutation<'_> {
 
     fn record_nodes(&mut self) {
         if let Some(journal) = &mut self.journal {
-            journal.record_nodes(self.list.nodes.clone());
+            journal.record_nodes(self.list.sequence.clone());
         }
     }
 
@@ -954,7 +963,7 @@ fn hash_mode(mode: Mode, projection: &mut EngineBoundaryHasher<'_>) {
 }
 
 fn hash_mode_list(list: &ModeList, projection: &mut EngineBoundaryHasher<'_>) {
-    projection.nodes(&list.nodes);
+    projection.nodes(list.nodes());
     match &list.align_state {
         Some(align) => {
             projection.bool(true);

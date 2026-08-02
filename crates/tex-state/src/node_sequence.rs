@@ -36,6 +36,11 @@ impl NodeSequence {
     }
 
     #[must_use]
+    pub fn from_shared_channels(semantic: Arc<Vec<Node>>, physical: Arc<Vec<Node>>) -> Self {
+        Self { semantic, physical }
+    }
+
+    #[must_use]
     pub fn semantic(&self) -> &[Node] {
         &self.semantic
     }
@@ -66,6 +71,20 @@ impl NodeSequence {
     pub fn replace_channels(&mut self, semantic: Vec<Node>, physical: Vec<Node>) {
         self.semantic = Arc::new(semantic);
         self.physical = Arc::new(physical);
+    }
+
+    /// Mutates semantic nodes and atomically resets the physical channel to
+    /// the resulting topology. Callers that perform a topology-aware rewrite
+    /// replace both channels explicitly instead.
+    pub fn mutate_semantic<R>(&mut self, mutate: impl FnOnce(&mut Vec<Node>) -> R) -> R {
+        let result = mutate(Arc::make_mut(&mut self.semantic));
+        self.physical = Arc::new((*self.semantic).clone());
+        result
+    }
+
+    pub fn truncate(&mut self, semantic_len: usize, physical_len: usize) {
+        Arc::make_mut(&mut self.semantic).truncate(semantic_len);
+        Arc::make_mut(&mut self.physical).truncate(physical_len);
     }
 
     pub fn semantic_arc(&self) -> Arc<Vec<Node>> {

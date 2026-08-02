@@ -8,6 +8,7 @@ use super::{AlignState, ModeLevelSummary, ModeList, ModeNest};
 struct ListProjection {
     id: u64,
     node_len: usize,
+    physical_node_len: usize,
     scalars: ModeListScalars,
 }
 
@@ -79,7 +80,7 @@ enum Inverse {
     },
     Nodes {
         level_id: u64,
-        old: Arc<Vec<Node>>,
+        old: tex_state::node_sequence::NodeSequence,
     },
     AlignState {
         level_id: u64,
@@ -187,7 +188,7 @@ impl ListJournal<'_> {
         });
     }
 
-    pub(super) fn record_nodes(&mut self, old: Arc<Vec<Node>>) {
+    pub(super) fn record_nodes(&mut self, old: tex_state::node_sequence::NodeSequence) {
         self.inverses.push(Inverse::Nodes {
             level_id: self.level_id,
             old,
@@ -229,7 +230,8 @@ impl ModeNest {
             .zip(&self.journal.level_ids)
             .map(|(level, &id)| ListProjection {
                 id,
-                node_len: level.list.nodes.len(),
+                node_len: level.list.nodes().len(),
+                physical_node_len: level.list.physical_nodes().len(),
                 scalars: ModeListScalars::capture(&level.list),
             })
             .collect();
@@ -272,10 +274,10 @@ impl ModeNest {
                     old,
                 } => {
                     let level = self.level_by_id_mut(level_id);
-                    Arc::make_mut(&mut level.list.nodes)[index] = old;
+                    level.list.sequence.mutate_semantic(|nodes| nodes[index] = old);
                 }
                 Inverse::Nodes { level_id, old } => {
-                    self.level_by_id_mut(level_id).list.nodes = old;
+                    self.level_by_id_mut(level_id).list.sequence = old;
                 }
                 Inverse::AlignState { level_id, old } => {
                     self.level_by_id_mut(level_id).list.align_state = old;
@@ -293,7 +295,10 @@ impl ModeNest {
         }
         for projection in frame.lists {
             let level = self.level_by_id_mut(projection.id);
-            Arc::make_mut(&mut level.list.nodes).truncate(projection.node_len);
+            level
+                .list
+                .sequence
+                .truncate(projection.node_len, projection.physical_node_len);
             projection.scalars.restore(&mut level.list);
         }
         Ok(())

@@ -26,22 +26,34 @@ fn mode_summary_shares_roots_and_restored_mutation_detaches() {
     let summary = nest.summary();
 
     assert!(Arc::ptr_eq(&nest.levels, &summary.levels));
-    let shared_nodes = Arc::clone(&summary.levels.last().expect("horizontal level").list.nodes);
+    let shared_nodes = summary
+        .levels
+        .last()
+        .expect("horizontal level")
+        .list
+        .sequence
+        .semantic_arc();
 
     let mut restored = ModeNest::from_summary(summary.clone()).expect("restore mode nest");
     assert!(Arc::ptr_eq(&restored.levels, &summary.levels));
     restored.current_list_mutation().push(kern(2));
 
     assert!(!Arc::ptr_eq(&restored.levels, &summary.levels));
-    let restored_nodes = &restored.levels.last().expect("horizontal level").list.nodes;
-    assert!(!Arc::ptr_eq(restored_nodes, &shared_nodes));
+    let restored_nodes = restored
+        .levels
+        .last()
+        .expect("horizontal level")
+        .list
+        .sequence
+        .semantic_arc();
+    assert!(!Arc::ptr_eq(&restored_nodes, &shared_nodes));
     assert_eq!(
         summary
             .levels
             .last()
             .expect("horizontal level")
             .list
-            .nodes
+            .nodes()
             .len(),
         1
     );
