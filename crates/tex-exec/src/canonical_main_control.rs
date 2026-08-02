@@ -1463,6 +1463,16 @@ impl CanonicalMainControl {
         self.modes.current_list()
     }
 
+    /// Finishes the current unfinished math list for crate-level structural
+    /// assertions without exposing the canonical control's owned mode nest.
+    #[cfg(test)]
+    pub(crate) fn finish_current_math_list_for_test(
+        &mut self,
+        stores: &mut Universe,
+    ) -> tex_state::ids::NodeListId {
+        crate::math::testing_finish_current_math_list(&mut self.modes, stores)
+    }
+
     /// Returns the structural alignment started by the most recent replayed
     /// `\halign` or `\valign`, if it has not yet been finished.
     #[must_use]
