@@ -1486,7 +1486,19 @@ fn right_closes_left_group_whose_numerator_was_captured_by_fraction() {
     let (stores, executor) = run_math_source(r"$\left.A\over A\abovewithdelims.?\right(+A");
 
     assert_eq!(executor.current_mode(), Mode::Math);
-    assert!(!support::terminal_effect_text(&stores).contains("Extra \\right"));
+    let transcript = support::terminal_effect_text(&stores);
+    assert!(!transcript.contains("Extra \\right"));
+    // TeX82 §§1160--1161 and 1182: `.` is the null delimiter, while the
+    // invalid `?` is backed up and diagnosed before §448 starts the explicit
+    // thickness scan. That scan therefore sees the same `?` and takes §446's
+    // missing-number path only after the delimiter report.
+    let missing_delimiter = transcript
+        .find("! Missing delimiter (. inserted).")
+        .expect("invalid right fraction delimiter is diagnosed");
+    let missing_number = transcript
+        .find("! Missing number, treated as zero.")
+        .expect("thickness reports its vacuous numeric constant");
+    assert!(missing_delimiter < missing_number, "{transcript}");
     let nodes = math_nodes(&stores, &executor);
     let inner = math_noad(&nodes[0]);
     let MathField::SubMlist(list) = inner.nucleus else {

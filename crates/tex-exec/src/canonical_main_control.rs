@@ -3377,9 +3377,6 @@ impl CanonicalMainControl {
         boundary: MathDelimiterBoundary,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
-        if boundary.delimiter.missing_delimiter {
-            report_missing_delimiter(&self.command, stores)?;
-        }
         match boundary.kind {
             MathDelimiterBoundaryKind::Left => {
                 // TeX82 §1191's `push_math(math_left_group)` opens both a
@@ -4635,30 +4632,6 @@ fn report_unpaired_display_end(
         &[
             "The `$' that I just saw supposedly matches a previous `$$'.",
             "So I shall assume that you typed `$$' both times.",
-        ],
-        context,
-    )?;
-    Ok(())
-}
-
-/// TeX82 §1161's invalid-delimiter `back_error`. The structured scanner has
-/// already returned the rejected token to input, so this boundary owns only
-/// the report after its borrow ends.
-fn report_missing_delimiter(
-    command: &CommandState,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
-    crate::error_report::report_error(
-        stores,
-        "Missing delimiter (. inserted)",
-        &[
-            "I was expecting to see something like `(' or `\\{' or",
-            "`\\}' here. If you typed, e.g., `{' instead of `\\{', you",
-            "should probably delete the `{' by typing `1' now, so that",
-            "braces don't get unbalanced. Otherwise just proceed.",
-            "Acceptable delimiters are characters whose \\delcode is",
-            "nonnegative, or you can use `\\delimiter <delimiter code>'.",
         ],
         context,
     )?;

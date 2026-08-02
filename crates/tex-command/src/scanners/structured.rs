@@ -35,6 +35,16 @@ use crate::{
 /// Stable pending-diagnostic identities for TeX82 §760 template recovery.
 const MISSING_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0001;
 const EXTRA_PARAMETER_DIAGNOSTIC: u64 = 0x616c_6967_0000_0002;
+const MISSING_DELIMITER_DIAGNOSTIC: u64 = 0x6d61_7468_0000_0001;
+
+const MISSING_DELIMITER_HELP: &[&str] = &[
+    "I was expecting to see something like `(' or `\\{' or",
+    "`\\}' here. If you typed, e.g., `{' instead of `\\{', you",
+    "should probably delete the `{' by typing `1' now, so that",
+    "braces don't get unbalanced. Otherwise just proceed.",
+    "Acceptable delimiters are characters whose \\delcode is",
+    "nonnegative, or you can use `\\delimiter <delimiter code>'.",
+];
 
 /// Provenance for a completed structured scan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1782,6 +1792,7 @@ impl CommandProcessor<'_> {
             // `back_error`, which returns the offending token to the input
             // before the error and leaves the null delimiter behind.
             self.back_input(command)?;
+            self.missing_delimiter_error()?;
             return Ok(ScannedMathDelimiter {
                 code: 0,
                 recovered: true,
@@ -1795,6 +1806,34 @@ impl CommandProcessor<'_> {
             missing_delimiter: false,
             provenance: StructuredProvenance { primary },
         })
+    }
+
+    /// TeX82 §1161's invalid-delimiter `back_error` report.
+    ///
+    /// This belongs to the scanner episode, immediately after the rejected
+    /// token is backed up. In particular, §1182 must report both delimiter
+    /// recoveries before §448 starts scanning `\abovewithdelims`'s rule
+    /// thickness. Deferring the reports to stomach application reverses that
+    /// order when the thickness itself takes §446's missing-number recovery.
+    fn missing_delimiter_error(&mut self) -> Result<(), CommandError> {
+        let context = self.command.output_open_context(&self.state);
+        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
+        {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: MISSING_DELIMITER_DIAGNOSTIC,
+                    runaway: None,
+                    message: "Missing delimiter (. inserted)".into(),
+                    help: MISSING_DELIMITER_HELP,
+                    context,
+                });
+            return Ok(());
+        }
+        let mut report = self.state.print_err("Missing delimiter (. inserted)");
+        report.help(MISSING_DELIMITER_HELP).context(context);
+        report.error().jump_out()?;
+        Ok(())
     }
 
     /// Scans TeX82 §435's `scan_four_bit_int` family index, the prefix common
