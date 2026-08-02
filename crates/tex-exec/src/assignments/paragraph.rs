@@ -638,7 +638,13 @@ fn break_current_paragraph(
         // itself contains only the already materialized replacement nodes.
         // Retain the count in the diagnostic view and clear the immutable
         // production view so later packing and shipout cannot replay it.
-        let mut diagnostic_nodes = broken.physical_nodes;
+        let mut diagnostic_nodes = broken
+            .physical_nodes
+            .into_iter()
+            .filter(|node| {
+                !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_))
+            })
+            .collect::<Vec<_>>();
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
                 *replace = empty_list;
