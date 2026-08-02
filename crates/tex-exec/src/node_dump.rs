@@ -972,7 +972,11 @@ impl GlueKindDump for GlueKind {
 
     fn glue_unit(self) -> &'static str {
         match self {
-            Self::MuSkip | Self::ThinMuSkip | Self::MedMuSkip | Self::ThickMuSkip => "mu",
+            // TeX82 §189's `Display glue p` distinguishes explicit `mu_glue`
+            // subtype from named muglue parameters: only `\mskip` reaches
+            // `print_spec(glue_ptr(p), "mu")`; the parameter subtypes reach
+            // `print_spec(glue_ptr(p), 0)`.
+            Self::MuSkip => "mu",
             _ => "",
         }
     }

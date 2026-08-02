@@ -253,7 +253,7 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
 }
 
 #[test]
-fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
+fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
     let mut stores = Universe::new();
     let spec = stores.intern_glue(GlueSpec {
         width: Scaled::from_raw(Scaled::UNITY),
@@ -310,9 +310,9 @@ fn glue_subtype_dump_matrix_preserves_pt_and_mu_identity() {
             "\\xleaders 1.0\n.\\hbox(0.0+0.0)x0.0\n",
         ),
         (GlueKind::MuSkip, None, "\\glue(\\mskip) 1.0mu\n"),
-        (GlueKind::ThinMuSkip, None, "\\glue(\\thinmuskip) 1.0mu\n"),
-        (GlueKind::MedMuSkip, None, "\\glue(\\medmuskip) 1.0mu\n"),
-        (GlueKind::ThickMuSkip, None, "\\glue(\\thickmuskip) 1.0mu\n"),
+        (GlueKind::ThinMuSkip, None, "\\glue(\\thinmuskip) 1.0\n"),
+        (GlueKind::MedMuSkip, None, "\\glue(\\medmuskip) 1.0\n"),
+        (GlueKind::ThickMuSkip, None, "\\glue(\\thickmuskip) 1.0\n"),
         (GlueKind::NonScript, None, "\\glue(\\nonscript) 1.0\n"),
     ];
 
