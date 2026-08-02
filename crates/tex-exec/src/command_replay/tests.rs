@@ -5832,6 +5832,28 @@ fn setbox_scans_make_box_without_a_second_main_control_trace() {
 }
 
 #[test]
+fn alignment_packing_scan_traces_expansion_in_the_new_alignment_mode() {
+    // TeX82 §§299/367/774: `init_align` pushes and negates the alignment
+    // mode before `scan_spec` expands `to\the\displaywidth`.  The expandable
+    // `\the` trace must therefore advance `shown_mode` to internal vertical
+    // mode even though it is scanner-owned rather than a main-control step.
+    let mut universe = Universe::new_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\nonstopmode\tracingcommands=2\tracingonline=1$$x\halign to\the\displaywidth{#\cr}\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_only_text(&universe);
+    assert!(
+        output.contains("{internal vertical mode: \\the}"),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn canonical_initex_replay_observes_committed_message_effects() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CommandReplayControl::tex82_initex(&mut universe);

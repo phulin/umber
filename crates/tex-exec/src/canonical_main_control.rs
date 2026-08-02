@@ -5381,9 +5381,20 @@ fn scan_replay_step(
     if let Some((alignment, phase)) = alignment_preamble {
         return match phase {
             AlignmentPreamblePhase::Opening => {
+                // TeX82 §§299/367: `scan_spec` expands its optional
+                // dimension while `init_align` is already in the alignment's
+                // newly pushed mode.  An expandable command such as `\the`
+                // therefore crosses `show_cur_cmd_chr` here, before ordinary
+                // main control gets another command.  Carry the same pending
+                // mode prefix and `shown_mode` update that `scan_step` owns
+                // around its `get_x_token` boundary.
+                prepare_command_trace(processor, mode, *shown_mode);
                 let packing = processor
                     .scan_alignment_preamble_opening()
                     .map_err(command_error)?;
+                if processor.command_trace_printed() {
+                    *shown_mode = Some(mode);
+                }
                 Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing })
             }
             AlignmentPreamblePhase::Start => {
