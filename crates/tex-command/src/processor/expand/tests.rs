@@ -3140,6 +3140,32 @@ fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
 }
 
 #[test]
+fn meaning_macro_prefixes_use_live_escape_character() {
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+    let empty = universe.intern_token_list(&[]);
+    let flags = MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER;
+    let definition = universe.intern_macro(MacroMeaning::new(flags, empty, empty));
+    let macro_name = universe.intern("result").symbol();
+    universe.set_meaning(macro_name, Meaning::Macro { flags, definition });
+    let command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(macro_name)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+
+    assert_eq!(
+        meaning_text(&universe.command_context(), &command),
+        "|protected|long|outer macro:->"
+    );
+}
+
+#[test]
 fn meaning_macro_token_list_distinguishes_words_symbols_spaces_and_active_chars() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let word = universe.intern("word").symbol();

@@ -1368,13 +1368,13 @@ pub(crate) fn meaning_text(
             let macro_meaning = state.macro_definition(definition);
             let mut prefix = String::new();
             if flags.contains(MeaningFlags::PROTECTED) {
-                prefix.push_str("\\protected");
+                prefix.push_str(&print_esc_text(state, "protected"));
             }
             if flags.contains(MeaningFlags::LONG) {
-                prefix.push_str("\\long");
+                prefix.push_str(&print_esc_text(state, "long"));
             }
             if flags.contains(MeaningFlags::OUTER) {
-                prefix.push_str("\\outer");
+                prefix.push_str(&print_esc_text(state, "outer"));
             }
             if !prefix.is_empty() {
                 prefix.push(' ');
