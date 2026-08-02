@@ -332,7 +332,7 @@ fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
     assert!(stores.box_reg(0).is_none());
     assert_eq!(stores.count(0), 7);
     assert_eq!(stores.count(1), 9);
-    assert!(terminal_effect_text(&stores).contains("A <box> was supposed to be here"));
+    assert!(terminal_effect_text(&stores).contains("Improper \\setbox"));
 }
 
 #[test]

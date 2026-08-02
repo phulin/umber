@@ -22,7 +22,9 @@ pub(crate) mod vsplit;
 
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
-use packaging::{ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value};
+use packaging::{
+    BoxScanContext, ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value,
+};
 pub(crate) use packaging::{first_box_node, scan_box_group, scan_pack_spec, take_last_box};
 pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_rule};
 use vsplit::scan_vsplit_node;
@@ -117,7 +119,14 @@ pub(super) fn execute_setbox(
     let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
     let (nest, stores) = transaction.parts();
     let mut construction = stores.begin_box_build();
-    let value = match scan_box_value(Some(nest), input, &mut construction, execution, context) {
+    let value = match scan_box_value(
+        Some(nest),
+        input,
+        &mut construction,
+        execution,
+        context,
+        BoxScanContext::SetBox,
+    ) {
         Ok(Some(ScannedBoxValue::Fresh(node))) => {
             let list = construction.freeze_node_list(&[node]);
             Some(list)

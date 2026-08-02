@@ -33,6 +33,12 @@ pub(super) enum ScannedBoxValue {
     Shared(Node),
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum BoxScanContext {
+    BoxExpected,
+    SetBox,
+}
+
 impl ScannedBoxValue {
     pub(super) fn into_node(self) -> Node {
         match self {
@@ -47,8 +53,15 @@ pub(in crate::assignments) fn scan_box_value_node(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<Option<Node>, ExecError> {
-    scan_box_value(None, input, stores, execution, context)
-        .map(|value| value.map(ScannedBoxValue::into_node))
+    scan_box_value(
+        None,
+        input,
+        stores,
+        execution,
+        context,
+        BoxScanContext::BoxExpected,
+    )
+    .map(|value| value.map(ScannedBoxValue::into_node))
 }
 
 pub(super) fn scan_box_value(
@@ -57,6 +70,7 @@ pub(super) fn scan_box_value(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
+    scan_context: BoxScanContext,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
     // TeX82's scan_box starts with get_x_token's "next non-blank non-relax"
     // loop (tex.web §1084).  This matters for format code that deliberately
@@ -73,7 +87,7 @@ pub(super) fn scan_box_value(
     };
     let token = tex_expand::semantic_token(traced);
     let Token::Cs(symbol) = token else {
-        return recover_missing_box(input, stores, traced);
+        return recover_missing_box(input, stores, traced, scan_context);
     };
     match stores.meaning(symbol) {
         Meaning::UnexpandablePrimitive(primitive @ UnexpandablePrimitive::HBox)
@@ -135,7 +149,7 @@ pub(super) fn scan_box_value(
             take_last_box(nest, stores, execution.command_fuel())
                 .map(|value| value.map(ScannedBoxValue::Shared))
         }
-        _ => recover_missing_box(input, stores, traced),
+        _ => recover_missing_box(input, stores, traced, scan_context),
     }
 }
 
@@ -146,18 +160,28 @@ fn recover_missing_box(
     input: &mut InputStack,
     stores: &mut Universe,
     traced: TracedTokenWord,
+    scan_context: BoxScanContext,
 ) -> Result<Option<ScannedBoxValue>, ExecError> {
-    crate::error_report::back_error(
-        input,
-        stores,
-        traced,
-        "A <box> was supposed to be here",
-        &[
-            "I was expecting to see \\hbox or \\vbox or \\copy or \\box or",
-            "something like that. So you might find something missing in",
-            "your output. But keep trying; you can fix this later.",
-        ],
-    )?;
+    let (message, help): (&str, &[&str]) = match scan_context {
+        // TeX82 §1084 selects this branch when `box_context < box_flag`;
+        // `\setbox` supplies its destination register as that context.
+        BoxScanContext::SetBox => (
+            "Improper \\setbox",
+            &[
+                "Sorry, \\setbox is not allowed after \\halign in a display,",
+                "or between \\accent and an accented character.",
+            ],
+        ),
+        BoxScanContext::BoxExpected => (
+            "A <box> was supposed to be here",
+            &[
+                "I was expecting to see \\hbox or \\vbox or \\copy or \\box or",
+                "something like that. So you might find something missing in",
+                "your output. But keep trying; you can fix this later.",
+            ],
+        ),
+    };
+    crate::error_report::back_error(input, stores, traced, message, help)?;
     Ok(None)
 }
 

@@ -82,6 +82,30 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
 }
 
 #[test]
+fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
+    // TeX82 §1084: a non-box command with `box_context < box_flag` is an
+    // improper `\setbox`; the rejected command is backed up for execution.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\nonstopmode\setbox0=\count0=7 \count1=9\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("Improper \\setbox"), "{terminal}");
+    assert!(
+        !terminal.contains("A <box> was supposed to be here"),
+        "{terminal}"
+    );
+    assert!(stores.box_reg(0).is_none());
+    assert_eq!(stores.count(0), 7);
+    assert_eq!(stores.count(1), 9);
+}
+
+#[test]
 fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
     // TeX82 §§299/366--367/1030: non-macro expansion traces inside `expand`,
     // then the settled unexpandable command traces at `reswitch`. The first

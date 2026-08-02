@@ -4433,6 +4433,22 @@ fn report_missing_box(command: &CommandState, stores: &mut Universe) -> Result<(
     Ok(())
 }
 
+/// TeX82 §1084's `box_context < box_flag` recovery for `\setbox`.
+fn report_improper_setbox(command: &CommandState, stores: &mut Universe) -> Result<(), ExecError> {
+    let context = command.output_open_context(&stores.command_context());
+    report_escaped_error(
+        stores,
+        "Improper ",
+        "setbox",
+        "",
+        &[
+            "Sorry, \\setbox is not allowed after \\halign in a display,",
+            "or between \\accent and an accented character.",
+        ],
+        context,
+    )
+}
+
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
 fn report_missing_vsplit_to(
     command: &CommandState,
@@ -13950,7 +13966,7 @@ fn apply_scanned_step(
             match payload {
                 ScannedBoxShiftPayload::Missing => {
                     let _ = boxes.take_box_context(false);
-                    report_missing_box(command.state, stores)?;
+                    report_improper_setbox(command.state, stores)?;
                 }
                 ScannedBoxShiftPayload::BoxRegister { index, copy } => {
                     let id = if copy {
