@@ -230,6 +230,9 @@ enum DimensionUnit {
 struct ScannedUnits {
     value: Scaled,
     order: Order,
+    /// TeX82 §460's `arith_error`, retained until `attach_sign` after
+    /// §448 has scanned its trailing optional space.
+    arith_error: bool,
     /// TeX82 §455's `found:` exit ends in `goto attach_sign`, which bypasses
     /// `scan_dimen`'s trailing `<Scan an optional space>`. Both internal-unit
     /// paths take it; every other unit falls through `attach_fraction`/`done`
@@ -647,11 +650,11 @@ impl CommandProcessor<'_> {
         } else {
             InternalLevel::Dimension
         };
-        let (value, order, attach_sign, recovery) = match first {
+        let (value, order, attach_sign, arith_error, recovery) = match first {
             Some(first) => match self.scan_something_internal(&first, level, false)? {
                 InternalScan::Value(value) => match self.fetch_internal_dimension(value, mu)? {
                     InternalDimension::Complete(value) => {
-                        (value, Order::Normal, true, ScalarRecovery::None)
+                        (value, Order::Normal, true, false, ScalarRecovery::None)
                     }
                     InternalDimension::Prefix(integer) => {
                         self.last_integer_terminator = None;
@@ -662,6 +665,7 @@ impl CommandProcessor<'_> {
                             units.value,
                             units.order,
                             units.attach_sign,
+                            units.arith_error,
                             ScalarRecovery::None,
                         )
                     }
@@ -673,13 +677,20 @@ impl CommandProcessor<'_> {
                     let (units, flip, recovery) =
                         self.scan_dimension_constant(first, allow_infinite, mu, provenance)?;
                     negative ^= flip;
-                    (units.value, units.order, units.attach_sign, recovery)
+                    (
+                        units.value,
+                        units.order,
+                        units.attach_sign,
+                        units.arith_error,
+                        recovery,
+                    )
                 }
             },
             None => (
                 Scaled::from_raw(0),
                 Order::Normal,
                 true,
+                false,
                 ScalarRecovery::InsertedZero,
             ),
         };
@@ -694,7 +705,7 @@ impl CommandProcessor<'_> {
         // §449's internal-dimension shortcut.  The range check therefore
         // applies even when the stored internal value could only have arisen
         // through arithmetic (for example, an overflowing glue width).
-        let value = if value.raw().unsigned_abs() >= 1 << 30 {
+        let value = if arith_error || value.raw().unsigned_abs() >= 1 << 30 {
             self.dimension_too_large_error()?;
             Scaled::MAX_DIMEN
         } else {
@@ -888,11 +899,19 @@ impl CommandProcessor<'_> {
         if !units.attach_sign {
             self.scan_optional_space()?;
         }
-        let value = if flip {
+        let mut value = if flip {
             Scaled::from_raw(-units.value.raw())
         } else {
             units.value
         };
+        if units.arith_error || value.raw().unsigned_abs() >= 1 << 30 {
+            self.dimension_too_large_error()?;
+            value = if flip {
+                Scaled::from_raw(-Scaled::MAX_DIMEN.raw())
+            } else {
+                Scaled::MAX_DIMEN
+            };
+        }
         observe!(
             self,
             CommandObservation::Scanner(ScannerRecord {
@@ -1365,9 +1384,6 @@ impl CommandProcessor<'_> {
                 (value.unwrap_or(Scaled::MAX_DIMEN), Order::Normal)
             }
         };
-        if arith_error {
-            self.dimension_too_large_error()?;
-        }
         Ok(ScannedUnits {
             value: if arith_error {
                 Scaled::MAX_DIMEN
@@ -1375,6 +1391,7 @@ impl CommandProcessor<'_> {
                 value
             },
             order,
+            arith_error,
             attach_sign: matches!(unit, DimensionUnit::Internal(_)),
         })
     }

@@ -5857,12 +5857,14 @@ two letters. (See Chapter 27 of The TeXbook.)\n\n"
         "cm, mm, dd, cc, nd, nc, bp, or sp",
     );
     let positive_large_terminal =
-        "! Dimension too large.\n<to be read again> 20000pt\n                          =\n";
-    let negative_large_terminal =
-        "! Dimension too large.\n<to be read again> -20000pt\n                           =\n";
+        "! Dimension too large.\n<to be read again> \n                   =\n";
+    let positive_large_space_terminal =
+        "! Dimension too large.\n<to be read again> 20000pt \n                           =\n";
+    let negative_large_terminal = positive_large_terminal;
     let large_help = "I can't work with sizes bigger than about 19 feet.\n\
 Continue and I'll use the largest value I can.\n\n";
     let positive_large_log = format!("{positive_large_terminal}{large_help}");
+    let positive_large_space_log = format!("{positive_large_space_terminal}{large_help}");
     let negative_large_log = format!("{negative_large_terminal}{large_help}");
     let true_terminal = "! Illegal magnification has been changed to 1000 (40000).\n<to be read again> 1true\n                        pt=\n";
     let true_log =
@@ -5887,6 +5889,16 @@ Continue and I'll use the largest value I can.\n\n";
                 '=',
                 positive_large_terminal,
                 positive_large_log.as_str(),
+            ),
+        ),
+        (
+            "TeX82 overflow consumes optional space before reporting",
+            scan(tex82, "20000pt =", None),
+            (
+                Scaled::MAX_DIMEN.raw(),
+                '=',
+                positive_large_space_terminal,
+                positive_large_space_log.as_str(),
             ),
         ),
         (
