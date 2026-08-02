@@ -1890,6 +1890,13 @@ impl VirtualCompileSession {
                 session.set_command_profile(self.engine.command_profile(), self.format.is_none());
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
+                let startup_name = self
+                    .main_path
+                    .as_str()
+                    .rsplit('/')
+                    .next()
+                    .expect("a canonical virtual path has a final component");
+                session.set_root_source_framing_name(format!("./{startup_name}"));
                 if self.authored_root_name.is_some() {
                     session
                         .set_root_source_framing(tex_command::SourceFramingPolicy::ExternallyOwned);

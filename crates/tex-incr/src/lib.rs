@@ -47,6 +47,7 @@ fn canonical_candidate_control(
     initex: bool,
     emit_dvi: bool,
     root_framing: SourceFramingPolicy,
+    root_framing_name: Option<&str>,
 ) -> Result<CanonicalMainControl, SessionError> {
     let mut control = if initex {
         CanonicalMainControl::prepared_initex(profile)
@@ -54,11 +55,13 @@ fn canonical_candidate_control(
         CanonicalMainControl::with_profile(profile)
     };
     control.set_dvi_output(emit_dvi);
-    control.register_root_source(
-        SourceRegistration::new(RegisteredSourceKind::Generated, bytes)
-            .with_name(source_path)
-            .with_framing(root_framing),
-    )?;
+    let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, bytes)
+        .with_name(source_path)
+        .with_framing(root_framing);
+    if let Some(name) = root_framing_name {
+        registration = registration.with_framing_name(name);
+    }
+    control.register_root_source(registration)?;
     control.flush_pending_file_framing(universe);
     control.capabilities_mut().set_startup_job_name(job_name);
     Ok(control)
@@ -908,6 +911,7 @@ pub struct Session {
     utf8_input_as_bytes: bool,
     dvi_output: bool,
     root_framing: SourceFramingPolicy,
+    root_framing_name: Option<String>,
     root_source_is_byte_projection: bool,
     command_profile: CommandProfile,
     initex: bool,
@@ -1058,6 +1062,7 @@ impl Session {
             utf8_input_as_bytes: false,
             dvi_output: true,
             root_framing: SourceFramingPolicy::Canonical,
+            root_framing_name: None,
             root_source_is_byte_projection,
             command_profile: CommandProfile::TEX82,
             initex: true,
@@ -1115,6 +1120,19 @@ impl Session {
             "root source framing cannot change after execution starts"
         );
         self.root_framing = framing;
+    }
+
+    /// Selects the selector-visible filename for canonical root framing.
+    ///
+    /// The editor layout keeps `source_path` as provenance. A driver whose
+    /// internal VFS path differs from TeX's startup filename uses this value
+    /// only for tex.web §537's `(name` display.
+    pub fn set_root_source_framing_name(&mut self, name: impl Into<String>) {
+        assert!(
+            self.history.is_empty(),
+            "root source framing name cannot change after execution starts"
+        );
+        self.root_framing_name = Some(name.into());
     }
 
     /// Selects the character domain already promised by this editor session.
@@ -1245,6 +1263,7 @@ impl Session {
             self.initex,
             self.dvi_output,
             self.root_framing,
+            self.root_framing_name.as_deref(),
         )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
@@ -1513,6 +1532,7 @@ impl Session {
             self.initex,
             self.dvi_output,
             self.root_framing,
+            self.root_framing_name.as_deref(),
         )?;
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));

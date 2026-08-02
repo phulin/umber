@@ -1201,7 +1201,10 @@ impl CommandState {
             SourceNameClass::File
                 if registered.framing == crate::SourceFramingPolicy::Canonical =>
             {
-                registered.name.clone()
+                registered
+                    .framing_name
+                    .clone()
+                    .or_else(|| registered.name.clone())
             }
             SourceNameClass::File => None,
             SourceNameClass::Scantokens(19) => Some(" ".into()),

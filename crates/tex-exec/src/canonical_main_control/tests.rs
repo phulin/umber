@@ -6339,6 +6339,20 @@ fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
 }
 
 #[test]
+fn message_slow_prints_nonprintable_character_tokens() {
+    // tex.web §§59, 1279: message text is a string, so character 13 uses the
+    // one-character string spelling rather than §58's raw `print_char` path.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\newlinechar=10\message{READLINE:[macro:->Alpha ^^M]}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+    assert_eq!(terminal_text(&stores), "READLINE:[macro:->Alpha ^^M]");
+}
+
+#[test]
 fn errmessage_selects_user_or_once_only_builtin_help_and_clears_flag() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

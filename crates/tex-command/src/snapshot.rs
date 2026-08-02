@@ -91,6 +91,10 @@ impl CommandSummary {
         if let Some(name) = &source.cursor.backing.name {
             registration = registration.with_name(Arc::clone(name));
         }
+        if let Some(name) = &source.cursor.backing.framing_name {
+            registration = registration.with_framing_name(Arc::clone(name));
+        }
+        registration = registration.with_framing(source.cursor.backing.framing);
         let Ok(backing) =
             crate::input::RegisteredSource::register(id, self.expansion.profile, registration)
         else {

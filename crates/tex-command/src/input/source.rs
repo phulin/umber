@@ -123,6 +123,7 @@ pub struct SourceRegistration {
     world_record: Option<InputRecordId>,
     modification_date: Option<tex_state::FileModificationDate>,
     name: Option<Arc<str>>,
+    framing_name: Option<Arc<str>>,
     framing: SourceFramingPolicy,
 }
 
@@ -136,6 +137,7 @@ impl SourceRegistration {
             world_record: None,
             modification_date: None,
             name: None,
+            framing_name: None,
             framing: SourceFramingPolicy::Canonical,
         }
     }
@@ -150,6 +152,7 @@ impl SourceRegistration {
             world_record: Some(content.record()),
             modification_date: content.modification_date(),
             name: None,
+            framing_name: None,
             framing: SourceFramingPolicy::Canonical,
         }
     }
@@ -166,6 +169,13 @@ impl SourceRegistration {
     #[must_use]
     pub fn with_name(mut self, name: impl Into<Arc<str>>) -> Self {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Selects a selector-visible §537 name distinct from source provenance.
+    #[must_use]
+    pub fn with_framing_name(mut self, name: impl Into<Arc<str>>) -> Self {
+        self.framing_name = Some(name.into());
         self
     }
 
@@ -303,6 +313,7 @@ pub(crate) struct RegisteredSource {
     /// [`SourceRegistration`] that produced this backing. See
     /// [`SourceRegistration::with_name`].
     pub(crate) name: Option<Arc<str>>,
+    pub(crate) framing_name: Option<Arc<str>>,
     pub(crate) framing: SourceFramingPolicy,
     descriptor: Arc<SourceDescriptor>,
 }
@@ -362,6 +373,7 @@ impl RegisteredSource {
             mode,
             bytes: registration.bytes,
             name: registration.name,
+            framing_name: registration.framing_name,
             framing: registration.framing,
             descriptor: Arc::new(descriptor),
         })
@@ -377,6 +389,7 @@ impl fmt::Debug for RegisteredSource {
             .field("mode", &self.mode)
             .field("bytes", &self.bytes)
             .field("name", &self.name)
+            .field("framing_name", &self.framing_name)
             .field("world_record", &self.world_record())
             .finish()
     }
@@ -389,6 +402,7 @@ impl PartialEq for RegisteredSource {
             && self.mode == other.mode
             && self.bytes == other.bytes
             && self.name == other.name
+            && self.framing_name == other.framing_name
             && self.world_record() == other.world_record()
     }
 }
@@ -402,6 +416,7 @@ impl Hash for RegisteredSource {
         self.mode.hash(state);
         self.bytes.hash(state);
         self.name.hash(state);
+        self.framing_name.hash(state);
         self.world_record().hash(state);
     }
 }

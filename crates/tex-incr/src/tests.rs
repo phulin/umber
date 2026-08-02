@@ -4546,7 +4546,7 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                     CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
                         name,
                         RegisteredSourceKind::Generated,
-                        Arc::from(source.as_bytes()),
+                        Arc::<[u8]>::from(source.as_bytes()),
                     ))
                 }),
             CanonicalResourceNeed::InputProbe { request } => self
@@ -4566,7 +4566,7 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                         resource: tex_command::FileEnquiryResource::new(
                             tex_command::SourceRegistration::new(
                                 RegisteredSourceKind::Generated,
-                                Arc::from(source.as_bytes()),
+                                Arc::<[u8]>::from(source.as_bytes()),
                             ),
                             None,
                         ),
@@ -5250,6 +5250,43 @@ fn finalize_materializes_session_effects_once_and_consumes_session() {
             .expect("UTF-8 output")
             .contains("retained hello")
     );
+}
+
+#[test]
+fn root_framing_name_is_distinct_from_editor_provenance_path() {
+    // tex.web §537 prints the startup filename. The editor's canonical VFS
+    // path remains the source/provenance identity and must not leak there.
+    let mut universe = template();
+    let _control = canonical_candidate_control(
+        &mut universe,
+        "job",
+        "/job/main.tex",
+        b"\\end".to_vec(),
+        CommandProfile::TEX82,
+        true,
+        true,
+        SourceFramingPolicy::Canonical,
+        Some("./main.tex"),
+    )
+    .expect("candidate starts");
+    let terminal = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { sink, text }
+                if matches!(
+                    sink,
+                    tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog
+                ) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect::<String>();
+    assert!(terminal.starts_with("(./main.tex"), "{terminal:?}");
+    assert!(!terminal.contains("/job/main.tex"), "{terminal:?}");
 }
 
 #[test]

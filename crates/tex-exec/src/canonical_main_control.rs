@@ -16707,7 +16707,7 @@ fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> Strin
     for &token in stores.tokens(tokens) {
         tex_expand::append_token_string_text(stores, token, &mut text);
     }
-    crate::diagnostics::print_text_with_newlinechar(stores, &text)
+    text
 }
 
 /// TeX82 §1297's `token_show(temp_head)` through the active selector.
@@ -16767,7 +16767,7 @@ fn issue_terminal_message(stores: &mut Universe, text: &str) {
     } else if printer.terminal_offset() > 0 || printer.log_offset() > 0 {
         printer.print_char(' ');
     }
-    printer.print_rendered(text);
+    printer.print(text);
 }
 
 /// TeX82 §1283's `<Print string s as an error message>`.
@@ -16784,7 +16784,7 @@ fn issue_error_message(
         .error_channel_mut()
         .take_long_help_seen(rendered.is_none() && !interactive);
     let mut report = stores.print_err("");
-    report.print_rendered(text);
+    report.print(text);
     match rendered {
         Some(rendered) => {
             report.use_err_help(rendered);
