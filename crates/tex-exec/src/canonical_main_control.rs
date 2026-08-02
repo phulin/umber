@@ -3268,6 +3268,9 @@ impl CanonicalMainControl {
 
     fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let conversion_error_context = crate::math::MathConversionErrorContext::new(
+            self.command.output_open_context(&stores.command_context()),
+        );
         let math_font_context = self.command.output_open_context(&stores.command_context());
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
@@ -3282,6 +3285,7 @@ impl CanonicalMainControl {
                 content,
             },
             insert_penalties,
+            conversion_error_context,
         );
         self.modes.current_list_mutation().append(nodes);
         self.modes.current_list_mutation().set_space_factor(1000);

@@ -68,7 +68,9 @@ pub(crate) fn insert_dollar_sign(
     )?;
     Ok(())
 }
-pub(crate) use lower::{finish_inline_math_list_node, finish_math_list_node};
+pub(crate) use lower::{
+    MathConversionErrorContext, finish_inline_math_list_node, finish_math_list_node,
+};
 pub(crate) use lower::{finish_math_lists, finish_math_lists_owned};
 use scan::*;
 use support::*;
@@ -391,6 +393,10 @@ fn finish_math(
             stores,
             MathListNode { display, content },
             insert_penalties,
+            MathConversionErrorContext::new(crate::diagnostics::show_context(
+                stores,
+                &input.summary(),
+            )),
         );
         execution.record_paragraph_math_families(family_mask);
         nest.current_list_mutation().append(nodes);

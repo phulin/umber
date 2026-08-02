@@ -250,6 +250,18 @@ fn run_canonical_math_recovery(
                 opentype: None,
             },
         );
+        let metrics = tex_state::InputReadState::read_input_file(
+            &mut stores.input_open_context(),
+            std::path::Path::new("cmex10.tfm"),
+        )
+        .expect("seeded extension font fixture reads through the world");
+        control.capabilities_mut().register_font(
+            "cmex10.tfm",
+            FontResource::Tfm {
+                metrics,
+                opentype: None,
+            },
+        );
     }
     run_registered_canonical_math_source(stores, control, source)
 }
@@ -1616,6 +1628,69 @@ fn undefined_math_family_reports_error_and_omits_only_character() {
         .collect::<Vec<_>>();
     assert_eq!(characters, ['a', 'b']);
     assert!(terminal_effect_text(&stores).contains("\\textfont 15 is undefined (character a)"));
+}
+
+/// TeX82 §§82/721: Appendix G reports an undefined family only after the
+/// formula has ended, but `error` still shows the live command input at that
+/// closing math shift.  All three size selectors share this boundary.
+#[test]
+fn undefined_math_family_reports_closing_source_context_before_help() {
+    let cases = [
+        (r#"\mathchar"0F61"#, "\\textfont"),
+        (r#"x_{\mathchar"0F61}"#, "\\scriptfont"),
+        (r#"x_{y_{\mathchar"0F61}}"#, "\\scriptscriptfont"),
+    ];
+    for (formula, selector) in cases {
+        let source = format!(
+            "\\font\\roman=cmr10 \\font\\symbol=cmsy10 \\font\\extension=cmex10\n\
+             \\textfont2=\\symbol \\scriptfont2=\\symbol \\scriptscriptfont2=\\symbol\n\
+             \\textfont3=\\extension \\scriptfont3=\\extension \\scriptscriptfont3=\\extension\n\
+             before\n\
+             ${formula}$ after\\end"
+        );
+        let (stores, _) =
+            run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, &source, true);
+        let output = terminal_effect_text(&stores);
+        let message = output
+            .find(&format!("{selector} 15 is undefined (character a)"))
+            .unwrap_or_else(|| panic!("missing family report in {output:?}"));
+        let source_context = output[message..]
+            .find("l.5 $")
+            .map(|offset| message + offset)
+            .unwrap_or_else(|| panic!("missing closing source context in {output:?}"));
+        let help = output[message..]
+            .find("Somewhere in the math formula just ended")
+            .map(|offset| message + offset)
+            .unwrap_or_else(|| panic!("missing family help in {output:?}"));
+        assert!(
+            message < source_context && source_context < help,
+            "TeX82 §82 context must precede §721 help: {output:?}"
+        );
+    }
+}
+
+#[test]
+fn detached_math_conversion_error_context_survives_snapshot_rollback() {
+    let (mut stores, control) = run_math_source_with_text_math_fonts("$\\mathchar\"0F61");
+    let list = unfinished_math_list(&mut stores, &control);
+    let snapshot = stores.snapshot();
+    let baseline = terminal_effect_text(&stores);
+    let context = crate::math::MathConversionErrorContext::new(
+        "\n<recently read> $\n                  \nl.9 $a$\n       ".to_owned(),
+    );
+
+    let _ = crate::math::finish_inline_math_list_node(&mut stores, list, false, context.clone());
+    let first = terminal_effect_text(&stores)[baseline.len()..].to_owned();
+    stores.rollback(&snapshot);
+    let _ = crate::math::finish_inline_math_list_node(&mut stores, list, false, context);
+    let second = terminal_effect_text(&stores)[baseline.len()..].to_owned();
+
+    assert_eq!(
+        first, second,
+        "rollback must replay the detached report exactly"
+    );
+    assert!(first.contains("<recently read> $"));
+    assert!(first.contains("l.9 $a$"));
 }
 
 #[test]

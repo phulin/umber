@@ -15,28 +15,41 @@ use tex_typeset::math::{
     MathParamState, MathParams, MathTypesetState, Style, mlist_to_hlist_with_sink,
 };
 
+/// Detached TeX82 §82 input context for an error raised while converting
+/// an already-complete math list.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MathConversionErrorContext(String);
+
+impl MathConversionErrorContext {
+    pub(crate) fn new(rendered: String) -> Self {
+        Self(rendered)
+    }
+}
+
 pub(crate) fn finish_math_list_node(
     stores: &mut Universe,
     list: MathListNode,
     insert_penalties: bool,
 ) -> Vec<Node> {
-    finish_math_list_node_with_reads(stores, list, insert_penalties).0
+    finish_math_list_node_with_reads(stores, list, insert_penalties, None).0
 }
 
 pub(crate) fn finish_inline_math_list_node(
     stores: &mut Universe,
     list: MathListNode,
     insert_penalties: bool,
+    error_context: MathConversionErrorContext,
 ) -> (Vec<Node>, u64) {
-    finish_math_list_node_with_reads(stores, list, insert_penalties)
+    finish_math_list_node_with_reads(stores, list, insert_penalties, Some(&error_context))
 }
 
 fn finish_math_list_node_with_reads(
     stores: &mut Universe,
     list: MathListNode,
     insert_penalties: bool,
+    error_context: Option<&MathConversionErrorContext>,
 ) -> (Vec<Node>, u64) {
-    let mut sink = LoweredMathSink::new(stores);
+    let mut sink = LoweredMathSink::new(stores, error_context);
     let params = MathParams::read(&sink);
     let style = if list.display {
         Style::DISPLAY
@@ -72,7 +85,7 @@ pub(super) fn convert_math_hlist(
     penalties: bool,
     params: &MathParams,
 ) -> Vec<Node> {
-    let mut sink = LoweredMathSink::new(stores);
+    let mut sink = LoweredMathSink::new(stores, None);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
 
@@ -89,15 +102,20 @@ fn convert_math_hlist_with_sink(
 
 struct LoweredMathSink<'a> {
     stores: &'a mut Universe,
+    error_context: Option<&'a MathConversionErrorContext>,
     root_nodes: Vec<Node>,
     glue_cache: Vec<(GlueSpec, GlueId)>,
     family_mask: Cell<u64>,
 }
 
 impl<'a> LoweredMathSink<'a> {
-    fn new(stores: &'a mut Universe) -> Self {
+    fn new(
+        stores: &'a mut Universe,
+        error_context: Option<&'a MathConversionErrorContext>,
+    ) -> Self {
         Self {
             stores,
+            error_context,
             root_nodes: Vec::new(),
             glue_cache: Vec::with_capacity(8),
             family_mask: Cell::new(0),
@@ -321,6 +339,9 @@ impl MathLayoutSink for LoweredMathSink<'_> {
                         "plain TeX doesn't allow \\it or \\sl in subscripts. Proceed,",
                         "and I'll try to forget that I needed that character.",
                     ]);
+                    if let Some(context) = self.error_context {
+                        report.context(context.0.clone());
+                    }
                     let _ = report.error();
                 }
             }
