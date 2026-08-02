@@ -5929,18 +5929,6 @@ impl Universe {
                     let Some(tokens) = restored_tok_param_tokens(self, record.old()) else {
                         continue;
                     };
-                    // A loaded schema-11 token-list handle and a newly
-                    // interned live handle can name the same payload while
-                    // having different raw words. Such a journal rewrite is
-                    // not TeX82 §283's saved eqtb value: §1090 observes a
-                    // null `par_shape_ptr` and performs no `eq_define`.
-                    // Compare payload identity, not the effective zero alone;
-                    // a real saved nonempty shape must still be traced.
-                    if restored_tok_param_tokens(self, record.assigned())
-                        .is_some_and(|assigned| assigned == tokens)
-                    {
-                        continue;
-                    }
                     assert_eq!(
                         tokens.len() % 8,
                         0,
@@ -7117,6 +7105,23 @@ impl Universe {
 
     /// Assigns TeX's `\parshape` through the ordinary group write barrier.
     pub fn set_paragraph_shape(&mut self, lines: &[ParagraphShapeLine], global: bool) {
+        // TeX82 §1090 clears `par_shape_ptr` only when it is non-null. A
+        // loaded format can represent the same null shape with a frozen
+        // token-list handle, so test the typed effective shape rather than
+        // rewriting that representation through `eq_define`. This preserves
+        // §283's distinction between no save-stack entry and restoration of a
+        // genuinely non-null shape at group exit.
+        let representation_only_null = if lines.is_empty() {
+            let cell = crate::cell::CellId::new(
+                crate::cell::BankTag::TokParam,
+                u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
+            );
+            let effective = self.stores.effective_restored_env_word(cell);
+            restored_tok_param_tokens(self, effective)
+                .is_none_or(<[Token]>::is_empty)
+        } else {
+            false
+        };
         let mut tokens = Vec::with_capacity(lines.len().saturating_mul(8));
         for line in lines {
             tokens.extend(
@@ -7129,7 +7134,9 @@ impl Universe {
             );
         }
         let id = self.intern_token_list(&tokens);
-        if global {
+        if representation_only_null {
+            self.stores.rewrite_null_parshape_representation(id);
+        } else if global {
             self.set_tok_param_global(TokParam::PAR_SHAPE_INTERNAL, id);
         } else {
             self.set_tok_param(TokParam::PAR_SHAPE_INTERNAL, id);

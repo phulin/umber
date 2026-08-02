@@ -13,7 +13,6 @@ pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
 pub struct RestoreRecord {
     cell: CellId,
     old: u64,
-    assigned: u64,
     trace_eligible: bool,
     retaining: bool,
     tracing_restores: i32,
@@ -23,12 +22,11 @@ pub struct RestoreRecord {
 }
 
 impl RestoreRecord {
-    fn restoring(env: &Env, cell: CellId, old: u64, assigned: u64) -> Self {
+    fn restoring(env: &Env, cell: CellId, old: u64) -> Self {
         let restored = env.restored_semantic_word(cell, old);
         Self {
             cell,
             old: restored.word,
-            assigned,
             trace_eligible: restored.trace_eligible,
             retaining: false,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
@@ -43,7 +41,6 @@ impl RestoreRecord {
         Self {
             cell,
             old: restored.word,
-            assigned: env.semantic_word(cell),
             trace_eligible: restored.trace_eligible,
             retaining: true,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
@@ -57,7 +54,6 @@ impl RestoreRecord {
         Self {
             cell: CellId::new(BankTag::Box, u32::from(index)),
             old: old.value(),
-            assigned: 0,
             trace_eligible: true,
             retaining: false,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
@@ -75,11 +71,6 @@ impl RestoreRecord {
     #[must_use]
     pub const fn old(&self) -> u64 {
         self.old
-    }
-
-    #[must_use]
-    pub const fn assigned(&self) -> u64 {
-        self.assigned
     }
 
     #[must_use]
@@ -643,12 +634,7 @@ impl Env {
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
                     if traced_local_entries.contains(&index) {
-                        restores.push(RestoreRecord::restoring(
-                            self,
-                            rec.cell(),
-                            rec.old(),
-                            rec.new_value(),
-                        ));
+                        restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
                     }
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
@@ -730,12 +716,7 @@ impl Env {
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
                         if traced_local_entries.contains(&index) {
-                            restores.push(RestoreRecord::restoring(
-                                self,
-                                rec.cell(),
-                                rec.old(),
-                                rec.new_value(),
-                            ));
+                            restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
                         }
                     } else if traced_local_entries.contains(&index) {
                         restores.push(RestoreRecord::retaining(self, rec.cell()));

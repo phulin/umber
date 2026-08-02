@@ -12046,6 +12046,43 @@ fn loaded_zero_parshape_stays_silent_when_early_restricted_hbox_closes() {
 }
 
 #[test]
+fn loaded_ten_line_parshape_restores_before_retried_eqno() {
+    // This is the later loaded-TRIP assignment history paired with the early
+    // null-shape fixture above: the job establishes ten lines, a nested local
+    // assignment clears them, and unsave restores the outer value immediately
+    // before a traced illegal `\eqno`. TeX82 §283 must show that saved eqtb
+    // transition regardless of token-list handle allocation identity.
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex
+        .dump_format()
+        .expect("ten-line parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingrestores=2\tracingcommands=2\parshape=10 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt\begingroup\parshape=0\tracingcommands=0\endgroup\noindent\eqno\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    let parshape_restore = output
+        .find("{restoring \\parshape=10}")
+        .unwrap_or_else(|| panic!("loaded ten-line parshape restore: {output:?}"));
+    let next_command = output
+        .find("{horizontal mode: \\eqno}")
+        .unwrap_or_else(|| panic!("post-restore command trace: {output:?}"));
+    assert!(
+        parshape_restore < next_command,
+        "loaded restore must precede the next command: {output:?}"
+    );
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main

@@ -475,6 +475,19 @@ impl Stores {
         &self.env
     }
 
+    pub(crate) fn effective_restored_env_word(&self, cell: crate::cell::CellId) -> u64 {
+        let raw = self.env.semantic_word(cell);
+        self.env.restored_semantic_word(cell, raw).word
+    }
+
+    pub(crate) fn rewrite_null_parshape_representation(&mut self, value: TokenListId) {
+        let cell = crate::cell::CellId::new(
+            crate::cell::BankTag::TokParam,
+            u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
+        );
+        self.env.restore_raw(cell, u64::from(value.raw()) + 1);
+    }
+
     #[cfg(test)]
     pub(crate) fn testing_restore_env_word(&mut self, cell: crate::cell::CellId, word: u64) {
         self.env.restore_raw(cell, word);
