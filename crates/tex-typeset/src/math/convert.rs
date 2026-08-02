@@ -108,7 +108,14 @@ fn convert_mlist_uncached<S: MathTypesetState>(
     let mut work = Vec::with_capacity(input.nodes.len());
     let mut max_height = Scaled::from_raw(0);
     let mut max_depth = Scaled::from_raw(0);
-    first_pass(ctx, &input, &mut work, &mut max_height, &mut max_depth);
+    first_pass(
+        ctx,
+        &input,
+        style,
+        &mut work,
+        &mut max_height,
+        &mut max_depth,
+    );
     convert_final_bin_to_ord(&mut work);
     let result = second_pass(ctx, style, work, penalties, max_height, max_depth);
     ctx.set_style(saved_style);
@@ -140,6 +147,7 @@ enum WorkItem {
 fn first_pass<S: MathTypesetState>(
     ctx: &mut Context<'_, S>,
     view: &ExpandedMathView,
+    base_style: Style,
     out: &mut Vec<WorkItem>,
     max_height: &mut Scaled,
     max_depth: &mut Scaled,
@@ -260,6 +268,15 @@ fn first_pass<S: MathTypesetState>(
                     right_class,
                     delimiter,
                 }));
+                if matches!(
+                    noad.kind,
+                    NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. }
+                ) {
+                    // e-TeX [36.727]: a right/middle noad restores the style
+                    // in force at entry to this mlist, not the most recent
+                    // explicit style node.
+                    ctx.set_style(base_style);
+                }
             }
             Node::MathNoad(noad) => {
                 let mut class = noad_class(noad);
@@ -371,7 +388,19 @@ fn expand_math_choices(
                     index: 0,
                 });
             }
-            node => out.push(node),
+            node => {
+                let resets_style = matches!(
+                    node,
+                    Node::MathNoad(MathNoad {
+                        kind: NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. },
+                        ..
+                    })
+                );
+                out.push(node);
+                if resets_style {
+                    style = starting_style;
+                }
+            }
         }
     }
     ExpandedMathView {
@@ -457,7 +486,15 @@ fn nested_mlist_requests(
                     NoadKind::LeftDelimiter { .. }
                         | NoadKind::RightDelimiter { .. }
                         | NoadKind::MiddleDelimiter { .. }
-                ) => {}
+                ) =>
+            {
+                if matches!(
+                    noad.kind,
+                    NoadKind::RightDelimiter { .. } | NoadKind::MiddleDelimiter { .. }
+                ) {
+                    style = starting_style;
+                }
+            }
             Node::MathNoad(noad) => {
                 let nucleus_style = if matches!(
                     noad.kind,
@@ -627,6 +664,7 @@ fn second_pass<S: MathTypesetState>(
             }
             WorkItem::Delimiter(delimiter) => {
                 let right_class = delimiter.right_class;
+                let resets_style = matches!(delimiter.left_class, NoadClass::Close);
                 // AppG rule 19
                 if let Some(left) = previous
                     && let spacing =
@@ -645,6 +683,9 @@ fn second_pass<S: MathTypesetState>(
                     delimiters::var_delimiter(ctx, delimiter.delimiter, base_style.size(), target);
                 output.push(boxed_node(delimiter));
                 previous = Some(right_class);
+                if resets_style {
+                    ctx.set_style(base_style);
+                }
             }
         }
     }

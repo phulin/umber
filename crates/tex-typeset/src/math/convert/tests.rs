@@ -133,6 +133,79 @@ fn mlist_passes_cover_all_styles_bins_nonscript_spacing_and_penalties() {
 }
 
 #[test]
+fn middle_and_right_restore_base_style_before_nested_math_choices() {
+    // e-TeX [36.727]: unlike a left noad, every middle/right noad resets
+    // `cur_style` to the style supplied to `mlist_to_hlist`.
+    let mut stores = setup_universe();
+    let arms = ['a', 'b', 'c', '+']
+        .map(|ch| stores.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, ch))]));
+    let choice = MathChoice {
+        display: arms[0],
+        text: arms[1],
+        script: arms[2],
+        script_script: arms[3],
+    };
+    let params = MathParams::read(&stores);
+    let selected_char = |layout: &MathLayout| {
+        let mut stack = vec![layout.root()];
+        while let Some(list) = stack.pop() {
+            for node in layout.logical_nodes(list) {
+                match node {
+                    MathNode::Char { ch, .. } => return Some(*ch),
+                    MathNode::HList(boxed) | MathNode::VList(boxed) => stack.push(boxed.list),
+                    _ => {}
+                }
+            }
+        }
+        None
+    };
+
+    for (base, expected) in [
+        (Style::DISPLAY, 'a'),
+        (Style::TEXT, 'b'),
+        (Style::SCRIPT, 'c'),
+        (Style::SCRIPT_SCRIPT, '+'),
+    ] {
+        for boundary in [
+            NoadKind::MiddleDelimiter { delimiter: 0 },
+            NoadKind::RightDelimiter { delimiter: 0 },
+        ] {
+            let nested = stores.freeze_node_list(&[
+                Node::MathStyle(tex_state::math::MathStyle::ScriptScript),
+                Node::MathNoad(MathNoad::new(boundary.clone(), MathField::Empty)),
+                Node::MathChoice(choice.clone()),
+            ]);
+            let input = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::SubMlist(nested),
+            ))]);
+            let layout = mlist_to_hlist(&stores, input, base, false, &params);
+            let selected = selected_char(&layout);
+            assert_eq!(
+                selected,
+                Some(expected),
+                "base={base:?}, boundary={boundary:?}"
+            );
+        }
+    }
+
+    let left = stores.freeze_node_list(&[
+        Node::MathStyle(tex_state::math::MathStyle::Script),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter { delimiter: 0 },
+            MathField::Empty,
+        )),
+        Node::MathChoice(choice),
+    ]);
+    let layout = mlist_to_hlist(&stores, left, Style::DISPLAY, false, &params);
+    assert!(
+        root_nodes(&layout)
+            .iter()
+            .any(|node| matches!(node, MathNode::Char { ch: 'c', .. }))
+    );
+}
+
+#[test]
 fn tex82_second_pass_spacing_delimiter_penalty_matrix() {
     let stores = setup_universe();
     let params = MathParams::read(&stores);
