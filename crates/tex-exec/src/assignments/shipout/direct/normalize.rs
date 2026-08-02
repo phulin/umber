@@ -383,22 +383,20 @@ fn append_whatsit_effect(
                 Some(text) => text,
                 None => expand_write_tokens(stores, expansion.expansion, tokens)?,
             };
-            // TeX82 §1370's `write_out` frames the expansion as `print_nl("");
-            // token_show(def_ref); print_ln` when the stream is not an open
-            // file. The trailing `print_ln` is part of the write's own text;
-            // the leading `print_nl` is not -- it is §62's column test against
-            // whatever happens to be on the line, which for a `\write16`
-            // inside a shipped box is §638's `[<counts>` marker printed a
-            // moment earlier. So it is applied to the channel and left off the
-            // page effect, which records what the token list expanded to.
-            if write_line_is_open(stores, sink) {
-                stores.world_mut().write_text(sink, "\n");
+            if let Some(sink) = deferred_write_sink(stores, sink) {
+                // TeX82 §1370's `write_out` frames the expansion as
+                // `print_nl(""); token_show(def_ref); print_ln` when the
+                // stream is not an open file. The trailing `print_ln` is part
+                // of the write's own text; the leading `print_nl` is not.
+                if write_line_is_open(stores, sink) {
+                    stores.world_mut().write_text(sink, "\n");
+                }
+                stores.world_mut().write_text(sink, &text);
+                effects.push(PageEffect::Write {
+                    sink: lower_sink(sink),
+                    text,
+                });
             }
-            stores.world_mut().write_text(sink, &text);
-            effects.push(PageEffect::Write {
-                sink: lower_sink(sink),
-                text,
-            });
         }
         Whatsit::Special { class, payload } => {
             effects.push(PageEffect::Special { class, payload });
@@ -712,6 +710,27 @@ fn append_whatsit_effect(
         | Whatsit::Language { .. } => {}
     }
     Ok(())
+}
+
+/// Resolves TeX82 §1370's live selector when a deferred write reaches
+/// shipout. `Stream`, `TerminalAndLog`, and `Log` retain §1342's normalized
+/// numbered, above-range, and negative stream identities until this point.
+fn deferred_write_sink(
+    stores: &Universe,
+    sink: tex_state::PrintSink,
+) -> Option<tex_state::PrintSink> {
+    let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
+    match sink {
+        tex_state::PrintSink::Stream(slot) if stores.world().write_stream_is_open(slot) => {
+            Some(sink)
+        }
+        tex_state::PrintSink::Stream(_) | tex_state::PrintSink::TerminalAndLog => selector.sink(),
+        tex_state::PrintSink::Log if selector == tex_state::print::Selector::TermAndLog => {
+            Some(tex_state::PrintSink::Log)
+        }
+        tex_state::PrintSink::Log => selector.sink(),
+        tex_state::PrintSink::Terminal => Some(tex_state::PrintSink::Terminal),
+    }
 }
 
 /// TeX82 §§1373--1374's `out_what` open loop.

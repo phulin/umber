@@ -2752,6 +2752,15 @@ impl World {
         self.stream_bufs_mut().partial_lines[slot.index()].clear();
     }
 
+    /// Whether TeX's numbered output stream is currently open.
+    ///
+    /// TeX82 §1370 uses this live bit when an immediate write executes; a
+    /// closed numbered stream writes through the current print selector.
+    #[must_use]
+    pub fn write_stream_is_open(&self, slot: StreamSlot) -> bool {
+        self.stream_bufs().write_streams[slot.index()].is_some()
+    }
+
     /// Attaches the canonical input display captured for the just-recorded open.
     pub fn set_last_stream_open_context(&mut self, context: impl Into<String>) {
         let position = self.effect_pos();

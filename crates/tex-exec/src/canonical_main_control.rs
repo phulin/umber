@@ -9109,6 +9109,35 @@ fn replay_write_sink(value: tex_command::WriteStreamSelector) -> PrintSink {
     }
 }
 
+/// Selects TeX82 §1370's sink at the moment an immediate write executes.
+///
+/// An open numbered stream keeps its file selector. A closed numbered stream
+/// and stream 16 keep the current interaction-mode selector; stream 17 only
+/// redirects `term_and_log` to `log_only`.
+fn immediate_write_sink(
+    value: tex_command::WriteStreamSelector,
+    stores: &Universe,
+) -> Option<PrintSink> {
+    let selector = tex_state::print::Selector::for_interaction(stores.interaction_mode());
+    match value {
+        tex_command::WriteStreamSelector::Stream(slot) => {
+            let slot = StreamSlot::new(slot);
+            stores
+                .world()
+                .write_stream_is_open(slot)
+                .then_some(PrintSink::Stream(slot))
+                .or_else(|| selector.sink())
+        }
+        tex_command::WriteStreamSelector::Negative
+            if selector == tex_state::print::Selector::TermAndLog =>
+        {
+            Some(PrintSink::Log)
+        }
+        tex_command::WriteStreamSelector::Negative
+        | tex_command::WriteStreamSelector::AboveRange => selector.sink(),
+    }
+}
+
 /// Converts a stream number already normalized by its command-owned
 /// restricted scan. Replay never owns range recovery or its diagnostic.
 fn replay_stream_slot(value: i32) -> StreamSlot {
@@ -12876,9 +12905,10 @@ fn apply_scanned_step(
                     }
                 }
                 ImmediateExtension::Write { stream, tokens } => {
-                    let sink = replay_write_sink(stream);
                     let text = canonical_write_text(stores.tokens(tokens.token_list()), stores);
-                    stores.world_mut().write_text(sink, &text);
+                    if let Some(sink) = immediate_write_sink(stream, stores) {
+                        stores.world_mut().write_text(sink, &text);
+                    }
                 }
                 ImmediateExtension::CloseOut { stream } => {
                     if let Some(stream) = stream.stream_slot() {

@@ -4137,6 +4137,48 @@ fn replay_executes_immediate_stream_extensions_and_replays_other_lookahead() {
     ));
 }
 
+/// TeX82 §1370 keeps the current print selector for a write to a closed
+/// numbered stream instead of discarding it as an unavailable file sink.
+#[test]
+fn closed_stream_write_follows_the_live_interaction_selector() {
+    for (deferred, source) in [
+        (false, br"\immediate\write15{selector text}\end".as_slice()),
+        (
+            true,
+            br"\setbox0=\vbox{\write15{selector text}}\shipout\box0\end".as_slice(),
+        ),
+    ] {
+        for (interaction, terminal_count) in [
+            (tex_state::InteractionMode::Batch, 0),
+            (tex_state::InteractionMode::Nonstop, 1),
+            (tex_state::InteractionMode::Scroll, 1),
+            (tex_state::InteractionMode::ErrorStop, 1),
+        ] {
+            let mut universe = Universe::new_with_plain_catcodes();
+            universe.set_interaction_mode(interaction);
+            let mut control = CommandReplayControl::tex82_initex(&mut universe);
+            register_source(&mut control, source);
+
+            run_to_end(&mut control, &mut universe);
+
+            assert_eq!(
+                terminal_only_text(&universe)
+                    .matches("selector text\n")
+                    .count(),
+                terminal_count,
+                "interaction={interaction:?}, deferred={deferred}"
+            );
+            assert_eq!(
+                transcript_text(&universe)
+                    .matches("selector text\n")
+                    .count(),
+                1,
+                "interaction={interaction:?}, deferred={deferred}"
+            );
+        }
+    }
+}
+
 #[test]
 fn replay_closeout_normalizes_immediate_and_deferred_write_streams() {
     for stream in ["-1", "16", "999999"] {
