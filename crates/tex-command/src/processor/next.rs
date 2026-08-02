@@ -919,6 +919,7 @@ impl CommandProcessor<'_> {
     /// end-job contribution trio and lets §994's `build_page` decide.
     pub fn begin_selected_output_routine(&mut self) -> Result<(), CommandError> {
         let output = TracedTokenList::synthetic(self.state.tok_param(TokParam::OUTPUT));
+        self.report_named_token_list("output", output.token_list());
         let level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: output.token_list(),

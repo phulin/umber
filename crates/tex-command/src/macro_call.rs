@@ -195,6 +195,32 @@ impl ParameterState {
 }
 
 impl CommandProcessor<'_> {
+    /// TeX82 §323's diagnostic for a named token-list parameter installed by
+    /// `begin_token_list`. Unlike ordinary macro calls, these lists trace only
+    /// when `\tracingmacros>1`.
+    pub(crate) fn report_named_token_list(
+        &mut self,
+        name: &str,
+        tokens: tex_state::ids::TokenListId,
+    ) {
+        if self.state.int_param(IntParam::TRACING_MACROS) <= 1 {
+            return;
+        }
+        let mut text = format!("\\{name}->");
+        for token in self.state.tokens(tokens).to_vec() {
+            text.push_str(&crate::processor::expand::token_list_token_text(
+                &self.state,
+                token,
+            ));
+        }
+        // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
+        // an ordinary macro invocation. At an existing line boundary this
+        // must not introduce a blank line before the named list.
+        let mut output = self.state.begin_diagnostic();
+        output.print_nl(&text);
+        output.end(false);
+    }
+
     /// TeX.web's scalar `macro_call` path for compulsory parameter text,
     /// literal argument matching, and replacement activation.
     pub(crate) fn macro_call(

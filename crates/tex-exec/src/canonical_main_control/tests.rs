@@ -270,6 +270,37 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
 }
 
 #[test]
+fn tracingmacros_two_traces_the_named_output_token_list() {
+    // TeX82 §§323/1025: `begin_token_list(output_routine,output_text)` traces
+    // the named token-list parameter only at the stronger tracing level.
+    for (level, expected) in [(1, false), (2, true)] {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(
+            &mut control,
+            format!(
+                "\\tracingmacros={level}\\tracingonline=1\n\\maxdeadcycles=1\\output={{\\dimen0=1pt}}\n\\topskip=0pt\\setbox0=\\vbox to1pt{{}}\\copy0\\penalty-10000\\end"
+            )
+            .as_bytes(),
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let terminal = terminal_text(&stores);
+        assert_eq!(
+            terminal.contains("\\output->{\\dimen 0=1pt}"),
+            expected,
+            "tracingmacros={level}: {terminal:?}"
+        );
+        assert!(
+            !terminal.contains("\n\n\\output->"),
+            "named-list tracing must use §323's conditional newline: {terminal:?}"
+        );
+    }
+}
+
+#[test]
 fn tracingcommands_does_not_trace_shipout_box_constructor() {
     // TeX82 §§1030/1075/1084: `\shipout` calls `scan_box` inside its already
     // traced main-control case. Its constructor is scanner-owned, while a
