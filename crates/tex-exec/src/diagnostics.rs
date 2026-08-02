@@ -663,13 +663,13 @@ pub(crate) fn execute_showlists(
                     DumpConfig::read(stores),
                 ));
             }
-        } else if !level.list().nodes().is_empty() {
+        } else if !level.list().physical_nodes().is_empty() {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
             text.push_str(&dump_node_slice(
                 stores,
-                level.list().nodes(),
+                level.list().physical_nodes(),
                 DumpConfig::read(stores),
             ));
         }

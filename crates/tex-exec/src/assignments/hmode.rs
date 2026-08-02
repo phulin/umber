@@ -784,6 +784,13 @@ fn append_hchar_with_fuel(
         update_space_factor(&mut list, stores, ch);
         return Ok(());
     }
+    flush_pending_hchar_run_with_fuel(
+        nest,
+        stores,
+        mode == Mode::Horizontal,
+        false,
+        fuel,
+    )?;
     crate::diagnostics::report_missing_character_warning(stores, font, ch, etex_extended);
     Ok(())
 }

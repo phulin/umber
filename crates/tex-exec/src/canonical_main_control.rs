@@ -13749,6 +13749,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowLists => {
+            // TeX82 §218 observes the synchronous linked list built by
+            // main_control. Materialize Umber's batched character tail before
+            // traversing its diagnostic physical projection.
+            crate::assignments::flush_pending_hchars(modes, stores, command.fuel)?;
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_showlists(stores, modes, context)?;
             Ok(ReplayStep::Continue)

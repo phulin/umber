@@ -1136,6 +1136,82 @@ fn retained_left_boundary_ligature_reenters_the_lig_kern_program() {
     ));
 }
 
+#[test]
+fn missing_glyph_terminates_the_live_ligature_run() {
+    // TeX82 §1034 leaves main_loop when the current font lacks a character;
+    // the next surviving character therefore begins a new ligature run.
+    use tex_fonts::metrics::CharTag;
+    use tex_fonts::{FontMetrics, LigKernCommand, LigKernInstruction, LigatureCommand, LoadedFont};
+
+    let mut characters = vec![None; 256];
+    for (code, tag) in [
+        (
+            b'A',
+            CharTag::LigKern {
+                program_index: 0,
+                start_index: 0,
+            },
+        ),
+        (b'B', CharTag::None),
+        (b'C', CharTag::None),
+    ] {
+        characters[usize::from(code)] = Some(tex_fonts::CharMetrics {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            italic_correction: Scaled::from_raw(0),
+            tag,
+        });
+    }
+    let metrics = FontMetrics::new(
+        characters,
+        vec![LigKernInstruction {
+            skip_byte: 128,
+            next_char: b'B',
+            command: Some(LigKernCommand::Ligature(LigatureCommand {
+                replacement: b'C',
+                delete_current: true,
+                delete_next: true,
+                pass_over: 0,
+            })),
+        }],
+        None,
+        None,
+        Vec::new(),
+    );
+    metrics.validate().expect("synthetic missing-glyph TFM");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(LoadedFont::new(
+        "missing-boundary",
+        "missing-boundary.tfm",
+        [0; 32],
+        0,
+        Scaled::from_raw(10 * Scaled::UNITY),
+        Scaled::from_raw(10 * Scaled::UNITY),
+        vec![Scaled::from_raw(0); 7],
+        metrics,
+    ));
+    stores.set_current_font(font);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::RestrictedHorizontal).expect("test hmode");
+    for ch in ['A', 'X', 'B'] {
+        append_canonical_character(&mut nest, &mut stores, ch, OriginId::UNKNOWN)
+            .expect("append test character");
+    }
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    flush_pending_hchars_without_right_boundary(&mut nest, &mut stores, fuel.fuel_mut())
+        .expect("flush test run");
+
+    assert!(matches!(
+        nest.current_list().nodes(),
+        [Node::Char { ch: 'A', .. }, Node::Char { ch: 'B', .. }]
+    ));
+    assert!(matches!(
+        nest.current_list().physical_nodes(),
+        [Node::Char { ch: 'A', .. }, Node::Char { ch: 'B', .. }]
+    ));
+}
+
 fn ligature_test_font(
     programs: &[(u8, u8, tex_fonts::LigatureCommand)],
     left_boundary: Option<(u8, tex_fonts::LigatureCommand)>,
