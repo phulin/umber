@@ -9885,6 +9885,23 @@ fn canonical_display_diagnostics_keep_show_raw_and_scan_other_operands() {
 }
 
 #[test]
+fn canonical_show_caret_renders_nonprinting_control_sequence_bytes() {
+    // TeX82 §§59-60/1293: `\show` sends the control-sequence name through
+    // `print`, so embedded string-pool bytes use canonical `^^` notation.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, -1);
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        br"\catcode0=11 \expandafter\def\csname a^^@^^@a\endcsname{}\expandafter\show\csname a^^@^^@a\endcsname\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let text = terminal_text(&universe);
+    assert!(text.contains("> \\a^^@^^@a=macro:"), "{text:?}");
+}
+
+#[test]
 fn canonical_showthe_and_the_preserve_font_identifier_tokens() {
     // TeX82 §§262/1297: each font identifier reaches `token_show`, so each
     // named control word keeps `print_cs`'s delimiter before the period.

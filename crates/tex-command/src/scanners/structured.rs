@@ -2471,11 +2471,15 @@ impl CommandProcessor<'_> {
             | Token::Char {
                 cat: Catcode::Active,
                 ..
-            } => format!(
-                "> {}={}",
-                string_text(&self.state, token),
-                Self::shown_meaning_text(&self.state, &command)
-            ),
+            } => {
+                let raw = string_text(&self.state, token);
+                let mut shown = String::new();
+                self.state.append_selector_string_text(&raw, &mut shown);
+                format!(
+                    "> {shown}={}",
+                    Self::shown_meaning_text(&self.state, &command)
+                )
+            }
             Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
                 format!("> {}", Self::shown_meaning_text(&self.state, &command))
             }

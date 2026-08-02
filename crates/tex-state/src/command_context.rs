@@ -31,6 +31,22 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    /// Appends string-pool content using TeX82 §§59--60's active-selector
+    /// `print` spelling, including `\newlinechar` handling.
+    pub fn append_selector_string_text(&self, raw: &str, text: &mut String) {
+        let newlinechar = u32::try_from(self.universe.int_param(IntParam::NEWLINE_CHAR))
+            .ok()
+            .filter(|&code| code <= u8::MAX.into())
+            .and_then(char::from_u32);
+        for ch in raw.chars() {
+            if Some(ch) == newlinechar {
+                text.push('\n');
+            } else {
+                crate::token_show::append_tex_print_char(ch, text);
+            }
+        }
+    }
+
     /// Appends one token using TeX82 §262's active-selector `show_token_list`
     /// spelling, including `print_cs` separators and `\newlinechar` handling.
     pub fn append_token_selector_text(&self, token: Token, text: &mut String) {
