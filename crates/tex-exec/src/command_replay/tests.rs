@@ -12003,37 +12003,55 @@ fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
 
 #[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
-    // TeX82 §§1200 and 1207 keep the rejected command pending while
+    // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main
-    // control. An executor step inserted between those operations used to
-    // leak an overfull-rule node and changed the normalized TRIP DVI by 40
-    // bytes even though the command-event stream remained exact.
+    // control. The observed executor path once bypassed that recovery and
+    // math-packed the finished alignment, changing the normalized TRIP DVI
+    // by 40 bytes even though the command-event stream remained exact.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.enable_geometry_observation();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
         br"\overfullrule=5pt\setbox0=\vbox{\hsize=20pt\noindent x$$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno}\shipout\box0\end",
     );
+    let mut observations = ObservationRecorder::default();
     loop {
-        let step = control.step(&mut universe).expect("microfixture executes");
-        let transcript = terminal_text(&universe);
-        if transcript.contains("Missing $$ inserted") {
-            assert!(
-                transcript.contains("You can't use `\\eqno' in horizontal mode"),
-                "§1207 recovery must resume the display and retry the pending command atomically"
-            );
-            break;
+        match control
+            .step_with_observer(&mut universe, &mut observations)
+            .expect("observed recovery microfixture executes")
+        {
+            ReplayStep::End | ReplayStep::EndOfInput => break,
+            ReplayStep::Continue => {}
         }
-        assert!(!matches!(step, ReplayStep::End | ReplayStep::EndOfInput));
     }
-    run_to_end(&mut control, &mut universe);
+    let transcript = terminal_text(&universe);
+    assert!(transcript.contains("Missing $$ inserted"));
+    assert!(transcript.contains("You can't use `\\eqno' in horizontal mode"));
 
     let artifact = universe
         .world()
         .committed_artifacts()
         .first()
         .expect("recovery microfixture ships one artifact");
-    assert_eq!(artifact.bytes().len(), 1276);
+    let hpack_count = universe
+        .geometry_observations_since(0)
+        .iter()
+        .filter(|event| matches!(event, tex_state::GeometryObservation::Hpack { .. }))
+        .count();
+    assert_eq!(
+        (artifact.bytes().len(), hpack_count),
+        (1276, 3),
+        "§1207 recovery must preserve the exact shipped page and pack sequence"
+    );
+    assert_eq!(
+        tex_out::PageArtifact::from_bytes(artifact.bytes())
+            .expect("recovery artifact parses")
+            .content_hash()
+            .expect("recovery artifact hashes")
+            .hex(),
+        "1502e8d335686668a385ce59a2fbb496c054d9deb6b85ed6e94b89703c0fe27b"
+    );
 }
 
 #[test]

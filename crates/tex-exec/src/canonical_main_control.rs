@@ -1726,8 +1726,8 @@ impl CanonicalMainControl {
                 Ok(ReplayStep::Continue)
             }
             ScannedStep::Math(request) => self.apply_canonical_math_request(request, stores),
-            ScannedStep::DisplayAlignmentEquationNumber { token, side } => {
-                self.recover_display_alignment_equation_number(token, side, stores)
+            ScannedStep::DisplayAlignmentEquationNumber { side } => {
+                self.recover_display_alignment_equation_number(side, stores)
             }
             ScannedStep::MathDelimiter(boundary) => {
                 self.apply_canonical_math_delimiter(boundary, stores)
@@ -2189,14 +2189,14 @@ impl CanonicalMainControl {
                     {
                         Some(command) => match command.meaning() {
                             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo) => {
+                                processor.back_input(command).map_err(command_error)?;
                                 ScannedStep::DisplayAlignmentEquationNumber {
-                                    token: command.spelling(),
                                     side: tex_command::EquationNumberSide::Right,
                                 }
                             }
                             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo) => {
+                                processor.back_input(command).map_err(command_error)?;
                                 ScannedStep::DisplayAlignmentEquationNumber {
-                                    token: command.spelling(),
                                     side: tex_command::EquationNumberSide::Left,
                                 }
                             }
@@ -2892,7 +2892,6 @@ impl CanonicalMainControl {
     /// TeX82 §1207's missing-display-closer recovery for an equation number.
     fn recover_display_alignment_equation_number(
         &mut self,
-        token: tex_state::token::TracedTokenWord,
         side: tex_command::EquationNumberSide,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
@@ -2908,12 +2907,7 @@ impl CanonicalMainControl {
         // §1207 calls back_error before resume_after_display. The backup
         // level must already be live when §82 renders context, and ordinary
         // main control must retry the command in the resumed paragraph.
-        let context = {
-            let mut machine = self.command_machine();
-            let mut processor = machine.processor(stores);
-            processor.back_input_token(token).map_err(command_error)?;
-            processor.error_context()
-        };
+        let context = self.command.output_open_context(&stores.command_context());
         crate::error_report::report_error(
             stores,
             "Missing $$ inserted",
@@ -2923,22 +2917,7 @@ impl CanonicalMainControl {
             ],
             context,
         )?;
-        // §1200's optional-space probe now fetches the backed-up non-space
-        // command and backs it up again. Capture that exact delivery here so
-        // display resumption can build the page before ordinary main control
-        // redispatches it, without exposing an extra host step between the
-        // two halves of §1207's recovery transition.
-        let pending = {
-            let mut machine = self.command_machine();
-            let mut processor = machine.processor(stores);
-            processor
-                .get_x_token()
-                .map_err(command_error)?
-                .ok_or(ExecError::MissingToken {
-                    context: "display alignment recovery command",
-                })?
-        };
-        self.finish_canonical_display_alignment_with_pending_command(
+        self.finish_canonical_display_alignment(
             stores,
             crate::align::FinishedAlignment {
                 nodes,
@@ -2946,7 +2925,7 @@ impl CanonicalMainControl {
                 aux_space_factor: None,
             },
         )?;
-        self.nested_step_once(stores, Some(pending))
+        Ok(ReplayStep::Continue)
     }
 
     fn apply_canonical_math_shift(
@@ -3173,14 +3152,6 @@ impl CanonicalMainControl {
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
         self.finish_canonical_display_alignment_inner(stores, finished, true)
-    }
-
-    fn finish_canonical_display_alignment_with_pending_command(
-        &mut self,
-        stores: &mut Universe,
-        finished: crate::align::FinishedAlignment,
-    ) -> Result<(), ExecError> {
-        self.finish_canonical_display_alignment_inner(stores, finished, false)
     }
 
     fn finish_canonical_display_alignment_inner(
@@ -3701,18 +3672,32 @@ impl CanonicalMainControl {
                     .next_do_assignments_command()
                     .map_err(command_error)?
                 {
-                    Some(command) => dispatch_main_control_command(
-                        &mut processor,
-                        command,
-                        mode,
-                        &self.boxes,
-                        innermost_group,
-                        job_is_all_over,
-                        false,
-                        &mut self.shown_mode,
-                        &mut diagnostics,
-                        false,
-                    )?,
+                    Some(command) => match command.meaning() {
+                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EqNo) => {
+                            processor.back_input(command).map_err(command_error)?;
+                            ScannedStep::DisplayAlignmentEquationNumber {
+                                side: tex_command::EquationNumberSide::Right,
+                            }
+                        }
+                        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LeftEqNo) => {
+                            processor.back_input(command).map_err(command_error)?;
+                            ScannedStep::DisplayAlignmentEquationNumber {
+                                side: tex_command::EquationNumberSide::Left,
+                            }
+                        }
+                        _ => dispatch_main_control_command(
+                            &mut processor,
+                            command,
+                            mode,
+                            &self.boxes,
+                            innermost_group,
+                            job_is_all_over,
+                            false,
+                            &mut self.shown_mode,
+                            &mut diagnostics,
+                            false,
+                        )?,
+                    },
                     None => ScannedStep::EndOfInput,
                 },
                 None => scan_replay_step(
@@ -4743,7 +4728,6 @@ enum ScannedStep {
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
     DisplayAlignmentEquationNumber {
-        token: tex_state::token::TracedTokenWord,
         side: tex_command::EquationNumberSide,
     },
     MathDelimiter(MathDelimiterBoundary),
