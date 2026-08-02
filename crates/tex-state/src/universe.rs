@@ -3334,6 +3334,12 @@ impl Universe {
         self.editor_content_hash = Some(hash);
     }
 
+    /// Returns the explicit editor revision identity installed by the host.
+    #[must_use]
+    pub const fn explicit_root_editor_content_hash(&self) -> Option<ContentHash> {
+        self.editor_content_hash
+    }
+
     #[must_use]
     pub fn root_editor_content_hash(&self, summary: &InputSummary) -> Option<ContentHash> {
         self.editor_content_hash

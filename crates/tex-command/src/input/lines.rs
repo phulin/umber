@@ -183,7 +183,7 @@ pub enum LineTerminator {
 /// Physical metadata retained independently of normalized character delivery.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct PhysicalLine {
-    source: SourceId,
+    pub(crate) source: SourceId,
     number: u64,
     content: SourceRange,
     terminator: SourceRange,

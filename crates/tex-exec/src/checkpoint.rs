@@ -91,6 +91,8 @@ impl EngineCheckpoint {
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<Self, CommandSummaryError> {
         let command = command.publish_summary()?;
+        let root_anchor = command.root_source_anchor().unwrap_or(0);
+        let root_content_hash = universe.explicit_root_editor_content_hash();
         let modes = nest.summary();
         let mode_hash = modes.semantic_fingerprint(universe);
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
@@ -108,8 +110,8 @@ impl EngineCheckpoint {
             input: InputSummary::default(),
             modes,
             state_hash,
-            root_anchor: 0,
-            root_content_hash: None,
+            root_anchor,
+            root_content_hash,
             effect_prefix,
             artifact_prefix,
             budget_counters,
@@ -180,6 +182,52 @@ impl EngineCheckpoint {
         *command = restored_command;
         *nest = restored_modes;
         Ok(())
+    }
+
+    /// Forks a retained canonical checkpoint and substitutes an edited root
+    /// source whose consumed prefix is unchanged.
+    pub fn fork_canonical_editor(
+        &self,
+        control: &mut crate::CanonicalMainControl,
+        substrate: &GenerationSubstrate,
+        old_source: &[u8],
+        new_source: std::sync::Arc<[u8]>,
+        fragments: &FragmentStore,
+        layout: &tex_state::EditorLayout,
+    ) -> Result<(Universe, Duration), EditorRestoreError> {
+        if self.root_content_hash != Some(ContentHash::from_bytes(old_source)) {
+            return Err(EditorRestoreError::RootRevisionMismatch);
+        }
+        if self.root_anchor > old_source.len()
+            || self.root_anchor > new_source.len()
+            || old_source[..self.root_anchor] != new_source[..self.root_anchor]
+        {
+            return Err(EditorRestoreError::ChangedRootPrefix);
+        }
+        let new_content_hash = ContentHash::from_bytes(&new_source);
+        let fork_started = Timer::start();
+        let mut universe = substrate
+            .fork_at(&self.universe)
+            .map_err(EditorRestoreError::Fork)?;
+        let fork_latency = fork_started.elapsed();
+        let mut rebound = self.clone();
+        let command = rebound
+            .command
+            .as_mut()
+            .ok_or(EditorRestoreError::Canonical(
+                CanonicalCheckpointRestoreError::MissingCommandSummary,
+            ))?;
+        if !command.rebind_root_source(old_source, new_source) {
+            return Err(EditorRestoreError::RootRevisionMismatch);
+        }
+        control
+            .restore_checkpoint(&rebound, &mut universe)
+            .map_err(EditorRestoreError::Canonical)?;
+        universe
+            .install_editor_fragments(fragments, layout)
+            .map_err(EditorRestoreError::Layout)?;
+        universe.set_root_editor_content_hash(new_content_hash);
+        Ok((universe, fork_latency))
     }
 
     #[must_use]
@@ -456,6 +504,7 @@ pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
     RootRevisionMismatch,
+    Canonical(CanonicalCheckpointRestoreError),
     ChangedRootPrefix,
     RootRebind(SourceMapError),
     IncludedInputUnavailable(SourceId),
@@ -470,6 +519,7 @@ impl fmt::Display for EditorRestoreError {
             Self::RootRevisionMismatch => {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
+            Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }

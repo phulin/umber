@@ -1,14 +1,16 @@
 //! Command snapshot and durable-summary ownership.
 
 use std::fmt;
+use std::sync::Arc;
 
-use crate::CommandState;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState, ScannerStatus};
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
 use crate::state::TransientState;
+use crate::{CommandState, RegisteredSourceKind, SourceRegistration};
+use tex_state::SourceId;
 
 /// Exact owned command-machine state for one executor-step rollback.
 ///
@@ -49,6 +51,58 @@ impl CommandSummary {
     #[must_use]
     pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
         self.expansion.profile.fingerprint()
+    }
+
+    /// Conservative physical cursor of the bottom registered source.
+    #[must_use]
+    pub fn root_source_anchor(&self) -> Option<usize> {
+        self.input.levels.iter().find_map(|level| {
+            let crate::input::InputLevel::Source(source) = level else {
+                return None;
+            };
+            usize::try_from(
+                source
+                    .cursor
+                    .line
+                    .as_ref()
+                    .map_or(source.cursor.next_physical_offset, |line| line.byte_cursor),
+            )
+            .ok()
+        })
+    }
+
+    /// Rebinds the bottom generated source to edited bytes while retaining
+    /// the exact lexer cursor and allocating a fresh provenance identity.
+    pub fn rebind_root_source(&mut self, old: &[u8], new: Arc<[u8]>) -> bool {
+        let Some(source) = self.input.levels.iter_mut().find_map(|level| match level {
+            crate::input::InputLevel::Source(source) => Some(source),
+            crate::input::InputLevel::Tokens(_) => None,
+        }) else {
+            return false;
+        };
+        if source.cursor.backing.bytes.as_ref() != old {
+            return false;
+        }
+        let Ok(raw) = u32::try_from(self.input.next_source_identity) else {
+            return false;
+        };
+        let id = SourceId::new(raw);
+        let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, new);
+        if let Some(name) = &source.cursor.backing.name {
+            registration = registration.with_name(Arc::clone(name));
+        }
+        let Ok(backing) =
+            crate::input::RegisteredSource::register(id, self.expansion.profile, registration)
+        else {
+            return false;
+        };
+        self.input.next_source_identity += 1;
+        self.input.registered_sources.push(backing.clone());
+        source.cursor.backing = backing;
+        if let Some(line) = &mut source.cursor.line {
+            line.physical.source = id;
+        }
+        true
     }
 }
 

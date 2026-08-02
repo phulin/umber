@@ -345,6 +345,7 @@ pub enum RevisionCandidateResult {
     Complete,
 }
 
+#[derive(Clone)]
 struct AdvanceSetup {
     execution_path: RevisionExecutionPath,
     next_revision: RevisionId,
@@ -1154,6 +1155,11 @@ impl Session {
             expanded_replacement.len(),
             LayoutGeneration::new(next_revision.raw()),
         )?;
+        let restart = if force_job_start {
+            None
+        } else {
+            select_restart(&old_history, &old_source, &next, &edit)
+        };
         let map = EditMap::new(edit.range.clone(), edit.replacement.len());
         if !force_job_start {
             self.substrate
@@ -1181,7 +1187,71 @@ impl Session {
             revision_setup_latency: revision_setup_started.elapsed(),
         });
 
-        self.start_replacement_candidate(setup)
+        match restart {
+            Some(restart) => {
+                match self.start_restored_candidate(Box::new((*setup).clone()), restart, true) {
+                    Ok(candidate) => Ok(candidate),
+                    Err(SessionError::Restore(_)) => {
+                        let mut fallback = setup;
+                        fallback.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
+                        self.start_replacement_candidate(fallback)
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            None => self.start_replacement_candidate(setup),
+        }
+    }
+
+    fn start_restored_candidate(
+        &self,
+        setup: Box<AdvanceSetup>,
+        restart: usize,
+        allow_convergence: bool,
+    ) -> Result<RevisionCandidate, SessionError> {
+        let substrate = self
+            .substrate
+            .as_ref()
+            .ok_or(SessionError::MissingAcceptedSubstrate)?;
+        let anchor = &setup.old_history[restart];
+        let mut control = if self.initex {
+            CanonicalMainControl::prepared_initex(self.command_profile)
+        } else {
+            CanonicalMainControl::with_profile(self.command_profile)
+        };
+        control
+            .capabilities_mut()
+            .set_startup_job_name(&self.job_name);
+        let (mut universe, restart_fork_latency) = anchor.checkpoint().fork_canonical_editor(
+            &mut control,
+            substrate,
+            setup.old_source.as_bytes(),
+            Arc::from(self.source_file_bytes(&setup.next)),
+            &setup.fragments,
+            &setup.next_layout,
+        )?;
+        for (path, bytes) in &self.registered_inputs {
+            universe.world_mut().set_memory_file(path, bytes.clone())?;
+        }
+        let mut memo = self.pure_memo.clone();
+        memo.begin_paragraph_history(true);
+        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
+        Ok(RevisionCandidate {
+            universe,
+            control,
+            sink: CandidateSink::Advance(sink),
+            memo,
+            completed: None,
+            suspension_serial: 0,
+            delivered_commands: 0,
+            execution_budgets: tex_exec::ExecutionBudgets::default(),
+            kind: RevisionCandidateKind::Incremental {
+                setup,
+                restart,
+                restart_fork_latency,
+            },
+        })
     }
 
     fn start_replacement_candidate(
