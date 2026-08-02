@@ -67,6 +67,26 @@ impl InputState {
         self.render_context_for_levels(&self.levels, stores, parameters)
     }
 
+    /// `show_context` projection for e-TeX `file_warning`, whose retiring
+    /// source has completed its last line but has not yet left `input_stack`.
+    pub(crate) fn output_retiring_source_context(
+        &self,
+        retiring: &SourceLevel,
+        stores: &tex_state::CommandContext<'_>,
+        parameters: &crate::macro_call::ParameterState,
+    ) -> String {
+        let mut levels = self.levels.clone();
+        if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
+            matches!(level, InputLevel::Source(source) if source.identity == retiring.identity)
+        }) {
+            *source = retiring.clone();
+            if let Some(line) = source.cursor.line.as_mut() {
+                line.physical = line.physical.with_number(source.cursor.next_line_number);
+            }
+        }
+        self.render_context_for_levels(&levels, stores, parameters)
+    }
+
     pub(crate) fn output_close_context(
         &self,
         stores: &tex_state::CommandContext<'_>,

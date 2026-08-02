@@ -1528,6 +1528,16 @@ impl CommandProcessor<'_> {
                             // EOF in a nested `\\input` must insert frozen
                             // `\\fi` above the parent, rather than allowing
                             // the parent's next token to escape `pass_text`.
+                            if self
+                                .state
+                                .int_param(tex_state::env::banks::IntParam::TRACING_NESTING)
+                                > 1
+                            {
+                                let context = self
+                                    .command
+                                    .output_retiring_source_context(&source, &self.state);
+                                self.pending_file_warning_context = Some((identity, context));
+                            }
                             let restart = self.retire_and_restart(identity)?;
                             // §362 prints its `)` *before* `end_file_reading`
                             // and `check_outer_validity`, so the bracket the
@@ -1608,6 +1618,10 @@ impl CommandProcessor<'_> {
         identity: InputLevelId,
     ) -> Result<RetirementRestart, CommandError> {
         let open_depths = self.command.source_open_depths(identity);
+        let nesting_context = self
+            .pending_file_warning_context
+            .take()
+            .and_then(|(level, context)| (level == identity).then_some(context));
         let retirement = self
             .command
             .retire_exhausted_input(identity)
@@ -1620,7 +1634,7 @@ impl CommandProcessor<'_> {
         if matches!(action, InputRetirementAction::SourcePopped)
             && let Some(open_depths) = open_depths
         {
-            self.warn_file_boundary_incomplete(open_depths);
+            self.warn_file_boundary_incomplete(open_depths, nesting_context);
         }
         if !matches!(action, InputRetirementAction::VTemplateRetained) {
             let reason = if self.take_immediate_write_retirement(identity) {

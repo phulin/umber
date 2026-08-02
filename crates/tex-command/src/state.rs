@@ -205,6 +205,15 @@ impl CommandState {
         self.input.output_open_context(stores, &self.parameters)
     }
 
+    pub(crate) fn output_retiring_source_context(
+        &self,
+        source: &crate::input::SourceLevel,
+        stores: &tex_state::CommandContext<'_>,
+    ) -> String {
+        self.input
+            .output_retiring_source_context(source, stores, &self.parameters)
+    }
+
     /// TeX82 §§1026/1028's context after the selected output list ends.
     ///
     /// Canonical delivery can retain a depleted cursor until the next fetch

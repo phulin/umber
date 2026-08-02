@@ -11,10 +11,8 @@ use crate::input::SourceOpenDepths;
 use crate::processor::CommandProcessor;
 
 impl CommandProcessor<'_> {
-    /// Completes e-TeX 2.6 [23.328]'s `group_warning`/`if_warning` tail.
-    /// Both procedures terminate the warning line and render the live
-    /// `show_context` only at `\tracingnesting>1`.
-    fn finish_cross_file_nesting_warning(&mut self, tracing_nesting: i32) {
+    /// Completes e-TeX 2.6 [23.328]'s nesting-warning context tail.
+    fn finish_nesting_warning(&mut self, tracing_nesting: i32) {
         if tracing_nesting > 1 {
             let context = self.error_context();
             self.state.printer().print_rendered(&context);
@@ -53,7 +51,7 @@ impl CommandProcessor<'_> {
             }
             printer.print(" of a different file");
         }
-        self.finish_cross_file_nesting_warning(tracing_nesting);
+        self.finish_nesting_warning(tracing_nesting);
     }
 
     /// e-TeX 2.6 [23.328]'s `if_warning`, emitted when a delimiter closes a
@@ -80,7 +78,7 @@ impl CommandProcessor<'_> {
             }
             printer.print(" of a different file");
         }
-        self.finish_cross_file_nesting_warning(tracing_nesting);
+        self.finish_nesting_warning(tracing_nesting);
     }
 
     /// `etex.ch` [23.328]'s `file_warning`, called once a source level has
@@ -96,8 +94,13 @@ impl CommandProcessor<'_> {
     /// the ambient selector rather than `begin_diagnostic`'s `\tracingonline`
     /// redirect: `file_warning` is not `stat`-gated in `etex.ch` and reaches
     /// the terminal whenever the ambient selector already does.
-    pub(crate) fn warn_file_boundary_incomplete(&mut self, open_depths: SourceOpenDepths) {
-        if self.state.int_param(IntParam::TRACING_NESTING) <= 0 {
+    pub(crate) fn warn_file_boundary_incomplete(
+        &mut self,
+        open_depths: SourceOpenDepths,
+        saved_context: Option<String>,
+    ) {
+        let tracing_nesting = self.state.int_param(IntParam::TRACING_NESTING);
+        if tracing_nesting <= 0 {
             return;
         }
         let group_depth = open_depths.group_depth as usize;
@@ -182,8 +185,14 @@ impl CommandProcessor<'_> {
             printer.print(" is incomplete");
         }
         if !group_lines.is_empty() || !condition_lines.is_empty() {
-            self.state.printer().print_ln();
-            self.state.record_warning_history();
+            if tracing_nesting > 1 {
+                let context = saved_context.unwrap_or_else(|| self.error_context());
+                self.state.printer().print_rendered(&context);
+                self.state.record_warning_history();
+            } else {
+                self.state.printer().print_ln();
+                self.state.record_warning_history();
+            }
         }
     }
 }

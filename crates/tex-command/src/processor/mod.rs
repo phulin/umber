@@ -62,6 +62,7 @@ pub struct CommandProcessor<'a> {
     /// metadata: raw delivery neither reads replay provenance nor lets this
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
+    pending_file_warning_context: Option<(InputLevelId, String)>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
     last_delivery: Option<DeliveryStamp>,
@@ -226,6 +227,7 @@ impl<'a> CommandProcessor<'a> {
             observer: None,
             fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
             immediate_write_retirement: None,
+            pending_file_warning_context: None,
             last_delivery: None,
             replay_completion: None,
             last_integer_terminator: None,

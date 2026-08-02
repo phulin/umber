@@ -1399,6 +1399,51 @@ fn cross_file_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> S
     effect_text(&universe)
 }
 
+fn file_boundary_nesting_warning_text(tracing_nesting: i32, conditional: bool) -> String {
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"a".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(
+        tex_state::env::banks::IntParam::TRACING_NESTING,
+        tracing_nesting,
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("source reads")
+            .expect("source token is delivered");
+    }
+    if conditional {
+        command.conditions.push(ConditionalKind::IfFalse, 4);
+    } else {
+        universe.enter_group_with_kind(tex_state::GroupKind::Simple);
+    }
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor.warn_file_boundary_incomplete(
+            crate::input::SourceOpenDepths {
+                group_depth: 0,
+                group_lineage: None,
+                conditional_depth: 0,
+                conditional_identity: None,
+            },
+            None,
+        );
+    }
+    effect_text(&universe)
+}
+
 #[test]
 fn tracingnesting_two_shows_context_after_cross_file_warnings() {
     // e-TeX 2.6 [23.328] shares this exact tail between `group_warning` and
@@ -1413,6 +1458,19 @@ fn tracingnesting_two_shows_context_after_cross_file_warnings() {
             contextual.contains("of a different file\nl.1"),
             "{contextual:?}"
         );
+    }
+}
+
+#[test]
+fn tracingnesting_two_shows_context_after_file_boundary_warnings() {
+    // e-TeX 2.6 [23.328]'s `file_warning` shares the context threshold for
+    // both of its incomplete-group and incomplete-conditional loops.
+    for conditional in [false, true] {
+        let terse = file_boundary_nesting_warning_text(1, conditional);
+        let contextual = file_boundary_nesting_warning_text(2, conditional);
+        assert!(terse.contains("is incomplete\n"), "{terse:?}");
+        assert!(!terse.contains("l.1"), "{terse:?}");
+        assert!(contextual.contains("is incomplete\nl.1"), "{contextual:?}");
     }
 }
 
@@ -1433,7 +1491,7 @@ fn tracingnesting_warns_when_a_file_ends_with_an_open_group() {
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
-    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 1);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_NESTING, 2);
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
         "inc.tex",
@@ -1477,6 +1535,7 @@ fn tracingnesting_warns_when_a_file_ends_with_an_open_group() {
         reported.contains("Warning: end of file when simple group (level 1) is incomplete\n"),
         "{reported:?}"
     );
+    assert!(reported.contains("is incomplete\nl.2 a"), "{reported:?}");
 }
 
 #[test]
