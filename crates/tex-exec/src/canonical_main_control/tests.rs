@@ -7388,6 +7388,55 @@ fn font_definition_size_boundaries_use_exact_replacements() {
 }
 
 #[test]
+fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
+    // TeX82 §564 reports malformed metrics without interning a partial font.
+    // A local failed definition must roll back at group end, while a global
+    // failed definition leaves the selector bound to nullfont.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    stores
+        .world_mut()
+        .set_memory_file("broken.tfm", b"not a TFM".to_vec())
+        .expect("malformed font fixture installs");
+    let metrics = InputReadState::read_input_file(
+        &mut stores.input_open_context(),
+        std::path::Path::new("broken.tfm"),
+    )
+    .expect("malformed font fixture reads");
+    control.capabilities_mut().register_font(
+        "broken.tfm",
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+    register_source(
+        &mut control,
+        br"\font\local=cmr10 {\font\local=broken }\global\font\globalbad=broken \end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let font = |stores: &Universe, name: &str| match stores
+        .meaning(stores.symbol(name).expect("font identifier was scanned"))
+    {
+        Meaning::Font(font) => font,
+        meaning => panic!("{name} has {meaning:?}"),
+    };
+    assert_ne!(font(&stores, "local"), tex_state::font::NULL_FONT);
+    assert_eq!(font(&stores, "globalbad"), tex_state::font::NULL_FONT);
+    let output = terminal_text(&stores);
+    assert_eq!(
+        output
+            .matches("not loadable: Bad metric (TFM) file")
+            .count(),
+        2,
+        "{output}"
+    );
+}
+
+#[test]
 fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
     // TeX82 §1257 compares the case-sensitive name and size when reusing a
     // font, then assigns font_id_text(f):=u even on the reuse path.

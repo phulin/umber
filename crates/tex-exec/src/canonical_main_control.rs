@@ -12801,6 +12801,16 @@ fn apply_scanned_step(
             resource,
             global,
         } => {
+            let bind_null_font = |stores: &mut Universe| {
+                if global {
+                    stores.set_meaning_global(
+                        request.target,
+                        Meaning::Font(tex_state::font::NULL_FONT),
+                    );
+                } else {
+                    stores.set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
+                }
+            };
             // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
             // continue with the replaced value; §1257 then loads the font
             // normally. The replacement is the scanner's, the report this
@@ -12831,17 +12841,30 @@ fn apply_scanned_step(
                     },
                     request.error_context.clone(),
                 )?;
-                if global {
-                    stores.set_meaning_global(
-                        request.target,
-                        Meaning::Font(tex_state::font::NULL_FONT),
-                    );
-                } else {
-                    stores.set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
-                }
+                bind_null_font(stores);
                 return Ok(ReplayStep::Continue);
             }
-            let loaded = load_canonical_font(&request, resource)?;
+            let loaded = match load_canonical_font(&request, resource) {
+                Ok(loaded) => loaded,
+                Err(ExecError::FontParse(_)) => {
+                    // TeX.web §564 treats malformed metrics exactly like the
+                    // recoverable not-loadable path. The fulfilled resource
+                    // remains retained by the host; only this definition is
+                    // replaced by nullfont with its requested assignment scope.
+                    let selector = stores.resolve(request.target).to_owned();
+                    crate::assignments::fonts::report_font_not_loadable_with_context(
+                        stores,
+                        &selector,
+                        &request.name,
+                        request.size,
+                        crate::assignments::fonts::FontLoadFailure::MalformedTfm,
+                        request.error_context.clone(),
+                    )?;
+                    bind_null_font(stores);
+                    return Ok(ReplayStep::Continue);
+                }
+                Err(error) => return Err(error),
+            };
             let id = match stores.try_intern_font_with_identifier(loaded, request.target) {
                 Ok(id) => id,
                 Err(
@@ -12857,15 +12880,7 @@ fn apply_scanned_step(
                         &request.name,
                         request.size,
                     )?;
-                    if global {
-                        stores.set_meaning_global(
-                            request.target,
-                            Meaning::Font(tex_state::font::NULL_FONT),
-                        );
-                    } else {
-                        stores
-                            .set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
-                    }
+                    bind_null_font(stores);
                     return Ok(ReplayStep::Continue);
                 }
                 Err(error) => return Err(error.into()),
