@@ -2189,7 +2189,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "umber2-johp.24.1.6: canonical pdfTeX surface migration"]
     fn pdffiledump_reports_and_recovers_negative_ranges() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
@@ -2206,6 +2205,35 @@ mod tests {
         assert!(output.contains("! Bad dump length (-2)."), "{output}");
         assert!(output.contains("O=[0041]"), "{output}");
         assert!(output.contains("L=[]"), "{output}");
+    }
+
+    #[test]
+    fn canonical_pdffiledump_retries_world_inputs_and_obeys_ranges() {
+        let mut stores = Universe::default();
+        prepare_pdftex_run_stores(&mut stores);
+        seed_pdftex_file_facts(&mut stores);
+        let output = run_pdf_memory(
+            concat!(
+                "\\def\\dumpname{asset.bin}",
+                "\\message{A=[\\pdffiledump length 3 {\\dumpname}]} ",
+                "\\message{B=[\\pdffiledump offset 2 length 99 {asset.bin}]} ",
+                "\\message{C=[\\pdffiledump offset 99 length 2 {asset.bin}]} ",
+                "\\message{M=[\\pdffiledump length 2 {missing}]}\\end",
+            ),
+            &mut stores,
+        )
+        .expect("file dump resource retries complete");
+        assert!(output.contains("A=[00417F]"), "{output}");
+        assert!(output.contains("B=[7F80FF0A]"), "{output}");
+        assert!(output.contains("C=[]"), "{output}");
+        assert!(output.contains("M=[]"), "{output}");
+        let asset_records = stores
+            .world()
+            .input_records()
+            .iter()
+            .filter(|record| record.path().to_string_lossy() == "asset.bin")
+            .count();
+        assert_eq!(asset_records, 1, "retries retain one immutable World read");
     }
 
     #[test]

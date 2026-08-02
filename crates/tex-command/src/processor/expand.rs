@@ -688,6 +688,9 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfLastMatch) => {
                 self.expand_pdf_last_match(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileDump) => {
+                self.expand_pdf_file_dump(command)
+            }
             // pdfTeX §57.1 consumes one raw token and, only for a registered
             // primitive spelling, replays the immutable frozen primitive.
             // The ordinary expanded loop then dispatches that original
@@ -1165,6 +1168,71 @@ impl CommandProcessor<'_> {
         }
         self.push_rendered_text(&rendered, opener.origin());
         Ok(())
+    }
+
+    /// pdftex.web §1590's `pdf_file_dump_code` conversion.
+    ///
+    /// The filename is scanned before the immutable input capability is
+    /// consulted. An absent capability therefore suspends the enclosing
+    /// aggregate operation, whose checkpoint restores both the option and
+    /// filename scans before the host retries it.
+    fn expand_pdf_file_dump(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        let mut offset = 0_i32;
+        let mut length = 0_i32;
+        if self.scan_keyword("offset")?.value {
+            offset = self.scan_integer()?.value;
+            if offset < 0 {
+                self.pdftex_file_range_diagnostic("offset", offset);
+                offset = 0;
+            }
+        }
+        if self.scan_keyword("length")?.value {
+            length = self.scan_integer()?.value;
+            if length < 0 {
+                self.pdftex_file_range_diagnostic("length", length);
+                length = 0;
+            }
+        }
+        let name = self.scan_balanced_text(true)?.tokens.token_list();
+        let name = pdftex_token_bytes(&mut self.state, name)
+            .into_iter()
+            .map(char::from)
+            .collect::<String>();
+        let Some(source) = self.host.input(&name) else {
+            return if self.host.input_is_unavailable(&name) {
+                Ok(())
+            } else {
+                Err(CommandError::MissingInput(name))
+            };
+        };
+        let start = usize::try_from(offset).expect("recovered file offset is nonnegative");
+        let bytes = source.bytes();
+        if start >= bytes.len() || length == 0 {
+            return Ok(());
+        }
+        let end = start
+            .saturating_add(usize::try_from(length).expect("recovered dump length is nonnegative"))
+            .min(bytes.len());
+        let mut rendered = String::with_capacity((end - start) * 2);
+        for byte in &bytes[start..end] {
+            use std::fmt::Write as _;
+            write!(rendered, "{byte:02X}").expect("writing to a String cannot fail");
+        }
+        self.push_rendered_text(&rendered, opener.origin());
+        Ok(())
+    }
+
+    fn pdftex_file_range_diagnostic(&mut self, kind: &str, value: i32) {
+        let label = if kind == "offset" {
+            "file offset"
+        } else {
+            "dump length"
+        };
+        self.command.semantic_diagnostics.push(
+            crate::CommandSemanticDiagnostic::PdfExpansionMessage {
+                text: format!("! Bad {label} ({value})."),
+            },
+        );
     }
 
     fn pdftex_regex_warning(&mut self, message: &str) {
