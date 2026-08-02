@@ -43,7 +43,7 @@ pub(crate) fn select_pending_page_output(
     prepare_box255(stores, fire_up, Some(&error_context))?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
-        prepend_output_heldover(stores, Vec::new());
+        prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -51,7 +51,7 @@ pub(crate) fn select_pending_page_output(
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
         report_output_loop(stores, dead_cycles, error_context)?;
-        prepend_output_heldover(stores, Vec::new());
+        prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page));
@@ -73,7 +73,7 @@ pub(crate) fn resume_page_builder_after_output(
         report_box255_not_emptied(stores, box255, error_context.clone())?;
     }
     stores.clear_page_discards();
-    prepend_output_heldover(stores, output_nodes);
+    prepend_output_heldover(stores, output_nodes, false);
     crate::page_builder::build_page_with_error_context(stores, Some(&error_context))
 }
 
@@ -116,7 +116,7 @@ fn fire_up_page(
     prepare_box255(stores, fire_up, None)?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
-        prepend_output_heldover(stores, Vec::new());
+        prepend_output_heldover(stores, Vec::new(), true);
         let node = take_box255_node(stores)?;
         let artifact = shipout_node(node, input, stores, execution)?;
         let _ = artifact;
@@ -130,7 +130,7 @@ fn fire_up_page(
     if dead_cycles >= max_dead_cycles {
         let context = crate::diagnostics::show_context(stores, stores.input_summary());
         report_output_loop(stores, dead_cycles, context)?;
-        prepend_output_heldover(stores, Vec::new());
+        prepend_output_heldover(stores, Vec::new(), true);
         let node = take_box255_node(stores)?;
         let _artifact = shipout_node(node, input, stores, execution)?;
         stores.clear_page_discards();
@@ -442,8 +442,28 @@ fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
     stores.set_box_reg_global(class, boxed);
 }
 
-fn prepend_output_heldover(stores: &mut Universe, output_nodes: Vec<Node>) {
+fn prepend_output_heldover(
+    stores: &mut Universe,
+    output_nodes: Vec<Node>,
+    discard_rewritten_break: bool,
+) {
     let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
+    // TeX82 §§994/1012 resume the page builder after `fire_up`; without an
+    // output routine that continuation discards the chosen penalty after
+    // §1013 rewrites it to `inf_penalty`. Canonical main control defers the
+    // output tail to the command-step boundary, so default shipout completes
+    // that one-token continuation here. User output retains it for §1026's
+    // ordinary builder resumption.
+    if discard_rewritten_break
+        && matches!(heldover.first(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
+    {
+        heldover.remove(0);
+    }
+    if discard_rewritten_break
+        && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
+    {
+        let _ = stores.pop_page_contribution_front();
+    }
     heldover.extend(output_nodes);
     stores.start_page_after_output();
     stores.set_page_integer(PageInteger::InsertPenalties, 0);
@@ -553,7 +573,7 @@ fn run_output_routine_inner(
         let context = crate::diagnostics::show_context(stores, stores.input_summary());
         report_box255_not_emptied(stores, box255, context)?;
     }
-    prepend_output_heldover(stores, output_level.list().nodes().to_vec());
+    prepend_output_heldover(stores, output_level.list().nodes().to_vec(), false);
     Ok(())
 }
 

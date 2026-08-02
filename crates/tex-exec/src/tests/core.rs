@@ -1439,7 +1439,6 @@ fn setlanguage_appends_normalized_language_whatsit_in_hmode() {
 }
 
 #[test]
-#[ignore = "umber2-alfh.4.59: canonical internal-integer assignment loses following expandafter"]
 fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
     let source = r#"
         \catcode`@=11
@@ -1450,8 +1449,55 @@ fn internal_integer_assignment_leaves_following_expandafter_unexpanded() {
         \expandafter\if@\string\ifplain
         \end
     "#;
-    let stores = run_canonical_tex82(source);
-    assert!(terminal_effect_text(&stores).contains("ok"));
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.as_bytes().to_vec(),
+        ))
+        .expect("register canonical source");
+    let mut observations = CoreObservationRecorder(Vec::new());
+    let mut terminated_at = None;
+    for step in 0..64 {
+        let result = control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("canonical step");
+        if matches!(result, MainControlStep::End | MainControlStep::EndOfInput) {
+            terminated_at = Some(step);
+            break;
+        }
+    }
+    assert!(
+        terminated_at.is_some(),
+        "canonical source did not terminate in 64 steps"
+    );
+    let raw_expandafter = observations.0.iter().position(|event| {
+        matches!(event, tex_command::CommandObservation::Command(command)
+            if command.boundary == tex_command::CommandDeliveryBoundary::Raw
+                && command.spelling == tex_command::ObservedToken::ControlSequence("expandafter".into()))
+    });
+    assert!(
+        raw_expandafter.is_some(),
+        "following expandafter remains available to main control"
+    );
+    assert!(
+        !observations.0.iter().any(|event| {
+            matches!(event, tex_command::CommandObservation::Command(command)
+                if command.boundary == tex_command::CommandDeliveryBoundary::Expanded
+                    && command.spelling == tex_command::ObservedToken::ControlSequence("expandafter".into()))
+        }),
+        "assignment scanning must not publish the following expandafter as expanded"
+    );
+    assert!(terminal_effect_text(&stores).contains("OK"));
+}
+
+struct CoreObservationRecorder(Vec<tex_command::CommandObservation>);
+
+impl tex_command::CommandObserver for CoreObservationRecorder {
+    fn committed(&mut self, observation: tex_command::CommandObservation) {
+        self.0.push(observation);
+    }
 }
 
 #[test]

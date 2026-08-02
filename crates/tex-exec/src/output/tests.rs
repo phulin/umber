@@ -499,7 +499,7 @@ fn output_resume_tears_down_group_mode_and_page_state_canonically() {
         kind: KernKind::Explicit,
     });
 
-    prepend_output_heldover(&mut stores, vec![]);
+    prepend_output_heldover(&mut stores, vec![], false);
 
     assert_eq!(stores.page_contents(), PageContents::Empty);
     assert_eq!(stores.current_page_len(), 0);
@@ -516,7 +516,7 @@ fn output_resume_orders_output_material_heldovers_and_contributions() {
     stores.push_current_page_node(Node::Penalty(1));
     stores.append_page_contribution(Node::Penalty(3));
 
-    prepend_output_heldover(&mut stores, vec![Node::Penalty(2)]);
+    prepend_output_heldover(&mut stores, vec![Node::Penalty(2)], false);
 
     assert_eq!(
         stores
@@ -595,4 +595,14 @@ fn output_resume_preserves_live_context_for_insertion_shrink_error() {
         .map(|offset| message + offset)
         .expect("§90 help");
     assert!(message < context && context < help, "{report:?}");
+}
+
+#[test]
+fn default_output_discards_rewritten_break_before_end_retry() {
+    let mut stores = Universe::new();
+    stores.append_page_contribution(Node::Penalty(INF_PENALTY));
+
+    prepend_output_heldover(&mut stores, Vec::new(), true);
+
+    assert!(stores.page_contributions().is_empty());
 }
