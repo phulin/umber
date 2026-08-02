@@ -100,6 +100,22 @@ impl RestoreRecord {
         self.box_trace_text = Some(text);
     }
 
+    fn refresh_restored_eqtb_value(&mut self, env: &Env) {
+        if self.cell.bank() != BankTag::TokParam
+            || self.cell.index()
+                != u32::from(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
+        {
+            return;
+        }
+        // TeX82 §283 calls show_eqtb only after unsave has installed the
+        // effective entry.  Global-record compaction can refile journal words
+        // after the individual undo record was visited, so its raw `old`
+        // word is not necessarily that final typed eqtb value.
+        let restored = env.restored_semantic_word(self.cell, env.semantic_word(self.cell));
+        self.old = restored.word;
+        self.trace_eligible = true;
+    }
+
     #[must_use]
     pub fn box_trace_text(&self) -> Option<&str> {
         self.box_trace_text.as_deref()
@@ -660,6 +676,9 @@ impl Env {
             }
         });
         reorder_sparse_register_restores(&mut restores);
+        for restore in &mut restores {
+            restore.refresh_restored_eqtb_value(self);
+        }
 
         let aftergroup_start = checked_aftergroup_start(aftergroup_start, self.aftergroup.len());
         let payloads = self.aftergroup.drain(aftergroup_start..).collect();

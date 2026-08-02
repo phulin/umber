@@ -12392,6 +12392,57 @@ fn loaded_trip_display_alignment_history_restores_shape_before_resumed_paragraph
 }
 
 #[test]
+fn loaded_trip_output_body_restores_shape_before_resumed_eqno() {
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingrestores=2\tracingcommands=2
+           \output={\tracingcommands=0\showthe\outputpenalty
+             \showboxbreadth=9999\showboxdepth=9999\hoffset=1sp
+             {\setbox254=\box255\shipout\box254}
+             \globaldefs=1\halign{#\tabskip=\lineskip\cr}}
+           \vsize=1pt\hsize=100pt
+           \parshape=10 0pt11pt 0pt12pt 0pt13pt 0pt0pt 0pt0pt
+                         0pt15pt 0pt16pt 0pt17pt 0pt18pt 0pt19pt
+           \begingroup\looseness=2\hangafter=-12\hangindent=-10pt
+           \noindent
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\penalty-10000
+           \vrule width1pt height2pt\penalty-10000
+           $$\halign to20pt{#\tabskip=0pt plus40pt\cr\cr}\eqno
+           \endgroup\end",
+    );
+    run_to_end(&mut control, &mut universe);
+
+    let output = terminal_text(&universe);
+    let restore = output
+        .find("{restoring \\parshape=10}")
+        .unwrap_or_else(|| panic!("source-driven output restore trace: {output:?}"));
+    let tracingcommands = output
+        .find("{restoring \\tracingcommands=2}")
+        .unwrap_or_else(|| panic!("source-driven tracingcommands restore: {output:?}"));
+    let hangafter = output
+        .find("{restoring \\hangafter=-12}")
+        .unwrap_or_else(|| panic!("source-driven hangafter restore: {output:?}"));
+    let retried_eqno = output
+        .find("{horizontal mode: \\eqno}")
+        .unwrap_or_else(|| panic!("source-driven eqno retry trace: {output:?}"));
+    assert!(
+        tracingcommands < restore && restore < hangafter && hangafter < retried_eqno,
+        "restore order tc={tracingcommands} par={restore} hang={hangafter} eqno={retried_eqno}: {output:?}"
+    );
+    assert!(!output.contains("{restoring \\parshape=0}"));
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main

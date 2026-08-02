@@ -1381,10 +1381,12 @@ fn line_shape(params: &ParagraphParams) -> LineShape {
 }
 
 pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
-    stores.set_paragraph_shape(&[], false);
     // e-TeX resets only the interline array at every normal paragraph; the
     // club and widow arrays retain their scoped assignments (manual §3.4).
     stores.set_penalty_array(PenaltyArrayKind::InterLine, &[], false);
+    // TeX82 §1090 saves these eqtb entries in this exact order. Section 283
+    // unwinds them in reverse, so `\parshape` is traced before `\hangafter`,
+    // `\hangindent`, and `\looseness`.
     if stores.int_param(IntParam::LOOSENESS) != 0 {
         stores.set_int_param(IntParam::LOOSENESS, 0);
     }
@@ -1394,6 +1396,7 @@ pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
     if stores.int_param(IntParam::HANG_AFTER) != 1 {
         stores.set_int_param(IntParam::HANG_AFTER, 1);
     }
+    stores.set_paragraph_shape(&[], false);
 }
 
 fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
