@@ -967,6 +967,42 @@ fn tracingcommands_two_reports_true_and_false_boolean_results() {
 }
 
 #[test]
+fn tracingcommands_two_reports_ifcase_selection_before_limb_skips() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
+    let or = install(&mut universe, "or", ExpandablePrimitive::Or);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        vec![
+            if_case,
+            other('2'),
+            other('a'),
+            or,
+            other('b'),
+            or,
+            other('c'),
+            fi,
+        ],
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'c');
+    assert!(processor.get_x_token().expect("input exhausts").is_none());
+    drop(processor);
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains("{\\ifcase}\n{case 2}"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn tracingcommands_one_or_less_omits_boolean_results() {
     // TeX82 §502 uses the strict `tracing_commands>1` threshold.
     for level in [0, 1] {

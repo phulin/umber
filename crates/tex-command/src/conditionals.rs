@@ -573,6 +573,7 @@ impl CommandProcessor<'_> {
         condition: ConditionId,
         selected: i32,
     ) -> Result<(), CommandError> {
+        self.trace_ifcase_selection(selected);
         if self.skip_ifcase_limbs(condition, selected)? {
             self.command
                 .conditions
@@ -589,6 +590,27 @@ impl CommandProcessor<'_> {
             self.observe_condition("branch", &frame, Some("case".into()));
         }
         Ok(())
+    }
+
+    /// TeX82 §509's diagnostic after scanning the case number and before
+    /// skipping any unselected limbs.
+    fn trace_ifcase_selection(&mut self, selected: i32) {
+        if self.state.int_param(IntParam::TRACING_COMMANDS) <= 1 {
+            return;
+        }
+        let text = format!("{{case {selected}}}");
+        if self.command.expanding_deferred_write() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+            return;
+        }
+        let mut diagnostic = self.state.begin_diagnostic();
+        diagnostic.print_nl(&text);
+        diagnostic.end(false);
     }
 
     fn evaluate_boolean(&mut self, kind: ConditionalKind) -> Result<bool, CommandError> {
