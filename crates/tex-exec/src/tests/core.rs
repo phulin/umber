@@ -2960,7 +2960,6 @@ fn box_motion_uses_tex_web_shift_amount_signs_and_diagnostics() {
 #[test]
 fn everypar_replays_through_input_stack_and_mutates_state() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
     let global = stores.intern("global");
     let count = stores.intern("count");
     let everypar = stores.intern_token_list(&[
@@ -2980,11 +2979,7 @@ fn everypar_replays_through_input_stack_and_mutates_state() {
         },
     ]);
     stores.set_tok_param(TokParam::EVERY_PAR, everypar);
-    let mut input = InputStack::new(MemoryInput::new("x\\par"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("paragraph executes");
+    let stores = run_canonical_tex82_with_universe(stores, "x\\par\\end");
 
     assert_eq!(stores.count(0), 7);
 }
@@ -2992,7 +2987,6 @@ fn everypar_replays_through_input_stack_and_mutates_state() {
 #[test]
 fn paragraph_end_appends_single_line_through_vertical_spacing() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
     stores.set_dimen_param(
         DimenParam::PAR_INDENT,
         tex_state::scaled::Scaled::from_raw(0),
@@ -3002,16 +2996,15 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
         ..GlueSpec::ZERO
     });
     stores.set_glue_param(GlueParam::BASELINE_SKIP, baseline);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\vsize=1000pt \\setbox0=\\hbox{}\\ht0=4pt\\dp0=1pt\\copy0\\par\\copy0",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("paragraph and box execute");
-
-    let nodes = stores.current_page_nodes();
+    let stores = run_canonical_tex82_with_universe(
+        stores,
+        "\\setbox0=\\hbox{}\\ht0=4pt\\dp0=1pt\\setbox1=\\vbox{\\copy0\\par\\copy0}\\end",
+    );
+    let root = stores.box_reg(1).expect("box1");
+    let [Node::VList(vbox)] = stores.nodes(root).testing_decoded() else {
+        panic!("box1 should contain a vbox");
+    };
+    let nodes = stores.nodes(vbox.children).testing_decoded();
     assert!(nodes.iter().any(|node| matches!(
         node,
         tex_state::node::Node::Glue {
@@ -3023,17 +3016,10 @@ fn paragraph_end_appends_single_line_through_vertical_spacing() {
 
 #[test]
 fn paragraph_hpack_appends_overfull_rule_for_insufficient_normal_shrink() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let stores = run_canonical_tex82(concat!(
         "\\setbox0=\\vbox{\\hsize=10pt \\overfullrule=5pt ",
-        "\\leftskip=8pt minus4pt \\noindent\\kern9pt\\par}"
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("overfull paragraph executes");
+        "\\leftskip=8pt minus4pt \\noindent\\kern9pt\\par}\\end"
+    ));
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
@@ -3062,15 +3048,7 @@ fn paragraph_hpack_appends_overfull_rule_for_insufficient_normal_shrink() {
 
 #[test]
 fn paragraph_end_ignores_empty_unindented_paragraph() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\vbox{\\noindent\\par\\indent\\par}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("empty and indented paragraphs execute");
+    let stores = run_canonical_tex82("\\setbox0=\\vbox{\\noindent\\par\\indent\\par}\\end");
 
     let box0 = stores.box_reg(0).expect("vbox register");
     let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
@@ -3084,17 +3062,10 @@ fn paragraph_end_ignores_empty_unindented_paragraph() {
 
 #[test]
 fn paragraph_start_resets_prevgraf_and_inserts_parskip_only_at_a_nonempty_boundary() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(concat!(
+    let stores = run_canonical_tex82(concat!(
         "\\parskip=7pt \\everypar{\\global\\count0=\\prevgraf}",
-        "\\setbox0=\\vbox{\\prevgraf=9 \\indent\\par \\prevgraf=8 \\indent\\par}"
-    )));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("paragraph boundary program executes");
+        "\\setbox0=\\vbox{\\prevgraf=9 \\indent\\par \\prevgraf=8 \\indent\\par}\\end"
+    ));
 
     assert_eq!(
         stores.count(0),
@@ -3149,13 +3120,12 @@ fn paragraph_start_resets_prevgraf_and_inserts_parskip_only_at_a_nonempty_bounda
 #[test]
 fn paragraph_indent_is_a_null_box_without_a_pack_transition() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    stores.set_dimen_param(
-        tex_state::env::banks::DimenParam::PAR_INDENT,
-        Scaled::from_raw(2 * Scaled::UNITY),
-    );
     stores.enable_geometry_observation();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control.stop_at_end_of_input();
+    run_registered_canonical_tex82(&mut control, &mut stores, "\\parindent=2pt\\indent");
 
-    let Node::HList(indent) = crate::assignments::make_indent_box(&mut stores) else {
+    let [Node::HList(indent)] = control.current_list().nodes() else {
         panic!("paragraph indent should be an hlist");
     };
 
@@ -3172,14 +3142,7 @@ fn paragraph_indent_is_a_null_box_without_a_pack_transition() {
 
 #[test]
 fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\vbox{\\hrule $$\\hbox{}$$}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vbox containing terminal display executes");
+    let stores = run_canonical_tex82("\\setbox0=\\vbox{\\hrule $$\\hbox{}$$}\\end");
 
     let box0 = stores.box_reg(0).expect("vbox register");
     let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
@@ -3192,15 +3155,8 @@ fn vbox_closing_brace_ends_paragraph_resumed_after_display() {
 
 #[test]
 fn paragraph_end_removes_only_the_final_trailing_glue() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\vbox{\\noindent x\\hskip1pt\\hskip2pt\\par}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("paragraph executes");
+    let stores =
+        run_canonical_tex82("\\setbox0=\\vbox{\\noindent x\\hskip1pt\\hskip2pt\\par}\\end");
 
     let box0 = stores.box_reg(0).expect("vbox register");
     let [Node::VList(vbox)] = stores.nodes(box0).testing_decoded() else {
