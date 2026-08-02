@@ -6,7 +6,6 @@
 //! registrations and aggregate retry policy; it has no token-delivery API.
 
 use std::fmt;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use tex_command::{
@@ -18,7 +17,7 @@ use tex_exec::{
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
     CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult, CheckpointSink,
-    EngineBoundary, ExecutionBudgetCounters, MainControlStep,
+    EngineBoundary, ExecutionBudgetCounters, MainControlStep, canonical_font_resource_path,
 };
 use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
@@ -804,7 +803,7 @@ impl<'a> CanonicalEngineSession<'a> {
             CanonicalResourceFulfillment::Font { request, resource } => self
                 .control
                 .capabilities_mut()
-                .register_font(canonical_font_path(&request.name), *resource),
+                .register_font(canonical_font_resource_path(&request.name), *resource),
             CanonicalResourceFulfillment::PdfImage { request, resource } => self
                 .control
                 .capabilities_mut()
@@ -829,7 +828,7 @@ impl<'a> CanonicalEngineSession<'a> {
             }
             CanonicalResourceNeed::Font { request } => {
                 self.control.capabilities_mut().register_font(
-                    canonical_font_path(&request.name),
+                    canonical_font_resource_path(&request.name),
                     FontResource::Unavailable,
                 )
             }
@@ -1117,15 +1116,6 @@ fn engine_termination_observation() -> tex_command::CommandObservation {
     })
 }
 
-fn canonical_font_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(name);
-    if path.extension().is_none() {
-        path.with_extension("tfm")
-    } else {
-        path
-    }
-}
-
 fn startup_file_name(line: &str) -> String {
     let supplied = line.trim().split_ascii_whitespace().next().unwrap_or("");
     if supplied
@@ -1207,7 +1197,7 @@ mod tests {
                         )
                     }),
                 CanonicalResourceNeed::Font { request } => world
-                    .read_file(canonical_font_path(&request.name))
+                    .read_file(canonical_font_resource_path(&request.name))
                     .ok()
                     .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
                         CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {

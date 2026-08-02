@@ -66,7 +66,7 @@ pub use mode::{
 };
 pub use retained_resource::{
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
-    CanonicalResourceWorld,
+    CanonicalResourceWorld, canonical_font_resource_path,
 };
 pub use tex_expand::{ResourceLookup, ResourceNeed, ResourceResult};
 

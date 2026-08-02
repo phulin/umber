@@ -54,7 +54,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use tex_command::FontResource;
-use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecError};
+use tex_exec::{
+    CanonicalResourceNeed, EngineCheckpoint, ExecError, canonical_font_resource_path,
+};
 use tex_state::{JobClock, Universe, World};
 use umber::{
     CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
@@ -236,15 +238,6 @@ fn canonical_input_path(name: &str) -> PathBuf {
     }
 }
 
-fn canonical_font_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(name);
-    if path.extension().is_none() {
-        path.with_extension("tfm")
-    } else {
-        path
-    }
-}
-
 struct CorpusHost;
 
 impl CanonicalResourceHost for CorpusHost {
@@ -271,7 +264,7 @@ impl CanonicalResourceHost for CorpusHost {
                     )
                 }),
             CanonicalResourceNeed::Font { request } => world
-                .read_file(canonical_font_path(&request.name))
+                .read_file(canonical_font_resource_path(&request.name))
                 .ok()
                 .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
                     CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {

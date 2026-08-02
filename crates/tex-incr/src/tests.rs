@@ -4569,7 +4569,7 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                     )
                 }),
             CanonicalResourceNeed::Font { request } => world
-                .read_file(canonical_font_path(&request.name))
+                .read_file(canonical_font_resource_path(&request.name))
                 .ok()
                 .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
                     CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {

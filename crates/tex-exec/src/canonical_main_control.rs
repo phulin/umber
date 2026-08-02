@@ -954,7 +954,7 @@ impl CanonicalMainControl {
         else {
             return Ok(scanned);
         };
-        let path = canonical_font_path(&request.name);
+        let path = crate::canonical_font_resource_path(&request.name);
         let resource =
             self.capabilities
                 .font(&path)
@@ -16015,14 +16015,6 @@ fn apply_accent_nodes(
     });
     modes.current_list_mutation().set_space_factor(1000);
     Ok(ReplayStep::Continue)
-}
-
-fn canonical_font_path(name: &str) -> PathBuf {
-    let mut path = PathBuf::from(name);
-    if !name.starts_with("opentype:") && path.extension().is_none() {
-        path.set_extension("tfm");
-    }
-    path
 }
 
 fn load_canonical_font(

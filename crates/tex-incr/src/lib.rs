@@ -18,7 +18,7 @@ use tex_exec::{
     Cancellation, CanonicalMainControl, CanonicalResourceFulfillment, CanonicalResourceHost,
     CanonicalResourceNeed, CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult,
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionBudgetCounters,
-    ExecutionContext, ExecutionStats, Executor, MainControlStep,
+    ExecutionContext, ExecutionStats, Executor, MainControlStep, canonical_font_resource_path,
 };
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
 use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
@@ -36,15 +36,6 @@ mod trace;
 
 pub use delivery::{DeliveryIdentity, SyntheticDeliveryKind};
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
-
-fn canonical_font_path(name: &str) -> PathBuf {
-    let path = PathBuf::from(name);
-    if path.extension().is_none() {
-        path.with_extension("tfm")
-    } else {
-        path
-    }
-}
 
 fn canonical_candidate_control(
     universe: &mut Universe,
@@ -587,7 +578,7 @@ impl RevisionCandidate {
             ) if expected == &request => self
                 .control
                 .capabilities_mut()
-                .register_font(canonical_font_path(&request.name), *resource),
+                .register_font(canonical_font_resource_path(&request.name), *resource),
             (
                 CanonicalResourceNeed::PdfImage { request: expected },
                 CanonicalResourceFulfillment::PdfImage { request, resource },
@@ -612,7 +603,7 @@ impl RevisionCandidate {
             }
             CanonicalResourceNeed::Font { request } => {
                 self.control.capabilities_mut().register_font(
-                    canonical_font_path(&request.name),
+                    canonical_font_resource_path(&request.name),
                     tex_command::FontResource::Unavailable,
                 )
             }
@@ -968,6 +959,19 @@ impl Session {
         self.initex = initex;
     }
 
+    /// Selects the character domain already promised by this editor session.
+    ///
+    /// Valid UTF-8 authored roots use Umber's separately identified Unicode
+    /// extension. LaTeX's compatibility input layer and a root projected from
+    /// arbitrary legacy bytes remain exact eight-bit jobs.
+    fn effective_command_profile(&self) -> CommandProfile {
+        if self.utf8_input_as_bytes || self.root_source_is_byte_projection {
+            self.command_profile
+        } else {
+            CommandProfile::unicode_extended(self.command_profile.dialect())
+        }
+    }
+
     /// Selects whether candidates prepare classic TeX82 DVI page plans.
     ///
     /// Artifacts are always committed for downstream outputs. This capability
@@ -1079,7 +1083,7 @@ impl Session {
             &self.job_name,
             &self.source_path,
             self.source_file_bytes(&self.source),
-            self.command_profile,
+            self.effective_command_profile(),
             self.initex,
         )?;
         let mut memo = self.pure_memo.clone();
@@ -1340,7 +1344,7 @@ impl Session {
             &self.job_name,
             setup.next_layout.path(),
             self.source_file_bytes(&setup.next),
-            self.command_profile,
+            self.effective_command_profile(),
             self.initex,
         )?;
         memo.begin_paragraph_history(false);

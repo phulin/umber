@@ -11,6 +11,20 @@ use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldErro
 
 use crate::CanonicalResourceNeed;
 
+/// Returns the exact transient capability key for a canonical font request.
+///
+/// TeX TFM names receive §1257's default `.tfm` extension. Umber's explicit
+/// `opentype:` namespace is already a complete typed resource name and must
+/// never be rewritten as a TFM path.
+#[must_use]
+pub fn canonical_font_resource_path(name: &str) -> std::path::PathBuf {
+    let mut path = std::path::PathBuf::from(name);
+    if !name.starts_with("opentype:") && path.extension().is_none() {
+        path.set_extension("tfm");
+    }
+    path
+}
+
 #[derive(Clone, Debug)]
 pub enum CanonicalResourceFulfillment {
     Input {
