@@ -104,6 +104,15 @@ impl CommandSummary {
         }
         true
     }
+
+    /// Whether this summary still owns the expected bottom source backing.
+    #[must_use]
+    pub fn root_source_matches(&self, expected: &[u8]) -> bool {
+        self.input.levels.iter().find_map(|level| match level {
+            crate::input::InputLevel::Source(source) => Some(source.cursor.backing.bytes.as_ref()),
+            crate::input::InputLevel::Tokens(_) => None,
+        }) == Some(expected)
+    }
 }
 
 /// The first nonquiescent command-state class preventing summary publication.

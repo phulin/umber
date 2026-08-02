@@ -345,7 +345,6 @@ pub enum RevisionCandidateResult {
     Complete,
 }
 
-#[derive(Clone)]
 struct AdvanceSetup {
     execution_path: RevisionExecutionPath,
     next_revision: RevisionId,
@@ -1189,14 +1188,21 @@ impl Session {
 
         match restart {
             Some(restart) => {
-                match self.start_restored_candidate(Box::new((*setup).clone()), restart, true) {
-                    Ok(candidate) => Ok(candidate),
-                    Err(SessionError::Restore(_)) => {
-                        let mut fallback = setup;
-                        fallback.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
-                        self.start_replacement_candidate(fallback)
-                    }
-                    Err(error) => Err(error),
+                let can_restore = self.substrate.as_ref().is_some_and(|substrate| {
+                    setup.old_history[restart]
+                        .checkpoint()
+                        .can_fork_canonical_editor(
+                            substrate,
+                            setup.old_source.as_bytes(),
+                            &self.source_file_bytes(&setup.next),
+                        )
+                });
+                if can_restore {
+                    self.start_restored_candidate(setup, restart, true)
+                } else {
+                    let mut fallback = setup;
+                    fallback.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
+                    self.start_replacement_candidate(fallback)
                 }
             }
             None => self.start_replacement_candidate(setup),

@@ -230,6 +230,27 @@ impl EngineCheckpoint {
         Ok((universe, fork_latency))
     }
 
+    /// Checks the immutable prerequisites for an edited-root canonical fork.
+    #[must_use]
+    pub fn can_fork_canonical_editor(
+        &self,
+        substrate: &GenerationSubstrate,
+        old_source: &[u8],
+        new_source: &[u8],
+    ) -> bool {
+        self.root_content_hash == Some(ContentHash::from_bytes(old_source))
+            && self.root_anchor <= old_source.len()
+            && self.root_anchor <= new_source.len()
+            && old_source[..self.root_anchor] == new_source[..self.root_anchor]
+            && substrate
+                .validate_checkpoint_snapshot(&self.universe)
+                .is_ok()
+            && self
+                .command
+                .as_ref()
+                .is_some_and(|command| command.root_source_matches(old_source))
+    }
+
     #[must_use]
     pub const fn mode_summary(&self) -> &ModeNestSummary {
         &self.modes
