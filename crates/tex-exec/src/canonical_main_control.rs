@@ -7306,6 +7306,19 @@ fn scan_command(
                 .map_err(command_error)?;
             Ok(ScannedStep::MissingMathShift)
         }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
+            if mode == Mode::Horizontal =>
+        {
+            // TeX82 §1095's `head_for_vmode` backs up an `\hrule`, inserts
+            // `\par`, and retries the rule in vertical mode. This must happen
+            // before §463 scans optional width/height/depth keywords: their
+            // lookahead may cross a line boundary, while §804's paragraph
+            // diagnostic must retain the line on which the rule was read.
+            processor
+                .recover_stop_for_vertical_mode(command)
+                .map_err(command_error)?;
+            Ok(ScannedStep::Continue)
+        }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
         ) => {

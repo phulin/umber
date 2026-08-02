@@ -4003,7 +4003,21 @@ fn production_driver_hrule_in_math_mode_inserts_missing_dollar_and_replays_hrule
     assert_eq!(
         control
             .step(&mut universe)
-            .expect("replayed hrule ends the paragraph and contributes a rule"),
+            .expect("replayed hrule schedules head_for_vmode recovery"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("inserted par ends the paragraph"),
+        MainControlStep::Continue
+    );
+    assert_eq!(control.current_mode(), crate::Mode::Vertical);
+    assert_eq!(
+        control
+            .step(&mut universe)
+            .expect("vertical redelivery contributes the hrule"),
         MainControlStep::Continue
     );
     assert_eq!(control.current_mode(), crate::Mode::Vertical);
@@ -7331,6 +7345,28 @@ fn canonical_initex_replay_scans_complete_rule_specs_through_command_control() {
         scanned(&horizontal, "dimension", "196608"),
         "{horizontal:?}"
     );
+}
+
+#[test]
+fn horizontal_hrule_ends_paragraph_before_scanning_rule_keywords() {
+    // TeX82 §§804/1095: head_for_vmode processes the paragraph while the
+    // triggering rule is still backed up. The later §463 keyword lookahead
+    // may read the next line, but cannot extend the paragraph's line range.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut control = CommandReplayControl::tex82_initex(&mut universe);
+    register_source(
+        &mut control,
+        b"\\hsize=10pt\\hbadness=0\\hskip1pt\n\\hrule\n\\end",
+    );
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = transcript_text(&universe);
+    assert!(
+        output.contains("in paragraph at lines 1--2"),
+        "paragraph must finish before rule-spec lookahead: {output}"
+    );
+    assert!(!output.contains("in paragraph at lines 1--3"));
 }
 
 #[test]
