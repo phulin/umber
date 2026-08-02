@@ -173,6 +173,12 @@ pub enum CommandReplayDelivery {
 }
 
 impl CommandState {
+    /// Returns the number of live TeX input levels retained by this command state.
+    #[must_use]
+    pub fn input_level_count(&self) -> usize {
+        self.input.levels.len()
+    }
+
     pub(crate) const fn name_in_progress(&self) -> bool {
         self.name_in_progress
     }

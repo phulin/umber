@@ -305,6 +305,7 @@ pub struct RevisionCandidate {
     completed: Option<CanonicalCandidateCompletion>,
     suspension_serial: u64,
     delivered_commands: usize,
+    effect_start: usize,
     job_start_captured: bool,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
@@ -400,6 +401,49 @@ impl PendingRevision {
 }
 
 impl RevisionCandidate {
+    fn validate_execution_budgets(&self) -> Result<(), SessionError> {
+        let attempted_steps = u64::try_from(self.delivered_commands).unwrap_or(u64::MAX);
+        let input_frames = u64::try_from(self.control.input_level_count()).unwrap_or(u64::MAX);
+        let journal_bytes = u64::try_from(self.universe.env_journal_bytes()).unwrap_or(u64::MAX);
+        let pending_effects = u64::try_from(
+            self.universe
+                .world()
+                .effect_records()
+                .len()
+                .saturating_sub(self.effect_start),
+        )
+        .unwrap_or(u64::MAX);
+        for (resource, limit, attempted) in [
+            ("steps", self.execution_budgets.steps, attempted_steps),
+            (
+                "live input frames",
+                self.execution_budgets.input_frames,
+                input_frames,
+            ),
+            (
+                "environment journal bytes",
+                self.execution_budgets.journal_bytes,
+                journal_bytes,
+            ),
+            (
+                "pending effects",
+                self.execution_budgets.effects,
+                pending_effects,
+            ),
+        ] {
+            if attempted > limit {
+                return Err(SessionError::Execute(
+                    tex_exec::ExecError::ResourceBudgetExceeded {
+                        resource,
+                        limit,
+                        attempted,
+                    },
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn resolve_frozen_diagnostic_primary(
         &self,
@@ -570,21 +614,12 @@ impl RevisionCandidate {
                     tex_exec::ExecError::ExecutionCancelled,
                 ));
             }
+            self.validate_execution_budgets()?;
             match self.control.advance(&mut self.universe)? {
                 CanonicalStepResult::Progress(step) => {
                     answered_needs.clear();
                     self.delivered_commands = self.delivered_commands.saturating_add(1);
-                    let attempted_steps =
-                        u64::try_from(self.delivered_commands).unwrap_or(u64::MAX);
-                    if attempted_steps > self.execution_budgets.steps {
-                        return Err(SessionError::Execute(
-                            tex_exec::ExecError::ResourceBudgetExceeded {
-                                resource: "steps",
-                                limit: self.execution_budgets.steps,
-                                attempted: attempted_steps,
-                            },
-                        ));
-                    }
+                    self.validate_execution_budgets()?;
                     let boundaries = self.control.take_completed_boundaries();
                     for boundary in boundaries {
                         let sink: &mut dyn CheckpointSink = match &mut self.sink {
@@ -622,6 +657,7 @@ impl RevisionCandidate {
                     }
                 }
                 CanonicalStepResult::Suspended(need) => {
+                    self.validate_execution_budgets()?;
                     if answered_needs.contains(&need) {
                         return Err(SessionError::CanonicalResourceNoProgress {
                             need,
@@ -1216,6 +1252,7 @@ impl Session {
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
             universe,
             control,
@@ -1224,6 +1261,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            effect_start,
             job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Initial {
@@ -1440,6 +1478,7 @@ impl Session {
         memo.begin_paragraph_history(true);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
         let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
+        let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
             universe,
             control,
@@ -1448,6 +1487,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            effect_start,
             job_start_captured: true,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Incremental {
@@ -1479,6 +1519,7 @@ impl Session {
         )?;
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
             universe,
             control,
@@ -1487,6 +1528,7 @@ impl Session {
             completed: None,
             suspension_serial: 0,
             delivered_commands: 0,
+            effect_start,
             job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },

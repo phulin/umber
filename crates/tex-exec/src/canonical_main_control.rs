@@ -694,6 +694,12 @@ impl CanonicalMainControl {
         &mut self.command
     }
 
+    /// Returns the number of live canonical TeX input levels.
+    #[must_use]
+    pub fn input_level_count(&self) -> usize {
+        self.command.input_level_count()
+    }
+
     /// Returns the immutable profile of this command processor.
     #[must_use]
     pub const fn command_profile(&self) -> CommandProfile {
@@ -12928,8 +12934,10 @@ fn apply_scanned_step(
                     // remains retained by the host; only this definition is
                     // replaced by nullfont with its requested assignment scope.
                     let selector = stores.resolve(request.target).to_owned();
+                    let selector_kind = stores.control_sequence_kind(request.target);
                     crate::assignments::fonts::report_font_not_loadable_with_context(
                         stores,
+                        selector_kind,
                         &selector,
                         &request.name,
                         request.size,

@@ -2306,7 +2306,7 @@ fn unavailable_required_input_becomes_an_engine_open_error() {
         .expect("authoritative negative input response");
     assert!(matches!(
         session.compile_attempt(),
-        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+        CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
             if diagnostic.message.contains("failed to open input")
     ));
 }
@@ -2676,7 +2676,7 @@ fn cumulative_engine_fuel_is_terminal_across_step_boundaries() {
         .expect("source");
     assert!(matches!(
         limited.compile_attempt(),
-        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+        CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
             if diagnostic.message.contains("canonical command fuel exhausted")
                 && diagnostic.message.contains("limit 1")
     ));
@@ -2700,6 +2700,110 @@ fn configured_executor_step_budget_fails_actionably() {
         limited.compile_attempt(),
         CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
             if diagnostic.message.contains("execution steps budget 0 exceeded at 1")
+    ));
+}
+
+#[test]
+fn configured_input_frame_budget_fails_actionably() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            input_frames: 0,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\end".to_vec())
+        .expect("source");
+    let result = limited.compile_attempt();
+    assert!(
+        matches!(
+            result,
+            CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
+                if diagnostic.message.contains("live input frames budget 0 exceeded at 1")
+        ),
+        "{result:?}"
+    );
+    assert!(limited.candidate.is_none());
+}
+
+#[test]
+fn configured_journal_budget_fails_actionably() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            journal_bytes: 0,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\count0=1\\end".to_vec())
+        .expect("source");
+    assert!(matches!(
+        limited.compile_attempt(),
+        CompileAttemptResult::Error(CompileError::Diagnostic(diagnostic))
+            if diagnostic.message.contains("environment journal bytes budget 0 exceeded")
+    ));
+    assert!(limited.candidate.is_none());
+}
+
+#[test]
+fn configured_pending_effect_budget_fails_actionably() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            effects: 0,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\message{effect}\\end".to_vec())
+        .expect("source");
+    let result = limited.compile_attempt();
+    assert!(
+        matches!(
+            result,
+            CompileAttemptResult::Error(CompileError::Diagnostic(ref diagnostic))
+                if diagnostic.message.contains("pending effects budget 0 exceeded at 2")
+        ),
+        "{result:?}"
+    );
+    assert!(limited.candidate.is_none());
+}
+
+#[test]
+fn retained_resource_retry_charges_live_input_frames_once() {
+    let mut limited = VirtualCompileSession::new(SessionOptions {
+        limits: SessionLimits {
+            input_frames: 2,
+            ..SessionLimits::default()
+        },
+        ..SessionOptions::default()
+    })
+    .expect("limited session");
+    limited
+        .add_user_file("main.tex", b"\\input remote \\end".to_vec())
+        .expect("source");
+    let request = requests(limited.compile_attempt())
+        .into_iter()
+        .next()
+        .expect("remote input request")
+        .key()
+        .clone();
+    limited
+        .provide_resources(vec![ResourceResponse::File(ResolvedFile {
+            request,
+            virtual_path: "/texlive/remote.tex".to_owned(),
+            bytes: b"\\relax".to_vec(),
+            expected_digest: None,
+        })])
+        .expect("remote input response");
+    assert!(matches!(
+        limited.compile_attempt(),
+        CompileAttemptResult::Complete(_)
     ));
 }
 
