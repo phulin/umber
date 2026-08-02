@@ -25,6 +25,7 @@ pub struct CurrentCommand {
     source_provenance: Option<SourceProvenance>,
     direct_source: bool,
     alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment,
+    outer_recovery_space: bool,
 }
 
 /// The command-code identity of a current delivery.
@@ -226,6 +227,7 @@ impl CurrentCommand {
             source_provenance,
             direct_source,
             alignment_adjustment: crate::processor::AlignmentDeliveryAdjustment::None,
+            outer_recovery_space: false,
         }
     }
 
@@ -290,6 +292,7 @@ impl CurrentCommand {
         self.control_sequence = None;
         self.source_provenance = None;
         self.direct_source = false;
+        self.outer_recovery_space = true;
     }
 
     /// Replaces an intercepted alignment terminator's effective meaning while
@@ -299,6 +302,16 @@ impl CurrentCommand {
             Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate);
         self.macro_observation_operand = None;
         self.control_sequence = None;
+    }
+
+    /// Whether §23 replaced this delivery by its temporary recovery space.
+    ///
+    /// The space is TeX's effective current command after the forbidden
+    /// outer token has been backed up; it is not an input token for an active
+    /// `scan_toks` collector to append before the inserted right brace closes
+    /// the runaway text.
+    pub(crate) const fn is_outer_recovery_space(&self) -> bool {
+        self.outer_recovery_space
     }
 
     /// Completes TeX82's `get_x_token` conversion of inaccessible
@@ -427,6 +440,7 @@ impl CurrentCommand {
             source_provenance: self.source_provenance,
             direct_source: self.direct_source,
             alignment_adjustment: self.alignment_adjustment,
+            outer_recovery_space: self.outer_recovery_space,
         }
     }
 }

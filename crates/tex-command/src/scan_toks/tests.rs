@@ -1889,11 +1889,8 @@ fn scan_toks_all_scanner_status_outer_and_eof_recovery() {
         processor
             .state
             .tokens(recovered.replacement_text.token_list()),
-        &[Token::Char {
-            ch: ' ',
-            cat: Catcode::Space,
-        }],
-        "check_outer_validity substitutes the forbidden delivery by its recovery space"
+        &[],
+        "check_outer_validity's temporary recovery space is not collected"
     );
     assert_eq!(
         processor
@@ -2000,10 +1997,7 @@ fn expanded_scan_toks_resumes_after_outer_token_aborts_macro_argument() {
         processor
             .state
             .tokens(recovered.replacement_text.token_list()),
-        &[Token::Char {
-            ch: ' ',
-            cat: Catcode::Space,
-        }]
+        &[]
     );
     assert_eq!(
         processor

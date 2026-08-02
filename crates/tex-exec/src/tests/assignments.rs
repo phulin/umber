@@ -383,7 +383,6 @@ fn noexpand_in_edef_preserves_a_token_register_assignment() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-alfh.4.28 canonical runaway recovery retains inserted space"]
 fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
     let stores = super::core::run_canonical_tex82(
         "\\outer\\def\\a{}\\toks0={x\\a\\count0=7\\end",

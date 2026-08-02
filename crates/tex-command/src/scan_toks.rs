@@ -551,6 +551,15 @@ impl CommandProcessor<'_> {
             // `$\displaystyle{##}$` is the common case): the still-open
             // `depth` continues over the boundary exactly as if no alignment
             // entry had ended.
+            //
+            // TeX82 §23 backs an inaccessible outer control sequence up,
+            // installs the right brace that ends this runaway collector, and
+            // changes only the live current command to a space. That space is
+            // recovery state, not input: §477 resumes with the inserted brace
+            // and must not append the temporary current-command value.
+            if delivered.is_outer_recovery_space() {
+                continue;
+            }
             let token = spelling.semantic_token();
             if let Some((hash, highest_parameter, target)) = pending_parameter.take() {
                 // §479: a second parameter character stores that character
