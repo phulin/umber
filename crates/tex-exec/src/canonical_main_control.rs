@@ -1341,12 +1341,14 @@ impl CanonicalMainControl {
             return;
         }
         self.main_loop_active = parking.character.is_some_and(|character| {
-            matches!(
-                self.modes.current_mode(),
-                Mode::Horizontal | Mode::RestrictedHorizontal
-            ) && stores
-                .font(stores.current_font())
-                .character_exists(character)
+            self.command.main_loop_batching_is_eligible()
+                && matches!(
+                    self.modes.current_mode(),
+                    Mode::Horizontal | Mode::RestrictedHorizontal
+                )
+                && stores
+                    .font(stores.current_font())
+                    .character_exists(character)
         });
     }
 

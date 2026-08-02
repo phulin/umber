@@ -1746,11 +1746,10 @@ fn paragraph_recording_preserves_source_text_batching() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-rcyr canonical alignment delivery does not deopt the horizontal main loop"]
 fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() {
     let run = observed_canonical_font_run(
         false,
-        br"\font\f=cmr10 \f\def\x{abcdefgh}\setbox0=\vbox{\halign{#\cr\x\cr}}\end",
+        br"\font\f=cmr10 \f\def\x{abcdefgh}\setbox0=\vbox{\halign{#\cr\omit\x\cr}}\end",
     );
     let run = horizontal_character_run(&run.steps, 'a'..='h');
 
