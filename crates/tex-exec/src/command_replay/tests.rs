@@ -12105,6 +12105,49 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
 }
 
 #[test]
+fn loaded_output_resets_paragraph_state_at_the_opening_brace_boundary() {
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    universe.enable_geometry_observation();
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\output={\global\setbox9=\box255}\vsize=1pt
+           \parshape=10 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt 0pt20pt
+           \hrule height2pt\penalty-10000\end",
+    );
+
+    for _ in 0..64 {
+        let step = control.step(&mut universe).expect("canonical step");
+        if universe.innermost_group_kind() == Some(tex_state::GroupKind::Output) {
+            assert_eq!(control.current_mode(), crate::Mode::InternalVertical);
+            assert_eq!(universe.paragraph_shape_len(), 10);
+            let geometry_before_brace = universe.geometry_observation_len();
+            assert_eq!(
+                control.step(&mut universe).expect("output opening brace"),
+                ReplayStep::Continue
+            );
+            assert_eq!(
+                universe.innermost_group_kind(),
+                Some(tex_state::GroupKind::Output)
+            );
+            assert_eq!(control.current_mode(), crate::Mode::InternalVertical);
+            assert_eq!(universe.paragraph_shape_len(), 0);
+            assert_eq!(universe.geometry_observation_len(), geometry_before_brace);
+            return;
+        }
+        assert!(!matches!(step, ReplayStep::End | ReplayStep::EndOfInput));
+    }
+    panic!("fixture did not reach output entry");
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main

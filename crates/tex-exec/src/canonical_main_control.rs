@@ -2590,12 +2590,6 @@ impl CanonicalMainControl {
                         Mode::InternalVertical,
                         -i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
                     )?;
-                    // TeX82 §1026 opens the output save level and then runs
-                    // `normal_paragraph`. These are real local definitions at
-                    // the output-group level: in particular a non-null
-                    // §1090 `par_shape_ptr` must enter §277's save stack so
-                    // §283 can restore and trace it when the routine ends.
-                    crate::assignments::normal_paragraph(&mut self.modes, stores);
                     stores.set_output_routine_active(true);
                     self.boxes.output_routine_active = true;
                     self.boxes.output_routine_opening_pending = true;
@@ -14648,6 +14642,12 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::OutputRoutineOpeningBrace => {
+            // TeX82 §1026 runs `normal_paragraph` after the output token list
+            // and output save level have both been opened, as part of
+            // `scan_left_brace`. Keep the reset at this consumed-opening-brace
+            // boundary: doing it in the deferred page-fire tail runs before
+            // command control has established the routine's body boundary.
+            crate::assignments::normal_paragraph(modes, stores);
             boxes.output_routine_opening_pending = false;
             Ok(ReplayStep::Continue)
         }
