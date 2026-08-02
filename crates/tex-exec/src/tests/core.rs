@@ -2585,16 +2585,11 @@ fn appended_box_resets_space_factor_before_sentence_punctuation() {
 #[test]
 fn overfull_hbox_appends_running_rule_when_enabled() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
     stores.set_dimen_param(
         DimenParam::OVERFULL_RULE,
         tex_state::scaled::Scaled::from_raw(3 * tex_state::scaled::Scaled::UNITY),
     );
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox to 10pt{\\kern20pt}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("overfull hbox executes");
+    let stores = run_canonical_tex82_with_universe(stores, "\\setbox0=\\hbox to 10pt{\\kern20pt}");
 
     let box0 = stores.box_reg(0).expect("box should be assigned");
     let [tex_state::node::Node::HList(box_node)] = stores.nodes(box0).testing_decoded() else {
@@ -2613,19 +2608,9 @@ fn overfull_hbox_appends_running_rule_when_enabled() {
 
 #[test]
 fn box_dimension_writes_are_readable_by_the() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    install_expandable(&mut stores, "the", ExpandablePrimitive::The);
-    let mut setup = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{}"));
-    Executor::new()
-        .run(&mut setup, &mut stores)
-        .expect("box setup executes");
+    let stores = run_canonical_tex82("\\setbox0=\\hbox{}");
     let before = stores.testing_epoch_clone_counts();
-    let mut input = InputStack::new(MemoryInput::new("\\wd0=12pt\\edef\\x{\\the\\wd0}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("box dimension assignment executes");
+    let stores = run_canonical_tex82_with_universe(stores, "\\wd0=12pt\\edef\\x{\\the\\wd0}");
     assert_eq!(stores.testing_epoch_clone_counts(), before);
 
     assert_eq!(
@@ -2650,15 +2635,9 @@ fn box_dimension_writes_are_readable_by_the() {
 
 #[test]
 fn box_dimension_writes_mutate_the_visible_box_binding() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\setbox0=\\hbox{} {\\ht0=12pt}\\setbox1=\\hbox{} {\\setbox1=\\hbox{}\\global\\ht1=9pt}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("box dimension grouping case executes");
+    );
 
     assert_eq!(
         stores
@@ -2680,18 +2659,12 @@ fn box_dimension_writes_mutate_the_visible_box_binding() {
 
 #[test]
 fn uncopy_primitives_unbox_without_clearing_registers() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\setbox0=\\hbox{\\kern1pt}\
          \\setbox1=\\hbox{\\unhcopy0}\
          \\setbox2=\\vbox{\\kern2pt}\
          \\setbox3=\\vbox{\\unvcopy2}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("uncopy primitives execute");
+    );
 
     assert!(stores.box_reg(0).is_some(), "\\unhcopy should not clear");
     assert!(stores.box_reg(2).is_some(), "\\unvcopy should not clear");
