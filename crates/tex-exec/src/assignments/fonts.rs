@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tex_fonts::LoadedFont;
 use tex_state::InputOpenState;
 use tex_state::ids::FontId;
+use tex_state::interner::ControlSequenceKind;
 use tex_state::scaled::FontSizeSpec;
 
 pub(super) fn execute_font_definition(
@@ -40,8 +41,10 @@ pub(super) fn execute_font_definition(
             // `start_font_error_message` names the selector, the file, and
             // the requested size before the reason.
             let selector = stores.resolve(target).to_owned();
+            let selector_kind = stores.control_sequence_kind(target);
             report_font_not_loadable(
                 stores,
+                selector_kind,
                 &selector,
                 &font_name,
                 size_spec,
@@ -68,8 +71,10 @@ pub(super) fn execute_font_definition(
                     // TeX.web §564 treats every malformed metric file like
                     // an unavailable font and leaves the selector null.
                     let selector = stores.resolve(target).to_owned();
+                    let selector_kind = stores.control_sequence_kind(target);
                     report_font_not_loadable(
                         stores,
+                        selector_kind,
                         &selector,
                         &font_name,
                         size_spec,
@@ -172,7 +177,8 @@ pub(super) fn execute_font_definition(
             // that the font table has no room. The destination remains the
             // provisional null font and the failed row is not committed.
             let selector = stores.resolve(target).to_owned();
-            report_font_capacity(stores, &selector, &font_name, size_spec)?;
+            let selector_kind = stores.control_sequence_kind(target);
+            report_font_capacity(stores, selector_kind, &selector, &font_name, size_spec)?;
             let meaning = Meaning::Font(tex_state::font::NULL_FONT);
             if apply_globaldefs(prefixes.global, stores) {
                 stores.set_meaning_global(target, meaning);
@@ -440,17 +446,27 @@ pub(crate) enum FontLoadFailure {
 
 pub(crate) fn report_font_not_loadable(
     stores: &mut Universe,
+    selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
     failure: FontLoadFailure,
 ) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
-    report_font_not_loadable_with_context(stores, selector, font_name, size_spec, failure, context)
+    report_font_not_loadable_with_context(
+        stores,
+        selector_kind,
+        selector,
+        font_name,
+        size_spec,
+        failure,
+        context,
+    )
 }
 
 pub(crate) fn report_font_not_loadable_with_context(
     stores: &mut Universe,
+    selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
@@ -472,7 +488,7 @@ pub(crate) fn report_font_not_loadable_with_context(
         ),
     };
     let mut report = stores.print_err("Font ");
-    report.print_esc(selector).print("=").print(font_name);
+    report.sprint_cs(selector_kind, selector).print("=").print(font_name);
     match size_spec {
         FontSizeSpec::At(size) => {
             report.print(" at ").print_scaled(size).print("pt");
@@ -499,13 +515,14 @@ pub(crate) fn report_font_not_loadable_with_context(
 /// TeX.web §567's capacity apology after a valid TFM has been read.
 pub(crate) fn report_font_capacity(
     stores: &mut Universe,
+    selector_kind: ControlSequenceKind,
     selector: &str,
     font_name: &str,
     size_spec: FontSizeSpec,
 ) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Font ");
-    report.print_esc(selector).print("=").print(font_name);
+    report.sprint_cs(selector_kind, selector).print("=").print(font_name);
     match size_spec {
         FontSizeSpec::At(size) => {
             report.print(" at ").print_scaled(size).print("pt");

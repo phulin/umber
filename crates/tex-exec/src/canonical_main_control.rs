@@ -12770,8 +12770,10 @@ fn apply_scanned_step(
                 // live input context also shows the command that follows the
                 // font specification.
                 let selector = stores.resolve(request.target).to_owned();
+                let selector_kind = stores.control_sequence_kind(request.target);
                 crate::assignments::fonts::report_font_not_loadable_with_context(
                     stores,
+                    selector_kind,
                     &selector,
                     &request.name,
                     request.size,
@@ -12800,8 +12802,10 @@ fn apply_scanned_step(
                     | tex_state::FontParameterError::FontInfoCapacity { .. },
                 ) => {
                     let selector = stores.resolve(request.target).to_owned();
+                    let selector_kind = stores.control_sequence_kind(request.target);
                     crate::assignments::fonts::report_font_capacity(
                         stores,
+                        selector_kind,
                         &selector,
                         &request.name,
                         request.size,

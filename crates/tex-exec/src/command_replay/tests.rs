@@ -2174,6 +2174,40 @@ fn canonical_unavailable_font_recovers_to_nullfont() {
 }
 
 #[test]
+fn canonical_missing_tfm_error_uses_sprint_cs_for_single_character_selector() {
+    // TeX82 §§560–561 spell the selector through `sprint_cs(u)` and then
+    // distinguish a failed open from a malformed file. A one-character
+    // control sequence therefore has no escape character in this message.
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_catcode('?', tex_state::token::Catcode::Active);
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    control
+        .capabilities_mut()
+        .register_font("xyzzy.tfm", FontResource::Unavailable);
+    let source = control
+        .command_mut()
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::World,
+            Arc::<[u8]>::from(&br"\font?=xyzzy\relax\end"[..]),
+        ))
+        .expect("source registers");
+    control
+        .command_mut()
+        .open_registered_source(source)
+        .expect("source opens");
+
+    run_to_end(&mut control, &mut universe);
+
+    let output = transcript_text(&universe);
+    assert!(
+        output.contains("! Font ?=xyzzy not loadable: Metric (TFM) file not found."),
+        "{output}"
+    );
+    assert!(!output.contains("Font \\?=xyzzy"), "{output}");
+}
+
+#[test]
 fn canonical_openin_read_and_closein_use_registered_immutable_input() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
