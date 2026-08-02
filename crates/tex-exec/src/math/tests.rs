@@ -28,6 +28,36 @@ fn terminal_text(stores: &Universe) -> String {
 }
 
 #[test]
+fn nested_sub_mlist_publishes_structural_hpack_geometry() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.enable_geometry_observation();
+    let nested = stores.freeze_node_list(&[]);
+    let formula = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        tex_state::math::MathField::SubMlist(nested),
+    ))]);
+
+    let _ = finish_math_list_node(
+        &mut stores,
+        tex_state::math::MathListNode {
+            display: false,
+            content: formula,
+        },
+        false,
+    );
+
+    assert_eq!(
+        stores.geometry_observations_since(0),
+        &[tex_state::GeometryObservation::Hpack {
+            width_sp: 0,
+            height_sp: 0,
+            depth_sp: 0,
+        }],
+        "TeX82 §651's Appendix G hpack must cross the execution observer boundary"
+    );
+}
+
+#[test]
 fn directed_display_packages_dlist_without_rewriting_its_semantic_children() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let formula_children = stores.freeze_node_list(&[Node::Kern {

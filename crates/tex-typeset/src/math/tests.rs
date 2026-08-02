@@ -1063,7 +1063,7 @@ fn fraction_reuses_single_explicit_numerator_box() {
 }
 
 #[test]
-fn direct_sub_box_nucleus_records_one_source_box_pack() {
+fn direct_sub_box_nucleus_records_one_hpack_observation() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);
     let explicit = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -1086,7 +1086,7 @@ fn direct_sub_box_nucleus_records_one_source_box_pack() {
     let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
 
     assert_eq!(
-        layout.source_box_pack_observations(),
+        layout.hpack_observations(),
         &[MathPackObservation {
             width: sc(120),
             height: sc(7),
@@ -1099,7 +1099,30 @@ fn direct_sub_box_nucleus_records_one_source_box_pack() {
         MathField::Empty,
     ))]);
     let layout = mlist_to_hlist(&universe, empty, Style::TEXT, false, &params);
-    assert!(layout.source_box_pack_observations().is_empty());
+    assert!(layout.hpack_observations().is_empty());
+}
+
+#[test]
+fn nested_sub_mlist_records_its_structural_hpack() {
+    let mut universe = setup_universe();
+    let nested = universe.freeze_node_list(&[]);
+    let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::SubMlist(nested),
+    ))]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert_eq!(
+        layout.hpack_observations(),
+        &[MathPackObservation {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+        }],
+        "TeX82 §651 observes Appendix G's structural sub-mlist hpack"
+    );
 }
 
 #[test]

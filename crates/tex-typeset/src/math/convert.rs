@@ -727,7 +727,7 @@ pub(crate) fn clean_box(
     }
 }
 
-fn clean_hlist(ctx: &Context<'_, impl MathTypesetState>, list: FrozenHList) -> MathBox {
+fn clean_hlist(ctx: &mut Context<'_, impl MathTypesetState>, list: FrozenHList) -> MathBox {
     match ctx.layout.single_node(list) {
         Some(MathNode::HList(boxed) | MathNode::VList(boxed)) if boxed.shift.raw() == 0 => {
             boxed.clone()

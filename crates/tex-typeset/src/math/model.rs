@@ -14,7 +14,7 @@ mod tests;
 pub struct MathLayout {
     nodes: Vec<MathNode>,
     root: FrozenHList,
-    source_box_packs: Vec<MathPackObservation>,
+    hpack_observations: Vec<MathPackObservation>,
     conversion_events: Vec<MathConversionEvent>,
     recovered: bool,
 }
@@ -70,7 +70,7 @@ impl MathLayout {
 /// Read-only access to formula-local structural spans during sink lowering.
 pub trait MathLayoutReader {
     fn math_nodes(&self, list: FrozenHList) -> &[MathNode];
-    fn source_box_pack_observations(&self) -> &[MathPackObservation];
+    fn hpack_observations(&self) -> &[MathPackObservation];
     fn conversion_events(&self) -> &[MathConversionEvent];
     fn recovered(&self) -> bool;
 }
@@ -80,8 +80,8 @@ impl MathLayoutReader for MathLayout {
         self.nodes(list)
     }
 
-    fn source_box_pack_observations(&self) -> &[MathPackObservation] {
-        &self.source_box_packs
+    fn hpack_observations(&self) -> &[MathPackObservation] {
+        &self.hpack_observations
     }
 
     fn conversion_events(&self) -> &[MathConversionEvent] {
@@ -227,14 +227,14 @@ pub enum BoxAxis {
 
 pub(crate) struct MathLayoutBuilder {
     nodes: Vec<MathNode>,
-    source_box_packs: Vec<MathPackObservation>,
+    hpack_observations: Vec<MathPackObservation>,
 }
 
 impl MathLayoutBuilder {
     pub(crate) fn new() -> Self {
         Self {
             nodes: Vec::new(),
-            source_box_packs: Vec::new(),
+            hpack_observations: Vec::new(),
         }
     }
 
@@ -256,7 +256,7 @@ impl MathLayoutBuilder {
         MathLayout {
             nodes: self.nodes,
             root,
-            source_box_packs: self.source_box_packs,
+            hpack_observations: self.hpack_observations,
             conversion_events,
             recovered,
         }
@@ -277,7 +277,7 @@ impl MathLayoutBuilder {
     }
 
     pub(crate) fn observe_source_box_pack(&mut self, boxed: &MathBox) {
-        self.source_box_packs.push(MathPackObservation {
+        self.hpack_observations.push(MathPackObservation {
             width: boxed.width,
             height: boxed.height,
             depth: boxed.depth,
@@ -318,8 +318,8 @@ impl MathLayoutBuilder {
         }
     }
 
-    pub(crate) fn hpack(&self, list: FrozenHList) -> MathBox {
-        MathBox {
+    pub(crate) fn hpack(&mut self, list: FrozenHList) -> MathBox {
+        let boxed = MathBox {
             width: list.width,
             height: list.height,
             depth: list.depth,
@@ -330,7 +330,17 @@ impl MathLayoutBuilder {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-        }
+        };
+        // TeX82 §651's `hpack` has one canonical return seam. Appendix G
+        // reaches it for every structural clean/sub-mlist box, not only for
+        // source boxes that arrived already packaged. Retain the finalized
+        // dimensions here so execution can publish every such transition.
+        self.hpack_observations.push(MathPackObservation {
+            width: boxed.width,
+            height: boxed.height,
+            depth: boxed.depth,
+        });
+        boxed
     }
 
     pub(crate) fn vpack(&self, list: FrozenHList) -> MathBox {

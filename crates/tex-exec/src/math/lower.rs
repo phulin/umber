@@ -329,7 +329,7 @@ impl MathLayoutSink for LoweredMathSink<'_> {
             self.root_nodes.clear();
             return;
         }
-        for packed in layout.source_box_pack_observations() {
+        for packed in layout.hpack_observations() {
             self.stores
                 .record_geometry_observation(GeometryObservation::Hpack {
                     width_sp: i64::from(packed.width.raw()),
