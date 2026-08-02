@@ -85,7 +85,11 @@ schema-3 production snapshot in place.
 `tools/parity-harness/src/trip_triage.rs` owns the compact TRIP-specific v1
 artifact. It compares canonical `tex-oracle` event streams before transcript,
 log, and preamble-normalized DVI channels, writes no copied outputs, and keeps
-the deterministic report bounded.
+the deterministic report bounded. For e-TeX sparse-register shorthand
+delivery, it projects the reference engine's allocator-owned array-node
+address only when Umber supplies the portable register-class and
+`print_sa_num` identity; an absent or integer Umber operand remains a semantic
+divergence.
 
 `tools/profile-analyzer` is the read-only Samply/Firefox processed-profile CLI.
 It reconstructs columnar sample stacks, consumes Samply presymbolication

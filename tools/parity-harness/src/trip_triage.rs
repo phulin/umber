@@ -453,8 +453,10 @@ impl TripProjection {
 }
 
 /// e-TeX 2.6 change [49.1224] stores a sparse-array node in `cur_chr` for a
-/// register shorthand above 255. Umber preserves the semantic register index
-/// instead of the mutable WEB node address, so the operand is non-portable.
+/// register shorthand above 255. Umber preserves [49.5508--5523]'s semantic
+/// register type and `print_sa_num` index instead of the mutable WEB node
+/// address. Project only that named portable identity: a missing or integer
+/// Umber operand has not preserved the sparse register semantics.
 fn sparse_register_operand_is_reference(expected: &Event, actual: &Event) -> bool {
     let (
         Event::Command(CommandEvent {
@@ -482,10 +484,8 @@ fn sparse_register_operand_is_reference(expected: &Event, actual: &Event) -> boo
         return false;
     };
 
-    matches!(
-        actual_operand,
-        CanonicalValue::Integer(_) | CanonicalValue::None
-    ) && matches!(expected_command.as_str(), "register" | "toks_register")
+    matches!(actual_operand, CanonicalValue::Name(_))
+        && matches!(expected_command.as_str(), "register" | "toks_register")
         && expected_delivery == actual_delivery
         && expected_command == actual_command
         && expected_control_sequence == actual_control_sequence
@@ -1379,15 +1379,21 @@ mod tests {
         };
         assert!(sparse_register_operand_is_reference(
             &event(CanonicalValue::Integer(1_926)),
-            &event(CanonicalValue::None)
+            &event(CanonicalValue::Name("skip:32767".into()))
         ));
+        for non_semantic_operand in [CanonicalValue::None, CanonicalValue::Integer(32_767)] {
+            assert!(!sparse_register_operand_is_reference(
+                &event(CanonicalValue::Integer(1_926)),
+                &event(non_semantic_operand)
+            ));
+        }
         assert!(!sparse_register_operand_is_reference(
             &event(CanonicalValue::Integer(1_926)),
             &Event::Command(CommandEvent {
                 delivery: tex_oracle::CommandDelivery::Raw,
                 command: CanonicalCommand {
                     command: "assign_glue".into(),
-                    operand: CanonicalValue::None,
+                    operand: CanonicalValue::Name("skip:32767".into()),
                     control_sequence: Some("alias".into()),
                     location: None,
                 },
