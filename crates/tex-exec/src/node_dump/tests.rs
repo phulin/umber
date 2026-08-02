@@ -784,7 +784,7 @@ fn showbox_limits_side_lists_leaders_and_discretionaries_without_mutation() {
             ".\\kern 1.0\n",
             ".etc.\n",
             "|\\kern 1.0\n",
-            ".etc.\n",
+            "|etc.\n",
         )
     );
     assert_eq!(stores.nodes(two_kerns), before, "dumping must be read-only");
@@ -799,7 +799,7 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
         kind: KernKind::Explicit,
     };
     let pre = stores.freeze_node_list(&[kern(1)]);
-    let post = stores.freeze_node_list(&[kern(2)]);
+    let post = stores.freeze_node_list(&[kern(2), kern(4)]);
     let replace = stores.freeze_node_list(&[kern(3)]);
     let disc = Node::Disc {
         kind: DiscKind::Discretionary,
@@ -818,10 +818,10 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
                 depth: 10,
             },
         ),
-        "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n",
+        "\\discretionary replacing 1\n.\\kern 1.0\n|\\kern 2.0\n|\\kern 4.0\n",
     );
     assert_eq!(stores.nodes(pre), &[kern(1)]);
-    assert_eq!(stores.nodes(post), &[kern(2)]);
+    assert_eq!(stores.nodes(post), &[kern(2), kern(4)]);
     assert_eq!(stores.nodes(replace), &[kern(3)]);
     assert!(matches!(
         disc,

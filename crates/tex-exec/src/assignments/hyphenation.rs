@@ -158,10 +158,20 @@ fn install_hyphenation_exceptions(
     diagnostics
 }
 
+#[cfg(test)]
 pub(crate) fn hyphenated_hlist_with_fuel(
     stores: &mut Universe,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
+) -> Result<Vec<Node>, ExecError> {
+    hyphenated_hlist_with_projections(stores, nodes, fuel, &mut Vec::new())
+}
+
+fn hyphenated_hlist_with_projections(
+    stores: &mut Universe,
+    nodes: Vec<Node>,
+    fuel: &mut tex_command::CommandFuel,
+    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
 ) -> Result<Vec<Node>, ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
@@ -195,6 +205,7 @@ pub(crate) fn hyphenated_hlist_with_fuel(
                 (language, left, right),
                 &mut out,
                 fuel,
+                physical_post_overrides,
             )?
         {
             index = next;
@@ -213,8 +224,15 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel(
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::node_sequence::NodeSequence, ExecError> {
-    let semantic = hyphenated_hlist_with_fuel(stores, nodes, fuel)?;
+    let mut physical_post_overrides = Vec::new();
+    let semantic =
+        hyphenated_hlist_with_projections(stores, nodes, fuel, &mut physical_post_overrides)?;
     let mut physical = semantic.clone();
+    for (index, physical_post) in physical_post_overrides {
+        if let Some(Node::Disc { post, .. }) = physical.get_mut(index) {
+            *post = physical_post;
+        }
+    }
     project_physical_pre_break_spans(stores, &mut physical, fuel)?;
     Ok(tex_state::node_sequence::NodeSequence::from_channels(
         semantic, physical,
@@ -419,6 +437,7 @@ fn hyphenate_after_glue(
     context: (u8, usize, usize),
     out: &mut Option<Vec<Node>>,
     fuel: &mut tex_command::CommandFuel,
+    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
 ) -> Result<Option<usize>, ExecError> {
     let (mut language, mut left, mut right) = context;
     let mut index = start;
@@ -550,7 +569,15 @@ fn hyphenate_after_glue(
             ..
         })
     );
-    append_hyphenated_word(stores, &word, &positions, no_left_boundary, out, fuel)?;
+    append_hyphenated_word(
+        stores,
+        &word,
+        &positions,
+        no_left_boundary,
+        out,
+        fuel,
+        physical_post_overrides,
+    )?;
     if let Some(kern) = trailing_font_kern {
         out.push(kern);
     }
@@ -779,6 +806,7 @@ fn append_hyphenated_word(
     no_left_boundary: bool,
     out: &mut Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
+    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
 ) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
     let nodes =
@@ -787,7 +815,7 @@ fn append_hyphenated_word(
     let mut position_index = 0;
     let mut char_start = 0;
 
-    for node in nodes {
+    for (node_index, node) in nodes.iter().cloned().enumerate() {
         let boundary_kern = matches!(
             node,
             Node::Kern {
@@ -813,9 +841,16 @@ fn append_hyphenated_word(
             .get(position_index)
             .filter(|&&position| char_start < position && position < char_end)
         {
-            out.push(discretionary_through_node(
-                stores, word, char_start, position, char_end, node, fuel,
-            )?);
+            let (disc, physical_post) = discretionary_through_node(
+                stores,
+                word,
+                (char_start, position, char_end),
+                node,
+                &nodes[node_index + 1..],
+                fuel,
+            )?;
+            physical_post_overrides.push((out.len(), physical_post));
+            out.push(disc);
             position_index += 1;
             // TeX82 likewise suppresses another hyphenation point whose
             // branches have not synchronized before this node ends.
@@ -842,12 +877,12 @@ fn append_hyphenated_word(
 fn discretionary_through_node(
     stores: &mut Universe,
     word: &[WordChar],
-    start: usize,
-    position: usize,
-    end: usize,
+    span: (usize, usize, usize),
     replacement: Node,
+    following: &[Node],
     fuel: &mut tex_command::CommandFuel,
-) -> Result<Node, ExecError> {
+) -> Result<(Node, tex_state::ids::NodeListId), ExecError> {
+    let (start, position, end) = span;
     let font = word[position - 1].font;
     let mut pre_pending: Vec<_> = word[start..position]
         .iter()
@@ -866,8 +901,89 @@ fn discretionary_through_node(
     let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    Ok(automatic_discretionary(stores, &pre, &post, &[replacement])
-        .expect("a single replacement node fits TeX82's quarterword count"))
+    let physical_post = physical_post_break_span(stores, &replacement, following, fuel)?;
+    let disc = automatic_discretionary(stores, &pre, &post, &[replacement])
+        .expect("a single replacement node fits TeX82's quarterword count");
+    Ok((disc, physical_post))
+}
+
+fn physical_post_break_span(
+    stores: &mut Universe,
+    replacement: &Node,
+    following: &[Node],
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<tex_state::ids::NodeListId, ExecError> {
+    let target = automatic_physical_replace_count(std::slice::from_ref(replacement))
+        .expect("one replacement node has a bounded physical span") as usize;
+    let mut projected = vec![replacement.clone()];
+    let mut consumed = node_original_len(replacement);
+    for node in following {
+        if consumed >= target {
+            if matches!(
+                node,
+                Node::Kern {
+                    kind: KernKind::Font,
+                    ..
+                }
+            ) {
+                projected.push(node.clone());
+                continue;
+            }
+            break;
+        }
+        match node {
+            Node::Kern {
+                kind: KernKind::Font,
+                ..
+            } => projected.push(node.clone()),
+            Node::Char { .. } => {
+                projected.push(node.clone());
+                consumed += 1;
+            }
+            Node::Lig {
+                font,
+                orig,
+                origins,
+                ..
+            } => {
+                let remaining = target - consumed;
+                if orig.len() <= remaining {
+                    projected.push(node.clone());
+                    consumed += orig.len();
+                } else {
+                    let pending = orig[..remaining]
+                        .iter()
+                        .copied()
+                        .zip(origins[..remaining].iter().copied())
+                        .map(|(ch, origin)| PendingHChar {
+                            font: *font,
+                            ch,
+                            origin,
+                        })
+                        .collect::<Vec<_>>();
+                    projected.extend(
+                        super::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
+                            .map_err(ExecError::Command)?,
+                    );
+                    consumed = target;
+                }
+            }
+            _ => break,
+        }
+    }
+    Ok(stores.freeze_node_list(&projected))
+}
+
+#[cfg(test)]
+pub(crate) fn test_physical_post_break_span(
+    stores: &mut Universe,
+    replacement: &Node,
+    following: &[Node],
+) -> Vec<Node> {
+    let mut fuel = tex_command::CommandFuelLedger::default();
+    let list = physical_post_break_span(stores, replacement, following, fuel.fuel_mut())
+        .expect("test diagnostic projection fuel");
+    stores.nodes(list).to_vec()
 }
 
 /// Freezes a §914 automatic discretionary when §918's replacement count fits.

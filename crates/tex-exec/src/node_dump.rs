@@ -730,9 +730,15 @@ fn dump_disc(
     if !stores.nodes(post).is_empty() {
         let old_len = out.len();
         dump_list(stores, post, config, depth + 1, ListContext::Neutral, out);
-        if old_len < out.len() {
-            let marker = old_len + usize::try_from(depth.max(-1) + 1).unwrap_or(0);
+        let marker_offset = usize::try_from(depth.max(-1) + 1).unwrap_or(0);
+        let mut line_start = old_len;
+        while line_start < out.len() {
+            let marker = line_start + marker_offset;
             out.replace_range(marker..marker + 1, "|");
+            let Some(newline) = out[line_start..].find('\n') else {
+                break;
+            };
+            line_start += newline + 1;
         }
     }
 }

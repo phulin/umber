@@ -876,6 +876,37 @@ fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
 }
 
 #[test]
+fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let font = stores.current_font();
+    let replacement = Node::Lig {
+        font,
+        ch: 'A',
+        orig: vec!['B', 'B'],
+        origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+        left_hit: false,
+        right_hit: false,
+    };
+    let following = [
+        Node::Kern {
+            amount: Scaled::from_raw(2 * Scaled::UNITY),
+            kind: KernKind::Font,
+        },
+        Node::Char {
+            font,
+            ch: 'B',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+    ];
+
+    let projected =
+        crate::assignments::test_physical_post_break_span(&mut stores, &replacement, &following);
+    assert!(
+        matches!(projected.as_slice(), [Node::Lig { orig, .. }, Node::Kern { kind: KernKind::Font, .. }, Node::Char { ch: 'B', .. }] if orig == &['B', 'B'])
+    );
+}
+
+#[test]
 fn successful_pretolerance_does_not_allocate_hyphenation_nodes() {
     let mut stores = stores_with_fonts();
     tex_expand::install_expandable_primitives(&mut stores);
