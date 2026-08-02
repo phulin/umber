@@ -214,7 +214,13 @@ pub(crate) fn finish_display_math(
         let list = stores.freeze_node_list(&children);
         display_line = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     }
-    display_line.shift = s + d;
+    let pre_display_direction = stores.int_param(IntParam::PRE_DISPLAY_DIRECTION);
+    if pre_display_direction == 0 {
+        display_line.shift = s + d;
+    } else {
+        display_line =
+            package_directed_display_line(stores, display_line, d, s, z, pre_display_direction);
+    }
     append_node_to_vertical_list(nest, stores, Node::HList(display_line))?;
 
     if let Some(mut boxed) = eq_box
@@ -246,6 +252,54 @@ pub(crate) fn finish_display_math(
     }
 
     Ok(())
+}
+
+/// e-TeX §§1478–1480's nonzero-`pre_display_direction` `app_display` path.
+///
+/// The inner `dlist` identity belongs to the formula box. The line appended
+/// to the vertical list is a normal hbox whose math-direction boundaries make
+/// the display transparent to the surrounding TeXXeT paragraph direction.
+pub(super) fn package_directed_display_line(
+    stores: &mut Universe,
+    display_line: BoxNode,
+    mut displacement: Scaled,
+    display_indent: Scaled,
+    display_width: Scaled,
+    pre_display_direction: i32,
+) -> BoxNode {
+    let end_displacement = if pre_display_direction > 0 {
+        scaled_sub(scaled_sub(display_width, displacement), display_line.width)
+    } else {
+        let end = displacement;
+        displacement = scaled_sub(scaled_sub(display_width, end), display_line.width);
+        end
+    };
+
+    let mut payload = if display_line.box_lr == tex_state::node::BoxLr::DList {
+        vec![Node::HList(display_line)]
+    } else {
+        let mut children = stores.nodes(display_line.children).to_vec();
+        if pre_display_direction < 0 {
+            children.reverse();
+        }
+        children
+    };
+    let mut children = Vec::with_capacity(payload.len() + 4);
+    children.push(Node::Direction(tex_state::node::Direction::BeginM));
+    children.push(Node::Kern {
+        amount: displacement,
+        kind: KernKind::Font,
+    });
+    children.append(&mut payload);
+    children.push(Node::Kern {
+        amount: end_displacement,
+        kind: KernKind::Font,
+    });
+    children.push(Node::Direction(tex_state::node::Direction::EndM));
+    let list = stores.freeze_node_list(&children);
+    let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
+    boxed.shift = display_indent;
+    boxed
 }
 
 pub(crate) fn finish_display_alignment(

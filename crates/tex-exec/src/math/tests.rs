@@ -4,7 +4,7 @@ use tex_state::GroupKind;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::math::{MathChar, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, KernKind, Node, Sign};
 use tex_state::scaled::GlueSetRatio;
 use tex_state::{EffectRecord, PrintSink};
 
@@ -25,6 +25,57 @@ fn terminal_text(stores: &Universe) -> String {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn directed_display_packages_dlist_without_rewriting_its_semantic_children() {
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let formula_children = stores.freeze_node_list(&[Node::Kern {
+        amount: sp(2),
+        kind: KernKind::Font,
+    }]);
+    let formula = BoxNode::new(BoxNodeFields {
+        width: sp(2),
+        height: sp(3),
+        depth: sp(1),
+        shift: Scaled::from_raw(0),
+        box_lr: BoxLr::DList,
+        glue_set: GlueSetRatio::ZERO,
+        glue_sign: Sign::Normal,
+        glue_order: Order::Normal,
+        children: formula_children,
+    });
+
+    let line =
+        display::package_directed_display_line(&mut stores, formula, sp(1), sp(4), sp(10), -1);
+
+    assert_eq!(line.box_lr, BoxLr::Normal);
+    assert_eq!(line.width, sp(10));
+    assert_eq!(line.shift, sp(4));
+    assert_eq!(
+        stores.nodes(line.children),
+        &[
+            Node::Direction(Direction::BeginM),
+            Node::Kern {
+                amount: sp(7),
+                kind: KernKind::Font,
+            },
+            Node::HList(formula),
+            Node::Kern {
+                amount: sp(1),
+                kind: KernKind::Font,
+            },
+            Node::Direction(Direction::EndM),
+        ]
+    );
+    assert_eq!(
+        stores.nodes(formula_children),
+        &[Node::Kern {
+            amount: sp(2),
+            kind: KernKind::Font,
+        }],
+        "direction packaging must preserve the formula list",
+    );
 }
 
 #[test]
