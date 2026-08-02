@@ -12235,6 +12235,102 @@ fn display_resume_list_survives_deferred_output_routine() {
 }
 
 #[test]
+fn loaded_output_cycle_restores_ten_line_shape_to_resumed_paragraph() {
+    // TeX82 §§1026/1090: the output save level owns normal_paragraph's
+    // ten-to-null transition. Section 283 must restore the job overlay before
+    // the horizontal level below the output routine is packed.
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
+    universe.enable_geometry_observation();
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingrestores=2
+           \output={\tracingcommands=0\global\setbox9=\box255}
+           \parshape=10 0pt11pt 0pt12pt 0pt13pt 0pt14pt 0pt15pt
+                         0pt16pt 0pt17pt 0pt18pt 0pt19pt 0pt20pt\relax",
+    );
+    for _ in 0..96 {
+        control.step(&mut universe).expect("loaded setup step");
+        if !universe
+            .tokens(universe.tok_param(TokParam::OUTPUT))
+            .is_empty()
+            && universe.paragraph_shape_len() == 10
+        {
+            break;
+        }
+    }
+    assert_eq!(universe.paragraph_shape_len(), 10);
+
+    universe.set_dimen_param(DimenParam::V_SIZE, Scaled::from_raw(Scaled::UNITY));
+    universe.prepend_page_contributions(vec![
+        Node::Rule {
+            width: Some(Scaled::from_raw(Scaled::UNITY)),
+            height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+            depth: Some(Scaled::from_raw(0)),
+        },
+        Node::Penalty(-10_000),
+    ]);
+    crate::page_builder::build_page(&mut universe).expect("forced page break");
+    control
+        .modes
+        .push(crate::Mode::Horizontal)
+        .expect("resumed paragraph");
+    control
+        .fire_pending_page_output(&mut universe)
+        .expect("loaded output starts");
+    assert_eq!(universe.innermost_group_kind(), Some(GroupKind::Output));
+    assert_eq!(universe.paragraph_shape_len(), 10);
+
+    for _ in 0..128 {
+        control.step(&mut universe).expect("loaded output step");
+        if universe.innermost_group_kind() != Some(GroupKind::Output) {
+            assert_eq!(control.current_mode(), crate::Mode::Horizontal);
+            assert_eq!(universe.paragraph_shape_len(), 10);
+            let output = terminal_text(&universe);
+            assert!(
+                output.contains("{restoring \\parshape=10}"),
+                "output unwind must trace the ten-line restore: {output:?}"
+            );
+            register_source(
+                &mut control,
+                br"\vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\penalty-10000
+                   \vrule width1pt\penalty-10000\vrule width1pt\penalty-10000\par\end",
+            );
+            run_to_end(&mut control, &mut universe);
+            let widths: Vec<_> = universe
+                .geometry_observations_since(0)
+                .iter()
+                .filter_map(|event| match event {
+                    tex_state::GeometryObservation::Hpack { width_sp, .. } => Some(*width_sp),
+                    _ => None,
+                })
+                .collect();
+            let expected: Vec<_> = (11_i64..=20)
+                .map(|points| points * i64::from(Scaled::UNITY))
+                .collect();
+            assert!(
+                widths
+                    .windows(expected.len())
+                    .any(|window| window == expected),
+                "resumed paragraph must pack at 11pt through 20pt: {widths:?}"
+            );
+            return;
+        }
+    }
+    panic!("loaded output routine did not unwind");
+}
+
+#[test]
 fn canonical_eqno_display_alignment_recovery_keeps_shipped_artifact_exact() {
     // TeX82 §§1200, 1206, and 1207 back up the rejected command before
     // resume_after_display builds the page, then retry it in ordinary main
@@ -12864,9 +12960,16 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 /// display -- not one command later (`umber2-johp.237`).
 #[test]
 fn display_resumption_enters_output_before_the_next_command() {
-    let mut universe = Universe::new_with_plain_catcodes();
+    let mut initex = crate::test_harness::universe_with_plain_catcodes();
+    let _builder = CanonicalMainControl::tex82_initex(&mut initex);
+    initex.set_paragraph_shape(&[], false);
+    let format = initex.dump_format().expect("empty parshape format dumps");
+    let mut universe =
+        Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+    tex_expand::register_expandable_primitives(&mut universe);
+    crate::register_unexpandable_primitives(&mut universe);
+    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_math_fonts(&mut control, &mut universe);
     register_source(
         &mut control,
@@ -12877,9 +12980,12 @@ fn display_resumption_enters_output_before_the_next_command() {
         br"\font\s=cmsy10 \font\e=cmex10
            \textfont2=\s \scriptfont2=\s \scriptscriptfont2=\s
            \textfont3=\e \scriptfont3=\e \scriptscriptfont3=\e
+           \tracingonline=1\tracingrestores=2
            \output={\global\count1=1 \global\setbox9=\box255}\topskip=0pt\vsize=30pt\maxdepth=2pt
+           \parshape=10 0pt11pt 0pt12pt 0pt13pt 0pt14pt 0pt15pt
+                         0pt16pt 0pt17pt 0pt18pt 0pt19pt 0pt20pt
            \setbox0=\hbox{}\ht0=20pt \copy0
-           \noindent$$\copy0$$\global\count2=\count1 \end",
+           \noindent$$\copy0$$\global\count3=\parshape\global\count2=\count1 \end",
     );
 
     for _ in 0..128 {
@@ -12911,6 +13017,12 @@ fn display_resumption_enters_output_before_the_next_command() {
         "\\output ran during the command that closed the display, so the very \
          next command already sees its global assignment"
     );
+    assert_eq!(
+        universe.count(3),
+        10,
+        "§1026 output unwind restores the loaded job's parshape before the next command"
+    );
+    assert!(terminal_text(&universe).contains("{restoring \\parshape=10}"));
     let widths = universe
         .geometry_observations_since(0)
         .iter()
@@ -12921,8 +13033,8 @@ fn display_resumption_enters_output_before_the_next_command() {
         .collect::<Vec<_>>();
     assert_eq!(
         (widths, universe.world().artifact_commits().len()),
-        (vec![0, 0, 0], 0),
-        "host-owned display/output sequence keeps exact packs and artifacts"
+        (vec![0, 0, 0], 1),
+        "loaded host-owned display/output sequence keeps exact packs and ships the final page"
     );
 }
 
