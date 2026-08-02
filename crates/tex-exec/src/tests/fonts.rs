@@ -450,10 +450,7 @@ fn expanded_paragraph_shipout_retains_semantic_font_resource() {
     let zero_glue = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
     stores.set_glue_param_global(tex_state::env::banks::GlueParam::PAR_FILL_SKIP, zero_glue);
     let mut control = canonical_pdf_font_control(&mut stores);
-    register_canonical_source(
-        &mut control,
-        br"\shipout\vbox{\base \noindent AAA\par}\end",
-    );
+    register_canonical_source(&mut control, br"\shipout\vbox{\base \noindent AAA\par}\end");
     run_canonical_to_end(&mut control, &mut stores);
     let artifact_id = stores.world().artifact_commits()[0];
     let bytes = stores
@@ -512,9 +509,7 @@ fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
          \\end"
             .as_bytes(),
     );
-    if !run_canonical_generated_fonts_to_end(&mut control, &mut stores) {
-        return;
-    }
+    run_canonical_to_end(&mut control, &mut stores);
 
     let base = font_meaning(&stores, "base");
     let copy = font_meaning(&stores, "copy");
@@ -559,6 +554,78 @@ fn pdftex_generated_fonts_match_copy_and_letterspace_state() {
 }
 
 #[test]
+fn canonical_generated_font_definitions_obey_globaldefs_scope() {
+    let mut stores = stores_with_fonts();
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\base=cmr10
+           {\pdfcopyfont\local=\base}
+           \globaldefs=1 {\pdfcopyfont\forced=\base}
+           \globaldefs=-1 {\global\pdfcopyfont\suppressed=\base}
+           \end",
+    );
+    run_canonical_to_end(&mut control, &mut stores);
+
+    assert_eq!(
+        stores.meaning(stores.symbol("local").expect("local target")),
+        tex_state::meaning::Meaning::Undefined
+    );
+    assert!(matches!(
+        stores.meaning(stores.symbol("forced").expect("forced target")),
+        tex_state::meaning::Meaning::Font(font) if font != tex_state::font::NULL_FONT
+    ));
+    assert_eq!(
+        stores.meaning(stores.symbol("suppressed").expect("suppressed target")),
+        tex_state::meaning::Meaning::Undefined
+    );
+}
+
+#[test]
+fn canonical_generated_fonts_warn_for_zero_em_and_reject_nested_copy() {
+    let mut stores = stores_with_fonts();
+    let mut control = canonical_pdf_font_control(&mut stores);
+    register_canonical_font(&mut control, &mut stores, "cmr10.tfm", "cmr10.tfm");
+    register_canonical_source(
+        &mut control,
+        br"\font\base=cmr10
+           \fontdimen6\base=0pt
+           \letterspacefont\spaced=\base 100
+           \pdfcopyfont\rejected=\spaced",
+    );
+
+    let error = loop {
+        match control.step(&mut stores) {
+            Ok(MainControlStep::Continue) => {}
+            Ok(step) => panic!("generated-font rejection expected before {step:?}"),
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(
+        error,
+        ExecError::CannotCopyFont("cannot copy a letterspaced font")
+    ));
+    assert_eq!(
+        stores
+            .font_parameter(font_meaning(&stores, "base"), 6)
+            .raw(),
+        0
+    );
+    assert!(
+        stores
+            .world()
+            .effect_records()
+            .iter()
+            .any(|effect| matches!(
+                effect,
+                tex_state::EffectRecord::StreamWrite { text, .. }
+                    if text.contains("font has zero em size")
+            ))
+    );
+}
+
+#[test]
 fn letterspaced_shipout_flattens_virtual_packets_onto_the_source_font() {
     let mut stores = stores_with_fonts();
     let mut control = canonical_pdf_font_control(&mut stores);
@@ -570,9 +637,7 @@ fn letterspaced_shipout_flattens_virtual_packets_onto_the_source_font() {
          \\spaced \\shipout\\hbox{AA}\\end"
             .as_bytes(),
     );
-    if !run_canonical_generated_fonts_to_end(&mut control, &mut stores) {
-        return;
-    }
+    run_canonical_to_end(&mut control, &mut stores);
     let artifact_id = stores.world().artifact_commits()[0];
     let bytes = stores
         .world()
@@ -712,27 +777,6 @@ fn run_canonical_to_end(control: &mut CanonicalMainControl, stores: &mut Univers
         {
             MainControlStep::End | MainControlStep::EndOfInput => break,
             MainControlStep::Continue => {}
-        }
-    }
-}
-
-/// Narrow xfail for umber2-alfh.4.11. Keep the state/output assertions live:
-/// once canonical generated-font scanning lands, this falls through to them.
-fn run_canonical_generated_fonts_to_end(
-    control: &mut CanonicalMainControl,
-    stores: &mut Universe,
-) -> bool {
-    loop {
-        match control.step(stores) {
-            Ok(MainControlStep::End | MainControlStep::EndOfInput) => return true,
-            Ok(MainControlStep::Continue) => {}
-            Err(ExecError::UnimplementedPrimitive {
-                primitive:
-                    UnexpandablePrimitive::PdfCopyFont
-                    | UnexpandablePrimitive::LetterspaceFont,
-                ..
-            }) => return false,
-            Err(error) => panic!("canonical generated-font program executes: {error:?}"),
         }
     }
 }

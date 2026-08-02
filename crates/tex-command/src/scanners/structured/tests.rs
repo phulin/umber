@@ -417,6 +417,34 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
 }
 
 #[test]
+fn generated_font_scanner_binds_null_before_source_and_scans_letterspace_tail() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("spaced").symbol();
+    universe.set_meaning_global(target, Meaning::Relax);
+    let mut tokens = vec![Token::Cs(target)];
+    tokens.extend(text_tokens("="));
+    tokens.push(Token::Cs(target));
+    tokens.extend(text_tokens(" 1200 nolig "));
+    push(&mut command, tokens);
+
+    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_generated_font_definition(GeneratedFontKind::Letterspace, false)
+        .expect("letterspace definition scans");
+
+    assert_eq!(definition.target, target);
+    assert_eq!(definition.source, tex_state::font::NULL_FONT);
+    assert_eq!(definition.amount, 1000);
+    assert!(definition.no_ligatures);
+    assert_eq!(
+        universe.meaning(target),
+        Meaning::Font(tex_state::font::NULL_FONT)
+    );
+}
+
+#[test]
 fn font_size_recovery_carries_the_backed_up_error_context() {
     // TeX82 §§82, 1258: `scan_int` leaves its lookahead under §325
     // `back_input`; the deferred stomach-side `int_error` must display that

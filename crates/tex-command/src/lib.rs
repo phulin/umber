@@ -103,7 +103,7 @@ pub use profile::{
 };
 pub use scanners::{
     AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, ExpandedWriteText,
-    FileNameComponents, FileNameTermination, FontLoadRequest, FontSizeRecovery,
+    FileNameComponents, FileNameTermination, FontLoadRequest, FontSizeRecovery, GeneratedFontKind,
     HyphenationDataKind, ImmediateExtension, InputStreamRequest, InternalValue,
     MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
     MathFieldEpisode, MathFractionKind, MathLimitKind, MathScriptKind, MathStyleKind,
@@ -115,11 +115,12 @@ pub use scanners::{
     ScannedAccent, ScannedAccentBase, ScannedBalancedText, ScannedBoxConstruction, ScannedBoxKind,
     ScannedBoxRegister, ScannedBoxShift, ScannedBoxShiftPayload, ScannedCharacterDefinition,
     ScannedDiscretionaryOpening, ScannedDisplayDiagnostic, ScannedEquationNumber, ScannedFileName,
-    ScannedGlueParameterAssignment, ScannedHyphenationData, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition, ScannedMathCharacter,
-    ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction, ScannedMathMuMaterial,
-    ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition, ScannedRuleSpec,
-    ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath, ScannedTokenRegisterAssignment,
+    ScannedGeneratedFontDefinition, ScannedGlueParameterAssignment, ScannedHyphenationData,
+    ScannedInsertConstruction, ScannedLeaderPayload, ScannedLetAssignment, ScannedMacroDefinition,
+    ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
+    ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
+    ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath,
+    ScannedTokenRegisterAssignment,
     ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};

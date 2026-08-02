@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use tex_state::glue::GlueSpec;
+use tex_state::ids::FontId;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{FontSizeSpec, Scaled};
@@ -142,6 +143,27 @@ pub struct FontLoadRequest {
     /// seam must carry this detached snapshot to report at the original
     /// semantic point.
     pub error_context: String,
+}
+
+/// pdfTeX's two generated-font constructors.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GeneratedFontKind {
+    Copy,
+    Letterspace,
+}
+
+/// A completed pdfTeX generated-font definition.
+///
+/// The command processor owns the raw definition target, provisional
+/// `nullfont` binding, optional equals sign, source-font selector, and (for
+/// `\letterspacefont`) the bounded amount and optional `nolig` keyword.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ScannedGeneratedFontDefinition {
+    pub kind: GeneratedFontKind,
+    pub target: Symbol,
+    pub source: FontId,
+    pub amount: i16,
+    pub no_ligatures: bool,
 }
 
 /// tex.web §1258's and §1259's illegal-size recoveries.
@@ -2068,6 +2090,51 @@ impl CommandProcessor<'_> {
             size,
             size_recovery,
             error_context: self.command.output_open_context(&self.state),
+        })
+    }
+
+    /// Scans pdfTeX's `\pdfcopyfont` and `\letterspacefont` definitions.
+    ///
+    /// Like TeX82 §1257's `new_font`, pdfTeX installs `nullfont` before it
+    /// scans any operand following the target. This is significant for a
+    /// self-referential definition and for every later failure path.
+    pub fn scan_generated_font_definition(
+        &mut self,
+        kind: GeneratedFontKind,
+        provisional_global: bool,
+    ) -> Result<ScannedGeneratedFontDefinition, CommandError> {
+        let target = self.scan_definition_target()?;
+        self.state.set_provisional_meaning(
+            target,
+            Meaning::Font(tex_state::font::NULL_FONT),
+            provisional_global,
+        );
+        observe!(
+            self,
+            crate::CommandObservation::Mutation(crate::MutationRecord {
+                target: "meaning",
+                value: "set_font".into(),
+                key: Some(self.state.resolve(target).to_owned()),
+                tokens: None,
+                global: provisional_global,
+            }),
+        );
+        let _ = self.scan_optional_equals()?;
+        let source = self.scan_font_selector()?;
+        let (amount, no_ligatures) = match kind {
+            GeneratedFontKind::Copy => (0, false),
+            GeneratedFontKind::Letterspace => {
+                let amount = self.scan_integer()?.value.clamp(-1000, 1000) as i16;
+                let no_ligatures = self.scan_keyword("nolig")?.value;
+                (amount, no_ligatures)
+            }
+        };
+        Ok(ScannedGeneratedFontDefinition {
+            kind,
+            target,
+            source,
+            amount,
+            no_ligatures,
         })
     }
 

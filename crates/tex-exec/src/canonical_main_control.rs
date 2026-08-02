@@ -12,16 +12,17 @@ use tex_command::{
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
     CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
     CommandRuntime, CommandState, CommandStateSnapshot, FatalError, FontLoadRequest, FontResource,
-    HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
-    MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind, MathStyleKind,
-    MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
-    PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImageRequest,
-    PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
+    GeneratedFontKind, HyphenationDataKind, ImmediateExtension, InputStreamRequest,
+    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind,
+    MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
+    PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
+    PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
     PdfReferenceObjectRequest, PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent,
     ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
     ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedInsertConstruction, ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec,
-    ScannedSetBoxPath, ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -4945,6 +4946,10 @@ enum ScannedStep {
         resource: Box<Option<FontResource>>,
         global: bool,
     },
+    GeneratedFontDefinition {
+        definition: ScannedGeneratedFontDefinition,
+        global: bool,
+    },
     InputStream {
         request: InputStreamRequest,
         resource: Option<SourceRegistration>,
@@ -5389,6 +5394,7 @@ impl ScannedStep {
                 | Self::FontDimen { .. }
                 | Self::FontInteger { .. }
                 | Self::FontDefinition { .. }
+                | Self::GeneratedFontDefinition { .. }
                 | Self::InputStream { .. }
                 | Self::Arithmetic { .. }
                 | Self::InvalidArithmeticTarget { .. }
@@ -7241,6 +7247,22 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(
+            primitive @ (UnexpandablePrimitive::PdfCopyFont
+            | UnexpandablePrimitive::LetterspaceFont),
+        ) => {
+            let kind = match primitive {
+                UnexpandablePrimitive::PdfCopyFont => GeneratedFontKind::Copy,
+                UnexpandablePrimitive::LetterspaceFont => GeneratedFontKind::Letterspace,
+                _ => unreachable!(),
+            };
+            Ok(ScannedStep::GeneratedFontDefinition {
+                definition: processor
+                    .scan_generated_font_definition(kind, global)
+                    .map_err(command_error)?,
+                global,
+            })
+        }
+        Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::PdfXImage | UnexpandablePrimitive::PdfRefXImage),
         ) => {
             // pdftex.web §§1551–1552 begin both image cases with
@@ -8571,6 +8593,7 @@ fn scan_unclassified_primitive(
         | P::LcCode
         | P::Leaders
         | P::Let
+        | P::LetterspaceFont
         | P::Lower
         | P::Lowercase
         | P::Marks
@@ -8601,6 +8624,7 @@ fn scan_unclassified_primitive(
         | P::PdfIncludeChars
         | P::PdfInfo
         | P::PdfLiteral
+        | P::PdfCopyFont
         | P::PdfMapFile
         | P::PdfMapLine
         | P::PdfNames
@@ -8838,8 +8862,6 @@ fn scan_unclassified_primitive(
         }
         P::DiscretionaryHyphen
         | P::GlobalDefs
-        | P::LetterspaceFont
-        | P::PdfCopyFont
         | P::PdfEfCode
         | P::PdfKnacCode
         | P::PdfKnbcCode
@@ -10448,6 +10470,13 @@ fn applied_mutation_observation(
                 global: *global,
             }
         }
+        ScannedStep::GeneratedFontDefinition { definition, global } => MutationRecord {
+            target: "meaning",
+            value: "set_font".into(),
+            key: Some(stores.resolve(definition.target).to_owned()),
+            tokens: None,
+            global: *global,
+        },
         // -- §1225's `read_to_cs` runs `define(p,call,cur_val)` after
         // `read_toks`. Open/close mutate stream state rather than `eqtb`;
         // read installs §482's collected list as a parameterless macro.
@@ -13089,6 +13118,48 @@ fn apply_scanned_step(
                 stores.set_meaning_global(request.target, Meaning::Font(id));
             } else {
                 stores.set_meaning(request.target, Meaning::Font(id));
+            }
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::GeneratedFontDefinition { definition, global } => {
+            if definition.kind == GeneratedFontKind::Copy
+                && matches!(
+                    stores.font(definition.source).construction(),
+                    tex_fonts::FontConstruction::Letterspaced { .. }
+                        | tex_fonts::FontConstruction::Expanded { .. }
+                )
+            {
+                let reason = match stores.font(definition.source).construction() {
+                    tex_fonts::FontConstruction::Expanded { .. } => "cannot copy an expanded font",
+                    _ => "cannot copy a letterspaced font",
+                };
+                return Err(ExecError::CannotCopyFont(reason));
+            }
+            let id = match definition.kind {
+                GeneratedFontKind::Copy => {
+                    stores.try_copy_font_with_identifier(definition.source, definition.target)?
+                }
+                GeneratedFontKind::Letterspace => {
+                    let zero_em = stores.font_parameter(definition.source, 6).raw() == 0;
+                    let id = stores.try_letterspace_font_with_identifier(
+                        definition.source,
+                        definition.target,
+                        definition.amount,
+                        definition.no_ligatures,
+                    )?;
+                    if zero_em {
+                        stores.world_mut().write_text(
+                            tex_state::PrintSink::TerminalAndLog,
+                            "\npdfTeX warning (\\letterspacefont): font has zero em size (\\fontdimen6)\n",
+                        );
+                    }
+                    id
+                }
+            };
+            if global {
+                stores.set_meaning_global(definition.target, Meaning::Font(id));
+            } else {
+                stores.set_meaning(definition.target, Meaning::Font(id));
             }
             Ok(ReplayStep::Continue)
         }
