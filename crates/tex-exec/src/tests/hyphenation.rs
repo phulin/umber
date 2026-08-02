@@ -897,12 +897,20 @@ fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
             ch: 'B',
             origin: tex_state::token::OriginId::UNKNOWN,
         },
+        Node::Kern {
+            amount: Scaled::from_raw(4 * Scaled::UNITY),
+            kind: KernKind::Font,
+        },
     ];
 
-    let projected =
-        crate::assignments::test_physical_post_break_span(&mut stores, &replacement, &following);
+    let projected = crate::assignments::test_physical_post_break_span(
+        &mut stores,
+        &replacement,
+        &following,
+        None,
+    );
     assert!(
-        matches!(projected.as_slice(), [Node::Lig { orig, .. }, Node::Kern { kind: KernKind::Font, .. }, Node::Char { ch: 'B', .. }] if orig == &['B', 'B'])
+        matches!(projected.as_slice(), [Node::Lig { orig, .. }, Node::Kern { kind: KernKind::Font, .. }, Node::Char { ch: 'B', .. }, Node::Kern { kind: KernKind::Font, .. }] if orig == &['B', 'B'])
     );
 }
 

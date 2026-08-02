@@ -901,7 +901,15 @@ fn discretionary_through_node(
     let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    let physical_post = physical_post_break_span(stores, &replacement, following, fuel)?;
+    let target = automatic_physical_replace_count(std::slice::from_ref(&replacement))
+        .expect("one replacement node has a bounded physical span") as usize;
+    let physical_post = physical_post_break_span(
+        stores,
+        &replacement,
+        following,
+        word.get(position + target).copied(),
+        fuel,
+    )?;
     let disc = automatic_discretionary(stores, &pre, &post, &[replacement])
         .expect("a single replacement node fits TeX82's quarterword count");
     Ok((disc, physical_post))
@@ -911,6 +919,7 @@ fn physical_post_break_span(
     stores: &mut Universe,
     replacement: &Node,
     following: &[Node],
+    synchronization_next: Option<WordChar>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
     let target = automatic_physical_replace_count(std::slice::from_ref(replacement))
@@ -965,6 +974,29 @@ fn physical_post_break_span(
                         super::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
                             .map_err(ExecError::Command)?,
                     );
+                    if !matches!(
+                        projected.last(),
+                        Some(Node::Kern {
+                            kind: KernKind::Font,
+                            ..
+                        })
+                    ) && let Some(kern) =
+                        super::hmode::right_boundary_kern(stores, *font, orig[remaining - 1])
+                    {
+                        projected.push(kern);
+                    }
+                    if !matches!(projected.last(), Some(Node::Kern { .. }))
+                        && let Some(next) = synchronization_next
+                        && next.font == *font
+                        && let Some(kern) = super::hmode::synchronization_kern(
+                            stores,
+                            *font,
+                            orig[remaining - 1],
+                            next.ch,
+                        )
+                    {
+                        projected.push(kern);
+                    }
                     consumed = target;
                 }
             }
@@ -979,10 +1011,23 @@ pub(crate) fn test_physical_post_break_span(
     stores: &mut Universe,
     replacement: &Node,
     following: &[Node],
+    synchronization_next: Option<(tex_state::ids::FontId, char)>,
 ) -> Vec<Node> {
     let mut fuel = tex_command::CommandFuelLedger::default();
-    let list = physical_post_break_span(stores, replacement, following, fuel.fuel_mut())
-        .expect("test diagnostic projection fuel");
+    let synchronization_next = synchronization_next.map(|(font, ch)| WordChar {
+        font,
+        ch,
+        lower: ch,
+        origin: OriginId::UNKNOWN,
+    });
+    let list = physical_post_break_span(
+        stores,
+        replacement,
+        following,
+        synchronization_next,
+        fuel.fuel_mut(),
+    )
+    .expect("test diagnostic projection fuel");
     stores.nodes(list).to_vec()
 }
 
