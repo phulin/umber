@@ -57,6 +57,15 @@ use crate::{ExecError, Mode, ModeNest};
 
 type PreparedDviPages = Arc<Vec<crate::dispatch::PreparedDviPage>>;
 
+/// TeX82 §1176's live `math_shift_group` context as observed by e-TeX
+/// [49.1292]. Equation-number groups retain §1177's saved side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MathShiftContext {
+    Inline,
+    Display,
+    EqNo(crate::mode::EqNoSide),
+}
+
 fn push_prepared_dvi_page(pages: &mut PreparedDviPages, page: crate::dispatch::PreparedDviPage) {
     Arc::make_mut(pages).push(page);
 }
@@ -83,6 +92,8 @@ pub struct CanonicalMainControl {
     /// e-TeX [48.1191]'s saved delimiter identity for each live
     /// `math_left_group`, outermost first. `true` denotes `\middle`.
     active_math_left_boundaries: Vec<bool>,
+    /// Live `math_shift_group` openers, outermost first.
+    active_math_shifts: Vec<MathShiftContext>,
     /// Physical glue-store identity plus the canonical pointer source of the
     /// last skip-register definition. The second component is `None` when
     /// scanning allocated a fresh TeX glue node that Umber subsequently
@@ -351,6 +362,7 @@ struct CanonicalStepSnapshot {
     active_discretionaries: Vec<ActiveDiscretionary>,
     active_math_choices: Vec<usize>,
     active_math_left_boundaries: Vec<bool>,
+    active_math_shifts: Vec<MathShiftContext>,
     main_loop_active: bool,
     shown_mode: Option<Mode>,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
@@ -376,6 +388,7 @@ impl CanonicalStepSnapshot {
             active_discretionaries: control.active_discretionaries.clone(),
             active_math_choices: control.active_math_choices.clone(),
             active_math_left_boundaries: control.active_math_left_boundaries.clone(),
+            active_math_shifts: control.active_math_shifts.clone(),
             main_loop_active: control.main_loop_active,
             shown_mode: control.shown_mode,
             completed_replay_episode: control.completed_replay_episode,
@@ -410,6 +423,7 @@ impl CanonicalStepSnapshot {
         control.active_discretionaries = self.active_discretionaries;
         control.active_math_choices = self.active_math_choices;
         control.active_math_left_boundaries = self.active_math_left_boundaries;
+        control.active_math_shifts = self.active_math_shifts;
         control.main_loop_active = self.main_loop_active;
         control.shown_mode = self.shown_mode;
         control.completed_replay_episode = self.completed_replay_episode;
@@ -1436,6 +1450,7 @@ impl CanonicalMainControl {
             &self.active_discretionaries,
             &self.active_math_choices,
             &self.active_math_left_boundaries,
+            &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -1956,6 +1971,7 @@ impl CanonicalMainControl {
             &self.active_discretionaries,
             &self.active_math_choices,
             &self.active_math_left_boundaries,
+            &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
         )?;
         if dumped_format {
@@ -2571,19 +2587,14 @@ impl CanonicalMainControl {
                             .try_into()
                             .unwrap_or(i32::MAX),
                     )?;
-                    self.modes.current_list_mutation().set_display_eq_no(
-                        crate::mode::DisplayEqNo {
-                            side: match number.side {
-                                tex_command::EquationNumberSide::Left => {
-                                    crate::mode::EqNoSide::Left
-                                }
-                                tex_command::EquationNumberSide::Right => {
-                                    crate::mode::EqNoSide::Right
-                                }
-                            },
-                            display,
-                        },
-                    );
+                    let side = match number.side {
+                        tex_command::EquationNumberSide::Left => crate::mode::EqNoSide::Left,
+                        tex_command::EquationNumberSide::Right => crate::mode::EqNoSide::Right,
+                    };
+                    self.active_math_shifts.push(MathShiftContext::EqNo(side));
+                    self.modes
+                        .current_list_mutation()
+                        .set_display_eq_no(crate::mode::DisplayEqNo { side, display });
                 }
             }
             CanonicalMathRequest::Family(_) => {}
@@ -2657,6 +2668,11 @@ impl CanonicalMainControl {
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
+        self.active_math_shifts.push(if display {
+            MathShiftContext::Display
+        } else {
+            MathShiftContext::Inline
+        });
         schedule_everymath(&mut self.command, stores, display);
         Ok(())
     }
@@ -2718,6 +2734,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "math shift group",
             })?;
+        self.active_math_shifts.pop();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok(())
     }
@@ -2741,6 +2758,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "equation number group",
             })?;
+        self.active_math_shifts.pop();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         // TeX82 §1194's equation-number branch assigns `p:=fin_mlist(null)`
         // a second time after boxing `a`: the display must be finished from
@@ -2794,6 +2812,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "display alignment group",
             })?;
+        self.active_math_shifts.pop();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_canonical_display(stores, interrupt.active_directions)
     }
@@ -2825,6 +2844,7 @@ impl CanonicalMainControl {
             .map_err(|_| ExecError::MissingToken {
                 context: "display math group",
             })?;
+        self.active_math_shifts.pop();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_canonical_display(stores, interrupt.active_directions)
     }
@@ -3327,12 +3347,12 @@ impl CanonicalMainControl {
             ScannedStep::ShowGroups { diagnostic: None } => ScannedStep::ShowGroups {
                 diagnostic: Some(detached_showgroups(
                     stores,
-                    &self.modes,
                     &self.active_alignment,
                     &self.boxes,
                     &self.active_discretionaries,
                     &self.active_math_choices,
                     &self.active_math_left_boundaries,
+                    &self.active_math_shifts,
                 )),
             },
             scanned => scanned,
@@ -3402,6 +3422,7 @@ impl CanonicalMainControl {
             &self.active_discretionaries,
             &self.active_math_choices,
             &self.active_math_left_boundaries,
+            &self.active_math_shifts,
             &mut self.prepared_dvi_pages,
         );
         if result.is_ok()
@@ -11127,39 +11148,31 @@ fn finish_replay_alignment_with_origin(
     Ok(())
 }
 
-/// Resolves e-TeX 2.6 [49.1292]'s coupled save-stack/mode-nest traversal into
-/// an immutable diagnostic value. Unrestricted horizontal levels do not own
-/// groups and are skipped by the WEB traversal; the remaining contexts are
-/// paired outermost-first without changing either live stack.
+/// Resolves e-TeX 2.6 [49.1292]'s save-stack traversal and its retained live
+/// construction contexts into an immutable diagnostic value without changing
+/// any engine stack.
 fn detached_showgroups(
     stores: &Universe,
-    modes: &ModeNest,
     active_alignment: &Option<ActiveReplayAlignment>,
     boxes: &ReplayBoxes,
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
     active_math_left_boundaries: &[bool],
+    active_math_shifts: &[MathShiftContext],
 ) -> crate::diagnostics::ShowGroupsDiagnostic {
     use crate::diagnostics::{ShowGroupFrame, ShowGroupsDiagnostic};
 
     let frames = stores.group_frames().collect::<Vec<_>>();
-    let summary = modes.summary();
-    let semantic_modes = summary
-        .levels()
-        .iter()
-        .filter_map(|level| (level.mode() != Mode::Horizontal).then_some(level.mode()))
-        .collect::<Vec<_>>();
-    let mut mode_index = 1usize;
     let mut align_level = 0usize;
     let mut box_index = 0usize;
     let mut discretionary_index = 0usize;
     let mut math_choice_index = 0usize;
     let mut math_left_index = 0usize;
+    let mut math_shift_index = 0usize;
     let align_kind = active_alignment.as_ref().map(|active| active.kind);
     let mut rendered = Vec::with_capacity(frames.len());
     for (index, frame) in frames.into_iter().enumerate() {
         let kind = frame.kind();
-        let mode = semantic_modes.get(mode_index).copied();
         let context = match kind {
             GroupKind::Simple | GroupKind::Math => "{".to_owned(),
             GroupKind::SemiSimple => "\\begingroup".to_owned(),
@@ -11197,10 +11210,19 @@ fn detached_showgroups(
                 math_choice_index = math_choice_index.saturating_add(1);
                 format!("\\mathchoice{}{{", "{}".repeat(completed))
             }
-            GroupKind::MathShift => match mode {
-                Some(Mode::DisplayMath) => "$$".to_owned(),
-                _ => "$".to_owned(),
-            },
+            GroupKind::MathShift => {
+                // TeX82 §1176's mode test and §1177's saved equation-number
+                // side are the semantic opener identity e-TeX [49.1292]
+                // reconstructs while traversing the live groups.
+                let context = match active_math_shifts.get(math_shift_index) {
+                    Some(MathShiftContext::Display) => "$$",
+                    Some(MathShiftContext::EqNo(crate::mode::EqNoSide::Left)) => "\\leqno",
+                    Some(MathShiftContext::EqNo(crate::mode::EqNoSide::Right)) => "\\eqno",
+                    Some(MathShiftContext::Inline) | None => "$",
+                };
+                math_shift_index = math_shift_index.saturating_add(1);
+                context.to_owned()
+            }
             GroupKind::MathLeft => {
                 // e-TeX 2.6 [49.1292] distinguishes the consecutive
                 // `math_left_group` segments opened by `\left` and `\middle`
@@ -11231,23 +11253,6 @@ fn detached_showgroups(
                 context.to_owned()
             }
         };
-        if matches!(
-            kind,
-            GroupKind::HBox
-                | GroupKind::AdjustedHBox
-                | GroupKind::VBox
-                | GroupKind::VTop
-                | GroupKind::Output
-                | GroupKind::Math
-                | GroupKind::Disc
-                | GroupKind::Insert
-                | GroupKind::VCenter
-                | GroupKind::MathChoice
-                | GroupKind::MathShift
-                | GroupKind::MathLeft
-        ) {
-            mode_index = mode_index.saturating_add(1);
-        }
         rendered.push(ShowGroupFrame {
             kind,
             level: index + 1,
@@ -11334,6 +11339,7 @@ fn apply_scanned_step(
     active_discretionaries: &[ActiveDiscretionary],
     active_math_choices: &[usize],
     active_math_left_boundaries: &[bool],
+    active_math_shifts: &[MathShiftContext],
     prepared_dvi_pages: &mut PreparedDviPages,
 ) -> Result<ReplayStep, ExecError> {
     match scanned {
@@ -13087,12 +13093,12 @@ fn apply_scanned_step(
         ScannedStep::ShowGroups { diagnostic: None } => {
             let diagnostic = detached_showgroups(
                 stores,
-                modes,
                 active_alignment,
                 boxes,
                 active_discretionaries,
                 active_math_choices,
                 active_math_left_boundaries,
+                active_math_shifts,
             );
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;

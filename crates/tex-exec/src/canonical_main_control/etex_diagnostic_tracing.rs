@@ -128,6 +128,29 @@ fn showgroups_names_a_math_left_group_reopened_by_middle() {
 }
 
 #[test]
+fn showgroups_reconstructs_every_math_shift_opener() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\n$\\showgroups$\n$$\\showgroups$$\n$$\\eqno{\\showgroups}$$\n$$\\leqno{\\showgroups}$$\n\\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    // TeX82 §§1176–1177 and e-TeX [49.1292] retain the opening math-shift
+    // context independently of the current semantic-nest traversal index.
+    for expected in [
+        "math shift group (level 1) entered at line 2 ($)",
+        "math shift group (level 1) entered at line 3 ($$)",
+        "math shift group (level 2) entered at line 4 (\\eqno)",
+        "math shift group (level 2) entered at line 5 (\\leqno)",
+    ] {
+        assert!(log.contains(expected), "missing {expected:?} from {log:?}");
+    }
+}
+
+#[test]
 fn shifted_hbox_group_kind_depends_on_the_enclosing_mode() {
     let (mut stores, mut control) = etex_control();
     register_source(
