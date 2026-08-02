@@ -552,14 +552,12 @@ fn arithmetic_failures_preserve_every_target_after_consuming_the_operand() {
 
 #[test]
 fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
+    let stores = Universe::new_with_plain_catcodes();
     let before = stores.code_table_generations();
-    let mut input = InputStack::new(MemoryInput::new("\\catcode`@=12 \\catcode`@=12"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("catcode assignments execute");
+    let stores = super::core::run_canonical_tex82_with_universe(
+        stores,
+        "\\catcode`@=12 \\catcode`@=12 \\end",
+    );
     let after = stores.code_table_generations();
 
     assert_eq!(stores.catcode('@'), Catcode::Other);
@@ -568,16 +566,10 @@ fn code_table_assignment_validates_and_bumps_generation_on_same_value() {
 
 #[test]
 fn code_table_assignments_obey_groups_global_prefix_and_globaldefs() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = super::core::run_canonical_tex82(
         "{\\catcode`@=11}{\\global\\catcode`!=11}\\globaldefs=1 \
-         {\\catcode`?=11}\\globaldefs=-1 {\\global\\catcode`*=11}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("code-table assignment scope should match other definitions");
+         {\\catcode`?=11}\\globaldefs=-1 {\\global\\catcode`*=11}\\end",
+    );
 
     assert_eq!(stores.catcode('@'), Catcode::Other);
     assert_eq!(stores.catcode('!'), Catcode::Letter);
@@ -587,13 +579,7 @@ fn code_table_assignments_obey_groups_global_prefix_and_globaldefs() {
 
 #[test]
 fn catcode_accepts_a_backtick_control_symbol_constant() {
-    let mut stores = Universe::new_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\catcode`\\{=1"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("backtick control symbol constant should not expand");
+    let stores = super::core::run_canonical_tex82("\\catcode`\\{=1\\end");
 
     assert_eq!(stores.catcode('{'), Catcode::BeginGroup);
 }
