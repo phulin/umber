@@ -1315,18 +1315,8 @@ fn left_right_scans_nested_list_as_inner_noad() {
 fn etex_middle_stays_inside_left_right_and_has_its_own_noad_kind() {
     // e-TeX manual section 3.5: `\middle` is valid only in a matching
     // `\left...\right` group and is sized with those delimiters.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(r"$\left(a\middle|b\right)"));
-    let mut executor = Executor::new();
-    executor
-        .run(&mut input, &mut stores)
-        .expect("middle executes");
-
-    let root = math_nodes(&stores, &executor);
+    let (stores, root) =
+        super::core::run_canonical_etex_current_list(r"$\left(a\middle|b\right)");
     let inner = math_noad(&root[0]);
     let MathField::SubMlist(content) = inner.nucleus else {
         panic!("left/right inner noad")
@@ -1420,27 +1410,14 @@ fn canonical_etex_repeated_middle_and_following_script_preserve_noad_boundaries(
 
 #[test]
 fn etex_display_records_and_resumes_the_interrupted_text_direction() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, nodes) = super::core::run_canonical_etex_current_list(
         r"\TeXXeTstate=1
           \everydisplay{\message{PD=\the\predisplaydirection}}
           \noindent\beginR abc$$x$$def\endR",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("directed display executes");
+    );
 
     assert!(terminal_effect_text(&stores).contains("PD=-1"));
-    let directions: Vec<_> = executor
-        .nest()
-        .current_list()
-        .nodes()
+    let directions: Vec<_> = nodes
         .iter()
         .filter_map(|node| match node {
             Node::Direction(direction) => Some(*direction),
@@ -1461,18 +1438,12 @@ fn doubled_math_shift_in_internal_vertical_mode_is_a_display() {
     // tex.web §§1090, 1092, and 1138: `new_graf` enters ordinary horizontal
     // mode even from an internal vlist, so doubled `$` opens display math and
     // `\ifinner` is false.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     // The probes are registers rather than `\message`s: §1195's math-font
     // report is unavoidable without loaded families, and §82's context display
     // echoes the source line, so any probe text would also appear in it.
-    let mut input = InputStack::new(MemoryInput::new(
-        r"\everypar{\global\count2=1}\setbox0=\vbox{$$\ifinner\global\count1=1\else\global\count1=2\fi$$}",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("internal doubled shift executes");
+    let stores = super::core::run_canonical_etex(
+        r"\everypar{\global\count2=1}\setbox0=\vbox{$$\ifinner\global\count1=1\else\global\count1=2\fi$$}\end",
+    );
 
     assert_eq!(stores.count(1), 2);
     assert_eq!(stores.count(2), 1);

@@ -6163,7 +6163,9 @@ fn canonical_etex_glue_component_enquiries_recover_standalone_in_every_mode() {
 
 pub(super) fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<Node>) {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    install_tex82_expandable_primitives(&mut stores);
+    install_unexpandable_primitives(&mut stores);
     tex_expand::install_etex_expandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     control
