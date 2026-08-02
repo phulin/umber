@@ -2,8 +2,8 @@ use super::support::*;
 use super::*;
 use test_support::{corpus_root, read_fixture};
 use tex_command::{
-    CommandProfile, RegisteredSourceKind, SourceRegistration, install_etex_expandable_primitives,
-    install_tex82_expandable_primitives,
+    CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration,
+    install_etex_expandable_primitives, install_tex82_expandable_primitives,
 };
 use tex_out::dvi::write_dvi;
 use tex_out::{
@@ -109,6 +109,50 @@ fn run_canonical_profile_source(
         }
     }
     panic!("canonical I/O source did not terminate");
+}
+
+fn run_canonical_cmr10_source(
+    stores: &mut Universe,
+    source: &[u8],
+    profile: CommandProfile,
+) -> Result<(), ExecError> {
+    let mut control = match profile {
+        CommandProfile::TEX82 => CanonicalMainControl::tex82_initex(stores),
+        _ => {
+            install_tex82_expandable_primitives(stores);
+            crate::install_unexpandable_primitives(stores);
+            install_etex_expandable_primitives(stores);
+            crate::install_etex_unexpandable_primitives(stores);
+            CanonicalMainControl::prepared_initex(profile)
+        }
+    };
+    let metrics = tex_state::InputReadState::read_input_file(
+        &mut tex_state::InputOpenState::input_open_context(stores),
+        std::path::Path::new("cmr10.tfm"),
+    )
+    .expect("seeded cmr10 fixture reads");
+    control.capabilities_mut().register_font(
+        "cmr10.tfm",
+        FontResource::Tfm {
+            metrics,
+            opentype: None,
+        },
+    );
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            source.to_vec(),
+        ))
+        .expect("register canonical font I/O source");
+    for _ in 0..1024 {
+        if matches!(
+            control.step(stores)?,
+            MainControlStep::End | MainControlStep::EndOfInput
+        ) {
+            return Ok(());
+        }
+    }
+    panic!("canonical font I/O source did not terminate");
 }
 
 fn run_canonical_source_with_observer(
@@ -1530,8 +1574,6 @@ fn shipout_special_expansion_error_commits_no_partial_artifact() {
 #[test]
 fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
     stores.set_dimen_param(DimenParam::MATH_SURROUND, Scaled::from_raw(123));
 
     let content = stores.freeze_node_list(&[tex_state::node::Node::MathNoad(
@@ -1561,14 +1603,11 @@ fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
     ));
     let root_list = stores.freeze_node_list(&[root]);
     stores.set_box_reg(0, root_list);
-    let mut input = InputStack::new(MemoryInput::new("\\shipout\\box0\\end"));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
+    run_canonical_source(&mut stores, b"\\shipout\\box0\\end", &[])
         .expect("deferred math list shipout succeeds");
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1585,20 +1624,16 @@ fn shipout_converts_deferred_math_lists_before_artifact_lowering() {
 #[test]
 fn etex_shipout_reorders_nested_tex_xet_segments_into_visual_order() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
-    crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        r"\font\f=cmr10 \relax \f\TeXXeTstate=1
+    run_canonical_cmr10_source(
+        &mut stores,
+        br"\font\f=cmr10 \relax \f\TeXXeTstate=1
           \shipout\hbox{A\beginR BC\beginL DE\endL FG\endR H}\end",
-    ));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("nested TeX--XeT shipout succeeds");
+        CommandProfile::ETEX26,
+    )
+    .expect("nested TeX--XeT shipout succeeds");
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1627,17 +1662,16 @@ fn etex_shipout_reorders_nested_tex_xet_segments_into_visual_order() {
 #[test]
 fn inline_math_restores_normal_space_for_dvi_movement_reuse() {
     let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        r"\font\f=cmr10 \relax \f \textfont0=\f \scriptfont0=\f \scriptscriptfont0=\f
+    run_canonical_cmr10_source(
+        &mut stores,
+        br"\font\f=cmr10 \relax \f \textfont0=\f \scriptfont0=\f \scriptscriptfont0=\f
           \shipout\hbox{A B\spacefactor=2000 $0$ if}\end",
-    ));
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("inline-math shipout succeeds");
+        CommandProfile::TEX82,
+    )
+    .expect("inline-math shipout succeeds");
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
@@ -1656,8 +1690,6 @@ fn inline_math_restores_normal_space_for_dvi_movement_reuse() {
 #[test]
 fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    crate::install_unexpandable_primitives(&mut stores);
     let cs = stores.intern("markcs");
     let mark_tokens = stores.intern_token_list(&[
         Token::Char {
@@ -1730,15 +1762,12 @@ fn shipout_lowers_supported_whatsit_adjacent_nodes_without_reordering_effects() 
     ));
     let root_list = stores.freeze_node_list(&[root]);
     stores.set_box_reg(0, root_list);
-    let mut input = InputStack::new(MemoryInput::new("\\shipout\\box0\\end"));
-
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
+    run_canonical_source(&mut stores, b"\\shipout\\box0\\end", &[])
         .expect("seeded shipout succeeds");
 
     let bytes = stores
         .world()
-        .read_artifact(stats.shipped_artifacts[0])
+        .read_artifact(stores.world().artifact_commits()[0])
         .expect("read artifact")
         .expect("artifact stored");
     let artifact = PageArtifact::from_bytes(&bytes).expect("artifact parses");
