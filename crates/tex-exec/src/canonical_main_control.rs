@@ -1617,6 +1617,34 @@ impl CanonicalMainControl {
             .map(|alignment| alignment.identity)
     }
 
+    /// Projects the preamble retained by canonical main control for focused
+    /// crate-internal scanner assertions.
+    #[cfg(test)]
+    pub(crate) fn active_alignment_state_for_test(&self) -> Option<AlignState> {
+        let active = self.active_alignment.as_ref()?;
+        (!active.columns.is_empty()).then(|| {
+            let columns = active
+                .columns
+                .iter()
+                .map(|templates| AlignColumn {
+                    u_template: templates
+                        .u_template
+                        .expect("canonical columns retain u templates")
+                        .token_list(),
+                    v_template: templates.v_template.token_list(),
+                })
+                .collect();
+            AlignState::new(
+                active.kind,
+                active.packing,
+                columns,
+                active.tabskips.clone(),
+                active.default_tabskip,
+                active.repeat_start,
+            )
+        })
+    }
+
     /// Applies an executor-selected alignment lifecycle transition.
     ///
     /// The request contains no token spelling, so this cannot create another

@@ -1,35 +1,34 @@
 use super::*;
-use crate::{Mode, install_unexpandable_primitives};
-use tex_lex::{InputStack, MemoryInput};
+use crate::{CanonicalMainControl, Mode};
+use std::sync::Arc;
+use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_state::scaled::Scaled;
-use tex_state::token::OriginId;
 use tex_state::{EffectRecord, PrintSink};
-
-fn context_token() -> TracedTokenWord {
-    TracedTokenWord::pack(
-        Token::Char {
-            ch: '&',
-            cat: Catcode::AlignmentTab,
-        },
-        OriginId::UNKNOWN,
-    )
-}
 
 fn scan(primitive: UnexpandablePrimitive, source: &str) -> (Universe, AlignState) {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(source));
-    input.begin_alignment();
-    let mut execution = crate::ExecutionContext::new("texput");
-    let state = scan_preamble(
-        primitive,
-        context_token(),
-        &mut input,
-        &mut stores,
-        &mut execution,
-    )
-    .expect("alignment preamble should scan");
-    (stores, state)
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let primitive = match primitive {
+        UnexpandablePrimitive::HAlign => "\\halign",
+        UnexpandablePrimitive::VAlign => "\\valign",
+        _ => unreachable!("test helper accepts alignment primitives only"),
+    };
+    let source = format!("{primitive} {source}");
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(source.into_bytes()),
+        ))
+        .expect("register canonical alignment source");
+    for _ in 0..128 {
+        control
+            .step(&mut stores)
+            .expect("canonical alignment preamble should scan");
+        if let Some(state) = control.active_alignment_state_for_test() {
+            return (stores, state);
+        }
+    }
+    panic!("canonical alignment preamble exceeded its step bound")
 }
 
 fn character(ch: char, cat: Catcode) -> Token {
@@ -72,10 +71,7 @@ fn alignment_scan_spec_consumes_brace_after_keyword_backups() {
             &[],
             "the source opener must not leak into the u-template"
         );
-        assert_eq!(
-            stores.tokens(state.columns()[0].v_template),
-            &[stores.frozen_end_template_token()]
-        );
+        assert_eq!(stores.tokens(state.columns()[0].v_template), &[]);
     }
 }
 
@@ -127,10 +123,7 @@ fn preamble_tabskip_span_expansion_and_delimiter_identity() {
     );
     assert_eq!(
         stores.tokens(state.columns()[0].v_template),
-        &[
-            character('y', Catcode::Letter),
-            stores.frozen_end_template_token(),
-        ]
+        &[character('y', Catcode::Letter)]
     );
     assert_eq!(
         stores.tokens(state.columns()[1].u_template),
@@ -138,10 +131,7 @@ fn preamble_tabskip_span_expansion_and_delimiter_identity() {
     );
     assert_eq!(
         stores.tokens(state.columns()[1].v_template),
-        &[
-            character('w', Catcode::Letter),
-            stores.frozen_end_template_token(),
-        ]
+        &[character('w', Catcode::Letter)]
     );
 }
 
@@ -179,10 +169,7 @@ fn periodic_preamble_repeats_u_v_templates_and_tabskip_exactly() {
 fn scan_u_v_templates_empty_nested_and_malformed() {
     let (empty_stores, empty) = scan(UnexpandablePrimitive::HAlign, "{#\\cr}");
     assert_eq!(empty_stores.tokens(empty.columns()[0].u_template), &[]);
-    assert_eq!(
-        empty_stores.tokens(empty.columns()[0].v_template),
-        &[empty_stores.frozen_end_template_token()]
-    );
+    assert_eq!(empty_stores.tokens(empty.columns()[0].v_template), &[]);
 
     let (stores, state) = scan(UnexpandablePrimitive::HAlign, "{  a{&}#v##w\\cr}");
     assert_eq!(
@@ -200,7 +187,6 @@ fn scan_u_v_templates_empty_nested_and_malformed() {
         &[
             character('v', Catcode::Letter),
             character('w', Catcode::Letter),
-            stores.frozen_end_template_token(),
         ],
         "a second parameter token is diagnosed and ignored"
     );
@@ -222,7 +208,7 @@ fn scan_u_v_templates_empty_nested_and_malformed() {
     );
     assert_eq!(
         missing_stores.tokens(missing.columns()[0].v_template),
-        &[missing_stores.frozen_end_template_token()],
+        &[],
         "the backed-up \\cr is re-read as the v-template terminator"
     );
     let output = terminal_text(&missing_stores);
