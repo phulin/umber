@@ -2351,16 +2351,7 @@ fn outer_def_accepts_active_character_target() {
 
 #[test]
 fn box_primitives_round_trip_through_registers() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\hbox to 10pt{}\\setbox1=\\copy0\\box0",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("box primitives execute");
+    let stores = run_canonical_tex82("\\setbox0=\\hbox to 10pt{}\\setbox1=\\copy0\\box0");
 
     assert!(stores.box_reg(0).is_none(), "\\box should void register 0");
     let box1 = stores.box_reg(1).expect("copy should preserve register 1");
@@ -2380,13 +2371,7 @@ fn box_primitives_round_trip_through_registers() {
 
 #[test]
 fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox \\global\\count0=7}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("box scanner inserts a missing opening brace");
+    let stores = run_canonical_tex82("\\setbox0=\\hbox \\global\\count0=7}");
 
     assert_eq!(stores.count(0), 7);
     assert!(stores.box_reg(0).is_some());
@@ -2395,15 +2380,9 @@ fn box_scanner_inserts_missing_left_brace_and_replays_body_token() {
 
 #[test]
 fn box_scanner_closes_by_execution_group_after_message_argument() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\setbox0=\\hbox{\\message{x}\\vbox{\\hrule height2pt}}\\hrule height3pt",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("box with a message argument executes");
+    );
 
     let box0 = stores.box_reg(0).expect("setbox destination remains owned");
     let [Node::HList(hbox)] = stores.nodes(box0).testing_decoded() else {
@@ -2435,7 +2414,6 @@ fn box_scanner_closes_by_execution_group_after_message_argument() {
 #[test]
 fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
     let checkpoint = stores.snapshot();
     // This is the decisive topology reduced from the malformed tail of
     // trip.tex: Box is innermost when its brace arrives, but Math is still
@@ -2444,10 +2422,7 @@ fn trip_math_mode_box_closure_preserves_ownership_and_replays() {
     let mut first_hash = None;
 
     for pass in 0..2 {
-        let mut input = InputStack::new(MemoryInput::new(source));
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("malformed math recovery remains inside the hbox scan");
+        stores = run_canonical_tex82_with_universe(stores, source);
 
         assert_eq!(stores.execution_group_depth(), 0, "pass {pass}");
         let box0 = stores.box_reg(0).expect("recovered setbox remains nonvoid");
