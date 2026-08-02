@@ -1,7 +1,34 @@
 use super::*;
 use crate::math::tests::{list_nodes, math_char, noad, root_nodes, sc, setup_universe};
-use crate::math::{MathParams, Style, mlist_to_hlist};
+use crate::math::{MathLayoutReader, MathParams, Style, mlist_to_hlist};
 use tex_state::math::{FractionThickness, MathFontSize, MathFraction};
+
+#[test]
+fn classic_character_operator_observes_clean_box_hpack() {
+    // TeX82 §749 calls clean_box for a character operator nucleus, and
+    // §720 packages that character with hpack(q,natural).
+    let mut stores = setup_universe();
+    let input = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Operator(LimitType::NoLimits),
+        MathField::MathChar(math_char('o')),
+    ))]);
+    let params = MathParams::read(&stores);
+
+    let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
+    let [MathNode::HList(operator)] = root_nodes(&layout).as_slice() else {
+        panic!("operator lowers to one horizontal box");
+    };
+
+    assert_eq!(
+        layout.pack_observations(),
+        &[super::super::MathPackObservation {
+            axis: super::super::BoxAxis::Horizontal,
+            width: operator.width,
+            height: operator.height,
+            depth: operator.depth,
+        }]
+    );
+}
 
 #[test]
 fn tex82_noad_constructor_clearance_and_italic_matrix() {
