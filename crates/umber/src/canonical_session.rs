@@ -245,6 +245,7 @@ pub struct CanonicalEngineSession<'a> {
     terminated: bool,
     artifact_cursor: usize,
     effect_cursor: usize,
+    terminal_input_cursor: Option<tex_state::TerminalInputPosition>,
     no_progress_limit: u8,
     mode_transitions: Vec<tex_exec::Mode>,
 }
@@ -255,6 +256,7 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_input_cursor: None,
             stores,
             control: CanonicalMainControl::with_profile(profile),
             initex: false,
@@ -281,6 +283,7 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_input_cursor: None,
             control: CanonicalMainControl::tex82_initex(stores),
             stores,
             initex: true,
@@ -304,6 +307,7 @@ impl<'a> CanonicalEngineSession<'a> {
         Self {
             artifact_cursor: stores.world().artifact_commits().len(),
             effect_cursor: stores.world().effect_records().len(),
+            terminal_input_cursor: None,
             control: CanonicalMainControl::prepared_initex(profile),
             stores,
             initex: true,
@@ -402,6 +406,10 @@ impl<'a> CanonicalEngineSession<'a> {
             .capabilities_mut()
             .set_startup_job_name(startup_input_name);
         self.root_framing_is_command_owned = source.name().is_some();
+        if source.kind() == RegisteredSourceKind::Generated && source.name().is_none() {
+            self.control.stop_at_end_of_input();
+            self.terminal_input_cursor = Some(self.stores.terminal_input_position());
+        }
         let source = self.control.register_root_source(source)?;
         self.root_registered = true;
         self.startup_input_name = Some(startup_input_name.to_owned());
@@ -915,7 +923,8 @@ impl<'a> CanonicalEngineSession<'a> {
             self.control.finish_job(self.stores, dvi_output, None);
         }
         let commits = self.stores.world().artifact_commits();
-        let artifacts = &commits[self.artifact_cursor..];
+        let artifact_start = self.artifact_cursor.min(commits.len());
+        let artifacts = commits[artifact_start..].to_vec();
         let emits_dvi = !self
             .control
             .command_profile()
@@ -924,7 +933,7 @@ impl<'a> CanonicalEngineSession<'a> {
         if (emits_dvi && receipts.len() != artifacts.len())
             || receipts
                 .iter()
-                .zip(artifacts)
+                .zip(&artifacts)
                 .any(|(receipt, hash)| receipt.hash() != *hash)
         {
             return Err(CanonicalSessionError::Execution(
@@ -933,19 +942,23 @@ impl<'a> CanonicalEngineSession<'a> {
                 ),
             ));
         }
-        let committed_artifacts = self.stores.world().committed_artifacts();
-        let effects = self.stores.world().effect_records()[self.effect_cursor..].to_vec();
+        let committed_artifacts =
+            self.stores.world().committed_artifacts()[artifact_start..commits.len()].to_vec();
+        let effect_records = self.stores.world().effect_records();
+        let effect_start = self.effect_cursor.min(effect_records.len());
+        let effects = effect_records[effect_start..].to_vec();
         self.artifact_cursor = commits.len();
-        self.effect_cursor = self.stores.world().effect_records().len();
+        self.effect_cursor = effect_records.len();
+        if let Some(position) = self.terminal_input_cursor.take() {
+            self.stores.restore_terminal_input_position(position);
+        }
         Ok(CanonicalSessionState::Complete(RunResult {
             terminal_text: crate::uncommitted_terminal_text(self.stores),
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
-            artifacts: artifacts.to_vec(),
+            artifacts,
             dvi_pages,
-            committed_artifacts: committed_artifacts
-                [self.artifact_cursor - artifacts.len()..self.artifact_cursor]
-                .to_vec(),
+            committed_artifacts,
             effects,
             dumped_format: self.control.dumped_format(),
             format_dump_receipt: self.control.format_dump_receipt().cloned(),

@@ -3206,6 +3206,21 @@ impl Universe {
         self.world.begin_retained_session()
     }
 
+    /// Captures an authored fragment's borrowed terminal-input cursor.
+    #[doc(hidden)]
+    pub fn terminal_input_position(&self) -> crate::world::TerminalInputPosition {
+        self.world.terminal_input_position()
+    }
+
+    /// Restores a position captured by [`Self::terminal_input_position`].
+    #[doc(hidden)]
+    pub fn restore_terminal_input_position(
+        &mut self,
+        position: crate::world::TerminalInputPosition,
+    ) {
+        self.world.restore_terminal_input_position(position);
+    }
+
     /// Consumes the retained effect branch by exposing it exactly once in order.
     pub fn export_retained_effects(&mut self) -> Result<(), WorldError> {
         let hash_base = self.state_hash_base.clone();

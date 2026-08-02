@@ -158,6 +158,9 @@ pub struct CanonicalMainControl {
     /// Empty when no startup line was scanned, which is §313's own display for
     /// a base level whose consumed and pending text are both empty.
     startup_terminal_line: String,
+    /// Host-owned authored chunks end when their registered root is
+    /// exhausted; complete TeX jobs retain §360's interactive `*` loop.
+    stop_at_end_of_input: bool,
     /// Observations produced by `fire_pending_page_output` after the current
     /// step's own records. Drained by every step, observed or not.
     page_output_observations: Vec<CommandObservation>,
@@ -1005,6 +1008,12 @@ impl CanonicalMainControl {
         Ok(id)
     }
 
+    /// Selects retained fragment semantics: root exhaustion is the host
+    /// boundary and must not consume §71 terminal lines looking for `\end`.
+    pub fn stop_at_end_of_input(&mut self) {
+        self.stop_at_end_of_input = true;
+    }
+
     /// Registers the startup root and immediately renders its §537 opening
     /// after the driver has opened the transcript.
     pub fn register_startup_root_source(
@@ -1507,7 +1516,7 @@ impl CanonicalMainControl {
         }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput) {
+        } else if matches!(result, ReplayStep::EndOfInput) && !self.stop_at_end_of_input {
             crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
@@ -2016,7 +2025,7 @@ impl CanonicalMainControl {
         }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput) {
+        } else if matches!(result, ReplayStep::EndOfInput) && !self.stop_at_end_of_input {
             crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         self.resume_main_control_parking(parking, stores);
@@ -3469,7 +3478,7 @@ impl CanonicalMainControl {
         ) = (&result, &scanned)
         {
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
-        } else if matches!(result, Ok(ReplayStep::EndOfInput)) {
+        } else if matches!(result, Ok(ReplayStep::EndOfInput)) && !self.stop_at_end_of_input {
             crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
         }
         if result.is_ok() {

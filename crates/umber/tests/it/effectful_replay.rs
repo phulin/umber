@@ -92,7 +92,6 @@ macro_rules! replay_identity_shard {
             })]
 
             #[test]
-            #[ignore = "umber2-johp.24.1.7: canonical multi-run replay identity"]
             fn $name(program in program_strategy()) {
                 assert_effectful_replay_identity(&program);
             }
@@ -110,7 +109,6 @@ macro_rules! commit_path_shard {
             })]
 
             #[test]
-            #[ignore = "umber2-johp.24.1.7: canonical multi-run replay identity"]
             fn $name((program, mask) in (commit_program_strategy(), prop::collection::vec(any::<bool>(), 0..18))) {
                 assert_commit_path_matches_straight_line(&program, &mask);
             }
@@ -135,6 +133,22 @@ commit_path_shard!(effectful_commit_path_4, 4);
 commit_path_shard!(effectful_commit_path_5, 5);
 commit_path_shard!(effectful_commit_path_6, 6);
 commit_path_shard!(effectful_commit_path_7, 7);
+
+#[test]
+fn terminal_read_chunk_survives_a_prior_retained_run() {
+    let mut universe = setup_universe();
+    run_tex_chunk(&mut universe, r"\write0{before} ");
+    assert_eq!(universe.world().stream_bufs().terminal_input_next(), 0);
+    run_tex_chunk(&mut universe, r"\read15 to\RA \message{t:\RA} ");
+}
+
+#[test]
+fn shipout_commit_cursor_survives_a_prior_effect_commit() {
+    let mut universe = setup_universe();
+    run_tex_chunk(&mut universe, r"\message{before} ");
+    commit_all(&mut universe);
+    run_tex_chunk(&mut universe, r"\shipout\hbox{\write16{page}} ");
+}
 
 #[test]
 fn fixed_effectful_program_does_not_leak_before_commit() {

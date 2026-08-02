@@ -1071,6 +1071,11 @@ pub struct StreamBufState {
     terminal_input_next: usize,
 }
 
+/// Opaque cursor for restoring a borrowed terminal-input position without
+/// exposing or replacing the World's retained terminal line storage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalInputPosition(usize);
+
 impl StreamBufState {
     fn retained_bytes(&self) -> usize {
         let read_paths = self
@@ -2546,6 +2551,18 @@ impl World {
             origin: content.origin,
         });
         Ok(Some(line))
+    }
+
+    pub(crate) fn terminal_input_position(&self) -> TerminalInputPosition {
+        TerminalInputPosition(self.stream_bufs.terminal_input_next)
+    }
+
+    pub(crate) fn restore_terminal_input_position(&mut self, position: TerminalInputPosition) {
+        assert!(
+            position.0 <= self.terminal_inputs.len(),
+            "terminal input position must name retained input"
+        );
+        self.stream_bufs_mut().terminal_input_next = position.0;
     }
 
     pub fn recorded_input_content(&self, id: InputRecordId) -> Option<FileContent> {
