@@ -3190,20 +3190,13 @@ fn paragraph_end_removes_only_the_final_trailing_glue() {
 
 #[test]
 fn last_items_read_current_horizontal_tail_by_type() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\setbox0=\\hbox{\
          \\kern3pt\\xdef\\lk{\\the\\lastkern}\
          \\penalty42\\xdef\\lp{\\the\\lastpenalty}\
          \\hskip1pt plus 2fil\\xdef\\ls{\\the\\lastskip}\
          \\kern4pt\\xdef\\lszero{\\the\\lastskip}}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("last-item reads execute");
+    );
 
     assert_eq!(macro_text(&stores, "lk"), "3.0pt");
     assert_eq!(macro_text(&stores, "lp"), "42");
@@ -3213,40 +3206,25 @@ fn last_items_read_current_horizontal_tail_by_type() {
 
 #[test]
 fn delete_last_removes_only_matching_current_list_tail() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let (stores, nodes) = run_canonical_tex82_current_list(
         "\\vskip1pt\\unpenalty\\edef\\stillglue{\\the\\lastskip}\
          \\unskip\\edef\\noglue{\\the\\lastskip}",
-    ));
-    let mut executor = Executor::new();
-
-    executor
-        .run(&mut input, &mut stores)
-        .expect("delete-last commands execute");
+    );
 
     assert_eq!(macro_text(&stores, "stillglue"), "1.0pt");
     assert_eq!(macro_text(&stores, "noglue"), "0.0pt");
-    assert!(executor.nest().current_list().nodes().is_empty());
+    assert!(nodes.is_empty());
     assert!(stores.page_contributions().is_empty());
 }
 
 #[test]
 fn vertical_infinite_skip_primitives_preserve_glue_orders() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let stores = run_canonical_tex82(
         "\\vfil\\edef\\vfilglue{\\the\\lastskip}\
          \\vfill\\edef\\vfillglue{\\the\\lastskip}\
          \\vss\\edef\\vssglue{\\the\\lastskip}\
          \\vfilneg\\edef\\vfilnegglue{\\the\\lastskip}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("vertical infinite skips execute");
+    );
 
     assert_eq!(macro_text(&stores, "vfilglue"), "0.0pt plus 1.0fil");
     assert_eq!(macro_text(&stores, "vfillglue"), "0.0pt plus 1.0fill");
@@ -3259,13 +3237,7 @@ fn vertical_infinite_skip_primitives_preserve_glue_orders() {
 
 #[test]
 fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\setbox0=\\hbox{\\vfill}"));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("restricted horizontal vskip uses off_save recovery");
+    let stores = run_canonical_tex82("\\setbox0=\\hbox{\\vfill}");
 
     assert!(stores.box_reg(0).is_some());
     assert!(support::terminal_effect_text(&stores).contains("Missing } inserted"));
@@ -3273,15 +3245,7 @@ fn vertical_skip_in_hbox_closes_box_and_retries_in_outer_mode() {
 
 #[test]
 fn vertical_skip_in_horizontal_mode_ends_the_paragraph_before_appending_glue() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\setbox0=\\vbox{\\noindent\\kern1pt\\vskip2pt\\kern3pt}",
-    ));
-
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("unrestricted horizontal vskip uses head_for_vmode");
+    let stores = run_canonical_tex82("\\setbox0=\\vbox{\\noindent\\kern1pt\\vskip2pt\\kern3pt}");
 
     let box0 = stores.box_reg(0).expect("vbox exists");
     let [Node::VList(outer)] = stores.nodes(box0).testing_decoded() else {
@@ -3306,20 +3270,10 @@ fn vertical_skip_in_horizontal_mode_ends_the_paragraph_before_appending_glue() {
 
 #[test]
 fn delete_last_outer_vertical_empty_matches_tex_error_asymmetry() {
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\unskip"));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("empty outer unskip is silent");
+    let _stores = run_canonical_tex82("\\unskip");
 
     for (source, command) in [("\\unpenalty", "\\unpenalty"), ("\\unkern", "\\unkern")] {
-        let mut stores = crate::test_harness::universe_with_plain_catcodes();
-        install_unexpandable_primitives(&mut stores);
-        let mut input = InputStack::new(MemoryInput::new(format!("{source}\\count0=23")));
-        Executor::new()
-            .run(&mut input, &mut stores)
-            .expect("outer delete apology is recoverable");
+        let stores = run_canonical_tex82(&format!("{source}\\count0=23"));
         assert!(
             support::terminal_effect_text(&stores)
                 .contains(&format!("You can't use `{command}' in vertical mode")),
