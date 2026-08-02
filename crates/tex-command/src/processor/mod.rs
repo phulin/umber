@@ -164,6 +164,7 @@ impl<'a> CommandProcessor<'a> {
     /// This must run before operand scanning because restricted scanners can
     /// report recoverable errors of their own before the command completes.
     pub fn print_command_trace(&mut self, command: PrintCommand) {
+        let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
         let command = print_cmd_chr_text(&self.state, command);
         let mode_prefix = self.command_trace_mode_prefix.take();
         let mut text = String::from("{");
@@ -172,6 +173,7 @@ impl<'a> CommandProcessor<'a> {
             text.push_str(": ");
         }
         text.push_str(&command);
+        text.push_str(&conditional_suffix);
         text.push('}');
         self.command_trace_printed = true;
         if self.command.expanding_deferred_write() {

@@ -959,7 +959,7 @@ impl CommandProcessor<'_> {
             self.record_extra_delimiter(delimiter);
             return Ok(());
         };
-        self.trace_conditional_close(delimiter, &frame);
+        self.trace_conditional_close(delimiter, &frame, false);
         if self
             .command
             .conditions
@@ -1151,7 +1151,7 @@ impl CommandProcessor<'_> {
     #[allow(unused_variables)]
     fn observe_pass_text_branch(&mut self, delimiter: ConditionalDelimiter) {
         if let Some(frame) = self.command.conditions.current().cloned() {
-            self.trace_conditional_close(delimiter, &frame);
+            self.trace_conditional_close(delimiter, &frame, true);
             self.observe_condition("branch", &frame, Some(delimiter.canonical_branch().into()));
         }
     }
@@ -1163,7 +1163,9 @@ impl CommandProcessor<'_> {
     /// so its own depth is the level e-TeX displays.
     ///
     fn trace_conditional_enter(&mut self, frame: &ConditionFrame) {
-        if !self.tracing_ifs_active() {
+        if self.state.int_param(IntParam::TRACING_IFS) <= 0
+            || (self.state.int_param(IntParam::TRACING_COMMANDS) > 1 && !frame.inverted)
+        {
             return;
         }
         let level = self.command.conditions.frames.len();
@@ -1191,8 +1193,15 @@ impl CommandProcessor<'_> {
     /// material (§494's `pass_text` `done:` label, this file's
     /// `observe_pass_text_branch`). `frame` is the live top-of-stack entry,
     /// which need not be the frame the enclosing skip was started for.
-    fn trace_conditional_close(&mut self, delimiter: ConditionalDelimiter, frame: &ConditionFrame) {
-        if !self.tracing_ifs_active() {
+    fn trace_conditional_close(
+        &mut self,
+        delimiter: ConditionalDelimiter,
+        frame: &ConditionFrame,
+        found_by_pass_text: bool,
+    ) {
+        if self.state.int_param(IntParam::TRACING_IFS) <= 0
+            || (self.state.int_param(IntParam::TRACING_COMMANDS) > 1 && !found_by_pass_text)
+        {
             return;
         }
         let level = self.command.conditions.frames.len();
@@ -1213,14 +1222,36 @@ impl CommandProcessor<'_> {
         diagnostic.end(false);
     }
 
-    /// e-TeX 2.6 [28.498/28.510]'s `if tracing_ifs>0 then if
-    /// tracing_commands<=1 then show_cur_cmd_chr` guard: once
-    /// `\tracingcommands` traces expandable commands at `>1` on its own
-    /// (tex.web §366), that trace already shows this delimiter and the
-    /// extra call here would duplicate it.
-    fn tracing_ifs_active(&self) -> bool {
-        self.state.int_param(IntParam::TRACING_IFS) > 0
-            && self.state.int_param(IntParam::TRACING_COMMANDS) <= 1
+    /// e-TeX's additions to TeX82 §299 when §367 traces an expandable
+    /// conditional or delimiter before its expansion routine runs.
+    pub(crate) fn command_trace_conditional_suffix(&self, meaning: Meaning) -> String {
+        if self.state.int_param(IntParam::TRACING_IFS) <= 0 {
+            return String::new();
+        }
+        if let Meaning::ExpandablePrimitive(primitive) = meaning
+            && ConditionalKind::from_primitive(primitive).is_some()
+        {
+            let level = self.command.conditions.frames.len() + 1;
+            let line = u32::try_from(self.command.input.current_file_line_number()).unwrap_or(0);
+            return conditional_trace_suffix(level, None, line);
+        }
+        if ConditionalDelimiter::from_meaning(meaning).is_none() {
+            return String::new();
+        }
+        let Some(frame) = self.command.conditions.current() else {
+            return String::new();
+        };
+        let mut condition =
+            crate::processor::expand::print_esc_text(&self.state, frame.kind.canonical_name());
+        if frame.inverted {
+            condition =
+                crate::processor::expand::print_esc_text(&self.state, "unless") + &condition;
+        }
+        conditional_trace_suffix(
+            self.command.conditions.frames.len(),
+            Some(condition),
+            frame.source_line,
+        )
     }
 
     /// e-TeX's `\unless`-prefixed `print_cmd_chr(if_test,cur_if)` spelling.
@@ -1298,6 +1329,22 @@ impl CommandProcessor<'_> {
             });
         }
     }
+}
+
+fn conditional_trace_suffix(level: usize, condition: Option<String>, source_line: u32) -> String {
+    let mut text = String::from(": ");
+    if let Some(condition) = condition {
+        text.push_str(&condition);
+        text.push(' ');
+    }
+    text.push_str("(level ");
+    text.push_str(&level.to_string());
+    text.push(')');
+    if source_line != 0 {
+        text.push_str(" entered on line ");
+        text.push_str(&source_line.to_string());
+    }
+    text
 }
 
 /// e-TeX 2.6 [49.3715]'s `print_if_line`: `if #<>0 then begin print(" entered

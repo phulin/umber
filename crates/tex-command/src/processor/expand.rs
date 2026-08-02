@@ -1413,6 +1413,11 @@ impl PrintCommand {
             control_sequence: command.control_sequence(),
         }
     }
+
+    #[must_use]
+    pub(crate) const fn meaning(self) -> Meaning {
+        self.meaning
+    }
 }
 
 /// TeX82 §298's `print_cmd_chr` representation of one delivered command.

@@ -349,6 +349,34 @@ fn tracingifs_reports_entering_and_the_ordinary_closing_delimiter() {
 }
 
 #[test]
+fn tracingcommands_conditional_trace_retains_tracingifs_stack_details() {
+    let (mut stores, mut control) = etex_control();
+    register_source(
+        &mut control,
+        b"\\nonstopmode\\tracingonline=1\\tracingifs=1\\tracingcommands=2\n\
+          \\ifdefined\\relax\\fi\n\
+          \\unless\\iffalse X\\else Y\\fi\n\
+          \\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("{vertical mode: \\ifdefined: (level 1) entered on line 2}"),
+        "{log:?}"
+    );
+    assert!(
+        log.contains("{\\unless}\n{\\unless\\iffalse: (level 1) entered on line 3}"),
+        "{log:?}"
+    );
+    assert!(
+        log.contains("{\\else: \\unless\\iffalse (level 1) entered on line 3}"),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn tracingifs_reports_the_else_branch_skip_and_its_closing_fi_separately() {
     let (mut stores, mut control) = etex_control();
     register_source(
