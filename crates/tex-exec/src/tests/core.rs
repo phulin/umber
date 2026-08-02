@@ -2,6 +2,7 @@ use super::support::*;
 use super::*;
 use tex_command::{
     CommandProfile, FontResource, RegisteredSourceKind, SourceRegistration,
+    install_etex_expandable_primitives, install_pdftex_expandable_primitives,
     install_tex82_expandable_primitives,
 };
 use tex_state::InputOpenState;
@@ -4903,12 +4904,12 @@ fn run_canonical_extended_profile(source: &str, profile: CommandProfile) -> Univ
     let mut control = CanonicalMainControl::prepared_initex(profile);
     install_tex82_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_etex_expandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     match profile {
         CommandProfile::ETEX26 => {}
         CommandProfile::PDFTEX14027 => {
-            tex_expand::install_pdftex_expandable_primitives(&mut stores);
+            install_pdftex_expandable_primitives(&mut stores);
         }
         _ => panic!("extended-profile helper requires e-TeX or pdfTeX"),
     }
@@ -4961,7 +4962,7 @@ pub(super) fn run_canonical_etex_current_list(source: &str) -> (Universe, Vec<No
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
     install_tex82_expandable_primitives(&mut stores);
     install_unexpandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    install_etex_expandable_primitives(&mut stores);
     install_etex_unexpandable_primitives(&mut stores);
     control
         .register_root_source(SourceRegistration::new(
