@@ -258,6 +258,60 @@ fn parshape_restore_trace_resolves_loaded_format_token_list_handle() {
 }
 
 #[test]
+fn parshape_restore_trace_materializes_loaded_format_base_after_zero_overlay() {
+    let mut initex = Universe::new();
+    initex.set_paragraph_shape(
+        &[super::ParagraphShapeLine {
+            indent: Scaled::from_raw(Scaled::UNITY),
+            width: Scaled::from_raw(10 * Scaled::UNITY),
+        }; 10],
+        true,
+    );
+    let format = initex.dump_format().expect("parshape format serializes");
+    let mut loaded =
+        Universe::from_format(World::memory(), &format).expect("parshape format loads");
+    let cell = crate::cell::CellId::new(
+        crate::cell::BankTag::TokParam,
+        u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
+    );
+    assert!(
+        loaded
+            .stores
+            .env()
+            .testing_format_base()
+            .iter()
+            .any(|entry| entry.cell == cell && entry.word != 0),
+        "fixture requires a serialized parshape in the immutable format base"
+    );
+
+    // Schema-11's loaded-format journal can represent restoration by deleting
+    // a mutable overlay (word zero), exposing the immutable base entry. Build
+    // that exact journal shape instead of assigning the frozen payload into
+    // the live token-list arena before the group starts.
+    loaded.stores.testing_restore_env_word(cell, 0);
+    loaded.set_int_param(IntParam::TRACING_RESTORES, 1);
+    loaded.set_int_param(IntParam::TRACING_ONLINE, 1);
+    loaded.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'\\'));
+    loaded.enter_group();
+    loaded.set_paragraph_shape(&[], false);
+    let _ = loaded.leave_group();
+
+    let output: String = loaded
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        output.contains("{restoring \\parshape=10}"),
+        "loaded format base was not materialized for restore tracing: {output:?}"
+    );
+}
+
+#[test]
 fn format_round_trip_preserves_profile_state_but_not_pending_transients() {
     // TeX82 §§1299--1329 serialize the semantic tables, not the live job's
     // input, page-building, diagnostic, or host-effect machinery.  e-TeX's

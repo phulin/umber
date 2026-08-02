@@ -5926,14 +5926,16 @@ impl Universe {
                     // indent/width pairs, rather than the backing token-list
                     // payload used by Umber. Section 283 calls that renderer
                     // immediately after restoring the saved eqtb entry.
-                    let tokens = restored_tok_param_tokens(self, record.old())
-                        .expect("restored internal parshape payload is absent");
+                    let Some(tokens) = restored_tok_param_tokens(self, record.old()) else {
+                        continue;
+                    };
                     assert_eq!(
                         tokens.len() % 8,
                         0,
                         "restored internal parshape payload is truncated"
                     );
-                    ("parshape".to_owned(), (tokens.len() / 8).to_string(), true)
+                    let line_count = tokens.len() / 8;
+                    ("parshape".to_owned(), line_count.to_string(), true)
                 }
                 BankTag::TokParam if cell.index() < 128 => {
                     let Some(name) = TokParam::new(cell.index() as u16).tex82_name() else {

@@ -475,6 +475,11 @@ impl Stores {
         &self.env
     }
 
+    #[cfg(test)]
+    pub(crate) fn testing_restore_env_word(&mut self, cell: crate::cell::CellId, word: u64) {
+        self.env.restore_raw(cell, word);
+    }
+
     /// Returns the current code-table generation vector.
     #[must_use]
     pub fn code_table_generations(&self) -> CodeTableGenerations {

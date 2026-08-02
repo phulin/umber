@@ -24,7 +24,7 @@ impl RestoreRecord {
     fn restoring(env: &Env, cell: CellId, old: u64) -> Self {
         Self {
             cell,
-            old,
+            old: env.restored_semantic_word(cell, old),
             retaining: false,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),
@@ -36,7 +36,7 @@ impl RestoreRecord {
     fn retaining(env: &Env, cell: CellId) -> Self {
         Self {
             cell,
-            old: env.semantic_word(cell),
+            old: env.restored_semantic_word(cell, env.semantic_word(cell)),
             retaining: true,
             tracing_restores: env.int_param(crate::env::banks::IntParam::TRACING_RESTORES),
             tracing_online: env.int_param(crate::env::banks::IntParam::TRACING_ONLINE),

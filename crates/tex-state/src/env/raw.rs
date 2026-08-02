@@ -158,6 +158,23 @@ impl Env {
         }
     }
 
+    /// Returns the effective value visible after a save-stack restoration.
+    ///
+    /// A loaded-format journal may use the default word to remove a mutable
+    /// overlay. In that representation the restored value lives only in the
+    /// immutable format base, so TeX82 §283's following `show_eqtb` must not
+    /// interpret the undo word itself as the restored semantic value.
+    pub(crate) fn restored_semantic_word(&self, cell: CellId, journal_word: u64) -> u64 {
+        if journal_word != 0 {
+            return journal_word;
+        }
+        let cell = CellId::new(cell.bank(), cell.index());
+        self.format_base
+            .binary_search_by_key(&cell.raw(), |entry| entry.cell.raw())
+            .ok()
+            .map_or(journal_word, |index| self.format_base[index].word)
+    }
+
     /// Returns a content-only hash of environment semantic state.
     ///
     /// The hash intentionally excludes allocation lengths, capacities, and
