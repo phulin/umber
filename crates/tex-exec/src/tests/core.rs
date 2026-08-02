@@ -208,30 +208,7 @@ fn owned_execution_run_observes_cancellation_before_mutation() {
 
 #[test]
 fn injected_interrupt_enters_and_leaves_pause_dialog_without_token_loss() {
-    struct InterruptDuringScan {
-        interrupt: PendingInterrupt,
-        requested: bool,
-    }
-
-    impl tex_expand::InputResolver for InterruptDuringScan {
-        fn open_input(
-            &mut self,
-            _input: &mut dyn tex_state::InputReadState,
-            _name: &str,
-            _request_index: u64,
-        ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-            assert!(!self.requested, "child input is opened exactly once");
-            self.requested = true;
-            self.interrupt.request();
-            Ok(tex_expand::ResourceLookup::Available(Box::new(
-                MemoryInput::new("0 "),
-            )))
-        }
-    }
-
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
     stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
     stores
         .world_mut()
@@ -241,38 +218,44 @@ fn injected_interrupt_enters_and_leaves_pause_dialog_without_token_loss() {
         .world_mut()
         .push_memory_terminal_line("")
         .expect("memory terminal accepts the deferred interrupt answer");
-    let mut input = InputStack::new(MemoryInput::new(
-        r"\count0=1 \advance\count\input child by1 \end",
-    ));
-    let mut run = ExecutionRun::new("injected-interrupt");
-    let interrupt = run.pending_interrupt();
-    let cancellation = Cancellation::new();
-    let mut resolver = InterruptDuringScan {
-        interrupt: interrupt.clone(),
-        requested: false,
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\count0=1 \advance\count\input child by1 \end".to_vec(),
+        ))
+        .expect("register canonical source");
+    let first = control
+        .advance_when(&mut stores, CanonicalAdvanceReadiness::Interrupted)
+        .expect("first interrupt dialog returns");
+    assert_eq!(
+        first,
+        CanonicalAdvanceOutcome::Step(CanonicalStepResult::Progress(MainControlStep::Continue))
+    );
+    let request = match control.advance(&mut stores).expect("input suspends") {
+        CanonicalStepResult::Suspended(need @ CanonicalResourceNeed::Input { .. }) => need,
+        other => panic!("expected typed input request, got {other:?}"),
     };
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-    interrupt.request();
-    loop {
-        match run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-            &cancellation,
-        ) {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::Complete(_) => break,
-            other => panic!("interrupted run must resume and complete: {other:?}"),
+    assert_eq!(
+        request,
+        CanonicalResourceNeed::Input {
+            name: "child.tex".into(),
+            original_name: "child".into(),
         }
-    }
+    );
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, b"0 ".to_vec()),
+    );
+    let replay = control
+        .advance_when(&mut stores, CanonicalAdvanceReadiness::Interrupted)
+        .expect("deferred interrupt dialog returns");
+    assert_eq!(
+        replay,
+        CanonicalAdvanceOutcome::Step(CanonicalStepResult::Progress(MainControlStep::Continue))
+    );
+    run_canonical_control_to_end(&mut control, &mut stores);
 
-    assert!(resolver.requested);
-    assert!(!interrupt.is_pending());
     assert_eq!(stores.count(0), 2);
     assert_eq!(
         stores.interaction_mode(),
@@ -283,86 +266,61 @@ fn injected_interrupt_enters_and_leaves_pause_dialog_without_token_loss() {
     assert_eq!(output.matches("? ").count(), 2, "{output}");
 }
 
-struct SuspendInputOnce {
-    suspensions_remaining: usize,
-    request_indices: Vec<u64>,
+fn canonical_input_need(result: CanonicalStepResult) -> CanonicalResourceNeed {
+    match result {
+        CanonicalStepResult::Suspended(need @ CanonicalResourceNeed::Input { .. }) => need,
+        other => panic!("expected typed input suspension, got {other:?}"),
+    }
 }
 
-struct SuspendScannerInputOnce {
-    suspended: bool,
-    request_indices: Vec<u64>,
+fn register_child_input(control: &mut CanonicalMainControl, contents: &[u8]) {
+    control.capabilities_mut().register_input(
+        "child.tex",
+        SourceRegistration::new(RegisteredSourceKind::World, contents.to_vec()),
+    );
 }
 
-impl tex_expand::InputResolver for SuspendScannerInputOnce {
-    fn open_input(
-        &mut self,
-        _input: &mut dyn tex_state::InputReadState,
-        _name: &str,
-        request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-        self.request_indices.push(request_index);
-        if !self.suspended {
-            self.suspended = true;
-            return Ok(tex_expand::ResourceLookup::NeedResource(
-                tex_expand::ResourceNeed::new(request_index),
-            ));
+fn run_canonical_control_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
+    loop {
+        match control.advance(stores).expect("canonical replay completes") {
+            CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+            CanonicalStepResult::Progress(MainControlStep::End | MainControlStep::EndOfInput) => {
+                break;
+            }
+            CanonicalStepResult::Suspended(need) => {
+                panic!("all resources were registered, got {need:?}")
+            }
         }
-        Ok(tex_expand::ResourceLookup::Available(Box::new(
-            MemoryInput::new("0 "),
-        )))
     }
 }
 
 #[test]
 fn resource_suspension_inside_integer_scanning_rolls_back_and_resumes() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\count0=7 \\count\\input child =42 \\end",
-    ));
-    let mut resolver = SuspendScannerInputOnce {
-        suspended: false,
-        request_indices: Vec::new(),
-    };
-    let mut run = ExecutionRun::new("nested-scanner-rollback");
-    let cancellation = Cancellation::new();
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\count0=7 \count\input child =42 \end".to_vec(),
+        ))
+        .expect("register source");
+    assert_eq!(
+        control.step(&mut stores).expect("first assignment"),
+        MainControlStep::Continue
+    );
     let universe_before = stores.snapshot().state_hash();
-    let input_before = input.summary();
-    let nest_before = run.nest().clone();
-
-    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-        &cancellation,
-    ) else {
-        panic!("resource request nested in integer scanning must suspend")
-    };
-    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
-    assert_eq!(suspension.blocked_step, ExecutionStep::MainControl);
-    assert_eq!(stores.snapshot().state_hash(), universe_before);
-    assert_eq!(input.summary(), input_before);
-    assert_eq!(run.nest(), &nest_before);
-    assert_eq!(stores.count(0), 0);
-
-    loop {
-        match run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-            &cancellation,
-        ) {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::Complete(_) => break,
-            other => panic!("nested scanner replay must complete, got {other:?}"),
+    let request = canonical_input_need(control.advance(&mut stores).expect("scanner suspends"));
+    assert_eq!(
+        request,
+        CanonicalResourceNeed::Input {
+            name: "child.tex".into(),
+            original_name: "child".into(),
         }
-    }
-    assert_eq!(resolver.request_indices, vec![0, 0]);
+    );
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(stores.count(0), 7);
+    register_child_input(&mut control, b"0 ");
+    run_canonical_control_to_end(&mut control, &mut stores);
     assert_eq!(stores.count(0), 42);
 }
 
@@ -426,105 +384,100 @@ fn high_segment_package_let_state_survives_lower_meaning_writes() {
 #[test]
 fn resource_suspension_rolls_back_groups_entered_by_blocked_dispatch() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\halign{\\input child#\\cr a\\cr}\\end"));
-    let mut resolver = SuspendScannerInputOnce {
-        suspended: false,
-        request_indices: Vec::new(),
-    };
-    let mut run =
-        ExecutionRun::new("nested-group-resource-rollback").with_cumulative_fuel_limit(100_000);
-    let cancellation = Cancellation::new();
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-    let universe_before = stores.snapshot().state_hash();
-    let input_before = input.summary();
-
-    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-        &cancellation,
-    ) else {
-        panic!("resource request after alignment group entry must suspend")
-    };
-    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
-    assert_eq!(stores.snapshot().state_hash(), universe_before);
-    assert_eq!(input.summary(), input_before);
-    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
-
-    loop {
-        match run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-            &cancellation,
-        ) {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::Complete(_) => break,
-            other => panic!("alignment replay must complete, got {other:?}"),
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\halign{\input child \relax#\cr a\cr}\end".to_vec(),
+        ))
+        .expect("register source");
+    control.set_fuel_limit(100_000).expect("finite fuel");
+    let (universe_before, group_depth_before, request) = loop {
+        let universe_before = stores.snapshot().state_hash();
+        let group_depth_before = tex_state::ExpansionState::execution_group_depth(&stores);
+        match control
+            .advance(&mut stores)
+            .expect("alignment preamble advances")
+        {
+            CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+            result @ CanonicalStepResult::Suspended(_) => {
+                break (
+                    universe_before,
+                    group_depth_before,
+                    canonical_input_need(result),
+                );
+            }
+            other => panic!("alignment ended before its input request: {other:?}"),
         }
-    }
-    assert_eq!(resolver.request_indices, vec![0, 0]);
+    };
+    assert_eq!(
+        request,
+        CanonicalResourceNeed::Input {
+            name: "child.tex".into(),
+            original_name: "child".into(),
+        }
+    );
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(
+        tex_state::ExpansionState::execution_group_depth(&stores),
+        group_depth_before
+    );
+    register_child_input(&mut control, b"0 ");
+    run_canonical_control_to_end(&mut control, &mut stores);
 }
 
 #[test]
 fn resource_suspension_preserves_local_box_state_only_until_box_exit() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
-        "\\def\\expected{alive}\\setbox0=\\vbox{\\def\\currbox{alive}\\input child \\
-         \\ifx\\currbox\\expected\\global\\count0=1\\else\\global\\count0=2\\fi}\\
-         \\ifx\\currbox\\undefined\\global\\count1=1\\else\\global\\count1=2\\fi\\end",
-    ));
-    let mut resolver = SuspendScannerInputOnce {
-        suspended: false,
-        request_indices: Vec::new(),
-    };
-    let mut run =
-        ExecutionRun::new("local-box-state-resource-rollback").with_cumulative_fuel_limit(100_000);
-    let cancellation = Cancellation::new();
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-    let universe_before = stores.snapshot().state_hash();
-    let currbox = stores.intern("currbox").symbol();
-
-    let ExecutionStepResult::AwaitingResources(suspension) = run.step(
-        &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-        &cancellation,
-    ) else {
-        panic!("resource request inside the open vbox must suspend")
-    };
-    assert_eq!(suspension.requests, vec![tex_expand::ResourceNeed::new(0)]);
-    assert_eq!(stores.snapshot().state_hash(), universe_before);
-    assert_eq!(tex_state::ExpansionState::execution_group_depth(&stores), 0);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\def\\expected{alive}\\setbox0=\\vbox{\\def\\currbox{alive}\\input child \
+              \\ifx\\currbox\\expected\\global\\count0=1\\else\\global\\count0=2\\fi} \
+              \\ifx\\currbox\\undefined\\global\\count1=1\\else\\global\\count1=2\\fi\\end"
+                .to_vec(),
+        ))
+        .expect("register source");
+    control.set_fuel_limit(100_000).expect("finite fuel");
     assert_eq!(
-        stores.meaning(currbox),
-        tex_state::meaning::Meaning::Undefined
+        control.step(&mut stores).expect("definition"),
+        MainControlStep::Continue
     );
-
-    loop {
-        match run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores).with_input_resolver(&mut resolver),
-            &cancellation,
-        ) {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::Complete(_) => break,
-            other => panic!("vbox replay must complete, got {other:?}"),
+    let currbox = stores.intern("currbox").symbol();
+    let (universe_before, group_depth_before, currbox_before, request) = loop {
+        let universe_before = stores.snapshot().state_hash();
+        let group_depth_before = tex_state::ExpansionState::execution_group_depth(&stores);
+        let currbox_before = stores.meaning(currbox);
+        match control.advance(&mut stores).expect("box scan advances") {
+            CanonicalStepResult::Progress(MainControlStep::Continue) => {}
+            result @ CanonicalStepResult::Suspended(_) => {
+                break (
+                    universe_before,
+                    group_depth_before,
+                    currbox_before,
+                    canonical_input_need(result),
+                );
+            }
+            other => panic!("box ended before its input request: {other:?}"),
         }
-    }
+    };
+    assert_eq!(
+        request,
+        CanonicalResourceNeed::Input {
+            name: "child.tex".into(),
+            original_name: "child".into(),
+        }
+    );
+    assert_eq!(stores.snapshot().state_hash(), universe_before);
+    assert_eq!(
+        tex_state::ExpansionState::execution_group_depth(&stores),
+        group_depth_before
+    );
+    assert_eq!(stores.meaning(currbox), currbox_before);
 
-    assert_eq!(resolver.request_indices, vec![0, 0]);
+    register_child_input(&mut control, b"0 ");
+    run_canonical_control_to_end(&mut control, &mut stores);
     assert_eq!(
         stores.count(0),
         1,
@@ -541,104 +494,33 @@ fn resource_suspension_preserves_local_box_state_only_until_box_exit() {
     );
 }
 
-impl tex_expand::InputResolver for SuspendInputOnce {
-    fn open_input(
-        &mut self,
-        _input: &mut dyn tex_state::InputReadState,
-        _name: &str,
-        request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn tex_lex::InputSource>> {
-        self.request_indices.push(request_index);
-        if self.suspensions_remaining > 0 {
-            self.suspensions_remaining -= 1;
-            return Ok(tex_expand::ResourceLookup::NeedResource(
-                tex_expand::ResourceNeed::new(request_index),
-            ));
-        }
-        Ok(tex_expand::ResourceLookup::Available(Box::new(
-            MemoryInput::new("\\count0=42"),
-        )))
-    }
-}
-
 #[test]
 fn resource_suspension_rolls_back_the_aggregate_step_and_replays_stably() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new("\\count0=7 \\input child"));
-    let mut resolver = SuspendInputOnce {
-        suspensions_remaining: 2,
-        request_indices: Vec::new(),
-    };
-    let mut recorder = TestRecorder::default();
-    let mut run = ExecutionRun::new("rollback-job");
-    let cancellation = Cancellation::new();
-
-    assert!(matches!(
-        run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores),
-            &cancellation,
-        ),
-        ExecutionStepResult::Progress(_)
-    ));
-
-    let suspension = loop {
-        let universe_before = stores.snapshot().state_hash();
-        let input_before = input.summary();
-        let nest_before = run.nest().clone();
-        let recorder_before = recorder.meanings.len();
-        let blocked_step = run.next_step();
-        let result = run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores)
-                .with_input_resolver(&mut resolver)
-                .recording(&mut recorder),
-            &cancellation,
-        );
-        if let ExecutionStepResult::AwaitingResources(suspension) = result {
-            assert_eq!(stores.snapshot().state_hash(), universe_before);
-            assert_eq!(input.summary(), input_before);
-            assert_eq!(run.nest(), &nest_before);
-            assert_eq!(run.next_step(), blocked_step);
-            assert_eq!(recorder.meanings.len(), recorder_before);
-            break suspension;
-        }
-        assert!(matches!(result, ExecutionStepResult::Progress(_)));
-    };
-    assert_eq!(run.lifecycle(), ExecutionLifecycle::Awaiting);
-    assert_eq!(suspension.requests.len(), 1);
-    assert_eq!(suspension.blocked_step, ExecutionStep::MainControl);
-
-    let first_request_index = suspension.requests[0].request_index();
-    let mut last_serial = suspension.serial;
-    loop {
-        let recorder_before = recorder.meanings.len();
-        let result = run.step(
-            &mut ExecutionServices::new(&mut input, &mut stores)
-                .with_input_resolver(&mut resolver)
-                .recording(&mut recorder),
-            &cancellation,
-        );
-        match result {
-            ExecutionStepResult::Progress(_) => {}
-            ExecutionStepResult::AwaitingResources(repeated) => {
-                assert_eq!(repeated.requests[0].request_index(), first_request_index);
-                assert!(repeated.serial > last_serial);
-                assert_eq!(recorder.meanings.len(), recorder_before);
-                last_serial = repeated.serial;
-            }
-            ExecutionStepResult::Complete(_) => break,
-            other => panic!("replayed run must complete, got {other:?}"),
-        }
-    }
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            br"\count0=7 \input child".to_vec(),
+        ))
+        .expect("register source");
     assert_eq!(
-        resolver.request_indices,
-        vec![
-            first_request_index,
-            first_request_index,
-            first_request_index
-        ]
+        control.step(&mut stores).expect("assignment"),
+        MainControlStep::Continue
     );
+    let state_before = stores.snapshot().state_hash();
+    let first = canonical_input_need(control.advance(&mut stores).expect("first suspension"));
+    assert_eq!(stores.snapshot().state_hash(), state_before);
+    let second = canonical_input_need(
+        control
+            .advance(&mut stores)
+            .expect("stable replay suspension"),
+    );
+    assert_eq!(second, first, "request identity and ordering remain stable");
+    assert_eq!(stores.snapshot().state_hash(), state_before);
+    assert_eq!(control.advance_telemetry().rollbacks, 2);
+    register_child_input(&mut control, br"\count0=42");
+    run_canonical_control_to_end(&mut control, &mut stores);
     assert_eq!(stores.count(0), 42);
 }
 

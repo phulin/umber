@@ -402,6 +402,9 @@ pub enum CanonicalStepResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CanonicalAdvanceReadiness {
     Ready,
+    /// A host interrupt was observed between aggregate operations. TeX's
+    /// instruction dialog runs before the untouched command stream resumes.
+    Interrupted,
     Cancelled,
 }
 
@@ -658,7 +661,37 @@ impl CanonicalMainControl {
         if readiness == CanonicalAdvanceReadiness::Cancelled {
             return Ok(CanonicalAdvanceOutcome::Cancelled);
         }
+        if readiness == CanonicalAdvanceReadiness::Interrupted {
+            self.pause_for_instructions(stores)?;
+        }
         self.advance(stores).map(CanonicalAdvanceOutcome::Step)
+    }
+
+    fn pause_for_instructions(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        // tex.web §330: an injected interruption always enters ErrorStop,
+        // reports against the live canonical input cursor, and leaves that
+        // cursor untouched when the dialog returns.
+        stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        self.refresh_host_capabilities(stores);
+        let context = command_processor(
+            &mut self.command,
+            &mut self.runtime,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
+        )
+        .error_context();
+        crate::error_report::report_error(
+            stores,
+            "Interruption",
+            &[
+                "You rang?",
+                "Try to insert some instructions for me (e.g., `I\\showlists'),",
+                "unless you just want to quit by typing `X'.",
+            ],
+            context,
+        )
     }
 
     #[cfg(test)]
