@@ -209,7 +209,11 @@ impl CommandProcessor<'_> {
             .ok_or(CommandError::input_invariant())?;
         let meaning = self.state.macro_definition(definition);
         let pattern = self.state.macro_definition_parameter_pattern(definition);
-        self.trace_macro_invocation(macro_name, meaning.replacement_text());
+        self.trace_macro_invocation(
+            macro_name,
+            meaning.parameter_text(),
+            meaning.replacement_text(),
+        );
         // TeX82 §389 calls the §391 parameter matcher only when the macro's
         // parameter text does not begin with `end_match`. A parameterless
         // macro therefore feeds its replacement directly, without a transient
@@ -377,12 +381,19 @@ impl CommandProcessor<'_> {
     fn trace_macro_invocation(
         &mut self,
         macro_name: tex_state::interner::Symbol,
+        parameters: tex_state::ids::TokenListId,
         replacement: tex_state::ids::TokenListId,
     ) {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return;
         }
         let mut text = crate::processor::expand::print_cs_text(&mut self.state, macro_name);
+        for token in self.state.tokens(parameters).to_vec() {
+            text.push_str(&crate::processor::expand::token_list_token_text(
+                &self.state,
+                token,
+            ));
+        }
         text.push_str("->");
         for token in self.state.tokens(replacement).to_vec() {
             text.push_str(&crate::processor::expand::token_list_token_text(
@@ -390,12 +401,7 @@ impl CommandProcessor<'_> {
                 token,
             ));
         }
-        self.command
-            .semantic_diagnostics
-            .push(crate::CommandSemanticDiagnostic::Trace {
-                text,
-                force_newline: true,
-            });
+        self.print_macro_trace(text, true);
     }
 
     /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
@@ -410,12 +416,29 @@ impl CommandProcessor<'_> {
                 word.semantic_token(),
             ));
         }
-        self.command
-            .semantic_diagnostics
-            .push(crate::CommandSemanticDiagnostic::Trace {
-                text,
-                force_newline: false,
-            });
+        self.print_macro_trace(text, false);
+    }
+
+    /// Prints a TeX82 §389/§400 macro diagnostic at the point `macro_call`
+    /// reaches it. Only deferred-write expansion postpones printing until its
+    /// owning executor episode can restore the live diagnostic selector.
+    fn print_macro_trace(&mut self, text: String, force_newline: bool) {
+        if self.command.expanding_deferred_write() {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline,
+                });
+            return;
+        }
+        let mut output = self.state.begin_diagnostic();
+        if force_newline {
+            output.print_ln().print(&text);
+        } else {
+            output.print_nl(&text);
+        }
+        output.end(false);
     }
 
     /// TeX82 §389's `warning_index`, spelled as §395/§396 print it.

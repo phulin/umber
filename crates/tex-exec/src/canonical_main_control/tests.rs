@@ -281,7 +281,7 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
 
     let terminal = pending_sink_text(&stores, true);
     let log = pending_sink_text(&stores, false);
-    let expected = "\n\\pair ->\n#1<-C\n#2<-D\n";
+    let expected = "\n\\pair #1#2->\n#1<-C\n#2<-D\n";
     assert_eq!(terminal, expected);
     assert_eq!(log, expected);
 
@@ -298,8 +298,32 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     );
     assert_eq!(
         pending_sink_text(&stores, false),
-        "\n\\pair ->\n#1<-A\n#2<-B\n"
+        "\n\\pair #1#2->\n#1<-A\n#2<-B\n"
     );
+}
+
+#[test]
+fn tracingmacros_precedes_condition_result_during_operand_expansion() {
+    // TeX82 §§389/400/498: `macro_call` prints the complete definition
+    // before matching arguments. A macro expanded while `conditional` scans
+    // an operand therefore precedes both its argument trace and the result.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\def\t#1{#1pt}\tracingcommands=2\tracingmacros=1\tracingonline=1
+\ifdim\t1=1pt\relax\fi\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    let invocation = terminal
+        .find("\\t #1->#1pt")
+        .expect("macro definition trace");
+    let argument = terminal.find("#1<-1").expect("macro argument trace");
+    let result = terminal.find("{true}").expect("conditional result trace");
+    assert!(invocation < argument && argument < result, "{terminal:?}");
 }
 
 #[test]
