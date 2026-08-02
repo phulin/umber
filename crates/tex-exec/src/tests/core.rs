@@ -2825,14 +2825,37 @@ fn leaders_report_missing_payload_and_glue_diagnostics() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-gkgh canonical leaders missing-glue recovery"]
 fn leaders_missing_glue_diagnostic_recovers_into_following_assignment() {
-    let missing_glue = run_canonical_tex82("\\setbox0=\\hbox{\\leaders\\hbox{}\\global\\count0=7}");
-    assert_eq!(missing_glue.count(0), 7);
-    assert!(
-        support::terminal_effect_text(&missing_glue)
-            .contains("Leaders not followed by proper glue")
+    let stores = run_canonical_tex82(
+        "\\setbox0=\\hbox{\\leaders\\hbox{}\\global\\count0=7}+         \\setbox1=\\vbox{\\cleaders\\hrule\\global\\count1=8}",
     );
+
+    assert_eq!(stores.count(0), 7, "box-payload recovery replays \\global");
+    assert_eq!(stores.count(1), 8, "rule-payload recovery replays \\global");
+    let terminal = support::terminal_effect_text(&stores);
+    assert_eq!(
+        terminal
+            .matches("Leaders not followed by proper glue")
+            .count(),
+        2,
+        "each malformed leader reports TeX82 §1078's diagnostic: {terminal:?}"
+    );
+
+    for register in [0, 1] {
+        let boxed = stores.box_reg(register).expect("recovered box register");
+        let [node] = stores.nodes(boxed).testing_decoded() else {
+            panic!("register {register} should contain its outer box");
+        };
+        let children = match node {
+            tex_state::node::Node::HList(node) => node.children,
+            tex_state::node::Node::VList(node) => node.children,
+            other => panic!("register {register} should contain a box, got {other:?}"),
+        };
+        assert!(
+            stores.nodes(children).is_empty(),
+            "a malformed leader must not append payload or glue"
+        );
+    }
 }
 
 #[test]

@@ -6109,6 +6109,23 @@ fn dispatch_main_control_command_inner(
     diagnostics: &mut Vec<PendingDiagnostic>,
     set_box_allowed: bool,
 ) -> Result<ScannedStep, ExecError> {
+    // TeX82 §1078 fetches the command following a completed leader payload
+    // inside `box_end`, before control returns to §1030's `big_switch` or
+    // §1211's prefix loop. Split replay finishes the box in one step and
+    // delivers that command in the next, so classify it at this same outer
+    // boundary. In particular, a non-glue `\global` is the command that
+    // `back_error` must restore; allowing it into the prefix loop first would
+    // consume and restore the following assignment instead.
+    if let Some((kind, payload)) = boxes.pending_leader.as_ref() {
+        let Some(glue) = scan_leader_glue_command(processor, command, mode)? else {
+            return Ok(ScannedStep::LeadersNotFollowedByGlue);
+        };
+        return Ok(ScannedStep::Leaders {
+            kind: *kind,
+            payload: *payload,
+            glue,
+        });
+    }
     // §1030's `reswitch:` label sits *above* the big case, not at the fetch:
     // a case that has already fetched its own replacement command dispatches
     // that command in place. `goto reswitch` is therefore not `back_input`,
@@ -6657,19 +6674,6 @@ fn scan_command(
         )));
     }
 
-    // A constructed leader payload has just completed its box group.  The
-    // following glue command is still raw input, so consume it here before
-    // replay turns the frozen payload into a glue node.
-    if let Some((kind, payload)) = boxes.pending_leader.as_ref() {
-        let Some(glue) = scan_leader_glue_command(processor, command, mode)? else {
-            return Ok(ScannedStep::LeadersNotFollowedByGlue);
-        };
-        return Ok(ScannedStep::Leaders {
-            kind: *kind,
-            payload: *payload,
-            glue,
-        });
-    }
     if boxes.output_routine_opening_pending
         && matches!(
             command.meaning(),
