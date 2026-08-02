@@ -660,7 +660,7 @@ fn language_whatsit_after_candidate_start_does_not_requalify_that_word() {
 #[test]
 fn automatic_discretionary_rejects_replacement_counts_above_127() {
     // TeX82 §918 discards the discretionary when r_count exceeds 127.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut stores = super::core::run_canonical_tex82("\\end");
     let replacement = vec![Node::Penalty(0); 128];
 
     assert!(
@@ -674,7 +674,7 @@ fn automatic_discretionary_rejects_replacement_counts_above_127() {
 fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
     // TeX82 §§904/914/918 counts the reconstitution's physical linked nodes,
     // not Umber's structured replacement-list entries.
-    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    let mut stores = super::core::run_canonical_tex82("\\end");
     let font = stores.current_font();
     let boundary_kern = Node::Kern {
         amount: Scaled::from_raw(1),
@@ -711,15 +711,9 @@ fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
 
 #[test]
 fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
-    let mut stores = stores_with_fonts();
-    tex_expand::install_expandable_primitives(&mut stores);
-    install_unexpandable_primitives(&mut stores);
-    let mut input = InputStack::new(MemoryInput::new(
+    let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\end",
-    ));
-    Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("font setup executes");
+    );
     let font = stores.current_font();
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let empty = stores.freeze_node_list(&[]);
@@ -772,7 +766,7 @@ fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
 
 #[test]
 fn through_ligature_physical_post_branch_owns_span_to_synchronization() {
-    let stores = crate::test_harness::universe_with_plain_catcodes();
+    let stores = super::core::run_canonical_tex82("\\end");
     let font = stores.current_font();
     let replacement = Node::Lig {
         font,
@@ -832,7 +826,7 @@ fn through_ligature_synchronization_counts_nodes_not_source_characters() {
     // reconstitution reaches the same character boundary. A structured `CA`
     // ligature is one replacement node, while the post branch is the single
     // `A` character at that boundary.
-    let stores = crate::test_harness::universe_with_plain_catcodes();
+    let stores = super::core::run_canonical_tex82("\\end");
     let font = stores.current_font();
     let replacement = Node::Lig {
         font,
