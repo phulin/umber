@@ -2072,6 +2072,51 @@ fn chosen_discretionary_transplants_nonempty_pre_and_post_lists() {
     ));
 }
 
+/// tex.web §§822 and 851: after a discretionary break, line measurement
+/// replaces the unbroken text by the post-break list. A nonempty post-break
+/// list can therefore make the following line exactly fit on the first pass.
+#[test]
+fn discretionary_post_break_width_participates_in_the_next_line() {
+    let mut universe = Universe::new();
+    let pre = universe.freeze_node_list(&[rule(7)]);
+    let post = universe.freeze_node_list(&[rule(4)]);
+    let replace = universe.freeze_node_list(&[rule(6)]);
+    let nodes = vec![
+        rule(3),
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre,
+            post,
+            replace,
+        },
+        rule(6),
+        Node::Penalty(EJECT_PENALTY),
+    ];
+    let mut parameters = params(13);
+    parameters.pretolerance = 0;
+    parameters.left_skip.width = sp(3);
+
+    let (plan, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+
+    assert_eq!(
+        plan.expect("the post-break line fits at pretolerance zero")
+            .breaks
+            .iter()
+            .map(|decision| decision.position)
+            .collect::<Vec<_>>(),
+        vec![2, 4]
+    );
+    assert!(trace.iter().any(|event| matches!(
+        event,
+        LineBreakTrace::Feasible {
+            breakpoint: TraceBreakpoint::Paragraph,
+            via: 1,
+            badness: Some(0),
+            ..
+        }
+    )));
+}
+
 /// tex.web §§886--887: glue, explicit and mu kerns, penalties, and math nodes
 /// disappear before the next line, but a font kern terminates that discard.
 #[test]

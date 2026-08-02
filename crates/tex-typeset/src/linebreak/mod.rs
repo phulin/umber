@@ -1234,6 +1234,22 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
                 self.include_font_expansion,
             );
         }
+        // TeX82 §822's break width removes the discretionary replacement
+        // already present in the paragraph prefix, then credits `post_break`
+        // to the next line by subtracting its width from the saved prefix.
+        if hyphenated
+            && let Some(Node::Disc { post, .. }) = position
+                .checked_sub(1)
+                .and_then(|index| self.nodes.get(index))
+        {
+            next_width = next_width.sub(line_widths_view(
+                self.state,
+                self.state.nodes(*post),
+                0,
+                self.state.nodes(*post).len(),
+                self.include_font_expansion,
+            ));
+        }
         Breakpoint {
             position,
             width_position,
