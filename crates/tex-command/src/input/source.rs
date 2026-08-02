@@ -121,6 +121,7 @@ pub struct SourceRegistration {
     kind: RegisteredSourceKind,
     bytes: Arc<[u8]>,
     world_record: Option<InputRecordId>,
+    modification_date: Option<tex_state::FileModificationDate>,
     name: Option<Arc<str>>,
     framing: SourceFramingPolicy,
 }
@@ -133,6 +134,7 @@ impl SourceRegistration {
             kind,
             bytes: bytes.into(),
             world_record: None,
+            modification_date: None,
             name: None,
             framing: SourceFramingPolicy::Canonical,
         }
@@ -146,6 +148,7 @@ impl SourceRegistration {
             kind: RegisteredSourceKind::World,
             bytes: content.shared_bytes(),
             world_record: Some(content.record()),
+            modification_date: content.modification_date(),
             name: None,
             framing: SourceFramingPolicy::Canonical,
         }
@@ -164,6 +167,12 @@ impl SourceRegistration {
     pub fn with_name(mut self, name: impl Into<Arc<str>>) -> Self {
         self.name = Some(name.into());
         self
+    }
+
+    /// Returns immutable modification metadata captured with a World read.
+    #[must_use]
+    pub const fn modification_date(&self) -> Option<tex_state::FileModificationDate> {
+        self.modification_date
     }
 
     /// Selects who owns transcript framing for this source.

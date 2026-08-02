@@ -790,8 +790,9 @@ impl RetainedExecution {
         frozen: &tex_exec::FrozenDiagnosticOrigin,
     ) -> Option<CompileSourceLocation> {
         let resolved = match self {
-            RetainedExecution::Initial { session, candidate } => session
-                .resolve_candidate_frozen_diagnostic_primary(candidate, frozen),
+            RetainedExecution::Initial { session, candidate } => {
+                session.resolve_candidate_frozen_diagnostic_primary(candidate, frozen)
+            }
             RetainedExecution::Pending(candidate) => {
                 candidate.resolve_frozen_diagnostic_primary(frozen)
             }
@@ -1890,9 +1891,8 @@ impl VirtualCompileSession {
                 session.set_utf8_input_as_bytes(self.engine.uses_latex_input());
                 session.set_dvi_output(self.outputs.contains(OutputCapability::Dvi));
                 if self.authored_root_name.is_some() {
-                    session.set_root_source_framing(
-                        tex_command::SourceFramingPolicy::ExternallyOwned,
-                    );
+                    session
+                        .set_root_source_framing(tex_command::SourceFramingPolicy::ExternallyOwned);
                 }
                 session
             });

@@ -901,14 +901,8 @@ fn discretionary_through_node(
     let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    let (physical_replace_count, physical_post) = physical_discretionary_projection(
-        stores,
-        word,
-        span,
-        &replacement,
-        following,
-        fuel,
-    )?;
+    let (physical_replace_count, physical_post) =
+        physical_discretionary_projection(stores, word, span, &replacement, following, fuel)?;
     let disc = automatic_discretionary_with_count(
         stores,
         &pre,
@@ -947,14 +941,8 @@ fn physical_discretionary_projection(
     let minor = super::hmode::reconstitute_with_fuel(stores, &minor_pending, false, false, fuel)
         .map_err(ExecError::Command)?;
 
-    let (major_len, minor_len) = synchronized_physical_branch_lengths(
-        &major,
-        start,
-        &minor,
-        position,
-        end,
-        word.len(),
-    );
+    let (major_len, minor_len) =
+        synchronized_physical_branch_lengths(&major, start, &minor, position, end, word.len());
     let physical_replace_count = u8::try_from(major_len)
         .ok()
         .filter(|&count| count <= 127)
@@ -1016,9 +1004,8 @@ pub(crate) fn test_physical_post_break_span(
     let (start, position, end) = span;
     let mut major = vec![replacement.clone()];
     major.extend_from_slice(following);
-    let (major_len, minor_len) = synchronized_physical_branch_lengths(
-        &major, start, minor, position, end, word_len,
-    );
+    let (major_len, minor_len) =
+        synchronized_physical_branch_lengths(&major, start, minor, position, end, word_len);
     (
         u8::try_from(major_len).expect("bounded test projection"),
         minor[..minor_len].to_vec(),

@@ -488,7 +488,10 @@ pub(crate) fn report_font_not_loadable_with_context(
         ),
     };
     let mut report = stores.print_err("Font ");
-    report.sprint_cs(selector_kind, selector).print("=").print(font_name);
+    report
+        .sprint_cs(selector_kind, selector)
+        .print("=")
+        .print(font_name);
     match size_spec {
         FontSizeSpec::At(size) => {
             report.print(" at ").print_scaled(size).print("pt");
@@ -522,7 +525,10 @@ pub(crate) fn report_font_capacity(
 ) -> Result<(), ExecError> {
     let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("Font ");
-    report.sprint_cs(selector_kind, selector).print("=").print(font_name);
+    report
+        .sprint_cs(selector_kind, selector)
+        .print("=")
+        .print(font_name);
     match size_spec {
         FontSizeSpec::At(size) => {
             report.print(" at ").print_scaled(size).print("pt");

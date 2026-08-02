@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
-use tex_command::{CommandObserver, FontResource, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandObserver, FileEnquiryResource, FontResource, RegisteredSourceKind, SourceRegistration,
+};
 use tex_exec::{CanonicalResourceNeed, CheckpointSink};
 use tex_observe::{
     DetachedEvidence, LiveSessionTranslator, LiveSource, decode_detached_evidence,
@@ -445,7 +447,7 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         })
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::InputProbe { name } => self
+            CanonicalResourceNeed::InputProbe { request } => self
                 .job_resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -454,30 +456,45 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         resolved_name,
                         source_kind,
                         bytes,
-                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::InputProbe {
-                            name: logical_name.clone(),
-                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
-                                .with_name(resolved_name.clone()),
-                        },
-                    )),
+                    } if logical_name == &request.name => {
+                        Some(CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::InputProbe {
+                                request: request.clone(),
+                                resource: FileEnquiryResource::new(
+                                    SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                        .with_name(resolved_name.clone()),
+                                    None,
+                                ),
+                            },
+                        ))
+                    }
                     _ => None,
                 })
                 .or_else(|| {
-                    self.format_resources.iter().find_map(|resource| match resource {
-                        FormatResource::Input {
-                            logical_name,
-                            source_kind,
-                            bytes,
-                        } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::InputProbe {
-                                name: logical_name.clone(),
-                                source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
-                                    .with_name(format!("./{logical_name}")),
-                            },
-                        )),
-                        _ => None,
-                    })
+                    self.format_resources
+                        .iter()
+                        .find_map(|resource| match resource {
+                            FormatResource::Input {
+                                logical_name,
+                                source_kind,
+                                bytes,
+                            } if logical_name == &request.name => {
+                                Some(CanonicalResourceOutcome::Fulfilled(
+                                    CanonicalResourceFulfillment::InputProbe {
+                                        request: request.clone(),
+                                        resource: FileEnquiryResource::new(
+                                            SourceRegistration::new(
+                                                *source_kind,
+                                                Arc::clone(bytes),
+                                            )
+                                            .with_name(format!("./{logical_name}")),
+                                            None,
+                                        ),
+                                    },
+                                ))
+                            }
+                            _ => None,
+                        })
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
             CanonicalResourceNeed::Font { request } => self
@@ -727,7 +744,7 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                     _ => None,
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::InputProbe { name } => self
+            CanonicalResourceNeed::InputProbe { request } => self
                 .resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -735,12 +752,17 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                         logical_name,
                         source_kind,
                         bytes,
-                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::InputProbe {
-                            name: logical_name.clone(),
-                            source: SourceRegistration::new(*source_kind, Arc::clone(bytes)),
-                        },
-                    )),
+                    } if logical_name == &request.name => {
+                        Some(CanonicalResourceOutcome::Fulfilled(
+                            CanonicalResourceFulfillment::InputProbe {
+                                request: request.clone(),
+                                resource: FileEnquiryResource::new(
+                                    SourceRegistration::new(*source_kind, Arc::clone(bytes)),
+                                    None,
+                                ),
+                            },
+                        ))
+                    }
                     _ => None,
                 })
                 .unwrap_or(CanonicalResourceOutcome::Unavailable),

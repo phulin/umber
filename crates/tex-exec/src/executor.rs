@@ -1446,11 +1446,7 @@ impl ExecutionRun {
         counters: ExecutionBudgetCounters,
     ) -> Result<(), ExecError> {
         for (resource, limit, attempted) in [
-            (
-                "steps",
-                self.budgets.steps,
-                counters.committed_steps,
-            ),
+            ("steps", self.budgets.steps, counters.committed_steps),
             (
                 "live input frames",
                 self.budgets.input_frames,

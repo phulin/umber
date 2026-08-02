@@ -4024,6 +4024,39 @@ fn unavailable_file_size_enquiry_is_a_probe_and_reaches_dump() {
 }
 
 #[test]
+fn canonical_pdf_file_enquiries_share_typed_virtual_file_responses() {
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        engine: EngineMode::PdfTex,
+        ..SessionOptions::default()
+    })
+    .expect("session");
+    session
+        .add_user_file("asset.bin", b"abc".to_vec())
+        .expect("asset");
+    session
+        .add_user_file(
+            "main.tex",
+            br"\message{S=[\pdffilesize{asset.bin}]}\message{M=[\pdfmdfivesum file {asset.bin}]}\message{D=[\pdffiledump offset 1 length 2 {asset.bin}]}\message{T=[\pdffilemoddate{asset.bin}]}\end".to_vec(),
+        )
+        .expect("main source");
+
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("registered virtual files should answer every enquiry without suspension");
+    };
+    let terminal = String::from_utf8_lossy(&output.terminal);
+    assert!(terminal.contains("S=[3]"), "{terminal}");
+    assert!(
+        terminal.contains("M=[900150983CD24FB0D6963F7D28E17F72]"),
+        "{terminal}"
+    );
+    assert!(terminal.contains("D=[6263]"), "{terminal}");
+    // In-memory authored files deliberately carry no filesystem timestamp;
+    // pdfTeX expands an available file with unavailable date metadata to
+    // nothing, rather than confusing absence of metadata with a missing file.
+    assert!(terminal.contains("T=[]"), "{terminal}");
+}
+
+#[test]
 fn invalid_and_absolute_file_enquiries_are_missing_without_host_access() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,

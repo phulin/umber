@@ -178,7 +178,7 @@ pub enum ExecError {
     /// A non-opening file probe has not received bytes or authoritative
     /// absence from the retained host yet.
     MissingCanonicalInputProbe {
-        name: String,
+        request: tex_command::FileEnquiryRequest,
     },
     /// A canonical font definition completed scanning, but its transient
     /// host capability has not supplied the immutable resource yet.
@@ -415,8 +415,8 @@ impl fmt::Display for ExecError {
             Self::MissingCanonicalInput { name, .. } => {
                 write!(f, "input source `{name}` is unavailable")
             }
-            Self::MissingCanonicalInputProbe { name } => {
-                write!(f, "input enquiry `{name}` is unresolved")
+            Self::MissingCanonicalInputProbe { request } => {
+                write!(f, "input enquiry `{}` is unresolved", request.name)
             }
             Self::MissingCanonicalFont { request } => {
                 write!(f, "font resource `{}` is unavailable", request.name)

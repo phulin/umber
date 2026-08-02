@@ -54,13 +54,10 @@ pub enum CommandError {
     OuterInMacroArgument,
     /// The installed input capability has no immutable backing for a
     /// requested logical filename.
-    MissingInput {
-        name: String,
-        original_name: String,
-    },
+    MissingInput { name: String, original_name: String },
     /// A non-opening file enquiry has no retained bytes or authoritative
     /// absence yet and must suspend for a typed host probe.
-    MissingInputProbe(String),
+    MissingInputProbe(crate::FileEnquiryRequest),
     /// An otherwise-originless command failure annotated by the expandable
     /// delivery which triggered it. Typed resource suspensions deliberately
     /// remain unwrapped so the host can retry them.
@@ -97,8 +94,10 @@ impl CommandError {
     }
 
     pub(crate) fn at_origin_unless_resource(self, origin: OriginId) -> Self {
-        if matches!(self, Self::MissingInput { .. } | Self::MissingInputProbe(_) | Self::AtOrigin { .. })
-        {
+        if matches!(
+            self,
+            Self::MissingInput { .. } | Self::MissingInputProbe(_) | Self::AtOrigin { .. }
+        ) {
             self
         } else {
             Self::AtOrigin {
@@ -135,8 +134,8 @@ impl std::fmt::Display for CommandError {
             Self::MissingInput { name, .. } => {
                 write!(formatter, "input source `{name}` is unavailable")
             }
-            Self::MissingInputProbe(name) => {
-                write!(formatter, "input enquiry `{name}` is unresolved")
+            Self::MissingInputProbe(request) => {
+                write!(formatter, "input enquiry `{}` is unresolved", request.name)
             }
             Self::AtOrigin { error, .. } => std::fmt::Display::fmt(error, formatter),
             Self::UnsupportedExpandablePrimitive(primitive) => {

@@ -495,8 +495,8 @@ impl RevisionCandidate {
                 let Some((fragments, layout)) = layout else {
                     return Some(fallback.clone());
                 };
-                let Some(root) = fragments
-                    .root_span_for_generated_bytes(&span.bytes, span.start..span.end)
+                let Some(root) =
+                    fragments.root_span_for_generated_bytes(&span.bytes, span.start..span.end)
                 else {
                     return Some(fallback.clone());
                 };
@@ -694,18 +694,16 @@ impl RevisionCandidate {
     ) -> Result<(), SessionError> {
         match (need, fulfillment) {
             (
-                CanonicalResourceNeed::Input {
-                    name: expected, ..
-                },
+                CanonicalResourceNeed::Input { name: expected, .. },
                 CanonicalResourceFulfillment::Input { name, source },
             ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
             (
-                CanonicalResourceNeed::InputProbe { name: expected },
-                CanonicalResourceFulfillment::InputProbe { name, source },
-            ) if expected == &name => self
+                CanonicalResourceNeed::InputProbe { request: expected },
+                CanonicalResourceFulfillment::InputProbe { request, resource },
+            ) if expected == &request => self
                 .control
                 .capabilities_mut()
-                .register_input_probe(name, source),
+                .register_input_probe(request.name, resource),
             (
                 CanonicalResourceNeed::Font { request: expected },
                 CanonicalResourceFulfillment::Font { request, resource },
@@ -730,11 +728,10 @@ impl RevisionCandidate {
             CanonicalResourceNeed::Input { name, .. } => {
                 self.control.capabilities_mut().mark_input_unavailable(name)
             }
-            CanonicalResourceNeed::InputProbe { name } => {
-                self.control
-                    .capabilities_mut()
-                    .mark_input_probe_unavailable(name)
-            }
+            CanonicalResourceNeed::InputProbe { request } => self
+                .control
+                .capabilities_mut()
+                .mark_input_probe_unavailable(&request.name),
             CanonicalResourceNeed::Font { request } => {
                 self.control.capabilities_mut().register_font(
                     canonical_font_resource_path(&request.name),

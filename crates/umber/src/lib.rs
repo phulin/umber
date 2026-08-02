@@ -697,14 +697,14 @@ impl CanonicalResourceHost for FileSessionResolvers {
                         )
                     })
             }
-            tex_exec::CanonicalResourceNeed::InputProbe { name } => self
+            tex_exec::CanonicalResourceNeed::InputProbe { request } => self
                 .input
                 .0
-                .read_from_canonical_world(world, name)
+                .read_from_canonical_world(world, &request.name)
                 .ok()
                 .map_or(CanonicalResourceOutcome::Unavailable, |content| {
                     CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::world_input_probe(name, content),
+                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content),
                     )
                 }),
             tex_exec::CanonicalResourceNeed::Font { request } => {

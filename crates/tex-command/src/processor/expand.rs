@@ -731,6 +731,12 @@ impl CommandProcessor<'_> {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::FileSize) => {
                 self.expand_pdf_file_size(command)
             }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfFileModificationDate) => {
+                self.expand_pdf_file_modification_date(command)
+            }
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfMdFiveSum) => {
+                self.expand_pdf_md_five_sum(command)
+            }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfInsertHeight) => {
                 self.expand_pdf_insert_height(command)
             }
@@ -1310,11 +1316,13 @@ impl CommandProcessor<'_> {
             return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInputProbe(name))
+                Err(CommandError::MissingInputProbe(
+                    crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Dump),
+                ))
             };
         };
         let start = usize::try_from(offset).expect("recovered file offset is nonnegative");
-        let bytes = source.bytes();
+        let bytes = source.source().bytes();
         if start >= bytes.len() || length == 0 {
             return Ok(());
         }
@@ -1341,11 +1349,76 @@ impl CommandProcessor<'_> {
             return if self.host.input_probe_is_unavailable(&name) {
                 Ok(())
             } else {
-                Err(CommandError::MissingInputProbe(name))
+                Err(CommandError::MissingInputProbe(
+                    crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::Size),
+                ))
             };
         };
-        self.push_rendered_text(&source.bytes().len().to_string(), opener.origin());
+        self.push_rendered_text(&source.source().bytes().len().to_string(), opener.origin());
         Ok(())
+    }
+
+    /// pdftex.web §1590's `pdf_file_mod_date_code` conversion.
+    fn expand_pdf_file_modification_date(
+        &mut self,
+        opener: CurrentCommand,
+    ) -> Result<(), CommandError> {
+        let name = self.scan_pdf_file_name()?;
+        let Some(resource) = self.host.input_probe(&name) else {
+            return if self.host.input_probe_is_unavailable(&name) {
+                Ok(())
+            } else {
+                Err(CommandError::MissingInputProbe(
+                    crate::FileEnquiryRequest::new(
+                        name,
+                        crate::FileEnquiryIntent::ModificationDate,
+                    ),
+                ))
+            };
+        };
+        if let Some(date) = resource.modification_date() {
+            self.push_rendered_text(
+                &format_pdf_date(date.clock, date.utc_offset_minutes),
+                opener.origin(),
+            );
+        }
+        Ok(())
+    }
+
+    /// pdftex.web §1590's string/file MD5 conversion.
+    fn expand_pdf_md_five_sum(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
+        use md5::{Digest, Md5};
+        let file = self.scan_keyword("file")?.value;
+        let tokens = self.scan_balanced_text(true)?.tokens.token_list();
+        let mut bytes = pdftex_token_bytes(&mut self.state, tokens);
+        if file {
+            let name = bytes.iter().copied().map(char::from).collect::<String>();
+            let Some(resource) = self.host.input_probe(&name) else {
+                return if self.host.input_probe_is_unavailable(&name) {
+                    Ok(())
+                } else {
+                    Err(CommandError::MissingInputProbe(
+                        crate::FileEnquiryRequest::new(name, crate::FileEnquiryIntent::MdFiveSum),
+                    ))
+                };
+            };
+            bytes = resource.source().bytes().to_vec();
+        }
+        let digest = Md5::digest(bytes);
+        let rendered = digest
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>();
+        self.push_rendered_text(&rendered, opener.origin());
+        Ok(())
+    }
+
+    fn scan_pdf_file_name(&mut self) -> Result<String, CommandError> {
+        let tokens = self.scan_balanced_text(true)?.tokens.token_list();
+        Ok(pdftex_token_bytes(&mut self.state, tokens)
+            .into_iter()
+            .map(char::from)
+            .collect())
     }
 
     /// pdftex.web §1590's `pdf_insert_ht_code` conversion reads the height
@@ -2136,6 +2209,28 @@ fn roman_numeral(value: i32) -> String {
         }
     }
     output
+}
+
+fn format_pdf_date(clock: tex_state::JobClock, utc_offset_minutes: i16) -> String {
+    use std::fmt::Write as _;
+    let mut date = format!(
+        "D:{:04}{:02}{:02}{:02}{:02}{:02}",
+        clock.year,
+        clock.month,
+        clock.day,
+        clock.time.div_euclid(60),
+        clock.time.rem_euclid(60),
+        clock.second,
+    );
+    if utc_offset_minutes == 0 {
+        date.push('Z');
+    } else {
+        let sign = if utc_offset_minutes < 0 { '-' } else { '+' };
+        let absolute = i32::from(utc_offset_minutes).abs();
+        write!(date, "{sign}{:02}'{:02}'", absolute / 60, absolute % 60)
+            .expect("writing to a String cannot fail");
+    }
+    date
 }
 
 #[cfg(test)]

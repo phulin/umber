@@ -53,7 +53,8 @@ print channel of its own outside the borrowed
   modelled by the executor latching it as the session's terminal state.
 - `src/input/source.rs`, `src/input/source/tests.rs`: public host-neutral
   source-registration inputs and errors plus private immutable backing,
-  source cursors, and focused registration tests. It also owns
+  source cursors, retained World modification metadata for typed file
+  enquiries, and focused registration tests. It also owns
   `SourceNameClass`, TeX82 §303's partition of a source level's `name` into
   the terminal (`name=0`), input stream `name-1` (`1..=17`), e-TeX's
   `\scantokens` pseudo-file (`name=18` or `19`), and a text file (`name>19`).

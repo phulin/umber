@@ -161,6 +161,32 @@ fn world_registration_retains_the_selected_input_record_for_provenance() {
 }
 
 #[test]
+fn world_registration_retains_file_enquiry_modification_metadata() {
+    let mut world = World::memory();
+    let date = tex_state::FileModificationDate::with_offset(
+        tex_state::JobClock {
+            year: 2026,
+            month: 8,
+            day: 2,
+            time: 12 * 60 + 34,
+            second: 56,
+        },
+        -300,
+    );
+    world
+        .set_memory_file("child.tex", b"child")
+        .expect("memory file is seeded");
+    world
+        .set_memory_file_modification_date("child.tex", date)
+        .expect("date is seeded");
+    let content = world.read_file("child.tex").expect("world read succeeds");
+
+    let registration = SourceRegistration::world(content);
+
+    assert_eq!(registration.modification_date(), Some(date));
+}
+
+#[test]
 fn with_name_survives_registration_into_the_backing() {
     // §537's `a_make_name_string` name has to reach the opened level, not
     // just the registration that requested it.

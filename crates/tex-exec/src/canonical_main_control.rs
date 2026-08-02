@@ -360,13 +360,12 @@ struct ActiveDiscretionary {
 pub enum CanonicalResourceNeed {
     /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
     /// but the host has not supplied its immutable source registration.
-    Input {
-        name: String,
-        original_name: String,
-    },
+    Input { name: String, original_name: String },
     /// A non-opening `\openin` or pdfTeX file enquiry needs bytes or
     /// authoritative absence.
-    InputProbe { name: String },
+    InputProbe {
+        request: tex_command::FileEnquiryRequest,
+    },
     /// TeX82's `new_font` completed its filename and size scan (§1254), but
     /// the host has not supplied the immutable font bytes.
     Font { request: FontLoadRequest },
@@ -1019,13 +1018,14 @@ impl CanonicalMainControl {
                 // host that reports the file absent reaches the closed-stream
                 // outcome.
                 match self.capabilities.input_probe_resource(&packed_name) {
-                    Some(resource) => Some(resource),
-                    None if self
-                        .capabilities
-                        .input_probe_is_unavailable(&packed_name) => None,
+                    Some(resource) => Some(resource.source().clone()),
+                    None if self.capabilities.input_probe_is_unavailable(&packed_name) => None,
                     None => {
                         return Err(ExecError::MissingCanonicalInputProbe {
-                            name: packed_name,
+                            request: tex_command::FileEnquiryRequest::new(
+                                packed_name,
+                                tex_command::FileEnquiryIntent::OpenInProbe,
+                            ),
                         });
                     }
                 }
@@ -1356,15 +1356,17 @@ impl CanonicalMainControl {
                     original_name,
                 } => {
                     self.pending_resource_site = Some(site);
-                    Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
-                        name,
-                        original_name,
-                    }))
+                    Ok(CanonicalStepResult::Suspended(
+                        CanonicalResourceNeed::Input {
+                            name,
+                            original_name,
+                        },
+                    ))
                 }
-                ExecError::MissingCanonicalInputProbe { name } => {
+                ExecError::MissingCanonicalInputProbe { request } => {
                     self.pending_resource_site = Some(site);
                     Ok(CanonicalStepResult::Suspended(
-                        CanonicalResourceNeed::InputProbe { name },
+                        CanonicalResourceNeed::InputProbe { request },
                     ))
                 }
                 error => Err(ExecError::Captured {
@@ -1376,12 +1378,14 @@ impl CanonicalMainControl {
             ExecError::MissingCanonicalInput {
                 name,
                 original_name,
-            } => Ok(CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
-                name,
-                original_name,
-            })),
-            ExecError::MissingCanonicalInputProbe { name } => Ok(
-                CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { name }),
+            } => Ok(CanonicalStepResult::Suspended(
+                CanonicalResourceNeed::Input {
+                    name,
+                    original_name,
+                },
+            )),
+            ExecError::MissingCanonicalInputProbe { request } => Ok(
+                CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { request }),
             ),
             ExecError::MissingCanonicalFont { request } => Ok(CanonicalStepResult::Suspended(
                 CanonicalResourceNeed::Font { request },
@@ -16781,7 +16785,9 @@ fn command_error(error: CommandError) -> ExecError {
             name,
             original_name,
         },
-        CommandError::MissingInputProbe(name) => ExecError::MissingCanonicalInputProbe { name },
+        CommandError::MissingInputProbe(request) => {
+            ExecError::MissingCanonicalInputProbe { request }
+        }
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.

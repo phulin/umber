@@ -157,14 +157,14 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
                 .map(|lookup| {
                     lookup.map(|content| CanonicalResourceFulfillment::world_input(name, content))
                 }),
-            CanonicalResourceNeed::InputProbe { name } => world
+            CanonicalResourceNeed::InputProbe { request } => world
                 .with_input_read_state(|input| {
                     self.input
-                        .probe(input, FileKind::TexInput, name, request_index)
+                        .probe(input, FileKind::TexInput, &request.name, request_index)
                 })
                 .map(|lookup| {
                     lookup.map(|content| {
-                        CanonicalResourceFulfillment::world_input_probe(name, content)
+                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content)
                     })
                 }),
             CanonicalResourceNeed::Font { request } => world

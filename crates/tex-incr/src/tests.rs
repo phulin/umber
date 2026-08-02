@@ -4549,24 +4549,28 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                         Arc::from(source.as_bytes()),
                     ))
                 }),
-            CanonicalResourceNeed::InputProbe { name } => self
+            CanonicalResourceNeed::InputProbe { request } => self
                 .files
                 .as_deref()
                 .and_then(|files| {
-                    files
-                        .get(name)
-                        .or_else(|| name.strip_suffix(".tex").and_then(|stem| files.get(stem)))
+                    files.get(&request.name).or_else(|| {
+                        request
+                            .name
+                            .strip_suffix(".tex")
+                            .and_then(|stem| files.get(stem))
+                    })
                 })
                 .map_or(CanonicalResourceOutcome::Unavailable, |source| {
-                    CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::InputProbe {
-                            name: name.clone(),
-                            source: tex_command::SourceRegistration::new(
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::InputProbe {
+                        request: request.clone(),
+                        resource: tex_command::FileEnquiryResource::new(
+                            tex_command::SourceRegistration::new(
                                 RegisteredSourceKind::Generated,
                                 Arc::from(source.as_bytes()),
                             ),
-                        },
-                    )
+                            None,
+                        ),
+                    })
                 }),
             CanonicalResourceNeed::Font { request } => world
                 .read_file(canonical_font_resource_path(&request.name))

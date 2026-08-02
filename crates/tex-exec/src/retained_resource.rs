@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tex_command::{
-    FontLoadRequest, FontResource, PdfImageRequest, PdfImageResource, RegisteredSourceKind,
-    SourceRegistration,
+    FileEnquiryRequest, FileEnquiryResource, FontLoadRequest, FontResource, PdfImageRequest,
+    PdfImageResource, RegisteredSourceKind, SourceRegistration,
 };
 use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
 
@@ -35,8 +35,8 @@ pub enum CanonicalResourceFulfillment {
     /// `\openin` probe. This remains distinct from required input backing so
     /// a later opening read can upgrade host dependency accounting.
     InputProbe {
-        name: String,
-        source: SourceRegistration,
+        request: FileEnquiryRequest,
+        resource: FileEnquiryResource,
     },
     Font {
         request: FontLoadRequest,
@@ -73,10 +73,10 @@ impl CanonicalResourceFulfillment {
     }
 
     #[must_use]
-    pub fn world_input_probe(name: impl Into<String>, content: FileContent) -> Self {
+    pub fn world_input_probe(request: FileEnquiryRequest, content: FileContent) -> Self {
         Self::InputProbe {
-            name: name.into(),
-            source: SourceRegistration::world(content),
+            request,
+            resource: FileEnquiryResource::world(content),
         }
     }
 }

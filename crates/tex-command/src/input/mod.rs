@@ -28,8 +28,8 @@ pub use lines::{
     SourceScalarRange,
 };
 pub use source::{
-    FileFramingEvent, MalformedUnicodeRange, RegisteredSourceKind, SourceNameClass,
-    SourceFramingPolicy, SourceRegistration, SourceRegistrationError,
+    FileFramingEvent, MalformedUnicodeRange, RegisteredSourceKind, SourceFramingPolicy,
+    SourceNameClass, SourceRegistration, SourceRegistrationError,
 };
 pub use tokenizer::{
     CatcodeQueries, InvalidSourceCharacter, LexerState, SourceControlSequenceKind,

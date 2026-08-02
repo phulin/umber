@@ -772,14 +772,12 @@ impl<'a> CanonicalEngineSession<'a> {
         let matches = match (&fulfillment, need) {
             (
                 CanonicalResourceFulfillment::Input { name, .. },
-                CanonicalResourceNeed::Input {
-                    name: expected, ..
-                },
+                CanonicalResourceNeed::Input { name: expected, .. },
             ) => name == expected,
             (
-                CanonicalResourceFulfillment::InputProbe { name, .. },
-                CanonicalResourceNeed::InputProbe { name: expected },
-            ) => name == expected,
+                CanonicalResourceFulfillment::InputProbe { request, .. },
+                CanonicalResourceNeed::InputProbe { request: expected },
+            ) => request == expected,
             (
                 CanonicalResourceFulfillment::Font { request, .. },
                 CanonicalResourceNeed::Font { request: expected },
@@ -800,11 +798,10 @@ impl<'a> CanonicalEngineSession<'a> {
             CanonicalResourceFulfillment::Input { name, source } => {
                 self.control.capabilities_mut().register_input(name, source)
             }
-            CanonicalResourceFulfillment::InputProbe { name, source } => {
-                self.control
-                    .capabilities_mut()
-                    .register_input_probe(name, source)
-            }
+            CanonicalResourceFulfillment::InputProbe { request, resource } => self
+                .control
+                .capabilities_mut()
+                .register_input_probe(request.name, resource),
             CanonicalResourceFulfillment::Font { request, resource } => self
                 .control
                 .capabilities_mut()
@@ -826,10 +823,10 @@ impl<'a> CanonicalEngineSession<'a> {
                     capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
                 }
             }
-            CanonicalResourceNeed::InputProbe { name } => {
+            CanonicalResourceNeed::InputProbe { request } => {
                 self.control
                     .capabilities_mut()
-                    .mark_input_probe_unavailable(name);
+                    .mark_input_probe_unavailable(&request.name);
             }
             CanonicalResourceNeed::Font { request } => {
                 self.control.capabilities_mut().register_font(
@@ -970,8 +967,8 @@ impl<'a> CanonicalEngineSession<'a> {
         need: &CanonicalResourceNeed,
     ) -> Option<CanonicalResourceFulfillment> {
         let name = match need {
-            CanonicalResourceNeed::Input { name, .. }
-            | CanonicalResourceNeed::InputProbe { name } => name,
+            CanonicalResourceNeed::Input { name, .. } => name,
+            CanonicalResourceNeed::InputProbe { request } => &request.name,
             CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
                 return None;
             }
@@ -984,8 +981,8 @@ impl<'a> CanonicalEngineSession<'a> {
             .flatten()?;
         Some(match need {
             CanonicalResourceNeed::Input { .. } => same_run_input_fulfillment(name, content),
-            CanonicalResourceNeed::InputProbe { .. } => {
-                CanonicalResourceFulfillment::world_input_probe(name, content)
+            CanonicalResourceNeed::InputProbe { request } => {
+                CanonicalResourceFulfillment::world_input_probe(request.clone(), content)
             }
             CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
                 unreachable!("non-file resources returned above")
@@ -1193,12 +1190,15 @@ mod tests {
                         )
                     },
                 ),
-                CanonicalResourceNeed::InputProbe { name } => world
-                    .read_file(name)
+                CanonicalResourceNeed::InputProbe { request } => world
+                    .read_file(&request.name)
                     .ok()
                     .map_or(CanonicalResourceOutcome::Unavailable, |content| {
                         CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::world_input_probe(name, content),
+                            CanonicalResourceFulfillment::world_input_probe(
+                                request.clone(),
+                                content,
+                            ),
                         )
                     }),
                 CanonicalResourceNeed::Font { request } => world

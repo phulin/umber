@@ -8,6 +8,69 @@ use tex_state::glue::GlueSpec;
 use tex_state::scaled::Scaled;
 use tex_state::world::FileContent;
 
+/// Why canonical command processing needs a non-opening file lookup.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FileEnquiryIntent {
+    OpenInProbe,
+    Size,
+    ModificationDate,
+    MdFiveSum,
+    Dump,
+}
+
+/// Complete identity of one host-neutral file enquiry.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct FileEnquiryRequest {
+    pub name: String,
+    pub intent: FileEnquiryIntent,
+}
+
+impl FileEnquiryRequest {
+    #[must_use]
+    pub fn new(name: impl Into<String>, intent: FileEnquiryIntent) -> Self {
+        Self {
+            name: name.into(),
+            intent,
+        }
+    }
+}
+
+/// Immutable answer to a non-opening file enquiry.
+#[derive(Clone, Debug)]
+pub struct FileEnquiryResource {
+    source: SourceRegistration,
+    modification_date: Option<tex_state::FileModificationDate>,
+}
+
+impl FileEnquiryResource {
+    #[must_use]
+    pub fn new(
+        source: SourceRegistration,
+        modification_date: Option<tex_state::FileModificationDate>,
+    ) -> Self {
+        Self {
+            source,
+            modification_date,
+        }
+    }
+
+    #[must_use]
+    pub fn world(content: FileContent) -> Self {
+        let modification_date = content.modification_date();
+        Self::new(SourceRegistration::world(content), modification_date)
+    }
+
+    #[must_use]
+    pub fn source(&self) -> &SourceRegistration {
+        &self.source
+    }
+
+    #[must_use]
+    pub const fn modification_date(&self) -> Option<tex_state::FileModificationDate> {
+        self.modification_date
+    }
+}
+
 /// Immutable font bytes selected by the host for a canonical `\\font` replay.
 ///
 /// This transient capability value is never retained by command state or
@@ -115,7 +178,7 @@ pub enum LastNodeItem {
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
     unavailable_input: BTreeSet<String>,
-    input_probes: BTreeMap<String, SourceRegistration>,
+    input_probes: BTreeMap<String, FileEnquiryResource>,
     unavailable_input_probes: BTreeSet<String>,
     fonts: BTreeMap<PathBuf, FontResource>,
     images: Vec<(PdfImageRequest, PdfImageResource)>,
@@ -180,14 +243,10 @@ impl CommandHostCapabilities {
     /// a later required read must revisit the host so dependency accounting
     /// can upgrade an authoritative probe to a required read. A prior required
     /// read may, however, answer a later probe from the stronger capability.
-    pub fn register_input_probe(
-        &mut self,
-        name: impl Into<String>,
-        source: SourceRegistration,
-    ) {
+    pub fn register_input_probe(&mut self, name: impl Into<String>, resource: FileEnquiryResource) {
         let name = name.into();
         self.unavailable_input_probes.remove(&name);
-        self.input_probes.insert(name, source);
+        self.input_probes.insert(name, resource);
     }
 
     /// Records a completed non-opening lookup which found no backing.
@@ -250,11 +309,11 @@ impl CommandHostCapabilities {
     /// Borrows bytes acquired for a non-opening enquiry. A prior required
     /// input is a stronger acquisition and can answer the same enquiry.
     #[must_use]
-    pub fn input_probe_resource(&self, name: &str) -> Option<SourceRegistration> {
+    pub fn input_probe_resource(&self, name: &str) -> Option<FileEnquiryResource> {
         self.input
             .get(name)
-            .or_else(|| self.input_probes.get(name))
-            .cloned()
+            .map(|source| FileEnquiryResource::new(source.clone(), source.modification_date()))
+            .or_else(|| self.input_probes.get(name).cloned())
     }
 
     /// Reports an authoritative absence for a non-opening enquiry.
@@ -386,7 +445,7 @@ impl<'a> CommandHostContext<'a> {
         self._capabilities.unavailable_input.contains(name)
     }
 
-    pub(crate) fn input_probe(&self, name: &str) -> Option<SourceRegistration> {
+    pub(crate) fn input_probe(&self, name: &str) -> Option<FileEnquiryResource> {
         self._capabilities.input_probe_resource(name)
     }
 

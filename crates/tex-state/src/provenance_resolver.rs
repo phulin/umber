@@ -99,10 +99,7 @@ impl<'a> ProvenanceResolver<'a> {
     /// Detaches generated backing identity before speculative provenance is
     /// rolled back, allowing an editor layout to rematch the immutable bytes.
     #[must_use]
-    pub fn detach_generated_origin(
-        &self,
-        origin: OriginId,
-    ) -> Option<DetachedGeneratedSourceSpan> {
+    pub fn detach_generated_origin(&self, origin: OriginId) -> Option<DetachedGeneratedSourceSpan> {
         let resolved = self.resolve_to_source(origin)?;
         let region = self.universe.source_region(resolved.source.source())?;
         let source = self.universe.generated_source(region.backing)?;

@@ -5966,7 +5966,10 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
     let second = control
         .advance(&mut stores)
         .expect_err("rolled-back input command retries identically");
-    assert_eq!(second.diagnostic_site().primary_origin(), Some(first_origin));
+    assert_eq!(
+        second.diagnostic_site().primary_origin(),
+        Some(first_origin)
+    );
     assert!(second.frozen_diagnostic_origin().is_some());
     assert_eq!(stores.testing_state_hash(), state_before);
     assert_eq!(stores.provenance_stats(), provenance_before);
@@ -7506,8 +7509,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
         accepted_containers: tex_fonts::AcceptedFontContainers::WASM,
         purposes: tex_fonts::FontPurposes::LAYOUT_AND_HTML,
     };
-    let bytes =
-        include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
+    let bytes = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2").to_vec();
     let font = tex_fonts::OpenTypeFont::parse(
         &request,
         tex_fonts::ResolvedFont {
@@ -7540,17 +7542,15 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
     let family_before = stores.math_family_font(MathFontSize::Text, 0);
     let state_before = stores.testing_state_hash();
 
-    let error = assign_canonical_math_family_font(
-        &mut stores,
-        MathFontSize::Text,
-        0,
-        unsupported,
-        true,
-    )
-    .expect_err("OpenType-only font cannot enter a classic math family");
+    let error =
+        assign_canonical_math_family_font(&mut stores, MathFontSize::Text, 0, unsupported, true)
+            .expect_err("OpenType-only font cannot enter a classic math family");
 
     assert!(matches!(error, ExecError::OpenTypeMathUnsupported));
-    assert_eq!(stores.math_family_font(MathFontSize::Text, 0), family_before);
+    assert_eq!(
+        stores.math_family_font(MathFontSize::Text, 0),
+        family_before
+    );
     assert_eq!(stores.testing_state_hash(), state_before);
     assign_canonical_math_family_font(
         &mut stores,

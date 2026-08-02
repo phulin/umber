@@ -1166,6 +1166,7 @@ dependencies = [
 name = "tex-command"
 version = "0.1.0"
 dependencies = [
+ "md-5",
  "posix-regex",
  "serde",
  "test-support",

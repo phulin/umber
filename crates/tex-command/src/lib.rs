@@ -68,14 +68,15 @@ pub use fuel::{
     MAX_COMMAND_FUEL_LIMIT,
 };
 pub use host::{
-    CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState, FontResource,
-    LastNodeItem, PdfImageResource,
+    CommandHostCapabilities, CommandHostContext, ConditionalMode, ConditionalState,
+    FileEnquiryIntent, FileEnquiryRequest, FileEnquiryResource, FontResource, LastNodeItem,
+    PdfImageResource,
 };
 pub use input::{
     CatcodeQueries, FileFramingEvent, InvalidSourceCharacter, LexerState, LineTerminator,
     MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
-    SourceControlSequenceKind, SourceLocation, SourceNameClass, SourceProvenance, SourceRange,
-    SourceFramingPolicy, SourceRegistration, SourceRegistrationError, SourceScalarRange,
+    SourceControlSequenceKind, SourceFramingPolicy, SourceLocation, SourceNameClass,
+    SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceScalarRange,
     SourceStepQueries, SourceToken, SourceTokenizationStep,
 };
 /// The single canonical naming vocabulary shared by every observation
