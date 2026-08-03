@@ -30,7 +30,7 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `src/compile_fail.rs`: Shared offline Cargo-check harness that gives each compile-fail fixture an independent temporary crate, points every crate at one reusable target directory, and checks stable stderr substrings.
 - `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
 - `src/dvi.rs`: shared DVI fixture setup, preamble-comment normalization, exact comparison, and byte-difference context.
-- `src/lib.rs`: public fixture assertion/read helpers, TeX/reference log normalizers, and PL font parsing utilities.
+- `src/lib.rs`: public fixture assertion/read helpers, checked runtime-checkout asset reads, TeX/reference log normalizers, and PL font parsing utilities.
 - `src/bin/pdf-normalize.rs`: host-only CLI exposing the independent Hayro
   structure projection to live-reference tooling.
 - `src/pdf.rs`: canonical Hayro-probe PDF page/content plus document-object and dictionary structure normalizer.

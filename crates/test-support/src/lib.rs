@@ -57,6 +57,23 @@ mod imp {
         repository_root().join("tests/corpus")
     }
 
+    /// Reads a repository-relative test asset from the checkout selected at runtime.
+    pub fn read_repository_asset(relative: impl AsRef<Path>) -> Result<Vec<u8>> {
+        let relative = relative.as_ref();
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            bail!(
+                "repository test asset path must be normalized and relative: {}",
+                relative.display()
+            );
+        }
+        let path = repository_root().join(relative);
+        fs::read(&path).with_context(|| format!("read repository test asset {}", path.display()))
+    }
+
     /// Returns the committed corpus below an explicitly selected repository.
     #[must_use]
     pub fn corpus_root_at(repository: &Path) -> PathBuf {
@@ -833,7 +850,7 @@ pub use corpus::{
 };
 pub use imp::{
     assert_matches_fixture, corpus_root, corpus_root_at, fixture_path, normalize, pl,
-    read_binary_fixture, read_fixture, repository_root, repository_root_at,
+    read_binary_fixture, read_fixture, read_repository_asset, repository_root, repository_root_at,
 };
 
 #[cfg(test)]

@@ -130,10 +130,17 @@ fn detached_geometry_uses_the_pinned_schema_three_header() {
 
 #[test]
 fn trip_construction_evidence_is_fresh_complete_and_canonical() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
-    let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
-    let tfm: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).unwrap());
+    let source: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let tripos: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/tripos.tex")
+            .expect("read TRIP terminal input"),
+    );
+    let tfm: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tfm")
+            .expect("read TRIP font metrics"),
+    );
     let recipe = trip_format_recipe(
         TripEngineProfile::Tex82,
         "trip",
@@ -2253,9 +2260,9 @@ fn trip_loaded_radical_overbar_uses_normal_kerns() {
     // does not reproduce the showbox9 list reached through TRIP lines 438--440.
     // TeX82 §§714/135 create both overbar spacers as normal `new_kern` nodes;
     // §184 consequently prints no explicit-subtype space after `\kern`.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let source: Arc<[u8]> =
-        Arc::from(fs::read(root.join("third_party/trip/trip.tex")).expect("TRIP source"));
+    let source: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
     let log = run_loaded_trip_source(source);
     let overbar = log.lines().collect::<Vec<_>>().windows(4).any(|lines| {
         lines[0].starts_with("..\\vbox(")
@@ -2269,8 +2276,9 @@ fn trip_loaded_radical_overbar_uses_normal_kerns() {
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
     let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
     let lines = text.lines().collect::<Vec<_>>();
     let source: Arc<[u8]> =
@@ -2279,10 +2287,17 @@ fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
 }
 
 fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
-    let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
-    let tfm: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).unwrap());
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let tripos: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/tripos.tex")
+            .expect("read TRIP terminal input"),
+    );
+    let tfm: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tfm")
+            .expect("read TRIP font metrics"),
+    );
     let recipe = trip_format_recipe(
         TripEngineProfile::Tex82,
         "trip",

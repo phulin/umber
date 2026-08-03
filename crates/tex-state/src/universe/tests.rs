@@ -164,15 +164,27 @@ fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
             _ => None,
         })
         .collect();
-    let skip_pos = output.find("{restoring \\skip22=0.0pt}").unwrap();
-    let dimen21_pos = output.find("{restoring \\dimen21=0.0pt}").unwrap();
+    let Some(skip_pos) = output.find("{restoring \\skip22=0.0pt}") else {
+        panic!("missing skip restore in {output:?}");
+    };
+    let Some(dimen21_pos) = output.find("{restoring \\dimen21=0.0pt}") else {
+        panic!("missing dimen21 restore in {output:?}");
+    };
     let toks_pos = output
         .find("{restoring \\toks32767=}")
         .unwrap_or_else(|| panic!("missing toks restore in {output:?}"));
-    let muskip_pos = output.find("{restoring \\muskip2200=0.0mu}").unwrap();
-    let dimen_pos = output.find("{restoring \\dimen2100=0.0pt}").unwrap();
-    let count2000_pos = output.find("{restoring \\count2000=0}").unwrap();
-    let count20_pos = output.find("{restoring \\count20=0}").unwrap();
+    let Some(muskip_pos) = output.find("{restoring \\muskip2200=0.0mu}") else {
+        panic!("missing muskip2200 restore in {output:?}");
+    };
+    let Some(dimen_pos) = output.find("{restoring \\dimen2100=0.0pt}") else {
+        panic!("missing dimen2100 restore in {output:?}");
+    };
+    let Some(count2000_pos) = output.find("{restoring \\count2000=0}") else {
+        panic!("missing count2000 restore in {output:?}");
+    };
+    let Some(count20_pos) = output.find("{restoring \\count20=0}") else {
+        panic!("missing count20 restore in {output:?}");
+    };
     assert!(
         skip_pos < dimen21_pos
             && dimen21_pos < toks_pos
