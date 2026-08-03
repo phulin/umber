@@ -47,6 +47,73 @@ fn fraction_dump_renders_the_packed_delimiter_field() {
     }
 }
 
+/// TeX82 §696 uses the same four-quarter rendering for radical and
+/// left/right noads as §697 uses for fraction delimiters. The upper scanner
+/// class bits are excluded, but a null noad is still printed.
+#[test]
+fn noad_dump_renders_the_packed_delimiter_field() {
+    let mut stores = Universe::new();
+    let nodes = [
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Radical {
+                delimiter: 0x0728_2382,
+            },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Radical {
+                delimiter: 0x0700_0000,
+            },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter {
+                delimiter: 0x0416_2362,
+            },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::LeftDelimiter {
+                delimiter: 0x0400_0000,
+            },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter {
+                delimiter: 0x0712_3456,
+            },
+            MathField::Empty,
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::RightDelimiter {
+                delimiter: 0x0700_0000,
+            },
+            MathField::Empty,
+        )),
+    ];
+    let list = stores.freeze_node_list(&nodes);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        ),
+        concat!(
+            "\\radical\"282382\n",
+            "\\radical\"0\n",
+            "\\left\"162362\n",
+            "\\left\"0\n",
+            "\\right\"123456\n",
+            "\\right\"0\n",
+        ),
+    );
+}
+
 #[test]
 fn deferred_write_dump_uses_show_token_list_control_word_separator() {
     let mut stores = Universe::new();

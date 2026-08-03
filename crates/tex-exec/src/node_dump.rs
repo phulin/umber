@@ -448,20 +448,20 @@ fn dump_math_noad(
 ) {
     match &noad.kind {
         NoadKind::Radical { delimiter } => {
-            let _ = write!(out, "\\radical\"{delimiter:X}");
+            dump_delimiter_command("\\radical", *delimiter, out);
         }
         NoadKind::Accent { accent } => {
             out.push_str("\\accent");
             dump_math_char_inline(*accent, out);
         }
         NoadKind::LeftDelimiter { delimiter } => {
-            let _ = write!(out, "\\left\"{delimiter:X}");
+            dump_delimiter_command("\\left", *delimiter, out);
         }
         NoadKind::RightDelimiter { delimiter } => {
-            let _ = write!(out, "\\right\"{delimiter:X}");
+            dump_delimiter_command("\\right", *delimiter, out);
         }
         NoadKind::MiddleDelimiter { delimiter } => {
-            let _ = write!(out, "\\middle\"{delimiter:X}");
+            dump_delimiter_command("\\middle", *delimiter, out);
         }
         _ => out.push_str(noad_name(&noad.kind)),
     }
@@ -656,13 +656,13 @@ fn dump_fraction_header(
         .map(delimiter_field)
         .filter(|field| *field != 0)
     {
-        let _ = write!(out, ", left-delimiter \"{left:X}");
+        dump_packed_delimiter(", left-delimiter ", left, out);
     }
     if let Some(right) = right_delimiter
         .map(delimiter_field)
         .filter(|field| *field != 0)
     {
-        let _ = write!(out, ", right-delimiter \"{right:X}");
+        dump_packed_delimiter(", right-delimiter ", right, out);
     }
     out.push('\n');
 }
@@ -676,6 +676,18 @@ fn delimiter_field(delimiter: u32) -> u32 {
     let large_character = delimiter & 0xff;
 
     (((small_family << 8) | small_character) << 12) | (large_family << 8) | large_character
+}
+
+/// Print a noad whose diagnostic payload is TeX82 §696's packed delimiter
+/// field. Unlike §697's optional fraction delimiters, a noad remains visible
+/// when all four quarters are zero.
+fn dump_delimiter_command(command: &str, delimiter: u32, out: &mut String) {
+    let delimiter = delimiter_field(delimiter);
+    dump_packed_delimiter(command, delimiter, out);
+}
+
+fn dump_packed_delimiter(prefix: &str, delimiter: u32, out: &mut String) {
+    let _ = write!(out, "{prefix}\"{delimiter:X}");
 }
 
 fn dump_fraction_part(
