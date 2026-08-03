@@ -7,6 +7,30 @@ use tex_exec::{
 };
 use tex_state::Universe;
 
+fn terminal_text(stores: &Universe) -> String {
+    let committed = stores
+        .world()
+        .memory_terminal_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite {
+                sink:
+                    tex_state::PrintSink::Terminal
+                    | tex_state::PrintSink::TerminalAndLog
+                    | tex_state::PrintSink::Log,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    committed + &pending
+}
+
 fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
     let source = control
         .command_mut()
@@ -28,6 +52,66 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
             MainControlStep::Continue => {}
         }
     }
+}
+
+fn run_to_end_observed(control: &mut CanonicalMainControl, stores: &mut Universe) {
+    struct Observer;
+    impl tex_command::CommandObserver for Observer {
+        fn committed(&mut self, _observation: tex_command::CommandObservation) {}
+    }
+    let mut observer = Observer;
+    loop {
+        match control
+            .step_with_observer(stores, &mut observer)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+}
+
+#[test]
+fn one_token_everydisplay_traces_its_named_context_before_final_token_execution() {
+    // TeX82 §§323 and 1145: begin_token_list(every_display,
+    // every_display_text) prints the named list while that input level owns
+    // its sole token. The following assignment executes normally, and §357
+    // retires the exhausted level on the next input demand.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingmacros=2\tracingonline=1\everydisplay{\global}\noindent$$\count7=19$$\end",
+    );
+
+    run_to_end_observed(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert_eq!(
+        terminal.matches("\\everydisplay->\\global").count(),
+        1,
+        "{terminal:?}"
+    );
+    assert_eq!(stores.count(7), 19);
+}
+
+#[test]
+fn exhausted_ordinary_token_replay_does_not_gain_a_named_hook_trace() {
+    // Negative control: §§323/307 name the every... token_type family, not
+    // every arbitrary stored or transient token list that reaches loc=null.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingmacros=2\tracingonline=1\toks0{\global}\the\toks0\count7=23\end",
+    );
+
+    run_to_end_observed(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(!terminal.contains("everydisplay->"), "{terminal}");
+    assert_eq!(stores.count(7), 23);
+    assert_eq!(control.command_mut().input_level_count(), 0);
 }
 
 fn editor_layout_for(bytes: &[u8]) -> (tex_state::FragmentStore, tex_state::EditorLayout) {

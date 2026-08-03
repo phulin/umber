@@ -25,6 +25,25 @@ use crate::profile::{
     CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
 };
 
+fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
+    match reason {
+        StoredReplayReason::EveryPar => "everypar",
+        StoredReplayReason::EveryMath => "everymath",
+        StoredReplayReason::EveryDisplay => "everydisplay",
+        StoredReplayReason::EveryHBox => "everyhbox",
+        StoredReplayReason::EveryVBox => "everyvbox",
+        StoredReplayReason::EveryJob => "everyjob",
+        StoredReplayReason::EveryCr => "everycr",
+        StoredReplayReason::OutputRoutine
+        | StoredReplayReason::EveryEof
+        | StoredReplayReason::Mark
+        | StoredReplayReason::Write
+        | StoredReplayReason::Discretionary => {
+            unreachable!("only executor-requested named lists are queued here")
+        }
+    }
+}
+
 /// Complete future-relevant state owned by the command machine.
 ///
 /// This is the command half of an executor savepoint. It contains semantic
@@ -54,8 +73,8 @@ pub struct CommandState {
     /// Named token-list levels installed since the executor last drained
     /// them, in push order.
     ///
-    /// This is observation-owned but unconditional: every step that opens an
-    /// episode drains it, so it cannot accumulate in a run nobody observes.
+    /// This is publication-owned but unconditional: every step that opens an
+    /// episode drains it, so it cannot accumulate across executor episodes.
     /// It deliberately carries no "am I observed" flag -- that would be
     /// observation state living inside semantic state, which
     /// `absent_observer_has_no_delivery_or_snapshot_effect` and
@@ -63,12 +82,16 @@ pub struct CommandState {
     /// to forbid, and which they caught when `umber2-johp.310` first tried
     /// it.
     ///
-    /// tex.web installs these inside `begin_token_list`, where its trace
-    /// observes them; Umber's executor asks command state to install them
+    /// tex.web installs these inside `begin_token_list`, where its trace and
+    /// observer see them; Umber's executor asks command state to install them
     /// after the borrowed command-processor episode has ended, so the record
-    /// waits here until the same operation publishes its other committed
-    /// observations.
-    pub(crate) named_token_list_pushes: Vec<(InputLevelId, StoredReplayReason)>,
+    /// waits here until the same operation publishes its trace and other
+    /// committed observations.
+    pub(crate) named_token_list_pushes: Vec<(
+        InputLevelId,
+        StoredReplayReason,
+        tex_state::ids::TokenListId,
+    )>,
     /// tex.web §537/§362 file-bracketing transitions, in the order they
     /// happened, waiting for the engine to render them as `(name`/`)`.
     ///
@@ -387,7 +410,8 @@ impl CommandState {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(reason),
         );
-        self.named_token_list_pushes.push((level, reason));
+        self.named_token_list_pushes
+            .push((level, reason, tokens.token_list()));
     }
 
     /// Takes the pushes of executor-requested named token lists, in order.
@@ -396,15 +420,38 @@ impl CommandState {
     /// records, which is where tex.web's own trace has them: inside the
     /// `new_graf`/`box_end`/`init_math` transition that installed the level.
     #[must_use]
-    pub fn take_named_token_list_push_observations(&mut self) -> Vec<crate::InputRecord> {
+    pub fn publish_named_token_list_pushes(
+        &mut self,
+        state: &mut tex_state::CommandContext<'_>,
+    ) -> Vec<crate::InputRecord> {
         self.named_token_list_pushes
             .drain(..)
-            .map(|(level, reason)| crate::InputRecord {
-                transition: crate::InputTransition::Push,
-                reason: crate::processor::stored_input_reason(reason),
-                source_name: None,
-                level: level.0,
-                position: 0,
+            .map(|(level, reason, tokens)| {
+                // TeX82 §§323 and 1145 trace a named token list at
+                // `begin_token_list`, while its token_type still identifies
+                // the list.  Publishing at the executor/command-state seam
+                // preserves that context even when the list has one token
+                // and is exhausted by the next main-control delivery.
+                if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
+                    let mut text =
+                        crate::processor::expand::print_esc_text(state, stored_replay_name(reason));
+                    text.push_str("->");
+                    for token in state.tokens(tokens).to_vec() {
+                        text.push_str(&crate::processor::expand::token_list_token_text(
+                            state, token,
+                        ));
+                    }
+                    let mut output = state.begin_diagnostic();
+                    output.print_nl(&text);
+                    output.end(false);
+                }
+                crate::InputRecord {
+                    transition: crate::InputTransition::Push,
+                    reason: crate::processor::stored_input_reason(reason),
+                    source_name: None,
+                    level: level.0,
+                    position: 0,
+                }
             })
             .collect()
     }

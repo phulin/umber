@@ -2421,7 +2421,7 @@ impl CanonicalMainControl {
                 // it committed, then the episode's own records.
                 let mut records: Vec<CommandObservation> = self
                     .command
-                    .take_named_token_list_push_observations()
+                    .publish_named_token_list_pushes(&mut stores.command_context())
                     .into_iter()
                     .map(CommandObservation::Input)
                     .collect();
@@ -4497,7 +4497,7 @@ impl CanonicalMainControl {
             // the step's own applied records.
             let entry_records: Vec<CommandObservation> = self
                 .command
-                .take_named_token_list_push_observations()
+                .publish_named_token_list_pushes(&mut stores.command_context())
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
@@ -4773,7 +4773,7 @@ impl CanonicalMainControl {
             // is published ahead of the transition's own committed records.
             records.extend(
                 self.command
-                    .take_named_token_list_push_observations()
+                    .publish_named_token_list_pushes(&mut stores.command_context())
                     .into_iter()
                     .map(CommandObservation::Input),
             );
