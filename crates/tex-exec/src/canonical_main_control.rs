@@ -623,6 +623,11 @@ impl CanonicalParagraphRegion {
         }
     }
 
+    /// Publishes this accepted replay region into universe-owned history.
+    pub fn publish_carried_history(&self, stores: &mut Universe) {
+        stores.record_carried_canonical_paragraph_region(self.history_record());
+    }
+
     #[must_use]
     pub const fn identity(&self) -> u64 {
         self.identity

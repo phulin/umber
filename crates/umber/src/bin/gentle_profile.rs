@@ -8,10 +8,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use tex_command::SourceRegistration;
+use tex_command::{RegisteredSourceKind, SourceRegistration};
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
-use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
+use tex_exec::{
+    Cancellation, CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
+    CanonicalResourceOutcome, CanonicalResourceWorld, CheckpointSink, EngineCheckpoint,
+};
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
     SameHistoryStop, Session,
@@ -27,7 +30,6 @@ use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
-use tex_state::{InputResolver, ResourceLookup, ResourceResult};
 use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
 #[cfg(feature = "profiling")]
 use umber::CanonicalExpansionStats;
@@ -513,9 +515,8 @@ fn run_cold_memo_policy(
         #[cfg(feature = "profiling")]
         let survivor_before = survivor_measurement();
         let started = Instant::now();
-        let (input, font) = resolvers.resolvers();
         let accepted = session
-            .cold_with_resolvers(input, font)
+            .cold_with_resolvers(&mut resolvers)
             .map_err(|error| format!("cold memo-policy run {}: {error}", run + 1))?;
         let elapsed = started.elapsed();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
@@ -592,40 +593,40 @@ fn run_cold_memo_policy(
 }
 
 struct OverlayInputResolver<'a> {
-    fallback: &'a mut dyn InputResolver,
+    fallback: &'a mut FileSessionResolvers,
     generated: &'a str,
 }
 
-impl InputResolver for OverlayInputResolver<'_> {
-    fn open_input(
+impl CanonicalResourceHost for OverlayInputResolver<'_> {
+    fn fulfill(
         &mut self,
-        input: &mut dyn tex_state::InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<tex_state::FileContent> {
-        if name == STABILIZATION_INPUT {
-            return input
-                .read_supplied_input_file(
-                    Path::new(name),
-                    self.generated.as_bytes().to_vec().into(),
-                )
-                .map(ResourceLookup::Available)
-                .map_err(|error| error.to_string());
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        match need {
+            CanonicalResourceNeed::Input { name, .. } if name == STABILIZATION_INPUT => {
+                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                    name,
+                    RegisteredSourceKind::Generated,
+                    self.generated.as_bytes().into(),
+                ))
+            }
+            CanonicalResourceNeed::InputProbe { request }
+                if request.name == STABILIZATION_INPUT =>
+            {
+                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::InputProbe {
+                    request: request.clone(),
+                    resource: tex_command::FileEnquiryResource::new(
+                        SourceRegistration::new(
+                            RegisteredSourceKind::Generated,
+                            self.generated.as_bytes(),
+                        ),
+                        None,
+                    ),
+                })
+            }
+            _ => self.fallback.fulfill(world, need),
         }
-        self.fallback.open_input(input, name, request_index)
-    }
-}
-
-struct UnavailableImageResolver;
-
-impl PdfImageResolver for UnavailableImageResolver {
-    fn open_image(
-        &mut self,
-        _input: &mut dyn tex_state::InputReadState,
-        _request: &PdfImageRequest,
-        _request_index: u64,
-    ) -> tex_exec::ResourceResult<tex_state::PdfExternalImageSource> {
-        Ok(tex_exec::ResourceLookup::Unavailable)
     }
 }
 
@@ -658,14 +659,13 @@ fn execute_stabilization_sample(
     let path = Path::new(JOB_DIR).join(JOB_FILE);
     let mut session = incremental_session(template, source, RevisionId::new(1), memo, recording)?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-    let (fallback, font) = resolvers.resolvers();
     let mut input = OverlayInputResolver {
-        fallback,
+        fallback: &mut resolvers,
         generated: "\\def\\stabilizationrefwidth{0pt}",
     };
     let started = Instant::now();
     session
-        .cold_with_resolvers(&mut input, font)
+        .cold_with_resolvers(&mut input)
         .map_err(|error| format!("construct stabilization history: {error}"))?;
     let initial = started.elapsed();
 
@@ -685,15 +685,13 @@ fn execute_stabilization_sample(
             .start_external_input_delta_candidate()
             .map_err(|error| format!("start stabilization pass {}: {error}", pass + 1))?;
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-        let (fallback, font) = resolvers.resolvers();
         let mut input = OverlayInputResolver {
-            fallback,
+            fallback: &mut resolvers,
             generated,
         };
-        let mut image = UnavailableImageResolver;
         let started = Instant::now();
         let outcome = candidate
-            .drive_with_resource_resolvers(&mut input, font, &mut image, &Cancellation::new())
+            .drive_with_resource_resolvers(&mut input, &Cancellation::new())
             .map_err(|error| format!("drive stabilization pass {}: {error}", pass + 1))?;
         if !matches!(outcome, RevisionCandidateResult::Complete) {
             return Err(format!(
@@ -866,9 +864,8 @@ fn run_incremental_path(
         options.memo_recording,
     )?;
     let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
-    let (input, font) = resolvers.resolvers();
     let initial = session
-        .cold_with_resolvers(input, font)
+        .cold_with_resolvers(&mut resolvers)
         .map_err(|error| format!("prepare isolated {} path: {error}", path_kind.name()))?;
     let left_dvi = initial.dvi_bytes().map_err(|error| error.to_string())?;
     let (_, right_cold) = execute_cold_sample(template, right, RevisionId::new(1))?;
@@ -894,9 +891,8 @@ fn run_incremental_path(
         let previous_memo = session.pure_memo_stats();
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
         let started = Instant::now();
-        let (input, font) = resolvers.resolvers();
         let accepted = session
-            .advance_with_resolvers(RevisionId::new(revision), edit, input, font)
+            .advance_with_resolvers(RevisionId::new(revision), edit, &mut resolvers)
             .map_err(|error| {
                 format!(
                     "advance isolated {} path step {}: {error}",
@@ -1952,9 +1948,8 @@ fn execute_incremental_sample(
     #[cfg(feature = "profiling")]
     let priming_state_hash_before = state_hash_measurement();
     let priming_started = Instant::now();
-    let (input, font) = resolvers.resolvers();
     session
-        .cold_with_resolvers(input, font)
+        .cold_with_resolvers(&mut resolvers)
         .map_err(|error| format!("prepare incremental baseline: {error}"))?;
     let priming_elapsed = priming_started.elapsed();
     #[cfg(feature = "profiling")]
@@ -1971,9 +1966,12 @@ fn execute_incremental_sample(
         let survivor_before = survivor_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
         let started = Instant::now();
-        let (input, font) = resolvers.resolvers();
         let accepted = session
-            .advance_with_resolvers(RevisionId::new(index as u64 + 2), edit.clone(), input, font)
+            .advance_with_resolvers(
+                RevisionId::new(index as u64 + 2),
+                edit.clone(),
+                &mut resolvers,
+            )
             .map_err(|error| format!("advance incremental edit {}: {error}", index + 1))?;
         let elapsed = started.elapsed();
         let memo = session.pure_memo_stats();
@@ -2142,9 +2140,8 @@ fn execute_cold_sample(
     )?;
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
     let started = Instant::now();
-    let (input, font) = resolvers.resolvers();
     let accepted = session
-        .cold_with_resolvers(input, font)
+        .cold_with_resolvers(&mut resolvers)
         .map_err(|error| format!("compile cold edited document: {error}"))?;
     let elapsed = started.elapsed();
     let _ = black_box(accepted.artifacts.len());

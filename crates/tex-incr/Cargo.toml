@@ -7,8 +7,6 @@ edition.workspace = true
 getrandom = { version = "0.3", features = ["wasm_js"] }
 tex-command = { path = "../tex-command" }
 tex-exec = { path = "../tex-exec" }
-tex-expand = { path = "../tex-expand" }
-tex-lex = { path = "../tex-lex" }
 tex-out = { path = "../tex-out" }
 tex-state = { path = "../tex-state" }
 

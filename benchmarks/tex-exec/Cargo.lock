@@ -970,8 +970,6 @@ dependencies = [
  "getrandom",
  "tex-command",
  "tex-exec",
- "tex-expand",
- "tex-lex",
  "tex-out",
  "tex-state",
 ]

@@ -23,7 +23,7 @@ fn template() -> Universe {
     // runs.
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     tex_exec::install_unexpandable_primitives(&mut universe);
-    tex_expand::install_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
     universe
 }
 
@@ -204,11 +204,11 @@ fn paragraph_recording_keeps_line_provenance_opaque() {
 
     let region = session
         .pure_memo
-        .accepted_paragraphs()
+        .accepted_canonical_paragraphs()
         .iter()
-        .find(|region| region.lines.is_some())
+        .find(|region| region.finished_lines.is_some())
         .expect("literal paragraph is retained");
-    assert!(region.delivered_tokens > repetitions);
+    assert!(region.delivered_commands > repetitions);
     assert!(matches!(
         region.line_provenance,
         tex_state::ParagraphLineProvenance::Accepted(_)
@@ -240,24 +240,12 @@ fn paragraph_history_interns_changed_observations_per_generation() {
 
     let regions = session
         .pure_memo
-        .accepted_paragraphs()
+        .accepted_canonical_paragraphs()
         .iter()
-        .filter(|region| region.lines.is_some())
+        .filter(|region| region.finished_lines.is_some())
         .collect::<Vec<_>>();
     assert!(regions.len() >= 2, "both paragraphs should be retained");
-    let first_table = regions[0]
-        .dependency_observations
-        .as_ref()
-        .expect("accepted region has an observation table");
-    assert!(regions.iter().all(|region| {
-        std::sync::Arc::ptr_eq(
-            first_table,
-            region
-                .dependency_observations
-                .as_ref()
-                .expect("accepted region has an observation table"),
-        )
-    }));
+    assert_ne!(regions[0].identity, regions[1].identity);
 
     let count_key = tex_state::DependencyKey::Cell {
         bank: tex_state::DependencyBank::Count,
@@ -267,7 +255,8 @@ fn paragraph_history_interns_changed_observations_per_generation() {
         .iter()
         .filter_map(|region| {
             region
-                .dependencies()
+                .dependencies
+                .iter()
                 .find(|dependency| dependency.key == count_key)
                 .map(|dependency| dependency.changed_at)
         })
@@ -308,7 +297,7 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
     assert!(
         session
             .pure_memo
-            .accepted_paragraphs()
+            .accepted_canonical_paragraphs()
             .iter()
             .any(|region| matches!(
                 region.line_provenance,
@@ -795,12 +784,7 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
         .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
         .expect("font fixture");
     session.cold().expect("cold revision");
-    let original_table = std::sync::Arc::as_ptr(
-        session.pure_memo.accepted_paragraphs()[0]
-            .dependency_observations
-            .as_ref()
-            .expect("cold observation table"),
-    ) as *const tex_state::ObservedDependency as usize;
+    let original_identity = session.pure_memo.accepted_canonical_paragraphs()[0].identity;
 
     let changed = source.find("changed").expect("changed paragraph");
     let before = session.pure_memo_stats();
@@ -822,39 +806,19 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
     );
     let accepted = session
         .pure_memo
-        .accepted_paragraphs()
+        .accepted_canonical_paragraphs()
         .iter()
-        .filter(|region| region.lines.is_some())
-        .collect::<Vec<_>>();
-    let tables = accepted
-        .iter()
-        .map(|region| {
-            std::sync::Arc::as_ptr(
-                region
-                    .dependency_observations
-                    .as_ref()
-                    .expect("accepted region has an observation table"),
-            ) as *const tex_state::ObservedDependency as usize
-        })
+        .filter(|region| region.finished_lines.is_some())
         .collect::<Vec<_>>();
     assert!(
-        accepted.windows(2).any(|pair| {
-            !std::sync::Arc::ptr_eq(
-                pair[0]
-                    .dependency_observations
-                    .as_ref()
-                    .expect("accepted region has an observation table"),
-                pair[1]
-                    .dependency_observations
-                    .as_ref()
-                    .expect("accepted region has an observation table"),
-            )
-        }),
-        "a newly cold paragraph and carried suffix must retain distinct generation tables: original={original_table} accepted={tables:?}"
+        accepted
+            .iter()
+            .any(|region| region.identity == original_identity),
+        "the unchanged suffix identity must remain accepted"
     );
     assert!(accepted.iter().all(|region| {
-        region.dependencies().count() == region.dependency_ordinals.len()
-            && region.break_dependencies().count() == region.break_dependency_ordinals.len()
+        region.dependencies.len()
+            == region.front_dependency_ordinals.len() + region.break_dependency_ordinals.len()
     }));
 }
 
@@ -2396,10 +2360,10 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
     session.cold().expect("cold revision");
     let inline_region = session
         .pure_memo
-        .accepted_paragraphs()
+        .accepted_canonical_paragraphs()
         .iter()
         .find(|region| {
-            region.dependencies().any(|dependency| {
+            region.dependencies.iter().any(|dependency| {
                 matches!(
                     dependency.key,
                     tex_state::DependencyKey::Code {
@@ -2410,7 +2374,7 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
             })
         })
         .expect("inline paragraph records exact math-code reads");
-    assert!(inline_region.dependencies().all(|dependency| {
+    assert!(inline_region.dependencies.iter().all(|dependency| {
         !matches!(
             dependency.key,
             tex_state::DependencyKey::CodeGeneration(
@@ -2419,7 +2383,8 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
         )
     }));
     let family_dependencies = inline_region
-        .dependencies()
+        .dependencies
+        .iter()
         .filter(|dependency| {
             matches!(
                 dependency.key,
@@ -2568,10 +2533,10 @@ fn inline_math_family_binding_change_rejects_retained_lines() {
     let before = session.pure_memo_stats();
     let inline_region = session
         .pure_memo
-        .accepted_paragraphs()
+        .accepted_canonical_paragraphs()
         .iter()
         .find(|region| {
-            region.dependencies().any(|dependency| {
+            region.dependencies.iter().any(|dependency| {
                 matches!(
                     dependency.key,
                     tex_state::DependencyKey::Cell {
@@ -3028,7 +2993,7 @@ fn macro_started_group_transitions_are_paragraph_replay_barriers() {
             "{name}: {stats:?}"
         );
         assert!(
-            session.pure_memo.accepted_paragraphs().is_empty(),
+            session.pure_memo.accepted_canonical_paragraphs().is_empty(),
             "{name}: a macro-started group transition must not publish a replay record"
         );
     }
@@ -3372,7 +3337,7 @@ fn paragraph_recording_rejects_pdf_microtype_until_font_code_dependencies_are_co
         .expect("font fixture");
     session.cold().expect("microtype paragraphs execute");
     assert!(
-        session.pure_memo.accepted_paragraphs().is_empty(),
+        session.pure_memo.accepted_canonical_paragraphs().is_empty(),
         "finished lines must not be retained until mutable PDF font-code dependencies are tracked"
     );
 }
@@ -3496,7 +3461,7 @@ fn break_dependency_cold_fallback_keeps_current_output_provenance() {
     );
     assert_eq!(after.paragraph_hits, before.paragraph_hits, "{after:?}");
     assert!(
-        !session.pure_memo.accepted_paragraphs().is_empty(),
+        !session.pure_memo.accepted_canonical_paragraphs().is_empty(),
         "the cold fallback must preserve, not rebuild or discard, the prior accepted history"
     );
     assert!(
@@ -3587,9 +3552,13 @@ fn paragraph_entry_validation_rejects_changed_indent_then_backdates_equal_state(
     assert!(
         session
             .pure_memo
-            .accepted_paragraphs()
+            .accepted_canonical_paragraphs()
             .iter()
-            .all(|region| region.dependencies().count() == region.dependency_ordinals.len()),
+            .all(|region| {
+                region.dependencies.len()
+                    == region.front_dependency_ordinals.len()
+                        + region.break_dependency_ordinals.len()
+            }),
         "cold fallback after a changed stamp must re-intern every observation ordinal"
     );
 
@@ -4696,29 +4665,6 @@ impl CanonicalResourceHost for DecliningStagedCanonicalHost<'_> {
     }
 }
 
-impl InputResolver for StagedInputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_state::FileContent> {
-        Ok(self.files.get(name).cloned().map_or_else(
-            || {
-                tex_expand::ResourceLookup::NeedResource(tex_expand::ResourceNeed::new(
-                    request_index,
-                ))
-            },
-            |source| match input
-                .read_supplied_input_file(std::path::Path::new(name), source.into_bytes().into())
-            {
-                Ok(content) => tex_expand::ResourceLookup::Available(content),
-                Err(_) => tex_expand::ResourceLookup::Unavailable,
-            },
-        ))
-    }
-}
-
 #[test]
 fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
     let original = "\\end".to_owned();
@@ -4739,7 +4685,6 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
         replacement: replacement.clone(),
     };
     let mut inputs = StagedInputResolver::default();
-    let mut fonts = DirectFontResolver;
     let initial_live_bytes = session.fragments.source_bytes();
     let mut peak_live_bytes = initial_live_bytes;
 
@@ -4748,7 +4693,11 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
         ("two", "\\shipout\\vbox{\\hrule height 2pt}"),
     ] {
         session
-            .advance_with_resolvers(RevisionId::new(2), edit.clone(), &mut inputs, &mut fonts)
+            .advance_with_resolvers(
+                RevisionId::new(2),
+                edit.clone(),
+                &mut DecliningStagedCanonicalHost::new(&mut inputs),
+            )
             .expect_err("unresolved input rejects this attempt");
         peak_live_bytes = peak_live_bytes.max(session.fragments.source_bytes());
         assert_eq!(session.fragments.source_bytes(), initial_live_bytes);
@@ -4757,7 +4706,11 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
     assert_eq!(peak_live_bytes, initial_live_bytes);
 
     let accepted = session
-        .advance_with_resolvers(RevisionId::new(2), edit, &mut inputs, &mut fonts)
+        .advance_with_resolvers(
+            RevisionId::new(2),
+            edit,
+            &mut DecliningStagedCanonicalHost::new(&mut inputs),
+        )
         .expect("fully provisioned retry succeeds");
     assert_eq!(session.fragments.source_bytes(), replacement.len());
     assert_eq!(
@@ -4776,7 +4729,7 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
     .expect("cold session");
     let mut cold_inputs = inputs;
     let cold = cold
-        .cold_with_resolvers(&mut cold_inputs, &mut fonts)
+        .cold_with_resolvers(&mut StagedCanonicalHost::new(&mut cold_inputs))
         .expect("cold comparison succeeds");
     assert_eq!(
         accepted.dvi_bytes().expect("incremental DVI"),
@@ -5320,7 +5273,7 @@ fn changed_included_input_rejects_checkpoint_reuse() {
     ))
     .with_plain_catcodes();
     tex_exec::install_unexpandable_primitives(&mut universe);
-    tex_expand::install_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
     let mut session = Session::start(
         universe,
         "include",

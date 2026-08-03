@@ -16,21 +16,18 @@ use tex_command::{
     SourceRegistrationError,
 };
 use tex_exec::{
-    Cancellation, CanonicalMainControl, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceNeed, CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult,
-    CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionBudgetCounters,
-    ExecutionContext, ExecutionStats, Executor, MainControlStep, canonical_font_resource_path,
+    Cancellation, CanonicalMainControl, CanonicalParagraphRegion, CanonicalResourceFulfillment,
+    CanonicalResourceHost, CanonicalResourceNeed, CanonicalResourceOutcome, CanonicalResourceWorld,
+    CanonicalStepResult, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
+    ExecutionBudgetCounters, MainControlStep, canonical_font_resource_path,
 };
-use tex_expand::{ResourceLookup, ResourceResult};
-use tex_lex::{InputStack, MemoryInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::token::OriginId;
 use tex_state::{
     ArtifactOrigin, CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord,
-    FragmentStore, GenerationForkError, GenerationSubstrate, InputReadState, InputResolver,
-    LayoutGeneration, LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation,
-    Universe, WorldError,
+    FragmentStore, GenerationForkError, GenerationSubstrate, LayoutGeneration,
+    LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation, Universe, WorldError,
 };
 
 mod trace;
@@ -260,35 +257,6 @@ pub struct ExpansionStats {
     pub builder_append_timer_samples: u64,
 }
 
-impl From<tex_lex::ExpansionStats> for ExpansionStats {
-    fn from(stats: tex_lex::ExpansionStats) -> Self {
-        Self {
-            token_frame_steps: stats.token_frame_steps,
-            provenance_resolutions: stats.provenance_resolutions,
-            character_tokens: stats.character_tokens,
-            meaning_lookups: stats.meaning_lookups,
-            literal_spans: stats.literal_spans,
-            literal_tokens: stats.literal_tokens,
-            segmentation_cache_hits: stats.segmentation_cache_hits,
-            segmentation_cache_misses: stats.segmentation_cache_misses,
-            builder_appends: stats.builder_appends,
-            source_text_span_attempts: stats.source_text_span_attempts,
-            source_text_spans: stats.source_text_spans,
-            source_text_tokens: stats.source_text_tokens,
-            meaning_cache_hits: stats.meaning_cache_hits,
-            meaning_cache_misses: stats.meaning_cache_misses,
-            frame_step_nanos: stats.frame_step_nanos,
-            provenance_nanos: stats.provenance_nanos,
-            classification_meaning_nanos: stats.classification_meaning_nanos,
-            builder_append_nanos: stats.builder_append_nanos,
-            frame_step_timer_samples: stats.frame_step_timer_samples,
-            provenance_timer_samples: stats.provenance_timer_samples,
-            classification_meaning_timer_samples: stats.classification_meaning_timer_samples,
-            builder_append_timer_samples: stats.builder_append_timer_samples,
-        }
-    }
-}
-
 /// High-level execution path used to produce one accepted revision.
 ///
 /// Paragraph telemetry remains generic. This attribution distinguishes an
@@ -364,6 +332,7 @@ pub struct PendingRevision {
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
+    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
     substrate: PendingSubstrate,
     reuse: ReuseMetrics,
     dumped_format: bool,
@@ -389,6 +358,8 @@ pub struct RevisionCandidate {
     job_start_captured: bool,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
+    carried_paragraphs: Vec<CanonicalParagraphRegion>,
+    replay_suffix: Vec<CanonicalParagraphRegion>,
 }
 
 struct CanonicalCandidateCompletion {
@@ -481,6 +452,36 @@ impl PendingRevision {
 }
 
 impl RevisionCandidate {
+    fn take_accepted_paragraphs(
+        &mut self,
+        convergence_position: Option<usize>,
+    ) -> Vec<CanonicalParagraphRegion> {
+        let resolver = self.universe.paragraph_origin_resolver();
+        let mut accepted = std::mem::take(&mut self.carried_paragraphs);
+        accepted.extend(self.control.take_finished_paragraph_regions());
+        if let Some(position) = convergence_position {
+            for region in &self.replay_suffix {
+                let starts_in_suffix = region
+                    .input()
+                    .coverage()
+                    .root_start()
+                    .is_some_and(|start| start >= position);
+                if starts_in_suffix
+                    && !accepted
+                        .iter()
+                        .any(|accepted| accepted.identity() == region.identity())
+                {
+                    region.publish_carried_history(&mut self.universe);
+                    accepted.push(region.clone());
+                }
+            }
+        }
+        for region in &mut accepted {
+            region.accept_line_provenance(Arc::clone(&resolver));
+        }
+        accepted
+    }
+
     fn validate_execution_budgets(&self) -> Result<(), SessionError> {
         let attempted_steps = u64::try_from(self.delivered_commands).unwrap_or(u64::MAX);
         let input_frames = u64::try_from(self.control.input_level_count()).unwrap_or(u64::MAX);
@@ -979,6 +980,7 @@ pub struct Session {
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
+    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
     substrate: Option<GenerationSubstrate>,
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
@@ -1130,6 +1132,7 @@ impl Session {
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
             history: Vec::new(),
+            canonical_paragraphs: Vec::new(),
             substrate: None,
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
@@ -1302,26 +1305,23 @@ impl Session {
     }
 
     pub fn cold(&mut self) -> Result<AcceptedOutput, SessionError> {
-        let mut input_resolver = DirectInputResolver;
-        let mut font_resolver = DirectFontResolver;
-        self.cold_with_resolvers(&mut input_resolver, &mut font_resolver)
+        self.cold_with_resolvers(&mut DirectCanonicalHost)
     }
 
     pub fn cold_with_resolvers(
         &mut self,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        self.cold_with_optional_image_resolver(input_resolver, font_resolver, None)
+        let mut candidate = self.start_cold_candidate()?;
+        drive_synchronous_candidate(&mut candidate, host)?;
+        self.accept_cold_candidate(candidate)
     }
 
     pub fn cold_with_resource_resolvers(
         &mut self,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
-        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        self.cold_with_optional_image_resolver(input_resolver, font_resolver, Some(image_resolver))
+        self.cold_with_resolvers(host)
     }
 
     /// Creates a private cold candidate without changing accepted session
@@ -1360,6 +1360,8 @@ impl Session {
             kind: RevisionCandidateKind::Initial {
                 source_len: self.source.len(),
             },
+            carried_paragraphs: Vec::new(),
+            replay_suffix: Vec::new(),
         })
     }
 
@@ -1547,6 +1549,26 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let anchor = &setup.old_history[restart];
+        let revised_root: Arc<[u8]> = Arc::from(setup.next.as_bytes());
+        let rehomed_paragraphs = self
+            .canonical_paragraphs
+            .iter()
+            .filter_map(|region| {
+                region.rehome_edited_root(
+                    setup.old_source.as_bytes(),
+                    Arc::clone(&revised_root),
+                    setup.map.old.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let (carried_paragraphs, replay_suffix): (Vec<_>, Vec<_>) =
+            rehomed_paragraphs.into_iter().partition(|region| {
+                region
+                    .input()
+                    .coverage()
+                    .root_end()
+                    .is_some_and(|end| end <= anchor.key.position)
+            });
         let mut control = if self.initex {
             CanonicalMainControl::prepared_initex(self.effective_command_profile())
         } else {
@@ -1564,12 +1586,16 @@ impl Session {
             &setup.fragments,
             &setup.next_layout,
         )?;
+        control.install_paragraph_replay_regions(replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
             universe.world_mut().set_memory_file(path, bytes.clone())?;
         }
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(true);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        for region in &carried_paragraphs {
+            region.publish_carried_history(&mut universe);
+        }
         let sink = ResumeSink::new(&setup.old_history, restart, &setup.map, allow_convergence);
         let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
@@ -1588,6 +1614,8 @@ impl Session {
                 restart,
                 restart_fork_latency,
             },
+            carried_paragraphs,
+            replay_suffix,
         })
     }
 
@@ -1626,6 +1654,8 @@ impl Session {
             job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },
+            carried_paragraphs: Vec::new(),
+            replay_suffix: Vec::new(),
         })
     }
 
@@ -1649,6 +1679,7 @@ impl Session {
         &self,
         mut candidate: RevisionCandidate,
     ) -> Result<PendingRevision, SessionError> {
+        let canonical_paragraphs = candidate.take_accepted_paragraphs(None);
         let RevisionCandidateKind::Replacement { setup } = candidate.kind else {
             return Err(SessionError::CandidateKindMismatch);
         };
@@ -1710,6 +1741,7 @@ impl Session {
             artifacts,
             dvi_pages,
             history,
+            canonical_paragraphs,
             substrate: PendingSubstrate::Replaced(substrate),
             reuse,
             dumped_format,
@@ -1723,6 +1755,13 @@ impl Session {
         &self,
         mut candidate: RevisionCandidate,
     ) -> Result<PendingRevision, SessionError> {
+        let convergence_position = match &candidate.sink {
+            CandidateSink::Advance(sink) if sink.convergence_old_index.is_some() => {
+                sink.records.last().map(|record| record.key.position)
+            }
+            _ => None,
+        };
+        let canonical_paragraphs = candidate.take_accepted_paragraphs(convergence_position);
         let RevisionCandidateKind::Incremental {
             setup,
             restart,
@@ -1964,6 +2003,7 @@ impl Session {
             artifacts,
             dvi_pages: pages,
             history,
+            canonical_paragraphs,
             substrate: pending_substrate,
             reuse,
             dumped_format,
@@ -1973,6 +2013,7 @@ impl Session {
         })
     }
 
+    #[cfg(any())]
     fn cold_with_optional_image_resolver(
         &mut self,
         input_resolver: &mut dyn InputResolver,
@@ -2212,24 +2253,16 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
     ) -> Result<AcceptedOutput, SessionError> {
-        let mut input_resolver = DirectInputResolver;
-        let mut font_resolver = DirectFontResolver;
-        self.advance_with_resolvers(next_revision, edit, &mut input_resolver, &mut font_resolver)
+        self.advance_with_resolvers(next_revision, edit, &mut DirectCanonicalHost)
     }
 
     pub fn advance_with_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        let pending = self.prepare_advance_with_resolvers(
-            next_revision,
-            edit,
-            input_resolver,
-            font_resolver,
-        )?;
+        let pending = self.prepare_advance_with_resolvers(next_revision, edit, host)?;
         self.accept_pending(pending)
     }
 
@@ -2237,17 +2270,9 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
-        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
-        let pending = self.prepare_advance_with_resource_resolvers(
-            next_revision,
-            edit,
-            input_resolver,
-            font_resolver,
-            image_resolver,
-        )?;
+        let pending = self.prepare_advance_with_resource_resolvers(next_revision, edit, host)?;
         self.accept_pending(pending)
     }
 
@@ -2258,35 +2283,23 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<PendingRevision, SessionError> {
-        self.prepare_advance_with_optional_image_resolver(
-            next_revision,
-            edit,
-            input_resolver,
-            font_resolver,
-            None,
-        )
+        let mut candidate = self.start_advance_candidate(next_revision, edit)?;
+        drive_synchronous_candidate(&mut candidate, host)?;
+        self.finish_advance_candidate(candidate)
     }
 
     pub fn prepare_advance_with_resource_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        input_resolver: &mut dyn InputResolver,
-        font_resolver: &mut dyn tex_exec::FontResolver,
-        image_resolver: &mut dyn tex_exec::PdfImageResolver,
+        host: &mut dyn CanonicalResourceHost,
     ) -> Result<PendingRevision, SessionError> {
-        self.prepare_advance_with_optional_image_resolver(
-            next_revision,
-            edit,
-            input_resolver,
-            font_resolver,
-            Some(image_resolver),
-        )
+        self.prepare_advance_with_resolvers(next_revision, edit, host)
     }
 
+    #[cfg(any())]
     fn prepare_advance_with_optional_image_resolver(
         &mut self,
         next_revision: RevisionId,
@@ -2665,6 +2678,7 @@ impl Session {
             artifacts,
             dvi_pages,
             history,
+            canonical_paragraphs,
             substrate,
             reuse,
             dumped_format,
@@ -2730,6 +2744,7 @@ impl Session {
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
         self.history = history;
+        self.canonical_paragraphs = canonical_paragraphs;
         self.dumped_format = dumped_format;
         self.format_dump_receipt = format_dump_receipt;
         self.expansion_stats = expansion_stats;
@@ -2802,6 +2817,7 @@ impl Session {
         );
         retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
         self.history = history;
+        self.canonical_paragraphs = run.canonical_paragraphs;
         self.effects = run.effects;
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
@@ -2901,6 +2917,7 @@ fn build_page_render_map(
 
 struct RevisionRun {
     history: Vec<BoundaryRecord>,
+    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
     effects: Vec<EffectRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -2925,6 +2942,7 @@ struct FinishedColdCandidate {
 fn finish_cold_candidate(
     mut candidate: RevisionCandidate,
 ) -> Result<FinishedColdCandidate, SessionError> {
+    let canonical_paragraphs = candidate.take_accepted_paragraphs(None);
     let RevisionCandidateKind::Initial { source_len } = candidate.kind else {
         return Err(SessionError::CandidateKindMismatch);
     };
@@ -2958,6 +2976,7 @@ fn finish_cold_candidate(
     Ok(FinishedColdCandidate {
         run: RevisionRun {
             history: sink.records,
+            canonical_paragraphs,
             effects,
             artifacts,
             dvi_pages,
@@ -2994,6 +3013,7 @@ impl CheckpointSink for HistorySink {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any())]
 fn execute_revision(
     template: &Universe,
     pure_memo: &mut tex_state::PureMemoRuntime,
@@ -3083,6 +3103,7 @@ fn execute_revision(
     })
 }
 
+#[cfg(any())]
 struct AdvanceRun {
     scratch: Universe,
     new_records: Vec<BoundaryRecord>,
@@ -3237,6 +3258,7 @@ fn push_checkpoint(
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
+#[cfg(any())]
 fn execute_advance(
     template: &Universe,
     pure_memo: &mut tex_state::PureMemoRuntime,
@@ -3462,23 +3484,62 @@ fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit)
         .map(|(index, _)| index)
 }
 
-struct DirectInputResolver;
+struct DirectCanonicalHost;
 
-impl InputResolver for DirectInputResolver {
-    fn open_input(
+impl CanonicalResourceHost for DirectCanonicalHost {
+    fn fulfill(
         &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<tex_state::FileContent> {
-        Ok(match input.read_input_file(Path::new(name)) {
-            Ok(content) => ResourceLookup::Available(content),
-            Err(_) => ResourceLookup::Unavailable,
-        })
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        match need {
+            CanonicalResourceNeed::Input { name, .. } => world
+                .read_file(Path::new(name))
+                .ok()
+                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::world_input(
+                        name, content,
+                    ))
+                }),
+            CanonicalResourceNeed::InputProbe { request } => world
+                .read_file(Path::new(&request.name))
+                .ok()
+                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
+                    CanonicalResourceOutcome::Fulfilled(
+                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content),
+                    )
+                }),
+            CanonicalResourceNeed::Font { request } => world
+                .read_file(canonical_font_resource_path(&request.name))
+                .ok()
+                .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
+                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                        request: request.clone(),
+                        resource: Box::new(tex_command::FontResource::Tfm {
+                            metrics,
+                            opentype: None,
+                        }),
+                    })
+                }),
+            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+        }
     }
 }
 
-struct DirectFontResolver;
+fn drive_synchronous_candidate(
+    candidate: &mut RevisionCandidate,
+    host: &mut dyn CanonicalResourceHost,
+) -> Result<(), SessionError> {
+    match candidate.drive_with_resource_resolvers(host, &Cancellation::new())? {
+        RevisionCandidateResult::Complete => Ok(()),
+        RevisionCandidateResult::AwaitingResources(need) => {
+            Err(SessionError::CanonicalResourceNoProgress {
+                need,
+                site: candidate.control.pending_resource_site(),
+            })
+        }
+    }
+}
 
 struct Timer {
     #[cfg(not(target_arch = "wasm32"))]
@@ -3506,6 +3567,7 @@ impl Timer {
     }
 }
 
+#[cfg(any())]
 impl tex_exec::FontResolver for DirectFontResolver {
     fn open_font(
         &mut self,
