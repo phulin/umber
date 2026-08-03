@@ -1015,9 +1015,39 @@ fn rebox_observes_each_tex82_packaging_call() {
             .iter()
             .map(|packed| (packed.axis, packed.width))
             .collect::<Vec<_>>(),
-        vec![(BoxAxis::Horizontal, sc(0)), (BoxAxis::Horizontal, sc(18)),],
-        "zero-width vertical reuse has only its source and exact-width completions"
+        vec![
+            (BoxAxis::Horizontal, sc(0)),
+            (BoxAxis::Horizontal, sc(0)),
+            (BoxAxis::Horizontal, sc(18)),
+        ],
+        "§715 naturally hpacks a zero-width vertical source before the exact-width hpack"
     );
+}
+
+#[test]
+fn clean_empty_field_uses_tex82_null_box_without_hpack() {
+    // TeX82 §720 sends an empty field to `found` as `new_null_box`. The sole
+    // unshifted box is already clean, so this path never calls hpack.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let mut ctx = Context {
+        state: &universe,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(0),
+        layout: MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
+    };
+
+    let boxed = clean_box(&mut ctx, &MathField::Empty, Style::TEXT);
+    assert_eq!(boxed.width, sc(0));
+    assert_eq!(boxed.height, sc(0));
+    assert_eq!(boxed.depth, sc(0));
+    assert!(ctx.layout.nodes(boxed.list).is_empty());
+    assert_eq!(ctx.layout.pack_observation_count(), 0);
 }
 
 #[test]

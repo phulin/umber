@@ -337,7 +337,18 @@ impl MathLayoutBuilder {
     }
 
     pub(crate) fn hpack(&mut self, list: FrozenHList) -> MathBox {
-        let boxed = self.structural_hbox(list);
+        let boxed = MathBox {
+            width: list.width,
+            height: list.height,
+            depth: list.depth,
+            shift: Scaled::from_raw(0),
+            list,
+            axis: BoxAxis::Horizontal,
+            display: false,
+            glue_set: GlueSetRatio::from_raw(0),
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+        };
         // TeX82 §651's `hpack` has one canonical return seam. Appendix G
         // reaches it for every structural clean/sub-mlist box, not only for
         // source boxes that arrived already packaged. Retain the finalized
@@ -346,7 +357,9 @@ impl MathLayoutBuilder {
         boxed
     }
 
-    pub(crate) fn structural_hbox(&self, list: FrozenHList) -> MathBox {
+    /// TeX82 §720's already-clean `new_null_box` for an empty math field.
+    pub(crate) fn null_hbox(&mut self) -> MathBox {
+        let list = self.empty();
         MathBox {
             width: list.width,
             height: list.height,

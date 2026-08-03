@@ -754,7 +754,10 @@ pub(crate) fn clean_box(
 ) -> MathBox {
     // AppG rule 17
     match field {
-        MathField::Empty => ctx.layout.hpack(ctx.layout.empty()),
+        // TeX82 §720 represents an empty field with `new_null_box`, then
+        // recognizes that sole unshifted box as already clean. No hpack is
+        // performed at this boundary.
+        MathField::Empty => ctx.layout.null_hbox(),
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             if let Some(fetched) = fetch(ctx, *ch, style) {
                 // TeX82 §720 does not return `char_box` directly here. It

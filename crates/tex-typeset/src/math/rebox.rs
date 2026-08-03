@@ -14,15 +14,9 @@ pub(super) fn rebox(
     if slack.raw() != 0 && !boxed.list.is_empty() {
         let mut payload = if matches!(boxed.axis, BoxAxis::Vertical) {
             let list = ctx.layout.hlist([MathNode::VList(boxed.clone())]);
-            // A nonzero vertical source first crosses TeX82 §715's natural
-            // hpack boundary. For a zero-width source, §715 only changes the
-            // structural wrapper before the common exact-width package; it
-            // does not publish a distinct zero-size completion.
-            let natural = if boxed.width.raw() == 0 {
-                ctx.layout.structural_hbox(list)
-            } else {
-                ctx.layout.hpack(list)
-            };
+            // TeX82 §715 naturally hpacks every nonempty vertical source
+            // whose width changes, including a zero-width source.
+            let natural = ctx.layout.hpack(list);
             boxed.height = natural.height;
             boxed.depth = natural.depth;
             natural.list
