@@ -240,7 +240,13 @@ impl ShortDisplayRenderer {
 
     pub(crate) fn render_nodes(&mut self, stores: &Universe, nodes: &[Node]) -> String {
         let mut out = String::new();
-        append_short_display_nodes(stores, nodes, &mut self.font, &mut out);
+        append_short_display_nodes(
+            stores,
+            nodes,
+            DiscReplacementLayout::DetachedProjection,
+            &mut self.font,
+            &mut out,
+        );
         out
     }
 
@@ -266,12 +272,29 @@ fn append_short_display(
     out: &mut String,
 ) {
     let nodes = stores.nodes(list).to_vec();
-    append_short_display_nodes(stores, &nodes, font_in_short_display, out);
+    append_short_display_nodes(
+        stores,
+        &nodes,
+        DiscReplacementLayout::FrozenList,
+        font_in_short_display,
+        out,
+    );
+}
+
+#[derive(Clone, Copy)]
+enum DiscReplacementLayout {
+    /// Paragraph tracing projects TeX's mutable linked list into a detached
+    /// slice. Its immutable side-list length identifies the projected nodes
+    /// hidden after a discretionary.
+    DetachedProjection,
+    /// A frozen engine list carries TeX's actual `replace_count` explicitly.
+    FrozenList,
 }
 
 fn append_short_display_nodes(
     stores: &Universe,
     nodes: &[Node],
+    disc_layout: DiscReplacementLayout,
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
@@ -311,20 +334,22 @@ fn append_short_display_nodes(
             Node::Disc {
                 pre,
                 post,
+                replace,
                 physical_replace_count,
                 ..
             } => {
                 append_short_display(stores, *pre, font_in_short_display, out);
                 append_short_display(stores, *post, font_in_short_display, out);
-                // TeX82 §174 advances past `replace_count` nodes linked after
-                // the discretionary. The immutable replacement side list is
-                // the replacement's content, not proof that those nodes are
-                // physically present after this particular disc. Math-list
-                // conversion, for example, retains the side list with a zero
-                // physical count, so a following rule must not be skipped.
-                index = index
-                    .saturating_add(usize::from(*physical_replace_count))
-                    .min(nodes.len());
+                // TeX82 §174 advances past the replacement nodes linked after
+                // the discretionary. Frozen engine lists carry that count
+                // explicitly; paragraph tracing instead supplies a detached
+                // projection whose hidden suffix is described by the
+                // immutable replacement side list.
+                let replacement_count = match disc_layout {
+                    DiscReplacementLayout::DetachedProjection => stores.nodes(*replace).len(),
+                    DiscReplacementLayout::FrozenList => usize::from(*physical_replace_count),
+                };
+                index = index.saturating_add(replacement_count).min(nodes.len());
             }
             // §175's `othercases do_nothing`: kerns, penalties, and the math
             // list nodes that never reach a packed horizontal list.
