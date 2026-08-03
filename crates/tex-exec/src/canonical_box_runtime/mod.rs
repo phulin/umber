@@ -12,7 +12,7 @@ mod vsplit;
 #[cfg(test)]
 pub(crate) use packaging::project_short_diagnostic_discs;
 pub(crate) use packaging::{
-    first_box_node, hpack_owned_with_overfull_rule, hpack_with_overfull_rule,
+    first_box_node, hpack_owned_with_overfull_rule, hpack_with_overfull_rule, take_last_box,
 };
 pub(crate) use vsplit::split_vbox_register;
 
@@ -28,4 +28,4 @@ pub(crate) use material::{
     split_hpack_migrations,
 };
 
-pub(crate) use crate::assignments::{indent_in_hmode, norm_min, take_last_box};
+pub(crate) use crate::assignments::{indent_in_hmode, norm_min};

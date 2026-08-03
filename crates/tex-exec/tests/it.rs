@@ -358,6 +358,9 @@ fn canonical_packaging_physically_owns_its_source_free_closure() {
         "fn hpack_owned_with_overfull_rule(",
         "fn project_short_diagnostic_discs(",
         "fn first_box_node(",
+        "fn take_last_box(",
+        "fn reset_removed_box_shift(",
+        "fn report_cannot_take_last_box(",
     ] {
         assert!(
             owner.contains(implementation),

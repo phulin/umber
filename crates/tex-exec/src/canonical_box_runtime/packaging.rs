@@ -6,6 +6,95 @@ use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
 use crate::packing_params::{hpack_params, recover_texxet_directions};
+use crate::{ExecError, Mode, ModeNest};
+
+use super::hmode::flush_pending_hchars;
+
+pub(crate) fn take_last_box(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<Option<Node>, ExecError> {
+    flush_pending_hchars(nest, stores, fuel)?;
+    match nest.current_mode() {
+        Mode::Math | Mode::DisplayMath => {
+            report_cannot_take_last_box(
+                stores,
+                "math mode",
+                &["Sorry; this \\lastbox will be void."],
+            )?;
+            Ok(None)
+        }
+        Mode::Vertical
+            if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
+        {
+            report_cannot_take_last_box(
+                stores,
+                "vertical mode",
+                &[
+                    "Sorry...I usually can't take things from the current page.",
+                    "This \\lastbox will therefore be void.",
+                ],
+            )?;
+            Ok(None)
+        }
+        Mode::Vertical => {
+            let Some(tail) =
+                crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
+            else {
+                return Ok(None);
+            };
+            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+                return Ok(None);
+            }
+            let mut removed = stores.remove_page_contribution_range(tail.removal_range());
+            Ok(reset_removed_box_shift(&mut removed))
+        }
+        Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
+            let Some(tail) =
+                crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
+            else {
+                return Ok(None);
+            };
+            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
+                return Ok(None);
+            }
+            let range = tail.removal_range();
+            let mut removed = nest.current_list_mutation().remove_node_range(range);
+            Ok(reset_removed_box_shift(&mut removed))
+        }
+    }
+}
+
+fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
+    let node = removed
+        .iter_mut()
+        .find(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
+    match node {
+        Node::HList(box_node) | Node::VList(box_node) => {
+            box_node.shift = tex_state::scaled::Scaled::from_raw(0);
+        }
+        _ => unreachable!("node was selected as a box"),
+    }
+    Some(node.clone())
+}
+
+fn report_cannot_take_last_box(
+    stores: &mut Universe,
+    mode: &str,
+    help: &[&str],
+) -> Result<(), ExecError> {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err("You can't use `");
+    report
+        .print_esc("lastbox")
+        .print("' in ")
+        .print(mode)
+        .help(help)
+        .context(context);
+    report.error().jump_out()?;
+    Ok(())
+}
 
 pub(crate) fn hpack_with_overfull_rule(
     stores: &mut Universe,

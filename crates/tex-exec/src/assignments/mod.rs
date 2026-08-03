@@ -77,7 +77,6 @@ pub(crate) use crate::canonical_box_runtime::hmode::{
 };
 pub(crate) use boxes::scan_math_box;
 pub(crate) use boxes::scan_setbox_target;
-pub(crate) use boxes::take_last_box;
 use boxes::*;
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 pub(crate) use canonical_paragraph_end::{

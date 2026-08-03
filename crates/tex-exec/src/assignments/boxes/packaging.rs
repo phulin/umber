@@ -8,6 +8,7 @@ use tex_state::token::{Catcode, TracedTokenWord};
 use tex_state::{ExpansionState, GroupKind, Universe};
 use tex_typeset::PackSpec;
 
+use crate::canonical_box_runtime::take_last_box;
 use crate::packing_params::{vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
@@ -183,76 +184,6 @@ fn recover_missing_box(
     Ok(None)
 }
 
-pub(crate) fn take_last_box(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<Option<Node>, ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
-    match nest.current_mode() {
-        Mode::Math | Mode::DisplayMath => {
-            report_cannot_take_last_box(
-                stores,
-                "math mode",
-                &["Sorry; this \\lastbox will be void."],
-            )?;
-            Ok(None)
-        }
-        Mode::Vertical
-            if nest.current_list().is_empty() && stores.page_contributions().is_empty() =>
-        {
-            report_cannot_take_last_box(
-                stores,
-                "vertical mode",
-                &[
-                    "Sorry...I usually can't take things from the current page.",
-                    "This \\lastbox will therefore be void.",
-                ],
-            )?;
-            Ok(None)
-        }
-        Mode::Vertical => {
-            let Some(tail) =
-                crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
-            else {
-                return Ok(None);
-            };
-            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
-                return Ok(None);
-            }
-            let range = tail.removal_range();
-            let mut removed = stores.remove_page_contribution_range(range);
-            Ok(reset_removed_box_shift(&mut removed))
-        }
-        Mode::InternalVertical | Mode::Horizontal | Mode::RestrictedHorizontal => {
-            let Some(tail) =
-                crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
-            else {
-                return Ok(None);
-            };
-            if !matches!(tail.node(), Node::HList(_) | Node::VList(_)) {
-                return Ok(None);
-            }
-            let range = tail.removal_range();
-            let mut removed = nest.current_list_mutation().remove_node_range(range);
-            Ok(reset_removed_box_shift(&mut removed))
-        }
-    }
-}
-
-fn reset_removed_box_shift(removed: &mut [Node]) -> Option<Node> {
-    let node = removed
-        .iter_mut()
-        .find(|node| matches!(node, Node::HList(_) | Node::VList(_)))?;
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => {
-            box_node.shift = tex_state::scaled::Scaled::from_raw(0);
-        }
-        _ => unreachable!("node was selected as a box"),
-    }
-    Some(node.clone())
-}
-
 /// TeX.web §370's `<Complain about an undefined macro>`.
 ///
 /// The offending name is deliberately absent from the message: §82's context
@@ -263,29 +194,6 @@ fn report_undefined_control_sequence(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     crate::legacy_diagnostics::report_undefined_control_sequence_in_input(input, stores)?;
-    Ok(())
-}
-
-/// TeX.web §1080's two `\lastbox` refusals, opened by §72's `you_cant`
-/// (`print_err("You can't use `"); print_cmd_chr; print("' in "); print_mode`).
-///
-/// `take_last_box` is also reached from canonical replay and from page
-/// building, neither of which holds a live `InputStack`, so §82's display
-/// comes from the last published input summary.
-fn report_cannot_take_last_box(
-    stores: &mut Universe,
-    mode: &str,
-    help: &[&str],
-) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
-    let mut report = stores.print_err("You can't use `");
-    report
-        .print_esc("lastbox")
-        .print("' in ")
-        .print(mode)
-        .help(help)
-        .context(context);
-    report.error().jump_out()?;
     Ok(())
 }
 

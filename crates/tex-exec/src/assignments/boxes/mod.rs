@@ -21,14 +21,14 @@ pub(crate) mod vsplit;
 use crate::canonical_box_runtime::hmode::infinite_glue;
 use crate::canonical_box_runtime::{
     append_box_node_to_current_list, append_box_register, apply_box_shift_delta,
-    execute_scanned_saved_vertical_discards, execute_scanned_unbox, first_box_node,
+    execute_scanned_saved_vertical_discards, execute_scanned_unbox, first_box_node, take_last_box,
 };
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
 use packaging::{
     BoxScanContext, ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value,
 };
-pub(crate) use packaging::{scan_box_group, scan_pack_spec, take_last_box};
+pub(crate) use packaging::{scan_box_group, scan_pack_spec};
 use vsplit::scan_vsplit_node;
 
 pub(super) fn execute_make_box(

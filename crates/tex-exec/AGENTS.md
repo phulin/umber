@@ -29,8 +29,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/canonical_box_runtime/`: typed canonical box-register, material,
   packing/migration, horizontal contribution, spacing, indentation, whatsit,
   and list-commit runtime surface; `packaging.rs` physically owns horizontal
-  packing/diagnostic projection and box lookup, and `vsplit.rs` owns vertical-box
-  register splitting; `hmode.rs` owns pending-character, ligature, shaping,
+  packing/diagnostic projection, box lookup, and `\lastbox` removal/diagnostics;
+  `vsplit.rs` owns vertical-box register splitting; `hmode.rs` owns pending-character, ligature, shaping,
   hyphen-boundary, spacing, and italic-correction runtime, while scanner fronts
   remain under assignments; `material.rs` owns post-scan box-register reads,
   unboxing, saved discards, delete-last behavior, migration, contribution, and
