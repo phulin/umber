@@ -111,10 +111,12 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
         completed_preamble,
         pending_fin_col_delimiter,
         extra_tab_recovery,
+        pending_outer_recovery_cr,
     } = alignment;
     assert!(completed_preamble.is_none());
     assert!(pending_fin_col_delimiter.is_none());
     assert!(extra_tab_recovery.is_none());
+    assert!(pending_outer_recovery_cr.is_none());
     let ExpansionState {
         cumulative_expansions,
         next_resource_resolution,

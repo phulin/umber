@@ -21,6 +21,7 @@ use crate::input::{
     BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
     StoredReplayReason, TokenBehavior, TokenPayload,
 };
+use crate::processor::alignment::PREAMBLE_ALIGN_STATE;
 use crate::processor::status::{
     AlignmentId, AlignmentScanContext, ScannerStatus, ScannerWarning, TokenBuilderId,
 };
@@ -3483,6 +3484,37 @@ impl CommandProcessor<'_> {
             } else {
                 command = Some(next);
             }
+        }
+        if command.as_ref().is_some_and(|command| {
+            matches!(
+                command.spelling().semantic_token(),
+                Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                }
+            ) && self.command.alignment.align_state == PREAMBLE_ALIGN_STATE
+        }) && let Some(cr) = self.command.alignment.pending_outer_recovery_cr.take()
+        {
+            // §336's first inserted `\cr` was seen while the runaway brace
+            // was still open. Once the follow-up `}` restores the preamble
+            // sentinel, replay the owned delimiter/brace tail before the
+            // backed-up forbidden command can open a second runaway episode.
+            self.conserve_input_stack()?;
+            self.command.push_token_level(
+                TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                    cr,
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '}',
+                            cat: Catcode::EndGroup,
+                        },
+                        OriginId::UNKNOWN,
+                    ),
+                ])),
+                TokenBehavior::Recovery,
+                RetirementBehavior::Pop,
+                ReplayTrace::Inserted,
+            );
         }
         Ok(command)
     }

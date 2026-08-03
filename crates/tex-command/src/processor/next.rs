@@ -2079,8 +2079,8 @@ impl CommandProcessor<'_> {
             ScannerStatus::Matching(_) => (Some("par"), RecoveryKind::InsertedControlSequence),
             // TeX82's `check_outer_validity` inserts frozen `\\cr` before
             // its required follow-up right brace. The recovery event denotes
-            // the inaccessible control sequence alone; raw delivery still
-            // owns the whole inserted token list.
+            // the inaccessible control sequence alone; raw delivery owns
+            // the whole displayed insertion.
             ScannerStatus::Aligning(_) => (Some("cr"), RecoveryKind::InsertedControlSequence),
             ScannerStatus::Normal | ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => {
                 (None, RecoveryKind::InsertedToken)
@@ -2129,6 +2129,9 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
         );
+        if matches!(&status, ScannerStatus::Aligning(_)) {
+            self.command.alignment.pending_outer_recovery_cr = Some(self.frozen_primitive("cr")?);
+        }
         // §336 ends with `ins_error`, which is `back_input` as an *inserted*
         // level and only then `error`. The context therefore renders with the
         // frozen recovery token already on the stack, which is what puts the

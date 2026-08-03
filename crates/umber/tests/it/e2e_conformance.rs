@@ -2387,6 +2387,21 @@ fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
         ),
         "{log}"
     );
+    let frontier = log
+        .rfind("! Incomplete \\ifcase;")
+        .expect("line-363 conditional recovery");
+    let recovery = &log[frontier..];
+    let first = recovery
+        .find("Runaway preamble?\n{")
+        .expect("line-363 runaway");
+    let after_first = &recovery[first + "Runaway preamble?".len()..];
+    let missing = after_first
+        .find("! Missing # inserted in alignment preamble.")
+        .expect("missing-parameter recovery follows runaway");
+    assert!(
+        !after_first[..missing].contains("Runaway preamble?"),
+        "{recovery}"
+    );
 }
 
 #[test]

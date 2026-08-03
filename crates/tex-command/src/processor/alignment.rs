@@ -12,7 +12,7 @@ use tex_state::glue::GlueSpec;
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::token::{Catcode, Token};
+use tex_state::token::{Catcode, Token, TracedTokenWord};
 
 use crate::CurrentCommand;
 use crate::input::InputLevelId;
@@ -250,6 +250,9 @@ pub(crate) struct AlignmentDeliveryState {
     pub(crate) pending_fin_col_delimiter: Option<(AlignmentIdentity, AlignmentCellDelimiter)>,
     /// A one-shot observer marker for TeX82 `fin_col` extra-tab recovery.
     pub(crate) extra_tab_recovery: Option<AlignmentIdentity>,
+    /// Frozen `\cr` retained by §336 until the follow-up inserted brace has
+    /// restored the preamble sentinel and the delimiter can be replayed.
+    pub(crate) pending_outer_recovery_cr: Option<TracedTokenWord>,
 }
 
 impl Default for AlignmentDeliveryState {
@@ -263,6 +266,7 @@ impl Default for AlignmentDeliveryState {
             completed_preamble: None,
             pending_fin_col_delimiter: None,
             extra_tab_recovery: None,
+            pending_outer_recovery_cr: None,
         }
     }
 }
