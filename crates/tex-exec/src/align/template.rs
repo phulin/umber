@@ -55,7 +55,7 @@ pub(super) fn expand_spanned_column_template_at_span_time(
 fn template_finished(
     input: &mut InputStack,
     stores: &Universe,
-    replay_marker: tex_lex::TokenListReplayMarker,
+    replay_marker: tex_state::TokenListReplayMarker,
 ) -> bool {
     if input.finish_exhausted_token_list_replay(replay_marker, stores) {
         return true;

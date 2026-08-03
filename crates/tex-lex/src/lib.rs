@@ -29,6 +29,7 @@ use tex_state::{
 use tex_state::{ProfilingTimer, World};
 
 use tex_state::MacroArguments as MacroArgumentsSummary;
+use tex_state::TokenListReplayMarker;
 pub use tex_state::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
     InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, SourceFrameSummary,
@@ -1175,16 +1176,6 @@ type LiteralSpanCache = AHashMap<(TokenListId, LiteralSpanPolicy), Arc<[LiteralS
 const LITERAL_SPAN_CACHE_MAX_ENTRIES: usize = 4096;
 const TRANSIENT_BUFFER_POOL_MAX_ENTRIES: usize = 64;
 const TRANSIENT_BUFFER_POOL_MAX_CAPACITY: usize = 4096;
-
-/// Identifies one live token-list replay frame independently of its content.
-///
-/// The marker is intentionally absent from resumable input summaries: callers
-/// use it only to delimit a synchronous replay operation on the current stack.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct TokenListReplayMarker {
-    sequence: u64,
-    frame_index: usize,
-}
 
 /// Ephemeral proof of the exact macro replay frame and position that delivered
 /// one token. This is deliberately absent from resumable summaries: TeX's
@@ -2644,10 +2635,8 @@ impl InputStack {
         origin_list: OriginListId,
         replay_kind: TokenListReplayKind,
     ) -> TokenListReplayMarker {
-        let replay_marker = TokenListReplayMarker {
-            sequence: self.next_replay_marker,
-            frame_index: self.frames.slot_len(),
-        };
+        let replay_marker =
+            TokenListReplayMarker::new(self.next_replay_marker, self.frames.slot_len());
         self.next_replay_marker = self
             .next_replay_marker
             .checked_add(1)
@@ -2692,10 +2681,8 @@ impl InputStack {
         tokens: Vec<TracedTokenWord>,
         replay_kind: TokenListReplayKind,
     ) -> TokenListReplayMarker {
-        let replay_marker = TokenListReplayMarker {
-            sequence: self.next_replay_marker,
-            frame_index: self.frames.slot_len(),
-        };
+        let replay_marker =
+            TokenListReplayMarker::new(self.next_replay_marker, self.frames.slot_len());
         self.next_replay_marker = self
             .next_replay_marker
             .checked_add(1)
@@ -5002,10 +4989,10 @@ impl InputStack {
 
     fn replay_marker_frame_index(&self, marker: TokenListReplayMarker) -> Option<usize> {
         matches!(
-            self.frames.get(marker.frame_index),
+            self.frames.get(marker.frame_index()),
             Some(InputFrame::TokenList(frame)) if frame.replay_marker == Some(marker)
         )
-        .then_some(marker.frame_index)
+        .then_some(marker.frame_index())
     }
 
     fn current_token_frame_index(&self) -> Option<usize> {
@@ -5024,10 +5011,7 @@ impl InputStack {
         if !needs_marker {
             return;
         }
-        let marker = TokenListReplayMarker {
-            sequence: self.next_replay_marker,
-            frame_index,
-        };
+        let marker = TokenListReplayMarker::new(self.next_replay_marker, frame_index);
         self.next_replay_marker = self
             .next_replay_marker
             .checked_add(1)

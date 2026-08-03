@@ -62,6 +62,18 @@ fn production_replay_kinds_stay_on_the_state_owner() {
             "{} must not import TokenListReplayKind through tex-lex",
             path.display()
         );
+        assert!(
+            !source.contains("tex_lex::TokenListReplayMarker"),
+            "{} must use tex_state::TokenListReplayMarker",
+            path.display()
+        );
+        assert!(
+            !source.lines().any(|line| {
+                line.contains("tex_lex::{") && line.contains("TokenListReplayMarker")
+            }),
+            "{} must not import TokenListReplayMarker through tex-lex",
+            path.display()
+        );
     }
 }
 

@@ -7,16 +7,14 @@
 
 use std::fmt;
 
-use tex_lex::{
-    InputStack, LexError, LiteralSpanPolicy, TokenListReplayKind, TokenListReplayMarker,
-};
+use tex_lex::{InputStack, LexError, LiteralSpanPolicy};
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::{InsertedOriginKind, OriginListBuilder};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
-use tex_state::{ExpansionState, TracedTokenList};
+use tex_state::{ExpansionState, TokenListReplayKind, TokenListReplayMarker, TracedTokenList};
 
 use crate::{
     Dispatch, DriverExpansionMode, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,

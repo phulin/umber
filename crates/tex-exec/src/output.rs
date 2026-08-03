@@ -523,7 +523,7 @@ fn run_output_routine_inner(
     execution: &mut crate::ExecutionContext<'_>,
     stats: &mut ExecutionStats,
     output: tex_state::ids::TokenListId,
-    replay: &mut Option<tex_lex::TokenListReplayMarker>,
+    replay: &mut Option<tex_state::TokenListReplayMarker>,
 ) -> Result<(), ExecError> {
     stores.set_output_routine_active(true);
     stores.enter_group_with_kind(GroupKind::Output);
@@ -664,7 +664,7 @@ fn report_deleted_box(stores: &mut Universe, deleted: tex_state::ids::NodeListId
 fn pop_finished_output_frame(
     input: &mut InputStack,
     stores: &Universe,
-    output_replay: tex_lex::TokenListReplayMarker,
+    output_replay: tex_state::TokenListReplayMarker,
 ) -> bool {
     input.finish_exhausted_token_list_replay(output_replay, stores)
 }

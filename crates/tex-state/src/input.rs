@@ -168,6 +168,31 @@ impl SourceId {
     }
 }
 
+/// Identifies one live token-list replay frame independently of its content.
+///
+/// The marker is intentionally absent from resumable input summaries: callers
+/// use it only to delimit a synchronous replay operation on the current stack.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct TokenListReplayMarker {
+    sequence: u64,
+    frame_index: usize,
+}
+
+impl TokenListReplayMarker {
+    #[must_use]
+    pub const fn new(sequence: u64, frame_index: usize) -> Self {
+        Self {
+            sequence,
+            frame_index,
+        }
+    }
+
+    #[must_use]
+    pub const fn frame_index(self) -> usize {
+        self.frame_index
+    }
+}
+
 /// Why a frozen token list is being replayed.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TokenListReplayKind {
