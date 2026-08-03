@@ -1784,6 +1784,7 @@ impl CanonicalMainControl {
         if self.modes.current_mode() != Mode::Horizontal
             || self.modes.depth() != 2
             || !self.paragraph_recorder.pending
+            || self.paragraph_recorder.replay.is_empty()
         {
             return false;
         }
