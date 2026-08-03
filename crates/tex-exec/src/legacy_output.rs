@@ -38,7 +38,7 @@ pub(crate) fn expand_shipout_write(
     })?;
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
-    Ok(crate::canonical_shipout::ExpandedWrite(text))
+    Ok(crate::canonical_shipout::ExpandedWrite::transactional(text))
 }
 
 pub(crate) fn expand_shipout_text(

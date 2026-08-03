@@ -159,10 +159,11 @@ fn deferred_write_trace_precedes_improper_spacefactor_report_with_live_context()
     // before expanded scan_toks. The named-list trace therefore precedes the
     // error, whose §82 context still displays that same live write level.
     let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\tracingmacros=2 \shipout\vbox{\write16{\the\spacefactor}}\end",
+        br"\tracingmacros=2\tracingonline=1 \shipout\vbox{\write16{\the\spacefactor}}\end",
     );
     run_to_end(&mut control, &mut stores);
 
@@ -177,7 +178,14 @@ fn deferred_write_trace_precedes_improper_spacefactor_report_with_live_context()
         .find("<write> ")
         .map(|offset| improper + offset)
         .unwrap_or_else(|| panic!("write context is live: {terminal:?}"));
-    assert!(trace < improper && improper < context, "{terminal}");
+    let recovered_zero = terminal[context..]
+        .find("\n0\n")
+        .map(|offset| context + offset)
+        .unwrap_or_else(|| panic!("recovered write value is published: {terminal:?}"));
+    assert!(
+        trace < improper && improper < context && context < recovered_zero,
+        "{terminal}"
+    );
 }
 
 #[test]

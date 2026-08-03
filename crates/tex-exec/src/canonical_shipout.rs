@@ -25,7 +25,32 @@ pub(crate) struct ShipoutOrigin {
     pub(crate) announce_openout: bool,
 }
 
-pub(crate) struct ExpandedWrite(pub(crate) String);
+pub(crate) struct ExpandedWrite {
+    pub(crate) text: String,
+    pub(crate) publication: WritePublication,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WritePublication {
+    Transactional,
+    Deferred,
+}
+
+impl ExpandedWrite {
+    pub(crate) fn transactional(text: String) -> Self {
+        Self {
+            text,
+            publication: WritePublication::Transactional,
+        }
+    }
+
+    pub(crate) fn deferred(text: String) -> Self {
+        Self {
+            text,
+            publication: WritePublication::Deferred,
+        }
+    }
+}
 
 pub(crate) struct ExpandedReplayText(pub(crate) Vec<u8>);
 

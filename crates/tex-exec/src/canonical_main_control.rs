@@ -11031,7 +11031,7 @@ fn canonical_replay_write(
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
-    Ok(crate::canonical_shipout::ExpandedWrite(text))
+    Ok(crate::canonical_shipout::ExpandedWrite::transactional(text))
 }
 
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
@@ -12243,112 +12243,126 @@ fn shipout_replay_box(
     print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
-    let write_diagnostics = std::cell::RefCell::new(Vec::new());
+    let write_publications = std::cell::RefCell::new(Vec::new());
     let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
     let emit_dvi = command.emit_dvi_override.unwrap_or(!supports_pdftex);
     let command_cell = std::cell::RefCell::new(command);
-    let mut expand_write =
-        |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
-            let mut command = command_cell.borrow_mut();
-            let input_snapshot = command.state.snapshot();
-            // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
-            // before moving to the next whatsit. A following write expands only
-            // after those effects have happened, so publish the committed prefix
-            // before its nested command episode contributes observations.
-            if let Some(observations) = command.observations.as_mut() {
-                observations.0.extend(
-                    stores.world().effect_records()[effect_cursor.get()..]
-                        .iter()
-                        .filter_map(stream_effect_observation)
-                        .map(CommandObservation::Effect),
-                );
+    let mut expand_write = |stores: &mut Universe,
+                            sink: PrintSink,
+                            tokens: tex_state::ids::TokenListId| {
+        let mut command = command_cell.borrow_mut();
+        let input_snapshot = command.state.snapshot();
+        // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
+        // before moving to the next whatsit. A following write expands only
+        // after those effects have happened, so publish the committed prefix
+        // before its nested command episode contributes observations.
+        if let Some(observations) = command.observations.as_mut() {
+            observations.0.extend(
+                stores.world().effect_records()[effect_cursor.get()..]
+                    .iter()
+                    .filter_map(stream_effect_observation)
+                    .map(CommandObservation::Effect),
+            );
+        }
+        effect_cursor.set(stores.world().effect_records().len());
+        let traced = stores
+            .tokens(tokens)
+            .iter()
+            .copied()
+            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+            .collect::<Vec<_>>();
+        let traced = stores.finish_traced_token_list(&traced);
+        let expanded = {
+            // TeX82 §1370 temporarily sets `mode:=0` while deferred
+            // write text expands. §299 names that value "no mode", and
+            // §367 updates `shown_mode` if it traces an expandable
+            // command during the scan.
+            let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
+            let mut processor = command.processor(stores);
+            processor.set_command_trace_mode_prefix(mode_prefix);
+            let result = processor.expand_write_text(traced).map_err(command_error);
+            let command_trace_printed = processor.command_trace_printed();
+            write_publications.borrow_mut().extend(
+                processor
+                    .take_semantic_diagnostics()
+                    .into_iter()
+                    .map(|diagnostic| {
+                        PendingShipoutPublication::Diagnostic(PendingDiagnostic::Command(
+                            diagnostic,
+                        ))
+                    }),
+            );
+            drop(processor);
+            if command_trace_printed {
+                *command.shown_mode = None;
             }
-            effect_cursor.set(stores.world().effect_records().len());
-            let traced = stores
-                .tokens(tokens)
-                .iter()
-                .copied()
-                .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-                .collect::<Vec<_>>();
-            let traced = stores.finish_traced_token_list(&traced);
-            let expanded = {
-                // TeX82 §1370 temporarily sets `mode:=0` while deferred
-                // write text expands. §299 names that value "no mode", and
-                // §367 updates `shown_mode` if it traces an expandable
-                // command during the scan.
-                let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
-                let mut processor = command.processor(stores);
-                processor.set_command_trace_mode_prefix(mode_prefix);
-                let result = processor.expand_write_text(traced).map_err(command_error);
-                let command_trace_printed = processor.command_trace_printed();
-                write_diagnostics.borrow_mut().extend(
-                    processor
-                        .take_semantic_diagnostics()
-                        .into_iter()
-                        .map(PendingDiagnostic::Command),
-                );
-                drop(processor);
-                if command_trace_printed {
-                    *command.shown_mode = None;
-                }
-                result
-            };
-            command
-                .state
-                .rollback_nested_input_preserving_conditions(input_snapshot)
-                .expect("shipout write replay preserves the command profile");
-            let expanded = expanded?;
-            if let Some(observations) = command.observations.as_mut() {
-                observations
-                    .0
-                    .push(CommandObservation::Effect(EffectRecord {
-                        kind: "write",
-                        detail: write_effect_detail(sink),
-                        source: None,
-                        tokens: Some(
-                            stores
-                                .tokens(expanded.tokens.token_list())
-                                .iter()
-                                .copied()
-                                .map(|token| observed_macro_token(token, stores))
-                                .collect(),
-                        ),
-                    }));
-            }
-            if expanded.unbalanced {
-                // TeX82 §1372's `<Recover from an unbalanced write command>`.
-                crate::error_report::report_error(
-                    stores,
-                    "Unbalanced write command",
-                    &[
-                        "On this page there's a \\write with fewer real {'s than }'s.",
-                        "I can't handle that very well; good luck.",
-                    ],
-                    expanded
-                        .error_context
-                        .expect("unbalanced write retains its live input context"),
-                )?;
-            }
-            let mut text = String::new();
-            for &token in stores.tokens(expanded.tokens.token_list()) {
-                tex_state::token_show::append_token_string_text(stores, token, &mut text);
-            }
-            let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
-            text.push('\n');
-            Ok(crate::canonical_shipout::ExpandedWrite(text))
+            result
         };
+        command
+            .state
+            .rollback_nested_input_preserving_conditions(input_snapshot)
+            .expect("shipout write replay preserves the command profile");
+        let expanded = expanded?;
+        if let Some(observations) = command.observations.as_mut() {
+            observations
+                .0
+                .push(CommandObservation::Effect(EffectRecord {
+                    kind: "write",
+                    detail: write_effect_detail(sink),
+                    source: None,
+                    tokens: Some(
+                        stores
+                            .tokens(expanded.tokens.token_list())
+                            .iter()
+                            .copied()
+                            .map(|token| observed_macro_token(token, stores))
+                            .collect(),
+                    ),
+                }));
+        }
+        if expanded.unbalanced {
+            // TeX82 §1372's `<Recover from an unbalanced write command>`.
+            crate::error_report::report_error(
+                stores,
+                "Unbalanced write command",
+                &[
+                    "On this page there's a \\write with fewer real {'s than }'s.",
+                    "I can't handle that very well; good luck.",
+                ],
+                expanded
+                    .error_context
+                    .expect("unbalanced write retains its live input context"),
+            )?;
+        }
+        let mut text = String::new();
+        for &token in stores.tokens(expanded.tokens.token_list()) {
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
+        }
+        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+        text.push('\n');
+        if let Some(sink) = crate::canonical_shipout::direct::deferred_write_sink(stores, sink) {
+            write_publications
+                .borrow_mut()
+                .push(PendingShipoutPublication::Write {
+                    sink,
+                    text: text.clone(),
+                });
+        }
+        Ok(crate::canonical_shipout::ExpandedWrite::deferred(text))
+    };
     let mut expand_replay = |stores: &mut Universe,
                              kind: crate::canonical_shipout::ReplayTextKind,
                              tokens: TokenListId| {
         let mut command = command_cell.borrow_mut();
-        canonical_replay_text(
-            &mut command,
-            stores,
-            kind,
-            tokens,
-            &mut write_diagnostics.borrow_mut(),
-        )
-        .map(crate::canonical_shipout::ExpandedReplayText)
+        let mut diagnostics = Vec::new();
+        let result = canonical_replay_text(&mut command, stores, kind, tokens, &mut diagnostics)
+            .map(crate::canonical_shipout::ExpandedReplayText);
+        write_publications.borrow_mut().extend(
+            diagnostics
+                .into_iter()
+                .map(PendingShipoutPublication::Diagnostic),
+        );
+        result
     };
     let mut receipt = crate::canonical_shipout::CanonicalShipoutTransaction::new(
         &mut expand_write,
@@ -12378,10 +12392,10 @@ fn shipout_replay_box(
     // expansion itself runs inside Umber's artifact transaction, so render
     // the command-owned reports only after that transaction has committed:
     // otherwise its transcript effects are consumed as staging scratch.
-    // `write_diagnostics` also contains §367 command traces: direct output
-    // inside the artifact transaction is staging scratch, so the command
-    // core queues them in detection order with scanner recoveries.
-    report_pending_diagnostics(stores, write_diagnostics.into_inner())?;
+    // The publication queue also contains §367 command traces: direct output
+    // inside the artifact transaction is staging scratch, so it retains every
+    // trace, scanner recovery, and resulting stream write in detection order.
+    report_shipout_publications(stores, write_publications.into_inner())?;
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(before) = memory_before {
         let after = stores.shipout_memory_usage();
@@ -18040,6 +18054,37 @@ enum PendingDiagnostic {
     /// The `bool` is `eTeX_ex`, which here rewrites the *message* as well as
     /// the help: etex.ch prints `' or `\protected'` before `' with `'.
     IrrelevantLongOuterPrefix(tex_command::PrintCommand, String, bool),
+}
+
+/// Output made durable only after a shipout artifact transaction commits.
+///
+/// TeX82 §§418/1370 run expansion, diagnostics, and the resulting stream
+/// write on one live call stack. Umber stages the page atomically, so every
+/// publication crossing that transaction boundary must retain the same
+/// detection order rather than grouping reports after writes.
+enum PendingShipoutPublication {
+    Diagnostic(PendingDiagnostic),
+    Write { sink: PrintSink, text: String },
+}
+
+fn report_shipout_publications(
+    stores: &mut Universe,
+    publications: Vec<PendingShipoutPublication>,
+) -> Result<(), ExecError> {
+    for publication in publications {
+        match publication {
+            PendingShipoutPublication::Diagnostic(diagnostic) => {
+                report_pending_diagnostics(stores, vec![diagnostic])?;
+            }
+            PendingShipoutPublication::Write { sink, text } => {
+                if crate::canonical_shipout::direct::write_line_is_open(stores, sink) {
+                    stores.world_mut().write_text(sink, "\n");
+                }
+                stores.world_mut().write_text(sink, &text);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Prints each report a completed scan owes, in detection order.

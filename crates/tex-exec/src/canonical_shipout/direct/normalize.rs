@@ -379,17 +379,20 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let crate::canonical_shipout::ExpandedWrite(text) =
-                (expansion.write_expander)(stores, sink, tokens)?;
+            let expanded = (expansion.write_expander)(stores, sink, tokens)?;
+            let text = expanded.text;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
                 // `print_nl(""); token_show(def_ref); print_ln` when the
                 // stream is not an open file. The trailing `print_ln` is part
                 // of the write's own text; the leading `print_nl` is not.
-                if write_line_is_open(stores, sink) {
-                    stores.world_mut().write_text(sink, "\n");
+                if expanded.publication == crate::canonical_shipout::WritePublication::Transactional
+                {
+                    if write_line_is_open(stores, sink) {
+                        stores.world_mut().write_text(sink, "\n");
+                    }
+                    stores.world_mut().write_text(sink, &text);
                 }
-                stores.world_mut().write_text(sink, &text);
                 effects.push(PageEffect::Write {
                     sink: lower_sink(sink),
                     text,
@@ -724,7 +727,7 @@ fn append_whatsit_effect(
 /// Resolves TeX82 §1370's live selector when a deferred write reaches
 /// shipout. `Stream`, `TerminalAndLog`, and `Log` retain §1342's normalized
 /// numbered, above-range, and negative stream identities until this point.
-fn deferred_write_sink(
+pub(super) fn deferred_write_sink(
     stores: &Universe,
     sink: tex_state::PrintSink,
 ) -> Option<tex_state::PrintSink> {
@@ -944,7 +947,7 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
 /// §1370 writes an unopened stream through `print_nl("")`, whose guard is
 /// `((term_offset>0)and(odd(selector)))or((file_offset>0)and(selector>=
 /// log_only))`. A `\write` to a real file has no column to break.
-fn write_line_is_open(stores: &Universe, sink: tex_state::PrintSink) -> bool {
+pub(super) fn write_line_is_open(stores: &Universe, sink: tex_state::PrintSink) -> bool {
     let bufs = stores.world().stream_bufs();
     let terminal = !bufs.terminal_partial_line().is_empty();
     let log = !bufs.log_partial_line().is_empty();

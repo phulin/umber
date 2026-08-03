@@ -301,7 +301,9 @@ pub(crate) fn test_stage_shipout_artifact(
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| {
-            Ok(crate::canonical_shipout::ExpandedWrite(String::new()))
+            Ok(crate::canonical_shipout::ExpandedWrite::transactional(
+                String::new(),
+            ))
         };
     let mut legacy_replay_expander =
         |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| {
