@@ -155,24 +155,42 @@ fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
     // ordinary math mode, then `fin_mlist` restores the enclosing display
     // before `get_x_token` expands the next command. Section 367 must compare
     // that restored mode with `shown_mode` and print the new mode prefix.
-    let mut stores = Universe::new_with_plain_catcodes();
-    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    register_source(
-        &mut control,
-        br"\tracingcommands=2\tracingonline=1 $$x\eqno y$\expandafter$\csname!\endcsname\end",
-    );
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let format = initialized.dump_format().expect("dump TeX82 format");
+    let loaded =
+        Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
 
-    run_to_end(&mut control, &mut stores);
+    for (mut stores, mut control) in [
+        (initialized, fresh_control),
+        (
+            loaded,
+            CanonicalMainControl::with_profile(CommandProfile::TEX82),
+        ),
+    ] {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        register_source(
+            &mut control,
+            br"\def\s{{\tracingcommands=0\showlists}}\tracingcommands=2\tracingrestores=2\tracingonline=1 $$x\eqno y\s$\expandafter$\csname!\endcsname\end",
+        );
 
-    let log = terminal_text(&stores);
-    let eqno_shift = log
-        .find("{math mode: the letter y}\n{math shift character $}")
-        .unwrap_or_else(|| panic!("equation-number closer is traced: {log}"));
-    let restored = log
-        .find("{display math mode: \\expandafter}\n{\\csname}")
-        .unwrap_or_else(|| panic!("restored display expansion is traced: {log}"));
-    assert!(eqno_shift < restored, "{log}");
+        run_to_end(&mut control, &mut stores);
+
+        let log = terminal_text(&stores);
+        let restore = log
+            .find("{restoring \\tracingcommands=2}")
+            .unwrap_or_else(|| panic!("nested diagnostic group restores tracing: {log}"));
+        let eqno_shift = restore
+            + log[restore..]
+                .find("{math shift character $}")
+                .unwrap_or_else(|| panic!("equation-number closer is traced: {log}"));
+        let restored = log
+            .find("{display math mode: \\expandafter}\n{\\csname}")
+            .unwrap_or_else(|| panic!("restored display expansion is traced: {log}"));
+        assert!(restore < eqno_shift && eqno_shift < restored, "{log}");
+        assert_eq!(log.matches("\\expandafter}").count(), 1, "{log}");
+        assert_eq!(log.matches("{\\csname}").count(), 1, "{log}");
+    }
 }
 
 #[test]

@@ -3568,13 +3568,13 @@ impl CanonicalMainControl {
                 if self.modes.current_list().display_eq_no().is_some() {
                     debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
                     let content = self.prepare_canonical_math_list(stores)?;
-                    let (display, finished) =
-                        self.finish_canonical_equation_number(stores, content)?;
+                    let eq = self.finish_canonical_equation_number_mlist(stores)?;
                     let paired = self.scan_canonical_display_end(stores)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
-                    self.finish_canonical_equation_number_group(stores)?;
+                    let (display, finished) =
+                        self.finish_canonical_equation_number_group(stores, eq, content)?;
                     self.finish_canonical_display_math_content(
                         stores,
                         display,
@@ -3755,9 +3755,26 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn finish_canonical_equation_number(
+    fn finish_canonical_equation_number_mlist(
         &mut self,
         stores: &mut Universe,
+    ) -> Result<crate::mode::DisplayEqNo, ExecError> {
+        let mut level =
+            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let eq = level
+            .list_mutation()
+            .take_display_eq_no()
+            .expect("equation number mode state");
+        // TeX82 §§1193/1197 restore the saved display mlist and mode before
+        // expanding the required second `$`. Equation-number packing and
+        // §1197 recovery both follow that probe, while its group remains live.
+        Ok(eq)
+    }
+
+    fn finish_canonical_equation_number_group(
+        &mut self,
+        stores: &mut Universe,
+        eq: crate::mode::DisplayEqNo,
         content: tex_state::ids::NodeListId,
     ) -> Result<
         (
@@ -3766,32 +3783,15 @@ impl CanonicalMainControl {
         ),
         ExecError,
     > {
-        let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
-        let eq = level
-            .list_mutation()
-            .take_display_eq_no()
-            .expect("equation number mode state");
         let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
-        // TeX82 §§1193/1197 restore the saved display mlist and mode before
-        // expanding the required second `$`, but §1197's recovery still runs
-        // before `unsave`. Return both owned parts with the equation-number
-        // group live so the caller probes in display mode, then restores the
-        // group and finishes the saved display formula.
-        Ok((eq.display, finished))
-    }
-
-    fn finish_canonical_equation_number_group(
-        &mut self,
-        stores: &mut Universe,
-    ) -> Result<(), ExecError> {
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "equation number group",
             })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
+        Ok((eq.display, finished))
     }
 
     fn finish_canonical_display_alignment(
