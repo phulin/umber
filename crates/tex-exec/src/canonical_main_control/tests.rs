@@ -259,7 +259,7 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
 }
 
 #[test]
-fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
+fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     // TeX82 §§785/1034/1038: an alignment cell body is ordinary main
     // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
     // `get_next`; only the following assignment returns to `x_token`.
@@ -268,7 +268,10 @@ fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
-        br"\font\f=cmr10 \f\setbox0=\hbox{\valign{#\cr 7A\righthyphenmin0\cr}}\end",
+        // Reduced from trip.tex:76--77. Keep the negative glue scan before
+        // the adjacent characters: it proves that the first `7` is a fresh
+        // §1030 entry and only `A` comes from §1038's raw lookahead.
+        br"\font\f=cmr10 \f\setbox0=\hbox{\valign{#\cr \hskip-9pt7A\righthyphenmin0\cr}}\end",
     );
     let mut observations = ObservationRecorder::default();
     loop {
@@ -314,6 +317,8 @@ fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
             (tex_command::CommandDeliveryBoundary::Expanded, "7"),
             (tex_command::CommandDeliveryBoundary::Raw, "7"),
             (tex_command::CommandDeliveryBoundary::Expanded, "7"),
+            (tex_command::CommandDeliveryBoundary::Raw, "7"),
+            (tex_command::CommandDeliveryBoundary::Expanded, "7"),
             (tex_command::CommandDeliveryBoundary::Raw, "A"),
             (tex_command::CommandDeliveryBoundary::Raw, "righthyphenmin"),
             (
@@ -322,6 +327,7 @@ fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
             ),
         ]
     );
+    assert_eq!(stores.int_param(IntParam::RIGHT_HYPHEN_MIN), 0);
 }
 
 #[test]
