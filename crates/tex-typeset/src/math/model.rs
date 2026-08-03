@@ -416,6 +416,37 @@ impl MathLayoutBuilder {
         }
     }
 
+    pub(crate) fn trivial_character_before_kern(&self, list: FrozenHList) -> Option<MathNode> {
+        if list.node_count != 2 {
+            return None;
+        }
+        let mut logical = Vec::with_capacity(2);
+        self.collect_nodes_bounded(list, &mut logical, 3);
+        match logical.as_slice() {
+            [character @ MathNode::Char { .. }, MathNode::Kern { .. }] => {
+                Some((*character).clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn collect_nodes_bounded<'a>(
+        &'a self,
+        list: FrozenHList,
+        out: &mut Vec<&'a MathNode>,
+        limit: usize,
+    ) {
+        for node in self.nodes(list) {
+            if out.len() >= limit {
+                return;
+            }
+            match node {
+                MathNode::Sequence(child) => self.collect_nodes_bounded(*child, out, limit),
+                node => out.push(node),
+            }
+        }
+    }
+
     fn span(&self, start: usize, end: usize, meas: Measurement) -> FrozenHList {
         FrozenHList {
             start: u32::try_from(start).expect("math layout exceeds u32 nodes"),

@@ -1024,6 +1024,77 @@ fn clean_math_character_observes_tex82_hpack_completion() {
 }
 
 #[test]
+fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
+    // TeX82 §720: the simplification recognizes exactly character+kern,
+    // retains hpack's width, and unlinks the kern from the box's owned list.
+    let mut universe = setup_universe();
+    let numerator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'a'))]);
+    let denominator = universe.freeze_node_list(&[Node::MathNoad(noad(NoadClass::Ord, 'b'))]);
+    let input = universe.freeze_node_list(&[Node::FractionNoad(MathFraction {
+        numerator,
+        denominator,
+        thickness: FractionThickness::Default,
+        left_delimiter: None,
+        right_delimiter: None,
+    })]);
+    let params = MathParams::read(&universe);
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let [MathNode::HList(fraction)] = root_nodes(&layout).as_slice() else {
+        panic!("expected fraction hbox");
+    };
+    let fraction_children = list_nodes(&layout, fraction.list);
+    let stack = fraction_children
+        .iter()
+        .find_map(|node| match node {
+            MathNode::VList(stack) => Some(stack),
+            _ => None,
+        })
+        .expect("expected fraction stack");
+    let [MathNode::HList(numerator), _, MathNode::Rule { .. }, _, _] =
+        list_nodes(&layout, stack.list).as_slice()
+    else {
+        panic!("expected ruled fraction contents");
+    };
+    let numerator_children = list_nodes(&layout, numerator.list);
+    let [
+        MathNode::Char {
+            ch: 'a', metrics, ..
+        },
+    ] = numerator_children.as_slice()
+    else {
+        panic!("clean numerator must own only its character: {numerator_children:#?}");
+    };
+    assert_eq!(
+        numerator.width,
+        add(metrics.width, metrics.italic_correction),
+        "packed width retains the physically removed italic correction"
+    );
+
+    let mut builder = MathLayoutBuilder::new();
+    let character = MathNode::Char {
+        font: universe.math_family_font(MathFontSize::Text, 0),
+        ch: 'a',
+        glyph_id: None,
+        metrics: universe
+            .font_char_metrics(universe.math_family_font(MathFontSize::Text, 0), b'a')
+            .expect("test font has a"),
+        origin: Default::default(),
+    };
+    let not_trivial = builder.hlist([
+        character,
+        MathNode::Kern {
+            amount: sc(2),
+            kind: KernKind::Font,
+        },
+        MathNode::Kern {
+            amount: sc(3),
+            kind: KernKind::Explicit,
+        },
+    ]);
+    assert!(builder.trivial_character_before_kern(not_trivial).is_none());
+}
+
+#[test]
 fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
     // TeX82 §754 measures a non-character nucleus through hpack(p, natural)
     // before it constructs either script box. The call is still made for an

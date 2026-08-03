@@ -766,12 +766,21 @@ pub(crate) fn clean_box(
 }
 
 fn clean_hlist(ctx: &mut Context<'_, impl MathTypesetState>, list: FrozenHList) -> MathBox {
-    match ctx.layout.single_node(list) {
+    let mut boxed = match ctx.layout.single_node(list) {
         Some(MathNode::HList(boxed) | MathNode::VList(boxed)) if boxed.shift.raw() == 0 => {
             boxed.clone()
         }
         _ => ctx.layout.hpack(list),
+    };
+    // TeX82 §720's "Simplify a trivial box" physically unlinks the kern in
+    // the exact character-plus-kern case after hpack has fixed the box
+    // dimensions. This is semantic list ownership, not showbox normalization:
+    // later consumers see the one-character payload while the packed width
+    // still includes the removed italic correction.
+    if let Some(character) = ctx.layout.trivial_character_before_kern(boxed.list) {
+        boxed.list = ctx.layout.hlist([character]);
     }
+    boxed
 }
 
 pub(crate) fn make_character_nucleus<S: MathTypesetState>(
