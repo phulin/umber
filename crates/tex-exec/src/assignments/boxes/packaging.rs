@@ -443,30 +443,9 @@ pub(crate) fn hpack_owned_with_overfull_rule(
             });
         }
     }
-    let short_diagnostic_nodes = diagnostic_nodes.as_deref().map(|physical| {
-        physical
-            .iter()
-            .zip(nodes.iter())
-            .map(|(physical, semantic)| match (physical, semantic) {
-                (
-                    Node::Disc {
-                        kind,
-                        replace,
-                        physical_replace_count,
-                        ..
-                    },
-                    Node::Disc { pre, post, .. },
-                ) => Node::Disc {
-                    kind: *kind,
-                    pre: *pre,
-                    post: *post,
-                    replace: *replace,
-                    physical_replace_count: *physical_replace_count,
-                },
-                _ => physical.clone(),
-            })
-            .collect::<Vec<_>>()
-    });
+    let short_diagnostic_nodes = diagnostic_nodes
+        .as_deref()
+        .map(|physical| project_short_diagnostic_discs(physical, nodes));
     let children = stores.freeze_node_list_owned(nodes);
     let mut packed = plan.finish(children);
     stores.set_last_badness(packed.badness);
@@ -503,6 +482,43 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         );
     }
     packed.node
+}
+
+/// Combines TeX's physical discretionary topology with semantic side lists.
+///
+/// Physical paragraph lists expand ligatures, so their node indices do not
+/// align with the semantic list. Discretionaries themselves retain source
+/// order across that projection; pair them by that order rather than by a
+/// positional zip. The physical node continues to own `replace_count` and
+/// its detached replacement list, while §174 renders the corresponding
+/// semantic pre/post branches.
+pub(super) fn project_short_diagnostic_discs(physical: &[Node], semantic: &[Node]) -> Vec<Node> {
+    let mut semantic_discs = semantic.iter().filter_map(|node| match node {
+        Node::Disc { pre, post, .. } => Some((*pre, *post)),
+        _ => None,
+    });
+    physical
+        .iter()
+        .map(|node| match node {
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => {
+                let (pre, post) = semantic_discs.next().unwrap_or((*pre, *post));
+                Node::Disc {
+                    kind: *kind,
+                    pre,
+                    post,
+                    replace: *replace,
+                    physical_replace_count: *physical_replace_count,
+                }
+            }
+            _ => node.clone(),
+        })
+        .collect()
 }
 
 pub(crate) fn scan_box_group(

@@ -218,6 +218,46 @@ fn line_trace_projection_renders_detached_replacement_content() {
 }
 
 #[test]
+fn frozen_line_diagnostic_renders_both_disc_branches_then_skips_replacement() {
+    // TeX82 §174 renders pre_break and post_break before advancing over the
+    // physically linked replacement. This is the remaining TRIP underfull
+    // line shape: `BB`, then `-`/`B-`, one hidden replacement node, then
+    // `BBB`, yielding exactly `BB-B-BBB`.
+    let mut stores = Universe::new();
+    let font = tex_state::font::NULL_FONT;
+    let chars = |text: &str| {
+        text.chars()
+            .map(|ch| Node::Char {
+                font,
+                ch,
+                origin: tex_state::token::OriginId::UNKNOWN,
+            })
+            .collect::<Vec<_>>()
+    };
+    let pre = stores.freeze_node_list(&chars("-"));
+    let post = stores.freeze_node_list(&chars("B-"));
+    let replacement = stores.freeze_node_list(&chars("X"));
+    let mut nodes = chars("BB");
+    nodes.push(Node::Disc {
+        kind: DiscKind::AutomaticHyphen,
+        pre,
+        post,
+        replace: replacement,
+        physical_replace_count: 1,
+    });
+    nodes.extend(chars("XBBB"));
+    let list = stores.freeze_node_list(&nodes);
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_list(&stores, list),
+        format!(
+            "{} BB-B-BBB",
+            crate::node_dump::font_identifier(&stores, font)
+        )
+    );
+}
+
+#[test]
 fn short_display_maps_all_node_classes() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);

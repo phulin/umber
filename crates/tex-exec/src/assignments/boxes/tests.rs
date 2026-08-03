@@ -1,6 +1,78 @@
 use super::*;
 
 #[test]
+fn short_diagnostic_pairs_discretionaries_across_ligature_expansion() {
+    // The physical projection expands the leading semantic ligature into two
+    // characters. Positional zipping would therefore miss the matching disc
+    // and retain its deliberately wrong `B` branch instead of the semantic
+    // hyphen. Ordered discretionary pairing preserves both side-list identity
+    // and the physical replacement topology.
+    let mut stores = Universe::new();
+    let font = tex_state::font::NULL_FONT;
+    let empty = stores.freeze_node_list(&[]);
+    let semantic_hyphen = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: '-',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let physical_b = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: 'B',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let semantic = [
+        Node::Lig {
+            font,
+            ch: 'B',
+            orig: vec!['B', 'B'],
+            origins: vec![tex_state::token::OriginId::UNKNOWN; 2],
+            left_hit: false,
+            right_hit: false,
+        },
+        Node::Disc {
+            kind: tex_state::node::DiscKind::AutomaticHyphen,
+            pre: semantic_hyphen,
+            post: empty,
+            replace: empty,
+            physical_replace_count: 0,
+        },
+    ];
+    let physical = [
+        Node::Char {
+            font,
+            ch: 'B',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Char {
+            font,
+            ch: 'B',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        },
+        Node::Disc {
+            kind: tex_state::node::DiscKind::AutomaticHyphen,
+            pre: physical_b,
+            post: empty,
+            replace: physical_b,
+            physical_replace_count: 1,
+        },
+    ];
+
+    let projected = super::packaging::project_short_diagnostic_discs(&physical, &semantic);
+    let Node::Disc {
+        pre,
+        replace,
+        physical_replace_count,
+        ..
+    } = projected[2]
+    else {
+        panic!("third physical node remains a discretionary")
+    };
+    assert_eq!(pre, semantic_hyphen);
+    assert_eq!(replace, physical_b);
+    assert_eq!(physical_replace_count, 1);
+}
+
+#[test]
 fn unboxing_removes_margin_kerns_without_mutating_source_or_reordering_material() {
     let mut stores = Universe::new_with_plain_catcodes();
     let font = tex_state::font::NULL_FONT;
