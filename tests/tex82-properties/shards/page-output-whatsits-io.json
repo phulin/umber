@@ -1178,7 +1178,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/output.rs",
+          "path": "crates/tex-exec/src/canonical_page_output.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
         },
         {
