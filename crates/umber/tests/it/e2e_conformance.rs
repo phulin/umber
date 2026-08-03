@@ -2275,6 +2275,22 @@ fn trip_loaded_delete_last_error_shows_command_context_before_help() {
 }
 
 #[test]
+fn trip_loaded_lastbox_error_shows_command_context_before_help() {
+    // TeX82 §§82/1081: `begin_box` rejects `\lastbox` on the current page,
+    // then §82 prints the still-live command input before §90's help.
+    let log = run_focused_loaded_trip_through(346);
+    let message = log
+        .rfind("You can't use `\\lastbox' in vertical mode.")
+        .expect("line-346 lastbox error");
+    let report = &log[message..];
+    let context = report.find("\\penalty5").expect("lastbox source context");
+    let help = report
+        .find("Sorry...I usually can't take things from the current page.")
+        .expect("lastbox help");
+    assert!(context < help, "{report}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

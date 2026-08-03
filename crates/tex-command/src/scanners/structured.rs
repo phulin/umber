@@ -473,7 +473,7 @@ pub struct ScannedInsertConstruction {
 ///
 /// Box shifts and `\setbox` share this exact `make_box` vocabulary and
 /// recovery; the historical type name is retained as part of the public API.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ScannedBoxShiftPayload {
     /// `scan_box`'s "A <box> was supposed to be here" recovery: the rejected
     /// command has already been backed up for ordinary replay.
@@ -482,7 +482,10 @@ pub enum ScannedBoxShiftPayload {
         index: u16,
         copy: bool,
     },
-    LastBox,
+    /// §1081 may diagnose against the live input while taking the last box.
+    LastBox {
+        error_context: String,
+    },
     VSplit(ScannedVSplit),
     Construction(ScannedBoxConstruction),
 }
@@ -490,7 +493,7 @@ pub enum ScannedBoxShiftPayload {
 /// A completed TeX82 §1073 box-shift prefix: the already-signed shift amount
 /// (tex.web's `box_context`) paired with the following box operand it
 /// applies to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedBoxShift {
     pub delta: Scaled,
     pub payload: ScannedBoxShiftPayload,
@@ -3039,7 +3042,9 @@ impl CommandProcessor<'_> {
                     });
                 }
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
-                    return Ok(ScannedBoxShiftPayload::LastBox);
+                    return Ok(ScannedBoxShiftPayload::LastBox {
+                        error_context: self.error_context(),
+                    });
                 }
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::VSplit) => {
                     return Ok(ScannedBoxShiftPayload::VSplit(self.scan_vsplit()?));

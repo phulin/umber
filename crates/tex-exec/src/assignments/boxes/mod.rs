@@ -206,7 +206,10 @@ pub(super) fn execute_box_list_command(
             )?;
         }
         UnexpandablePrimitive::LastBox => {
-            if let Some(node) = take_last_box(nest, stores, execution.command_fuel())? {
+            let error_context = crate::diagnostics::show_context(stores, input.summary());
+            if let Some(node) =
+                take_last_box(nest, stores, execution.command_fuel(), error_context)?
+            {
                 append_box_node_to_current_list(nest, stores, node, execution.command_fuel())?;
             }
         }

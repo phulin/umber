@@ -14,6 +14,7 @@ pub(crate) fn take_last_box(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
+    error_context: String,
 ) -> Result<Option<Node>, ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
     match nest.current_mode() {
@@ -22,6 +23,7 @@ pub(crate) fn take_last_box(
                 stores,
                 "math mode",
                 &["Sorry; this \\lastbox will be void."],
+                error_context,
             )?;
             Ok(None)
         }
@@ -35,6 +37,7 @@ pub(crate) fn take_last_box(
                     "Sorry...I usually can't take things from the current page.",
                     "This \\lastbox will therefore be void.",
                 ],
+                error_context,
             )?;
             Ok(None)
         }
@@ -83,8 +86,8 @@ fn report_cannot_take_last_box(
     stores: &mut Universe,
     mode: &str,
     help: &[&str],
+    context: String,
 ) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("You can't use `");
     report
         .print_esc("lastbox")

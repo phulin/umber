@@ -6414,7 +6414,9 @@ enum ScannedStep {
     /// into the current list atomically; unlike `\unvbox`, no register
     /// number is scanned.
     SavedVerticalDiscards(UnexpandablePrimitive),
-    LastBox,
+    LastBox {
+        error_context: String,
+    },
     Leaders {
         kind: GlueKind,
         payload: LeaderPayload,
@@ -9260,7 +9262,11 @@ fn scan_command(
                 index: register.index,
             })
         }
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => Ok(ScannedStep::LastBox),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
+            Ok(ScannedStep::LastBox {
+                error_context: processor.error_context(),
+            })
+        }
         // TeX82's main-control dispatch on `abs(mode)+cur_cmd` (tex.web
         // §1073): `\raise`/`\lower` (`vmove`) are legal only outside vertical
         // mode (`hmode+vmove`, `mmode+vmove`); `\moveleft`/`\moveright`
@@ -11997,7 +12003,7 @@ fn applied_mutation_observation(
         | ScannedStep::BoxRegister { .. }
         | ScannedStep::Unbox { .. }
         | ScannedStep::SavedVerticalDiscards(..)
-        | ScannedStep::LastBox
+        | ScannedStep::LastBox { .. }
         | ScannedStep::Leaders { .. }
         | ScannedStep::LeaderRegister { .. }
         | ScannedStep::MissingLeaderPayload
@@ -15623,11 +15629,12 @@ fn apply_scanned_step(
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
-                    ScannedBoxShiftPayload::LastBox => {
+                    ScannedBoxShiftPayload::LastBox { error_context } => {
                         let node = crate::canonical_box_runtime::take_last_box(
                             modes,
                             stores,
                             command.fuel,
+                            error_context,
                         )?;
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -15738,8 +15745,13 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::LastBox => {
-            let node = crate::canonical_box_runtime::take_last_box(modes, stores, command.fuel)?;
+        ScannedStep::LastBox { error_context } => {
+            let node = crate::canonical_box_runtime::take_last_box(
+                modes,
+                stores,
+                command.fuel,
+                error_context,
+            )?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -17585,8 +17597,9 @@ fn apply_box_shift(
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedBoxShiftPayload::LastBox => {
-            let node = crate::canonical_box_runtime::take_last_box(modes, stores, fuel)?;
+        ScannedBoxShiftPayload::LastBox { error_context } => {
+            let node =
+                crate::canonical_box_runtime::take_last_box(modes, stores, fuel, error_context)?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }

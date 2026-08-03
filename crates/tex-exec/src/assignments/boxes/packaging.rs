@@ -145,7 +145,8 @@ pub(super) fn scan_box_value(
                 tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
             );
             let nest = nest.ok_or(ExecError::MissingToken { context: "box" })?;
-            take_last_box(nest, stores, execution.command_fuel())
+            let error_context = crate::diagnostics::show_context(stores, input.summary());
+            take_last_box(nest, stores, execution.command_fuel(), error_context)
                 .map(|value| value.map(ScannedBoxValue::Shared))
         }
         _ => recover_missing_box(input, stores, traced, scan_context),
