@@ -16,7 +16,11 @@ Run authored tests with `node --test crates/umber-wasm/js/*.test.js`.
 - `worker-controller.test.js`: transfer fidelity and teardown tests.
 - `worker-entry.js`: dedicated module-worker compile entry and transfer response.
 - `html-preview.js` / `html-preview.d.ts`: CSP-validated scriptless iframe installer for canonical generated HTML.
-- `html-patch.js` / `html-patch.d.ts`: typed snapshot/patch DOM mount, unchanged-node identity preservation, atomic preflight, and content-addressed resource lifetime.
+- `html-patch.js` / `html-patch.d.ts`: public typed snapshot/patch DOM mount facade.
+- `html-patch-dom.js`: safe DOM construction, mutation, and user-state preservation.
+- `html-patch-model.js`: snapshot/patch validation and canonical model simulation.
+- `html-patch-resources.js`: content-addressed resource staging and lifetime.
+- `html-patch-shared.js`: internal schema constants, bounded values, and adapter utilities.
 - `source-map.js` / `source-map.d.ts`: DOM point to revision-checked rendered-source query helper.
 - `manifest-resolver.js`: validated immutable-manifest HTTP resolver.
 - `manifest-schema.js`: immutable manifest, lookup-key, path, and compatibility validation.

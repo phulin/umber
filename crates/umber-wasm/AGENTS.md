@@ -15,7 +15,8 @@ the manifest's validated content-addressed object name.
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
 - `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
-- `src/result.rs`: binary-safe conversion of native typed resource batches and completed attempts to discriminated JS results.
+- `src/result.rs`: completed-attempt and diagnostic conversion facade.
+- `src/result/`: focused binary-safe resource-request, metrics, and incremental-render conversion modules.
 - `tests/it.rs`: wasm-bindgen boundary, lifecycle, and native fixed-point
   representation/failure parity tests over shared stabilization fixtures.
 - `tests/virtual_font_acquisition.rs`: focused host-neutral WASM coverage for
