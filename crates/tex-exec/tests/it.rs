@@ -364,6 +364,18 @@ fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
     );
     assert!(!checkpoint.contains("pub enum EngineRestoreError"));
     assert!(!public_surface.contains("EngineRestoreError"));
+    for forbidden in [
+        "InputStack::from_summary",
+        "MemoryInput::from_offset",
+        "WorldInput::from_content_at_offset",
+        "LayoutCursor::new",
+        "restore_editor_checkpoint",
+    ] {
+        assert!(
+            !checkpoint.contains(forbidden),
+            "checkpoint schema must not reconstruct retired editor input through {forbidden}"
+        );
+    }
 }
 
 #[test]

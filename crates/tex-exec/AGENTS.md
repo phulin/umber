@@ -72,6 +72,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/job_output.rs`: TeX82 §§532--536's engine-owned lazy DVI/transcript
   names, `texput` fallback, transcript-open state, and interactive open retry;
   direct lifecycle tests live in `src/job_output/tests.rs`.
+- `src/legacy_editor_restart.rs`: isolated retired `InputStack` reconstruction
+  used only by the synchronous incremental compatibility path; canonical editor
+  sessions restore through command-owned checkpoints.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.

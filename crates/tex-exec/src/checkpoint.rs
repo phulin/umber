@@ -4,13 +4,13 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandSummaryError};
-use tex_lex::{InputSource, InputStack, LayoutCursor, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
 use tex_state::{
     ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputSummary, Snapshot,
     SourceId, Universe,
 };
 
+use crate::legacy_editor_restart::InputStack;
 use crate::{ExecError, ModeNest, ModeNestSummary};
 
 /// In-memory schema version for aggregate engine checkpoints.
@@ -34,22 +34,22 @@ pub enum EngineBoundary {
 pub struct EngineCheckpoint {
     schema_version: u32,
     boundary: EngineBoundary,
-    universe: Snapshot,
-    continuation: CheckpointContinuation,
-    modes: ModeNestSummary,
+    pub(crate) universe: Snapshot,
+    pub(crate) continuation: CheckpointContinuation,
+    pub(crate) modes: ModeNestSummary,
     state_hash: u64,
-    root_anchor: usize,
-    root_content_hash: Option<tex_state::ContentHash>,
+    pub(crate) root_anchor: usize,
+    pub(crate) root_content_hash: Option<tex_state::ContentHash>,
     effect_prefix: usize,
     artifact_prefix: usize,
-    budget_counters: crate::ExecutionBudgetCounters,
+    pub(crate) budget_counters: crate::ExecutionBudgetCounters,
 }
 
 /// The command machine and retired executor have different continuation
 /// owners. Keeping the variants disjoint prevents canonical publication from
 /// smuggling an empty legacy input summary through the checkpoint contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum CheckpointContinuation {
+pub(crate) enum CheckpointContinuation {
     Canonical(Box<CommandSummary>),
     LegacyInput(InputSummary),
 }
@@ -563,23 +563,6 @@ impl fmt::Display for EditorRestoreError {
 impl std::error::Error for EditorRestoreError {}
 
 impl crate::Executor {
-    /// Binds the canonical frozen editor layout to the retired executor's root
-    /// delivery state. The layout remains owned by `tex-state`; callers do not
-    /// construct or retain the lexer-specific cursor projection.
-    pub fn install_editor_root_layout(
-        &mut self,
-        input: &mut InputStack,
-        layout: &tex_state::EditorLayout,
-        fragments: &FragmentStore,
-    ) -> Result<(), EditorRestoreError> {
-        let cursor =
-            LayoutCursor::new(layout, fragments).map_err(EditorRestoreError::LayoutCursor)?;
-        input
-            .install_root_layout_cursor(cursor)
-            .ok_or(EditorRestoreError::RootRevisionMismatch)?;
-        Ok(())
-    }
-
     /// Restores a canonical checkpoint without consulting a host or legacy
     /// input stack.  All fallible reconstruction happens before any live root
     /// is changed, so a profile or mode mismatch is atomic.
@@ -592,87 +575,6 @@ impl crate::Executor {
         checkpoint.restore_canonical_state(command, &mut self.nest, universe)?;
         self.budget_counters = checkpoint.budget_counters;
         Ok(())
-    }
-
-    /// Restores a retained checkpoint while substituting only its root editor
-    /// buffer. Preparation happens on a fork, so failure cannot partially
-    /// mutate the live executor, input stack, or Universe.
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::disallowed_methods)] // Diagnostic latency; no engine fact observes it.
-    pub fn restore_editor_checkpoint(
-        &mut self,
-        input: &mut InputStack,
-        universe: &mut Universe,
-        substrate: &GenerationSubstrate,
-        checkpoint: &EngineCheckpoint,
-        old_source: &str,
-        source: &str,
-        fragments: &FragmentStore,
-        layout: &tex_state::EditorLayout,
-    ) -> Result<Duration, EditorRestoreError> {
-        if checkpoint.root_content_hash
-            != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
-        {
-            return Err(EditorRestoreError::RootRevisionMismatch);
-        }
-        if checkpoint.root_anchor > old_source.len()
-            || checkpoint.root_anchor > source.len()
-            || old_source.as_bytes()[..checkpoint.root_anchor]
-                != source.as_bytes()[..checkpoint.root_anchor]
-        {
-            return Err(EditorRestoreError::ChangedRootPrefix);
-        }
-        let fork_started = Timer::start();
-        let mut restored_universe = substrate
-            .fork_at(&checkpoint.universe)
-            .map_err(EditorRestoreError::Fork)?;
-        let fork_latency = fork_started.elapsed();
-        restored_universe
-            .install_editor_fragments(fragments, layout)
-            .map_err(EditorRestoreError::Layout)?;
-        let CheckpointContinuation::LegacyInput(input_summary) = &checkpoint.continuation else {
-            return Err(EditorRestoreError::CanonicalContinuation);
-        };
-        let (summary, root_source) = restored_universe
-            .rebind_root_editor_layout(input_summary, source.as_bytes(), checkpoint.root_anchor)
-            .map_err(EditorRestoreError::RootRebind)?;
-        let restored_modes =
-            ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;
-        let mut restored_input = InputStack::from_summary(&summary, |source_id, record, frame| {
-            if source_id == root_source {
-                let source = if frame.byte_projection() {
-                    MemoryInput::byte_projection_from_offset(source, checkpoint.root_anchor)
-                } else {
-                    MemoryInput::from_offset(source, checkpoint.root_anchor)
-                }
-                .with_logical_path(layout.path());
-                return Ok::<Box<dyn InputSource>, EditorRestoreError>(Box::new(source));
-            }
-            let Some(record) = record else {
-                return Err(EditorRestoreError::IncludedInputUnavailable(source_id));
-            };
-            let content = restored_universe
-                .world()
-                .recorded_input_content(record)
-                .ok_or(EditorRestoreError::IncludedInputUnavailable(source_id))?;
-            Ok(Box::new(WorldInput::from_content_at_offset(
-                content,
-                frame.next_source_offset(),
-            )))
-        })?;
-        let installed_root = restored_input
-            .install_root_layout_cursor(
-                LayoutCursor::new(layout, fragments).map_err(EditorRestoreError::LayoutCursor)?,
-            )
-            .ok_or(EditorRestoreError::RootRevisionMismatch)?;
-        debug_assert_eq!(installed_root, root_source);
-        restored_universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
-        restored_universe.set_input_summary(restored_input.summary());
-        *universe = restored_universe;
-        *input = restored_input;
-        self.nest = restored_modes;
-        self.budget_counters = checkpoint.budget_counters;
-        Ok(fork_latency)
     }
 }
 
