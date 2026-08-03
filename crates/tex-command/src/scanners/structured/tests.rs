@@ -298,6 +298,55 @@ fn inaccessible_recovery_is_inserted_above_the_ordinary_backup() {
 }
 
 #[test]
+fn missing_macro_target_reports_once_and_leaves_following_command() {
+    // TeX82 §1215's `get_r_token` performs the whole `ins_error; restart`
+    // episode. Its rejected `{` starts the definition; no executor recovery
+    // remains, and the command after the balanced replacement stays unread.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("{}?"));
+
+    let (definition, next) = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let definition = processor
+            .scan_macro_definition(false)
+            .expect("missing macro target recovers");
+        let next = processor
+            .get_x_token()
+            .expect("following delivery succeeds")
+            .expect("following command remains");
+        (definition, next)
+    };
+
+    assert_eq!(universe.resolve(definition.target), "inaccessible");
+    assert!(
+        universe
+            .tokens(definition.parameter_text.token_list())
+            .is_empty()
+    );
+    assert!(
+        universe
+            .tokens(definition.replacement_text.token_list())
+            .is_empty()
+    );
+    assert!(matches!(
+        next.meaning(),
+        Meaning::CharToken {
+            ch: '?',
+            cat: Catcode::Other
+        }
+    ));
+    assert_eq!(
+        diagnostic_text(&universe)
+            .matches("Missing control sequence inserted")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn ordinary_error_backup_remains_to_be_read_again() {
     // TeX82 §§325, 314: a normal `back_input` used by number recovery is not
     // retyped as §327's inserted input.

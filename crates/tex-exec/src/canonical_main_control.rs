@@ -6315,7 +6315,6 @@ enum ScannedStep {
         parameter_text: TracedTokenList,
         replacement_text: TracedTokenList,
         definition_origin: tex_state::token::OriginId,
-        missing_target: bool,
     },
     CharacterDefinition {
         primitive: UnexpandablePrimitive,
@@ -8980,7 +8979,6 @@ fn scan_command(
                 parameter_text: definition.parameter_text,
                 replacement_text: definition.replacement_text,
                 definition_origin: definition.provenance.primary,
-                missing_target: definition.missing_target,
             })
         }
         Meaning::UnexpandablePrimitive(
@@ -15227,25 +15225,7 @@ fn apply_scanned_step(
             parameter_text,
             replacement_text,
             definition_origin,
-            missing_target,
         } => {
-            if missing_target {
-                // TeX82 §1215's `get_r_token`; the frozen `\inaccessible`
-                // insertion it recovers with is already the scanner's.
-                let context = command.state.output_open_context(&stores.command_context());
-                crate::error_report::report_error(
-                    stores,
-                    "Missing control sequence inserted",
-                    &[
-                        "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
-                        "I've inserted an inaccessible control sequence so that your",
-                        "definition will be completed without mixing me up too badly.",
-                        "You can recover graciously from this error, if you're",
-                        "careful; see exercise 27.2 in The TeXbook.",
-                    ],
-                    context,
-                )?;
-            }
             let meaning = MacroMeaning::new(
                 flags,
                 parameter_text.token_list(),

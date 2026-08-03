@@ -2291,6 +2291,29 @@ fn trip_loaded_lastbox_error_shows_command_context_before_help() {
 }
 
 #[test]
+fn trip_loaded_missing_definition_target_recovers_once() {
+    // TeX82 §1215's `get_r_token` owns one complete `ins_error` and restart:
+    // the rejected `{` supplies the empty definition and `?` resumes normally.
+    let log = run_focused_loaded_trip_through(347);
+    let lastbox = log
+        .rfind("You can't use `\\lastbox' in vertical mode.")
+        .expect("line-346 lastbox error");
+    let report = &log[lastbox..];
+    assert_eq!(
+        report
+            .matches("! Missing control sequence inserted.")
+            .count(),
+        1,
+        "{report}"
+    );
+    assert!(report.contains("{the character ?}"), "{report}");
+    assert!(
+        report.contains("{horizontal mode: the character ?}"),
+        "{report}"
+    );
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

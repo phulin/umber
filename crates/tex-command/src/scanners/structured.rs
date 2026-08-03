@@ -80,8 +80,6 @@ pub struct ScannedMacroDefinition {
     pub parameter_text: TracedTokenList,
     pub replacement_text: TracedTokenList,
     pub provenance: StructuredProvenance,
-    /// TeX82 §1215 substituted the inaccessible recovery target.
-    pub missing_target: bool,
 }
 
 /// A completed TeX82 `\let` or `\futurelet` assignment.
@@ -3567,11 +3565,11 @@ impl CommandProcessor<'_> {
         let command = self
             .next_non_space_raw()?
             .ok_or(CommandError::input_invariant())?;
-        let (target, missing_target) = if let Some(target) = command.control_sequence() {
-            (target, false)
+        let target = if let Some(target) = command.control_sequence() {
+            target
         } else {
             self.back_input(command)?;
-            (self.scan_definition_target()?, true)
+            self.scan_definition_target()?
         };
         let scanned = self.scan_toks(ScanToksMode::MacroDefinitionFor { expanded, target })?;
         Ok(ScannedMacroDefinition {
@@ -3579,7 +3577,6 @@ impl CommandProcessor<'_> {
             parameter_text: scanned.parameter_text,
             replacement_text: scanned.replacement_text,
             provenance: provenance(&scanned),
-            missing_target,
         })
     }
 
