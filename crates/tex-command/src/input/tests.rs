@@ -1,7 +1,10 @@
 use tex_state::print::{ErrorContextLevel, ErrorContextWidths, render_error_context};
 
 use crate::CommandState;
-use crate::input::{InputLevel, InputState, RegisteredSourceKind, SourceRegistration};
+use crate::input::{
+    InputLevel, InputState, RegisteredSourceKind, ReplayTrace, RetirementBehavior,
+    SharedTokenBuffer, SourceRegistration, TokenBehavior, TokenPayload,
+};
 
 #[test]
 fn cropped_pseudoprint_preserves_the_location_label() {
@@ -71,5 +74,44 @@ fn source_context_pseudoprints_synthetic_endline_on_the_live_cursor_side() {
     assert_eq!(
         render_error_context(&[context], ErrorContextWidths::default(), 5),
         "\nl.1 left\n        }--"
+    );
+}
+
+#[test]
+fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
+    // TeX82 §§354/390: `get_next` returns `frozen_end_template` when the
+    // v-template's stored list is exhausted. Although `loc=null`, §315 shows
+    // that synthetic current token after the cursor until `do_endv` finishes.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let relax = universe.intern("A").symbol();
+    let identity = command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::<
+            [tex_state::token::TracedTokenWord],
+        >::from(vec![
+            tex_state::token::TracedTokenWord::pack(
+                tex_state::token::Token::Cs(relax),
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+        ]))),
+        TokenBehavior::VTemplate,
+        RetirementBehavior::RetainExhaustedVTemplate,
+        ReplayTrace::VTemplate,
+    );
+    let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("v-template") else {
+        panic!("token-list level expected");
+    };
+    cursor.index = 1;
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<template> \\A \n              \\endtemplate "
+    );
+    command
+        .retire_exhausted_input(identity)
+        .expect("template boundary is retained");
+
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<template> \\A \n              \\endtemplate "
     );
 }

@@ -291,7 +291,7 @@ impl InputState {
                 .collect()
         }
 
-        let (before, after) = match &tokens.payload {
+        let (before, mut after) = match &tokens.payload {
             TokenPayload::Stored { tokens: list, .. } => {
                 let words = stores.tokens(*list);
                 let split = tokens.index.min(words.len());
@@ -341,6 +341,24 @@ impl InputState {
                 )
             }
         };
+        // tex.web §§354/390 leave `loc=null` on the exhausted v-template
+        // while returning `frozen_end_template` as the current token. The
+        // sentinel is not part of the stored template list, but §315's
+        // pseudoprint must still put that current token on the unread side of
+        // the cursor until `do_endv` completes the cell.
+        if matches!(tokens.behavior, TokenBehavior::VTemplate)
+            && matches!(
+                tokens.retirement,
+                RetirementBehavior::RetainExhaustedVTemplate
+                    | RetirementBehavior::AwaitingVTemplateRetirement
+            )
+            && after.is_empty()
+        {
+            after.push_str(&crate::processor::expand::token_list_token_text(
+                stores,
+                stores.frozen_end_template_token(),
+            ));
+        }
         // §314's macro arm is `print_ln; print_cs(name)` -- the control
         // sequence being expanded, not a bracketed type name -- and §319
         // pseudoprints `link(start)`, the whole macro text, so the parameter
