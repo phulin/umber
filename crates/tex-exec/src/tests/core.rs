@@ -1596,7 +1596,10 @@ fn paragraph_recording_preserves_source_text_batching() {
 }
 
 #[test]
-fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() {
+fn horizontal_main_control_preserves_raw_lookahead_in_alignment_cells() {
+    // TeX82 §§1034/1038: an alignment cell is ordinary main-control
+    // material, so adjacent characters remain in the raw inner loop even
+    // while alignment-aware `get_next` owns delimiter interception.
     let run = observed_canonical_font_run(
         false,
         br"\font\f=cmr10 \f\def\x{abcdefgh}\setbox0=\vbox{\halign{#\cr\omit\x\cr}}\end",
@@ -1604,10 +1607,9 @@ fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() 
     let run = horizontal_character_run(&run.steps, 'a'..='h');
 
     assert_eq!(run.len(), 8);
-    assert!(
-        run.iter()
-            .all(|step| !step.main_loop_before && !step.main_loop_after)
-    );
+    assert!(!run[0].main_loop_before);
+    assert!(run[1..].iter().all(|step| step.main_loop_before));
+    assert!(run.iter().all(|step| step.main_loop_after));
     assert_eq!(
         run[0].delivery.provenance.input_level,
         run[7].delivery.provenance.input_level

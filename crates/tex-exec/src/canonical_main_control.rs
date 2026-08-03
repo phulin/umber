@@ -1796,10 +1796,9 @@ impl CanonicalMainControl {
             matches!(
                 self.modes.current_mode(),
                 Mode::Horizontal | Mode::RestrictedHorizontal
-            ) && !self.command.alignment_scanner_is_active()
-                && stores
-                    .font(stores.current_font())
-                    .character_exists(character)
+            ) && stores
+                .font(stores.current_font())
+                .character_exists(character)
         });
     }
 

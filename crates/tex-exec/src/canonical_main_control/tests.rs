@@ -259,7 +259,6 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
 }
 
 #[test]
-#[ignore = "umber2-e21y"]
 fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     // TeX82 §§785/1034/1038: an alignment cell body is ordinary main
     // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
