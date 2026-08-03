@@ -2025,6 +2025,11 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
         )),
         "{log}"
     );
+    assert_eq!(
+        log.matches("{horizontal mode: \\expandafter}").count(),
+        1,
+        "{log}"
+    );
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {

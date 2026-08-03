@@ -195,6 +195,47 @@ fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
 }
 
 #[test]
+fn tracingcommands_aftergroup_expansion_reports_resumed_horizontal_mode() {
+    // TeX82 §§299/1200: ending the display releases its aftergroup token,
+    // pushes horizontal mode, and then expands that token while scanning the
+    // optional space. This is a distinct nested expansion boundary from
+    // §1197's display-mode second-$ probe above, and consumes the new mode
+    // prefix exactly once.
+    let mut initialized = Universe::new_with_plain_catcodes();
+    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let format = initialized.dump_format().expect("dump TeX82 format");
+    let loaded =
+        Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
+
+    for (mut stores, mut control) in [
+        (initialized, fresh_control),
+        (
+            loaded,
+            CanonicalMainControl::with_profile(CommandProfile::TEX82),
+        ),
+    ] {
+        stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+        register_source(
+            &mut control,
+            br"\tracingcommands=2\tracingonline=1 $$x\aftergroup\expandafter\eqno y$\expandafter$\csname!\endcsname\end",
+        );
+
+        run_to_end(&mut control, &mut stores);
+
+        let log = terminal_text(&stores);
+        let display = log
+            .find("{display math mode: \\expandafter}")
+            .unwrap_or_else(|| panic!("display probe owns its prefix: {log}"));
+        let horizontal = log
+            .find("{horizontal mode: \\expandafter}")
+            .unwrap_or_else(|| panic!("optional-space probe owns its prefix: {log}"));
+        assert!(display < horizontal, "{log}");
+        assert_eq!(log.matches("\\expandafter}").count(), 2, "{log}");
+        assert!(!log.contains("{\\expandafter}"), "{log}");
+    }
+}
+
+#[test]
 fn tracingcommands_omits_characters_retired_inside_main_loop() {
     // TeX82 §§1034/1038: after the first character enters `main_loop`,
     // adjacent characters are retired by its raw lookahead and never reach

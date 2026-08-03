@@ -4037,9 +4037,17 @@ impl CanonicalMainControl {
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
     fn scan_canonical_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let mode = self.modes.current_mode();
+        let shown_mode = self.shown_mode;
         let mut machine = self.command_machine();
         let mut processor = machine.processor(stores);
+        // TeX82 §§299/1200: resume_after_display has already pushed the new
+        // horizontal mode when its scanner expands this token. The expansion
+        // therefore owns the same pending mode prefix as every other
+        // get_x_token boundary, including §1197's staged display-end probe.
+        prepare_command_trace(&mut processor, mode, shown_mode);
         let fetched = processor.get_x_token();
+        let command_trace_printed = processor.command_trace_printed();
         match fetched {
             Ok(Some(command))
                 if !matches!(
@@ -4050,11 +4058,16 @@ impl CanonicalMainControl {
                     }
                 ) =>
             {
-                processor.back_input(command).map_err(command_error)
+                processor.back_input(command).map_err(command_error)?;
             }
-            Ok(_) => Ok(()),
-            Err(err) => Err(command_error(err)),
+            Ok(_) => {}
+            Err(err) => return Err(command_error(err)),
         }
+        drop(processor);
+        if command_trace_printed {
+            *machine.shown_mode = Some(mode);
+        }
+        Ok(())
     }
 
     fn apply_canonical_math_delimiter(
