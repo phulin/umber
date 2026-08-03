@@ -263,6 +263,7 @@ pub(crate) fn end_paragraph_with_fuel(
         return Ok(());
     }
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    stores.begin_paragraph_break_dependency_region();
     if nest.current_list().is_empty() {
         let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
         normal_paragraph(nest, stores);
@@ -485,6 +486,7 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     flush_pending_hchars_with_fuel(nest, stores, fuel)?;
+    stores.begin_paragraph_break_dependency_region();
     if nest.current_list().is_empty() {
         let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
         return Ok(ParagraphBreakResult {

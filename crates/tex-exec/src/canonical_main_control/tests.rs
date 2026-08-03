@@ -2936,8 +2936,20 @@ fn canonical_paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
     memo.accept_paragraph_history(resolver);
     let accepted = &memo.accepted_canonical_paragraphs()[0];
     assert_eq!(accepted.dependencies.as_ref(), region.dependencies.as_ref());
+    assert_eq!(
+        accepted.front_dependency_ordinals.len() + accepted.break_dependency_ordinals.len(),
+        accepted.dependencies.len()
+    );
     assert_eq!(accepted.mutations.as_ref(), region.mutations.as_ref());
     assert!(accepted.finished_lines.is_some());
+    assert_eq!(accepted.line_count, region.line_count());
+    assert_eq!(accepted.line_last_badness, region.line_last_badness());
+    assert_eq!(accepted.effects.as_ref(), region.effects.as_ref());
+    assert_eq!(accepted.barriers.as_ref(), region.barriers.as_ref());
+    assert!(matches!(
+        accepted.line_provenance,
+        tex_state::ParagraphLineProvenance::Accepted(_)
+    ));
     assert_eq!(
         (accepted.starting_provenance, accepted.ending_provenance),
         expected_bounds
@@ -3079,8 +3091,22 @@ fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
     run_to_end(&mut control, &mut stores);
     let regions = control.take_finished_paragraph_regions();
     assert_eq!(regions.len(), 2);
+    let resolver = stores.paragraph_origin_resolver();
 
-    for region in regions {
+    for mut region in regions {
+        region.accept_line_provenance(Arc::clone(&resolver));
+        let transitions = region
+            .input()
+            .coverage()
+            .transitions()
+            .cloned()
+            .collect::<Vec<_>>();
+        let front_dependencies = Arc::clone(&region.front_dependency_ordinals);
+        let break_dependencies = Arc::clone(&region.break_dependency_ordinals);
+        let line_count = region.line_count;
+        let line_last_badness = region.line_last_badness;
+        let effects = Arc::clone(&region.effects);
+        let barriers = Arc::clone(&region.barriers);
         let old_start = region.input().coverage().root_start().expect("root start");
         let old_end = region.input().coverage().root_end().expect("root end");
         let rebound = region
@@ -3096,7 +3122,67 @@ fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
         );
         assert_eq!(rebound.starting_state_hash(), region.starting_state_hash());
         assert_eq!(rebound.ending_state_hash(), region.ending_state_hash());
+        assert_eq!(
+            rebound
+                .input()
+                .coverage()
+                .transitions()
+                .cloned()
+                .collect::<Vec<_>>(),
+            transitions
+        );
+        assert_eq!(rebound.front_dependency_ordinals, front_dependencies);
+        assert_eq!(rebound.break_dependency_ordinals, break_dependencies);
+        assert_eq!(rebound.line_count, line_count);
+        assert_eq!(rebound.line_last_badness, line_last_badness);
+        assert_eq!(rebound.effects, effects);
+        assert_eq!(rebound.barriers, barriers);
+        assert!(matches!(
+            rebound.line_provenance,
+            tex_state::ParagraphLineProvenance::Accepted(_)
+        ));
     }
+}
+
+#[test]
+fn canonical_paragraph_effects_publish_an_explicit_replay_barrier() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"alpha\\message{visible} beta\\par\\end");
+    run_to_end(&mut control, &mut stores);
+    let region = control
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("paragraph region");
+
+    assert!(!region.effects.is_empty());
+    assert_eq!(
+        region.barriers.as_ref(),
+        [tex_state::ParagraphBarrierReason::UntrackedWorldAccess]
+    );
+}
+
+#[test]
+fn canonical_display_interruption_publishes_its_direction_continuation() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"alpha$$x$$\\end");
+    run_to_end(&mut control, &mut stores);
+    let region = control
+        .take_finished_paragraph_regions()
+        .into_iter()
+        .next()
+        .expect("display-interrupted paragraph");
+
+    assert_eq!(
+        region.display_active_directions.as_deref(),
+        Some([].as_slice())
+    );
+    assert_eq!(
+        region.barriers.as_ref(),
+        [tex_state::ParagraphBarrierReason::DisplayMath]
+    );
 }
 
 #[test]

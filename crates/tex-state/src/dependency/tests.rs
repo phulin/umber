@@ -189,6 +189,24 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
 }
 
 #[test]
+fn canonical_paragraph_dependency_phases_remain_exact_and_separate() {
+    let mut runtime = DependencyRuntime::default();
+    let front_key = DependencyKey::Meaning(1);
+    let break_key = DependencyKey::Meaning(2);
+    runtime.begin_region();
+    runtime.record(front_key, DependencyValue::Integer(11));
+    runtime.begin_paragraph_break_region();
+    runtime.record(break_key, DependencyValue::Integer(22));
+
+    let (front, breaking) = runtime.finish_paragraph_region();
+    assert_eq!(front.len(), 1);
+    assert_eq!(front[0].key, front_key);
+    assert_eq!(breaking.len(), 1);
+    assert_eq!(breaking[0].key, break_key);
+    assert!(!runtime.is_recording());
+}
+
+#[test]
 fn universe_facade_records_and_invalidates_across_rollback() {
     let key = DependencyKey::World {
         field: DependencyWorldField::Rng,

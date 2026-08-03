@@ -1764,6 +1764,18 @@ impl Universe {
         self.dependencies.finish_region()
     }
 
+    /// Starts the line-breaking dependency phase of a canonical paragraph.
+    pub fn begin_paragraph_break_dependency_region(&mut self) {
+        self.dependencies.begin_paragraph_break_region();
+    }
+
+    /// Finishes both canonical paragraph dependency phases.
+    pub fn finish_paragraph_dependency_region(
+        &mut self,
+    ) -> (Vec<ObservedDependency>, Vec<ObservedDependency>) {
+        self.dependencies.finish_paragraph_region()
+    }
+
     /// Marks one observable fact after its aggregate mutation barrier.
     pub fn mark_dependency_changed(&mut self, key: DependencyKey) -> ChangedAt {
         self.dependencies.mark_changed(key)

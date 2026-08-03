@@ -10,13 +10,22 @@ fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
         root_start: Some(10),
         root_end: Some(20),
         delivered_commands: 3,
+        input_transition_count: 0,
         retained_bytes: 64,
         dependencies: Arc::from([]),
+        front_dependency_ordinals: Arc::from([]),
+        break_dependency_ordinals: Arc::from([]),
         mutation_entry_in_group: false,
         mutations: Arc::from([]),
         finished_lines: None,
+        line_count: 0,
+        line_last_badness: 0,
+        display_active_directions: None,
+        barriers: Arc::from([]),
+        effects: Arc::from([]),
         starting_provenance: crate::provenance::ProvenanceStats::default(),
         ending_provenance: crate::provenance::ProvenanceStats::default(),
+        line_provenance: ParagraphLineProvenance::Pending,
     };
     runtime.record_canonical_paragraph_region(record.clone());
     runtime.record_canonical_paragraph_lookup(false, 0);

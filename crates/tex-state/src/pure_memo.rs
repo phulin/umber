@@ -209,17 +209,26 @@ pub struct CanonicalParagraphHistoryRecord {
     pub root_start: Option<usize>,
     pub root_end: Option<usize>,
     pub delivered_commands: usize,
+    pub input_transition_count: usize,
     pub retained_bytes: usize,
     /// Exact semantic reads captured while canonical main control owned the
     /// paragraph. These remain detached across accepted generations.
     pub dependencies: Arc<[ObservedDependency]>,
+    pub front_dependency_ordinals: Arc<[u32]>,
+    pub break_dependency_ordinals: Arc<[u32]>,
     /// Entry-class and setter-observed replay preconditions.
     pub mutation_entry_in_group: bool,
     pub mutations: Arc<[PureParagraphMutation]>,
     /// Accepted retained output and its rollback-coupled provenance bounds.
     pub finished_lines: Option<RetainedNodeList>,
+    pub line_count: i32,
+    pub line_last_badness: i32,
+    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
+    pub barriers: Arc<[ParagraphBarrierReason]>,
+    pub effects: Arc<[crate::EffectRecord]>,
     pub starting_provenance: crate::provenance::ProvenanceStats,
     pub ending_provenance: crate::provenance::ProvenanceStats,
+    pub line_provenance: ParagraphLineProvenance,
 }
 
 impl ParagraphOpportunityStats {
@@ -1402,6 +1411,13 @@ impl PureMemoRuntime {
                 region.dependency_observations = Some(Arc::clone(&observations));
             }
             if region.lines.is_some()
+                && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
+            {
+                region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));
+            }
+        }
+        for region in &mut self.recorded_canonical_paragraphs {
+            if region.finished_lines.is_some()
                 && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
             {
                 region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));

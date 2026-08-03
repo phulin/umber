@@ -583,8 +583,15 @@ pub struct CanonicalParagraphRegion {
     starting_provenance: ProvenanceStats,
     ending_provenance: ProvenanceStats,
     dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
+    front_dependency_ordinals: std::sync::Arc<[u32]>,
+    break_dependency_ordinals: std::sync::Arc<[u32]>,
     mutation_entry_in_group: bool,
     mutations: std::sync::Arc<[tex_state::PureParagraphMutation]>,
+    line_count: i32,
+    line_last_badness: i32,
+    display_active_directions: Option<std::sync::Arc<[tex_state::node::Direction]>>,
+    barriers: std::sync::Arc<[tex_state::ParagraphBarrierReason]>,
+    line_provenance: tex_state::ParagraphLineProvenance,
 }
 
 impl CanonicalParagraphRegion {
@@ -595,15 +602,24 @@ impl CanonicalParagraphRegion {
             root_start: coverage.root_start(),
             root_end: coverage.root_end(),
             delivered_commands: coverage.delivered_commands(),
+            input_transition_count: coverage.transitions().len(),
             retained_bytes: self.finished_lines.as_ref().map_or(0, |_| {
                 std::mem::size_of::<tex_state::survivor::RetainedNodeList>()
             }),
             dependencies: std::sync::Arc::clone(&self.dependencies),
+            front_dependency_ordinals: std::sync::Arc::clone(&self.front_dependency_ordinals),
+            break_dependency_ordinals: std::sync::Arc::clone(&self.break_dependency_ordinals),
             mutation_entry_in_group: self.mutation_entry_in_group,
             mutations: std::sync::Arc::clone(&self.mutations),
             finished_lines: self.finished_lines.clone(),
+            line_count: self.line_count,
+            line_last_badness: self.line_last_badness,
+            display_active_directions: self.display_active_directions.clone(),
+            barriers: std::sync::Arc::clone(&self.barriers),
+            effects: std::sync::Arc::clone(&self.effects),
             starting_provenance: self.starting_provenance,
             ending_provenance: self.ending_provenance,
+            line_provenance: self.line_provenance.clone(),
         }
     }
 
@@ -627,6 +643,30 @@ impl CanonicalParagraphRegion {
     #[must_use]
     pub fn effects(&self) -> impl ExactSizeIterator<Item = &tex_state::EffectRecord> {
         self.effects.iter()
+    }
+
+    #[must_use]
+    pub const fn line_count(&self) -> i32 {
+        self.line_count
+    }
+
+    #[must_use]
+    pub const fn line_last_badness(&self) -> i32 {
+        self.line_last_badness
+    }
+
+    #[must_use]
+    pub const fn line_provenance(&self) -> &tex_state::ParagraphLineProvenance {
+        &self.line_provenance
+    }
+
+    pub fn accept_line_provenance(
+        &mut self,
+        resolver: std::sync::Arc<tex_state::ParagraphOriginResolver>,
+    ) {
+        if self.finished_lines.is_some() {
+            self.line_provenance = tex_state::ParagraphLineProvenance::Accepted(resolver);
+        }
     }
 
     /// Exact aggregate dependency/mutation witness at paragraph entry.
@@ -697,6 +737,7 @@ struct CanonicalParagraphRecorder {
     starting_contribution_len: usize,
     effect_start: usize,
     starting_provenance: Option<ProvenanceStats>,
+    starting_prev_graf: i32,
     finished: Vec<CanonicalParagraphRegion>,
     replay: Vec<CanonicalParagraphRegion>,
 }
@@ -716,6 +757,7 @@ impl CanonicalParagraphRecorder {
         self.starting_contribution_len = stores.page_contributions().len();
         self.effect_start = stores.world().effect_records().len();
         self.starting_provenance = Some(stores.provenance_stats());
+        self.starting_prev_graf = modes.enclosing_vertical_prev_graf();
         self.pending = true;
     }
 
@@ -746,14 +788,22 @@ impl CanonicalParagraphRecorder {
             let list = stores.freeze_node_list(&finished);
             stores.retain_paragraph_result(list)
         });
-        let effects = stores
+        let effects: std::sync::Arc<[tex_state::EffectRecord]> = stores
             .world()
             .effect_records()
             .get(self.effect_start..)
             .unwrap_or_default()
             .to_vec()
             .into();
-        let dependencies = stores.finish_dependency_region().into();
+        let (front_dependencies, break_dependencies) = stores.finish_paragraph_dependency_region();
+        let front_len = front_dependencies.len();
+        let mut dependencies = front_dependencies;
+        dependencies.extend(break_dependencies);
+        let front_dependency_ordinals = (0..front_len as u32).collect::<Vec<_>>().into();
+        let break_dependency_ordinals = (front_len as u32..dependencies.len() as u32)
+            .collect::<Vec<_>>()
+            .into();
+        let dependencies = dependencies.into();
         let mutation_summary = stores.finish_pure_paragraph_recording().unwrap_or(
             tex_state::PureParagraphMutationSummary {
                 entry_in_group: tex_state::ExpansionState::execution_group_depth(stores) != 0,
@@ -762,6 +812,20 @@ impl CanonicalParagraphRecorder {
             },
         );
         self.next_identity = self.next_identity.wrapping_add(1);
+        let display_active_directions = modes
+            .current_list()
+            .display_interrupt()
+            .map(|interrupt| interrupt.active_directions.clone().into());
+        let mut barriers = Vec::new();
+        if display_active_directions.is_some() {
+            barriers.push(tex_state::ParagraphBarrierReason::DisplayMath);
+        }
+        if !effects.is_empty() {
+            barriers.push(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
+        }
+        if mutation_summary.unsupported_group_ownership {
+            barriers.push(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
+        }
         let region = CanonicalParagraphRegion {
             identity: self.next_identity,
             input,
@@ -779,14 +843,21 @@ impl CanonicalParagraphRecorder {
                 .expect("pending paragraph owns its provenance bound"),
             ending_provenance: stores.provenance_stats(),
             dependencies,
+            front_dependency_ordinals,
+            break_dependency_ordinals,
             mutation_entry_in_group: mutation_summary.entry_in_group,
             mutations: mutation_summary.mutations.into(),
+            line_count: modes
+                .enclosing_vertical_prev_graf()
+                .saturating_sub(self.starting_prev_graf),
+            line_last_badness: stores.last_badness(),
+            display_active_directions,
+            barriers: barriers.clone().into(),
+            line_provenance: tex_state::ParagraphLineProvenance::Pending,
         };
         stores.record_canonical_paragraph_region(region.history_record());
-        if !region.effects.is_empty() {
-            stores.record_pure_paragraph_barriers(&[
-                tex_state::ParagraphBarrierReason::UntrackedWorldAccess,
-            ]);
+        if !barriers.is_empty() {
+            stores.record_pure_paragraph_barriers(&barriers);
         }
         self.finished.push(region);
     }
@@ -1839,7 +1910,7 @@ impl CanonicalMainControl {
             return false;
         }
         let Some(index) = self.paragraph_recorder.replay.iter().position(|region| {
-            region.effects.is_empty()
+            region.barriers.is_empty()
                 && crate::paragraph_memo::same_mutation_entry_class(
                     region.mutation_entry_in_group,
                     tex_state::ExpansionState::execution_group_depth(stores),
@@ -2896,10 +2967,11 @@ impl CanonicalMainControl {
             self.paragraph_recorder
                 .begin(&mut self.command, &self.modes, stores);
         }
-        if outer_paragraph_was_active
+        let outer_paragraph_finished = outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
-        {
+            || self.paragraph_recorder.pending && self.modes.current_mode() == Mode::DisplayMath;
+        if outer_paragraph_finished {
             self.paragraph_recorder
                 .finish(&mut self.command, &self.modes, stores);
             self.completed_boundaries
