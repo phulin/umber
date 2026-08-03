@@ -205,6 +205,63 @@ fn output_token_list_push_precedes_its_scanner_owned_opening_brace() {
 }
 
 #[test]
+fn pending_every_par_push_precedes_later_output_push_and_output_brace() {
+    // TeX82 §§1091/1025/323: display resumption starts the following
+    // paragraph (and therefore its `every_par` list) before its final
+    // `build_page` can enter the output routine. All three publications are
+    // one ordered transaction: every_par, output_text, then output_text's
+    // scanner-owned opening brace.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\maxdeadcycles=1\vsize=1pt\everypar{\relax}\output={\dimen0=1pt}
+           \noindent X\par $$x$$Y\penalty-10000\end",
+    );
+
+    let observations = collect_to_end(&mut control, &mut stores);
+    let pushes: Vec<_> = observations
+        .0
+        .iter()
+        .enumerate()
+        .filter_map(|(index, observation)| match observation {
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Push
+                    && matches!(
+                        record.reason,
+                        InputReason::EveryPar | InputReason::OutputRoutine
+                    ) =>
+            {
+                Some((index, record.reason, record.level))
+            }
+            _ => None,
+        })
+        .collect();
+    let pair = pushes
+        .windows(2)
+        .find(|pair| pair[0].1 == InputReason::EveryPar && pair[1].1 == InputReason::OutputRoutine);
+    let pair = pair.unwrap_or_else(|| panic!("expected adjacent ordered pushes: {pushes:?}"));
+    let opening_brace = observations
+        .0
+        .iter()
+        .enumerate()
+        .find_map(|(index, observation)| match observation {
+            CommandObservation::Command(record)
+                if index > pair[1].0
+                    && record.boundary == CommandDeliveryBoundary::Raw
+                    && record.command == "left_brace"
+                    && record.provenance.input_level == pair[1].2 =>
+            {
+                Some(index)
+            }
+            _ => None,
+        })
+        .expect("the later output list consumes its opening brace");
+    assert!(pair[1].0 < opening_brace, "{pushes:?}");
+}
+
+#[test]
 fn default_page_output_publishes_no_output_token_list_push() {
     // TeX82 §§1023--1025: the default output path ships box 255 without
     // entering `output_text`; only a selected non-null \output routine owns

@@ -184,11 +184,12 @@ pub struct CanonicalMainControl {
     /// Host-owned authored chunks end when their registered root is
     /// exhausted; complete TeX jobs retain §360's interactive `*` loop.
     stop_at_end_of_input: bool,
-    /// Observations produced by `fire_pending_page_output` after the current
-    /// step's own records. Drained by every step, observed or not. TeX82
-    /// §§1025/323's named `output_text` push is drained into this buffer
-    /// while the output episode is opened, before the following step can
-    /// deliver the routine's scanner-owned opening brace.
+    /// The ordered publication transaction produced by
+    /// `fire_pending_page_output` after the contributing step's own records.
+    /// It first receives any earlier named-list pushes still owned by that
+    /// aggregate step, then TeX82 §§1025/323's `output_text` push. Every step
+    /// drains it before the following step can deliver the routine's
+    /// scanner-owned opening brace.
     page_output_observations: Vec<CommandObservation>,
     /// The commit buffer for the operation in flight, occupied exactly while
     /// an observed operation is running.
@@ -2462,8 +2463,13 @@ impl CanonicalMainControl {
                 return Err(error);
             }
         };
-        let opens_output_episode =
-            stores.page_fire_up().is_some() && !self.boxes.output_routine_active;
+        // A host-owned application can itself run `fire_pending_page_output`
+        // before reaching this common tail. Retain that already-opened
+        // episode here instead of asking only whether another fire-up is
+        // currently pending; otherwise its observations survive into the
+        // next command step and that command's raw delivery overtakes them.
+        let opens_output_episode = !self.page_output_observations.is_empty()
+            || (stores.page_fire_up().is_some() && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores)?;
         {
             // Host-owned transitions are still complete main-control steps.
@@ -3293,6 +3299,22 @@ impl CanonicalMainControl {
                     let enclosing = self.operation_observations.take();
                     if enclosing.is_some() {
                         self.operation_observations = Some(ObservationBuffer::default());
+                        // TeX82 §1091's `every_par` (and every other named
+                        // hook installed earlier in this aggregate step) has
+                        // already run `begin_token_list`. Move those pending
+                        // publications into the page-output transaction before
+                        // §1025 opens `output_text`, so the one deferred queue
+                        // retains their chronological §323 order.
+                        self.operation_observations
+                            .as_mut()
+                            .expect("observed page-output episode has a buffer")
+                            .0
+                            .extend(
+                                self.command
+                                    .publish_named_token_list_pushes(&mut stores.command_context())
+                                    .into_iter()
+                                    .map(CommandObservation::Input),
+                            );
                     }
                     let mut processor = command_processor(
                         &mut self.command,
@@ -3308,24 +3330,9 @@ impl CanonicalMainControl {
                     let opened = processor.begin_selected_output_routine();
                     let opened = opened.map_err(command_error);
                     if enclosing.is_some() {
-                        let mut deferred =
+                        let deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
                                 .unwrap_or_default();
-                        // TeX82 §1025 calls `begin_token_list(output_routine,
-                        // output_text)` before `scan_left_brace`, and §323
-                        // publishes the named push inside that call. The
-                        // physical replay push above is observed immediately,
-                        // while its named publication is queued in command
-                        // state until the processor borrow ends. Drain it into
-                        // the same page-output episode now: leaving it for the
-                        // ordinary next-step tail lets that step's raw opening
-                        // brace overtake the push.
-                        deferred.0.extend(
-                            self.command
-                                .publish_named_token_list_pushes(&mut stores.command_context())
-                                .into_iter()
-                                .map(CommandObservation::Input),
-                        );
                         self.page_output_observations.extend(deferred.0);
                     }
                     opened?;
