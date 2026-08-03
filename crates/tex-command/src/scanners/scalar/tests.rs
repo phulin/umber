@@ -5467,6 +5467,31 @@ fn integer_character_constant_raw_token_and_optional_space_matrix() {
 }
 
 #[test]
+fn brace_character_constant_restores_alignment_depth() {
+    let mut universe = crate::test_harness::universe();
+    let (value, align_state) = scan_with(
+        &mut universe,
+        vec![
+            char_token('`'),
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+        |processor| {
+            processor.command.alignment.align_state = crate::processor::CELL_ALIGN_STATE;
+            let value = processor
+                .scan_integer()
+                .expect("brace character constant scans")
+                .value;
+            (value, processor.command.alignment.align_state)
+        },
+    );
+    assert_eq!(value, i32::from(b'}'));
+    assert_eq!(align_state, crate::processor::CELL_ALIGN_STATE);
+}
+
+#[test]
 fn integer_character_constants_recover_values_above_255_in_exact_profile() {
     for token_is_control_sequence in [false, true] {
         let mut universe = crate::test_harness::universe();

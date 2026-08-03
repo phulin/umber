@@ -606,7 +606,26 @@ impl CommandProcessor<'_> {
     pub(crate) fn get_next_character_code(
         &mut self,
     ) -> Result<Option<CurrentCommand>, CommandError> {
-        self.get_token()
+        let command = self.get_token()?;
+        if let Some(command) = &command
+            && matches!(
+                command.spelling().semantic_token(),
+                Token::Char {
+                    cat: Catcode::BeginGroup | Catcode::EndGroup,
+                    ..
+                }
+            )
+        {
+            // TeX82 §442 immediately cancels `get_next`'s brace update
+            // when a brace token supplies an alphabetic character constant.
+            // The token is consumed as a character code, not as grouping
+            // material, so a following alignment delimiter must still see
+            // the entry's original `align_state`.
+            self.command
+                .alignment
+                .undo_delivery(command.alignment_adjustment());
+        }
+        Ok(command)
     }
 
     /// Delivers one raw token for consumers which canonically permit a new
