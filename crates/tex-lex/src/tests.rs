@@ -1,17 +1,16 @@
 use super::{
-    AlignmentTerminator, AlignmentTokenDelivery, ConditionFrameSummary, ConditionKind,
-    ImmutableSourceKind, InputFrame, InputFrameSummary, InputSource, InputStack, LayoutCursor,
-    LayoutCursorError, LexError, Lexer, LexerState, LineEvent, LineReader, LiteralSpanPolicy,
-    MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput, PhysicalLine,
-    StableSourceSpanId, TokenListReplayKind, load_next_line,
+    AlignmentTerminator, AlignmentTokenDelivery, ImmutableSourceKind, InputFrame,
+    InputFrameSummary, InputSource, InputStack, LayoutCursor, LayoutCursorError, LexError, Lexer,
+    LexerState, LineEvent, LineReader, LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
+    MacroArguments, MemoryInput, PhysicalLine, StableSourceSpanId, load_next_line,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tex_state::ConditionLimb;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{ConditionFrameSummary, ConditionKind, ConditionLimb, TokenListReplayKind};
 use tex_state::{
     ContentHash, EditorLayout, ExpansionState, FragmentStore, LayoutGeneration, Piece,
     ProvenanceResolver, Universe,

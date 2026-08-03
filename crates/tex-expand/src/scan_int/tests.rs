@@ -52,7 +52,7 @@ fn scans_font_hyphenchar_as_an_internal_integer() {
     let list =
         stores.intern_token_list(&[Token::Cs(hyphenchar.symbol()), Token::Cs(font_cs.symbol())]);
     let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list(list, tex_lex::TokenListReplayKind::Inserted);
+    input.push_token_list(list, tex_state::TokenListReplayKind::Inserted);
 
     let scanned = scan_int(
         &mut input,
@@ -86,7 +86,7 @@ fn scans_fontdimen_as_a_raw_scaled_internal_integer() {
         Token::Cs(font_cs.symbol()),
     ]);
     let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list(list, tex_lex::TokenListReplayKind::Inserted);
+    input.push_token_list(list, tex_state::TokenListReplayKind::Inserted);
 
     let scanned = scan_int(
         &mut input,
@@ -391,7 +391,7 @@ fn scans_mathchardef_meaning_direct_macro_and_signed_without_read_ahead() {
         char_token('X', Catcode::Letter),
     ]);
     let mut direct_input = InputStack::new(MemoryInput::new(""));
-    direct_input.push_token_list(explicit_space, tex_lex::TokenListReplayKind::Inserted);
+    direct_input.push_token_list(explicit_space, tex_state::TokenListReplayKind::Inserted);
     let direct = scan_int(
         &mut direct_input,
         &mut tex_state::ExpansionContext::new(&mut stores),

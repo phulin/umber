@@ -30,7 +30,7 @@ fn main_control_recovery_lowers_only_recoverable_error_kinds() {
 }
 use ahash::AHashMap;
 use tex_lex::MacroArguments;
-use tex_lex::{ConditionFrameSummary, InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{InputStack, MemoryInput};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::TokenListId;
 use tex_state::interner::Symbol;
@@ -44,6 +44,7 @@ use tex_state::provenance::{
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{ConditionFrameSummary, TokenListReplayKind};
 use tex_state::{ExpansionState, InputReadState, Universe};
 
 #[test]

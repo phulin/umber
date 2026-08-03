@@ -61,9 +61,11 @@ fn macro_arguments_stay_on_the_state_owner() {
                     && !source.contains("tex_lex::LiteralSpanPolicy")
                     && !source.contains("LexError, LiteralSpanPolicy")
                     && !source.contains("tex_lex::ConditionLimb")
-                    && !source.contains("ConditionKind, ConditionLimb")
-                    && !source.contains("MacroReplaySite, TokenListReplayKind")
-                    && !source.contains("TokenListReplayKind, TracedExpansionToken"),
+                    && !source.contains("tex_lex::ConditionFrameSummary")
+                    && !source.contains("tex_lex::ConditionFrameToken")
+                    && !source.contains("tex_lex::ConditionKind")
+                    && !source.contains("tex_lex::TokenListReplayKind")
+                    && !source.contains("MacroReplaySite, TokenListReplayKind"),
                 "{} must consume immutable replay payloads from tex-state",
                 path.display()
             );
@@ -75,4 +77,20 @@ fn macro_arguments_stay_on_the_state_owner() {
     assert!(!lexer.contains("pub struct MacroReplaySite"));
     assert!(!lexer.contains("pub struct TracedExpansionToken"));
     assert!(!lexer.contains("pub enum LiteralSpanPolicy"));
+    let state_reexports = lexer
+        .split_once("pub use tex_state::{")
+        .and_then(|(_, suffix)| suffix.split_once("};"))
+        .map(|(reexports, _)| reexports)
+        .expect("lexer state re-export block");
+    for descriptor in [
+        "ConditionFrameSummary",
+        "ConditionFrameToken",
+        "ConditionKind",
+        "TokenListReplayKind",
+    ] {
+        assert!(
+            !state_reexports.contains(descriptor),
+            "tex-lex must not re-export state-owned {descriptor}"
+        );
+    }
 }

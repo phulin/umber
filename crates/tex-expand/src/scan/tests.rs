@@ -3,11 +3,7 @@ use super::{
     scan_general_text_expanded_with_expanded_open, scan_toks, scan_toks_expanded,
     scan_toks_expanded_with_driver,
 };
-use tex_lex::{
-    InputStack, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput,
-    TokenListReplayKind,
-};
-use tex_state::TracedTokenList;
+use tex_lex::{InputStack, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput};
 use tex_state::Universe;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::MacroDefinitionProvenance;
@@ -15,6 +11,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{TokenListReplayKind, TracedTokenList};
 
 use crate::ExpansionContext;
 

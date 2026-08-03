@@ -22,18 +22,17 @@ use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
-    AlignmentScannerPhase, ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore,
-    InputRecordId, LiteralSpanPolicy, MacroReplaySite, RootSpanId, TracedExpansionToken,
-    WorldError,
+    AlignmentScannerPhase, ConditionFrameSummary, ConditionFrameToken, ContentHash, EditorLayout,
+    ExpansionState, FileContent, FragmentStore, InputRecordId, LiteralSpanPolicy, MacroReplaySite,
+    RootSpanId, TokenListReplayKind, TracedExpansionToken, WorldError,
 };
 #[cfg(feature = "profiling")]
 use tex_state::{ProfilingTimer, World};
 
 use tex_state::TokenListReplayMarker;
 pub use tex_state::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, InputFrameSummary, InputSummary,
-    LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, SourceFrameSummary,
-    SourceId, TokenListReplayKind, TracedTokenList,
+    InputFrameSummary, InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange,
+    MacroArguments, SourceFrameSummary, SourceId, TracedTokenList,
 };
 
 /// Classifies and applies TeX's alignment-sensitive raw-token delivery.

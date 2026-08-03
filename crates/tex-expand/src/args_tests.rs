@@ -1,5 +1,6 @@
 use crate::args::{MacroCallError, match_macro_call};
-use tex_lex::{InputStack, MemoryInput, TokenListReplayKind};
+use tex_lex::{InputStack, MemoryInput};
+use tex_state::TokenListReplayKind;
 use tex_state::ids::OriginListId;
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::MeaningFlags;
