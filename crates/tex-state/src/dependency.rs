@@ -300,8 +300,15 @@ impl DependencyRuntime {
             self.paragraph_front.is_none(),
             "paragraph break region already active"
         );
-        self.paragraph_front = Some(self.finish_region());
-        self.begin_region();
+        let Some(front) = self.active.take() else {
+            // Dependency recording is optional. Inner or directly-entered
+            // canonical paragraphs can reach the shared breaking boundary
+            // without an outer paragraph recorder, in which case there is
+            // no phase to rotate and none must be invented.
+            return;
+        };
+        self.paragraph_front = Some(front.into_observations());
+        self.active = Some(DependencyRegion::default());
     }
 
     /// Finishes a canonical paragraph and returns its two dependency phases.

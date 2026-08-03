@@ -3185,6 +3185,29 @@ fn canonical_display_interruption_publishes_its_direction_continuation() {
     );
 }
 
+/// The shared display interruption can run for a canonical paragraph that is
+/// not owned by the outer-paragraph recorder. Dependency recording is
+/// optional at this boundary, so its absent phase must remain balanced.
+#[test]
+fn canonical_unrecorded_display_interruption_keeps_dependency_phases_balanced() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .modes
+        .push(Mode::Horizontal)
+        .expect("enter unrecorded canonical paragraph");
+
+    let interrupted = crate::assignments::interrupt_canonical_paragraph_for_display(
+        &mut control.modes,
+        &mut stores,
+        control.fuel.fuel_mut(),
+    )
+    .expect("empty unrecorded paragraph interruption remains valid");
+
+    assert!(interrupted.last_line.is_none());
+    assert!(interrupted.finished_nodes.is_empty());
+}
+
 #[test]
 fn canonical_paragraph_rehome_rejects_an_overlapping_edit() {
     let old = br"alpha beta\par\end";

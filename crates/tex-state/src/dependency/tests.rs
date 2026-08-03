@@ -179,6 +179,12 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     assert!(runtime.tracker.changed.is_empty());
     assert!(!runtime.is_recording());
 
+    runtime.begin_paragraph_break_region();
+    assert!(
+        !runtime.is_recording(),
+        "an absent optional paragraph region must remain absent"
+    );
+
     runtime.begin_region();
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
