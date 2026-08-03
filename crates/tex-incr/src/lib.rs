@@ -1586,14 +1586,16 @@ impl Session {
         control
             .capabilities_mut()
             .set_startup_job_name(&self.job_name);
-        let (mut universe, restart_fork_latency) = anchor.checkpoint().fork_canonical_editor(
-            &mut control,
-            substrate,
-            setup.old_source.as_bytes(),
-            Arc::from(self.source_file_bytes(&setup.next)),
-            &setup.fragments,
-            &setup.next_layout,
-        )?;
+        let (mut universe, restart_fork_latency, replay_suffix) =
+            anchor.checkpoint().fork_canonical_editor_with_paragraphs(
+                &mut control,
+                substrate,
+                setup.old_source.as_bytes(),
+                Arc::from(self.source_file_bytes(&setup.next)),
+                &setup.fragments,
+                &setup.next_layout,
+                &replay_suffix,
+            )?;
         control.install_paragraph_replay_regions(replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
             universe.world_mut().set_memory_file(path, bytes.clone())?;

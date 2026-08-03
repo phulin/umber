@@ -830,6 +830,14 @@ impl Stores {
         }
     }
 
+    pub(crate) fn set_macro_definition_provenance(
+        &mut self,
+        id: MacroDefinitionId,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        self.macros.set_provenance(id, provenance);
+    }
+
     /// Sets a local macro meaning by freezing its public aggregate first.
     pub fn set_macro_meaning(&mut self, symbol: impl SymbolReference, macro_meaning: MacroMeaning) {
         let definition = self.intern_macro(macro_meaning);

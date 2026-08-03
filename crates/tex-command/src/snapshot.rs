@@ -29,8 +29,8 @@ pub struct CommandStateSnapshot {
 /// expansion episodes, or alignment-template identities.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct CommandSummary {
-    input: InputState,
-    parameters: ParameterState,
+    pub(crate) input: InputState,
+    pub(crate) parameters: ParameterState,
     conditions: ConditionStack,
     align_state: i32,
     expansion: ExpansionState,

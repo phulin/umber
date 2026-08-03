@@ -603,6 +603,40 @@ pub struct CanonicalParagraphRegion {
 }
 
 impl CanonicalParagraphRegion {
+    pub(crate) fn replace_input(&mut self, input: tex_command::ParagraphInputTransaction) {
+        self.input = input;
+    }
+
+    pub(crate) fn can_mount_finished_lines(&self, universe: &Universe) -> bool {
+        self.finished_lines
+            .as_ref()
+            .is_none_or(|lines| universe.can_mount_retained_paragraph_result(lines))
+    }
+
+    pub(crate) fn mount_finished_lines(&self, universe: &mut Universe) -> bool {
+        let Some(lines) = &self.finished_lines else {
+            return true;
+        };
+        match &self.line_provenance {
+            tex_state::ParagraphLineProvenance::Accepted(resolver) => universe
+                .mount_prevalidated_paragraph_result_lazy(lines, std::sync::Arc::clone(resolver))
+                .is_some(),
+            tex_state::ParagraphLineProvenance::Pending => false,
+        }
+    }
+
+    fn materialize_finished_nodes(
+        &self,
+        universe: &mut Universe,
+    ) -> Option<Vec<tex_state::node::Node>> {
+        let lines = self.finished_lines.as_ref()?;
+        let tex_state::ParagraphLineProvenance::Accepted(resolver) = &self.line_provenance else {
+            return None;
+        };
+        let list = universe
+            .mount_prevalidated_paragraph_result_lazy(lines, std::sync::Arc::clone(resolver))?;
+        Some(universe.nodes(list).to_vec())
+    }
     fn history_record(&self) -> tex_state::CanonicalParagraphHistoryRecord {
         let coverage = self.input.coverage();
         tex_state::CanonicalParagraphHistoryRecord {
@@ -720,9 +754,6 @@ impl CanonicalParagraphRegion {
         rebound.input = self
             .input
             .rebind_unchanged_root_prefix(old, new, unchanged_end)?;
-        if rebound.finished_lines.is_some() {
-            rebound.line_provenance = tex_state::ParagraphLineProvenance::Pending;
-        }
         Some(rebound)
     }
 
@@ -738,9 +769,6 @@ impl CanonicalParagraphRegion {
     ) -> Option<Self> {
         let mut rebound = self.clone();
         rebound.input = self.input.rebind_edited_root(old, new, edited)?;
-        if rebound.finished_lines.is_some() {
-            rebound.line_provenance = tex_state::ParagraphLineProvenance::Pending;
-        }
         Some(rebound)
     }
 }
@@ -1965,6 +1993,10 @@ impl CanonicalMainControl {
             return false;
         }
         let region = self.paragraph_recorder.replay.remove(index);
+        let finished_nodes = region.materialize_finished_nodes(stores);
+        if finished_nodes.is_some() {
+            stores.record_pure_paragraph_line_hit();
+        }
         stores
             .record_canonical_paragraph_lookup(true, region.input.coverage().delivered_commands());
         self.command.abandon_paragraph_input_transaction();
@@ -1981,6 +2013,13 @@ impl CanonicalMainControl {
         stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
+        if let Some(nodes) = finished_nodes {
+            for node in nodes {
+                crate::vertical::append_vertical_contribution(&mut self.modes, stores, node);
+            }
+            crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
+                .expect("prevalidated retained paragraph page contribution must replay");
+        }
         self.paragraph_recorder.next_identity =
             self.paragraph_recorder.next_identity.max(region.identity);
         self.paragraph_recorder.finished.push(region);

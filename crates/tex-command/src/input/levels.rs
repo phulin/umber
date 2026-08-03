@@ -132,6 +132,10 @@ impl SharedTokenBuffer {
     pub(crate) fn get(&self, index: usize) -> Option<TracedTokenWord> {
         self.0.get(index).copied()
     }
+
+    pub(crate) fn words(&self) -> &[TracedTokenWord] {
+        &self.0
+    }
 }
 
 /// Shared ownership of commands restored by `back_input` or scanner replay.
@@ -148,6 +152,10 @@ impl SharedBackedUpBuffer {
 
     pub(crate) fn get(&self, index: usize) -> Option<BackedUpToken> {
         self.0.get(index).copied()
+    }
+
+    pub(crate) fn words(&self) -> &[BackedUpToken] {
+        &self.0
     }
 
     /// Prepends tokens to e-TeX's active optimized `backed_up` list.

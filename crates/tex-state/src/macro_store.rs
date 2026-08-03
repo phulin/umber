@@ -303,6 +303,15 @@ impl MacroStore {
         self.provenance.get(id.raw() as usize).copied().flatten()
     }
 
+    pub(crate) fn set_provenance(
+        &mut self,
+        id: MacroDefinitionId,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        assert!(self.contains(id), "macro definition id is not live");
+        self.provenance[id.raw() as usize] = Some(provenance);
+    }
+
     #[must_use]
     pub(crate) fn observation_operand(&self, id: MacroDefinitionId) -> i64 {
         assert!(self.contains(id), "macro definition id is not live");

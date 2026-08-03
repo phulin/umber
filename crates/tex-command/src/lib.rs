@@ -31,6 +31,7 @@ macro_rules! observe {
 
 mod command;
 mod conditionals;
+mod continuation;
 pub use conditionals::{ActiveCondition, IncompleteCondition};
 mod error;
 mod fatal;
@@ -63,6 +64,7 @@ mod fixture_replay;
 mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
+pub use continuation::OwnedCommandContinuation;
 pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{

@@ -933,15 +933,31 @@ impl GenerationSubstrate {
     /// Clones this frozen generation once and atomically rolls the clone back
     /// to an exact owner-validated checkpoint.
     pub fn fork_at(&self, checkpoint: &Snapshot) -> Result<Universe, GenerationForkError> {
+        self.fork_at_prepared(checkpoint, |_| ())
+            .map(|(fork, ())| fork)
+    }
+
+    /// Clones a retained generation, prepares handle-free continuation data
+    /// from the still-complete clone, then rolls that clone to `checkpoint`.
+    ///
+    /// Preparation cannot mutate the source generation. This ordering is the
+    /// atomic boundary required by clients whose retained continuation can
+    /// reach immutable arenas allocated after the selected checkpoint.
+    pub fn fork_at_prepared<T>(
+        &self,
+        checkpoint: &Snapshot,
+        prepare: impl FnOnce(&Universe) -> T,
+    ) -> Result<(Universe, T), GenerationForkError> {
         self.universe.validate_fork_snapshot(checkpoint)?;
         let mut fork = self.universe.clone();
+        let prepared = prepare(&fork);
         let checkpoint = fork.retarget_inherited_snapshot(checkpoint);
         fork.rollback_generation_fork(&checkpoint);
         fork.fork_origin = Some(ForkOrigin {
             source_owner: self.universe.owner.snapshot_owner(),
             anchor_serial: checkpoint.serial,
         });
-        Ok(fork)
+        Ok((fork, prepared))
     }
 
     /// Retargets a source-generation prefix snapshot onto a promoted fork.
@@ -4628,6 +4644,18 @@ impl Universe {
     #[must_use]
     pub fn macro_definition_provenance(&self, id: MacroDefinitionId) -> MacroDefinitionProvenance {
         self.stores.macro_definition_provenance(id)
+    }
+
+    /// Attaches provenance after a definition's semantic body has been interned.
+    ///
+    /// Detached continuation import uses this two-phase operation to break the
+    /// legitimate definition -> provenance -> invocation -> definition cycle.
+    pub fn set_macro_definition_provenance(
+        &mut self,
+        id: MacroDefinitionId,
+        provenance: MacroDefinitionProvenance,
+    ) {
+        self.stores.set_macro_definition_provenance(id, provenance);
     }
 
     pub fn set_macro_meaning(

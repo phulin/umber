@@ -205,6 +205,31 @@ impl EngineCheckpoint {
         fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
     ) -> Result<(Universe, Duration), EditorRestoreError> {
+        self.fork_canonical_editor_with_paragraphs(
+            control,
+            substrate,
+            old_source,
+            new_source,
+            fragments,
+            layout,
+            &[],
+        )
+        .map(|(universe, latency, _)| (universe, latency))
+    }
+
+    /// Forks a checkpoint and atomically remaps its command continuation and
+    /// retained paragraph endpoints before either can be restored.
+    pub fn fork_canonical_editor_with_paragraphs(
+        &self,
+        control: &mut crate::CanonicalMainControl,
+        substrate: &GenerationSubstrate,
+        old_source: &[u8],
+        new_source: std::sync::Arc<[u8]>,
+        fragments: &FragmentStore,
+        layout: &tex_state::EditorLayout,
+        paragraphs: &[crate::CanonicalParagraphRegion],
+    ) -> Result<(Universe, Duration, Vec<crate::CanonicalParagraphRegion>), EditorRestoreError>
+    {
         if self.root_content_hash != Some(ContentHash::from_bytes(old_source)) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -216,20 +241,49 @@ impl EngineCheckpoint {
         }
         let new_content_hash = ContentHash::from_bytes(&new_source);
         let fork_started = Timer::start();
-        let mut universe = substrate
-            .fork_at(&self.universe)
+        let summary = self.command_summary().ok_or(EditorRestoreError::Canonical(
+            CanonicalCheckpointRestoreError::MissingCommandSummary,
+        ))?;
+        let (mut universe, owned) = substrate
+            .fork_at_prepared(&self.universe, |source| {
+                tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                    summary,
+                    paragraphs
+                        .iter()
+                        .map(crate::CanonicalParagraphRegion::input),
+                    source,
+                )
+            })
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
         let mut rebound = self.clone();
-        rebound.universe = universe.snapshot();
         let CheckpointContinuation::Canonical(command) = &mut rebound.continuation else {
             return Err(EditorRestoreError::Canonical(
                 CanonicalCheckpointRestoreError::MissingCommandSummary,
             ));
         };
+        let (materialized, materialized_paragraphs) =
+            owned.materialize_with_paragraphs(&mut universe);
+        *command = Box::new(materialized);
         if !command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
+        let mut paragraphs = paragraphs.to_vec();
+        for (paragraph, input) in paragraphs.iter_mut().zip(materialized_paragraphs) {
+            paragraph.replace_input(input);
+        }
+        if !paragraphs
+            .iter()
+            .all(|paragraph| paragraph.can_mount_finished_lines(&universe))
+            || !paragraphs
+                .iter()
+                .all(|paragraph| paragraph.mount_finished_lines(&mut universe))
+        {
+            return Err(EditorRestoreError::Canonical(
+                CanonicalCheckpointRestoreError::InvalidRetainedParagraph,
+            ));
+        }
+        rebound.universe = universe.snapshot();
         control
             .restore_checkpoint(&rebound, &mut universe)
             .map_err(EditorRestoreError::Canonical)?;
@@ -237,7 +291,7 @@ impl EngineCheckpoint {
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
         universe.set_root_editor_content_hash(new_content_hash);
-        Ok((universe, fork_latency))
+        Ok((universe, fork_latency, paragraphs))
     }
 
     /// Checks the immutable prerequisites for an edited-root canonical fork.
@@ -501,6 +555,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
 #[derive(Debug)]
 pub enum CanonicalCheckpointRestoreError {
     MissingCommandSummary,
+    InvalidRetainedParagraph,
     CommandProfile(CommandProfileMismatch),
     Mode(ExecError),
 }
@@ -510,6 +565,9 @@ impl fmt::Display for CanonicalCheckpointRestoreError {
         match self {
             Self::MissingCommandSummary => {
                 f.write_str("checkpoint has no canonical command summary")
+            }
+            Self::InvalidRetainedParagraph => {
+                f.write_str("retained paragraph graph cannot be mounted atomically")
             }
             Self::CommandProfile(error) => {
                 write!(f, "could not restore checkpoint command profile: {error}")

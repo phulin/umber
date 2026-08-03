@@ -59,8 +59,10 @@ impl ParagraphInputCoverage {
 /// levels and without consulting the retired `tex_lex::InputStack`.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ParagraphInputTransaction {
-    starting_input: InputState,
-    ending_input: InputState,
+    pub(crate) starting_input: InputState,
+    pub(crate) ending_input: InputState,
+    pub(crate) starting_parameters: crate::macro_call::ParameterState,
+    pub(crate) ending_parameters: crate::macro_call::ParameterState,
     coverage: ParagraphInputCoverage,
 }
 
@@ -295,6 +297,7 @@ fn rebase_ending_input_identities(
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ActiveParagraphInputTransaction {
     starting_input: InputState,
+    starting_parameters: crate::macro_call::ParameterState,
     root_start: Option<usize>,
     delivered_commands: usize,
     transitions: Vec<InputRecord>,
@@ -312,6 +315,7 @@ impl crate::CommandState {
         debug_assert!(self.paragraph_input_transaction.is_none());
         self.paragraph_input_transaction = Some(ActiveParagraphInputTransaction {
             starting_input: self.input.clone(),
+            starting_parameters: self.parameters.clone(),
             root_start: root_source_anchor(&self.input),
             delivered_commands: 0,
             transitions: Vec::new(),
@@ -324,6 +328,8 @@ impl crate::CommandState {
         Some(ParagraphInputTransaction {
             starting_input: active.starting_input,
             ending_input: self.input.clone(),
+            starting_parameters: active.starting_parameters,
+            ending_parameters: self.parameters.clone(),
             coverage: ParagraphInputCoverage {
                 root_start: active.root_start,
                 root_end: root_source_anchor(&self.input),
@@ -355,6 +361,9 @@ impl crate::CommandState {
         if self.input != starting_input {
             return Err(ParagraphInputReplayError::StartingInputMismatch);
         }
+        if self.parameters != transaction.starting_parameters {
+            return Err(ParagraphInputReplayError::StartingInputMismatch);
+        }
         let mut ending_input = transaction.ending_input.clone();
         rebase_ending_input_identities(
             &mut ending_input,
@@ -364,6 +373,7 @@ impl crate::CommandState {
         )
         .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
         self.input = ending_input;
+        self.parameters = transaction.ending_parameters.clone();
         Ok(())
     }
 
