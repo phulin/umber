@@ -722,6 +722,11 @@ impl RevisionCandidate {
                             sink.checkpoint(checkpoint);
                         }
                     }
+                    if self.control.has_pending_paragraph_replay()
+                        && let CandidateSink::Advance(sink) = &mut self.sink
+                    {
+                        sink.defer_convergence_for_paragraph_replay();
+                    }
                     let stop = match &self.sink {
                         CandidateSink::Cold(sink) => sink.stop_requested(),
                         CandidateSink::Advance(sink) => sink.stop_requested(),
@@ -3230,6 +3235,10 @@ impl ResumeSink {
             trace_validation_latency: Duration::ZERO,
             allow_convergence,
         }
+    }
+
+    fn defer_convergence_for_paragraph_replay(&mut self) {
+        self.convergence_old_index = None;
     }
 }
 

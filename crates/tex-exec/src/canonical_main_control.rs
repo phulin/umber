@@ -1998,6 +1998,14 @@ impl CanonicalMainControl {
         Arc::make_mut(&mut self.paragraph_recorder.replay).extend(regions);
     }
 
+    /// Whether a later source-aligned paragraph still has an accepted replay
+    /// candidate. Editor convergence must not adopt the enclosing suffix
+    /// before these finer-grained candidates have had their own entry check.
+    #[must_use]
+    pub fn has_pending_paragraph_replay(&self) -> bool {
+        !self.paragraph_recorder.replay.is_empty()
+    }
+
     fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
         if self.modes.current_mode() != Mode::Horizontal
             || self.modes.depth() != 2
