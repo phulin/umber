@@ -558,7 +558,7 @@ pub struct AcceptedFinalization {
     pub prepared_pages: Option<tex_state::PreparedPageSuffix>,
     pub dumped_format: bool,
     pub format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
-    pub expansion_stats: tex_lex::ExpansionStats,
+    pub expansion_stats: tex_incr::ExpansionStats,
     pub virtual_font_resources: PdfVirtualFontResources,
 }
 
