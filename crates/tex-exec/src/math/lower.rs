@@ -304,7 +304,10 @@ impl MathLayoutSink for LoweredMathSink<'_> {
             match *event {
                 MathConversionEvent::MissingCharacter { font, character } => {
                     if self.stores.int_param(IntParam::TRACING_LOST_CHARS) > 0 {
-                        let font_name = self.stores.font_name(font).to_owned();
+                        // TeX82 §581's `char_warning` prints the stored
+                        // external name, not `\fontname`'s size-qualified
+                        // rendering.
+                        let font_name = self.stores.font(font).name().to_owned();
                         let mut diagnostic = self.stores.begin_diagnostic();
                         diagnostic
                             .print_nl("Missing character: There is no ")

@@ -72,7 +72,10 @@ pub(crate) fn report_missing_character_warning(
     if stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) <= 0 {
         return;
     }
-    let font_name = stores.font_name(font).to_owned();
+    // TeX82 §581's `char_warning` prints `font_name[f]` directly.  Unlike
+    // `\fontname`, that stored external name never gains an `at <size>pt`
+    // suffix when the font was loaded away from its design size.
+    let font_name = stores.font(font).name().to_owned();
     let force_online =
         etex_extended && stores.int_param(tex_state::env::banks::IntParam::TRACING_LOST_CHARS) > 1;
     let mut diagnostic = if force_online {

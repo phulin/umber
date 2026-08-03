@@ -1698,6 +1698,30 @@ fn missing_math_character_reports_canonical_warning_and_omits_only_character() {
     );
 }
 
+/// TeX82 §581 prints `font_name[f]` in `char_warning`, so neither a font at
+/// design size nor one loaded at another size receives `\fontname`'s size
+/// suffix in the source-driven missing-character diagnostic.
+#[test]
+fn missing_math_character_uses_external_name_at_design_and_scaled_sizes() {
+    for font_spec in ["cmr10", "cmr10 at 20pt"] {
+        let (mut stores, executor) =
+            run_math_source_with_text_math_font_spec("$\\mathchar\"007F", font_spec);
+        let list = unfinished_math_list(&mut stores, &executor);
+
+        let _ = crate::math::finish_math_list_node(&mut stores, list, false);
+
+        let terminal = terminal_effect_text(&stores);
+        assert!(
+            terminal.contains("Missing character: There is no ^^? in font cmr10!"),
+            "font specification {font_spec:?} produced {terminal:?}"
+        );
+        assert!(
+            !terminal.contains("in font cmr10 at 20.0pt!"),
+            "font specification {font_spec:?} produced {terminal:?}"
+        );
+    }
+}
+
 /// TeX82 §§722--723: selecting nullfont through an undefined family resets
 /// only that math field to empty and continues converting its siblings.
 #[test]
@@ -2024,6 +2048,13 @@ fn run_math_source(source: &str) -> (Universe, CanonicalMainControl) {
 }
 
 fn run_math_source_with_text_math_fonts(source: &str) -> (Universe, CanonicalMainControl) {
+    run_math_source_with_text_math_font_spec(source, "cmr10")
+}
+
+fn run_math_source_with_text_math_font_spec(
+    source: &str,
+    font_spec: &str,
+) -> (Universe, CanonicalMainControl) {
     let mut stores = stores_with_fonts();
     let metrics = stores
         .world_mut()
@@ -2041,7 +2072,7 @@ fn run_math_source_with_text_math_fonts(source: &str) -> (Universe, CanonicalMai
         .set_memory_file("cmr10.tfm", sparse_metrics)
         .expect("install sparse metrics under the asserted diagnostic name");
     let source = format!(
-        r"\font\rm=cmr10
+        r"\font\rm={font_spec}
           \tracinglostchars=1
           \textfont0=\rm \scriptfont0=\rm \scriptscriptfont0=\rm
           \textfont1=\rm \scriptfont1=\rm \scriptscriptfont1=\rm {source}"
