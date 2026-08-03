@@ -3664,8 +3664,7 @@ impl World {
 
     pub(crate) fn assert_snapshot_retained(&self, snapshot: &WorldSnapshot) {
         assert!(
-            snapshot.effect_pos
-                == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+            self.snapshot_effects_are_retained(snapshot)
                 && (self.artifact_base..=self.artifact_pos())
                     .contains(&snapshot.artifact_commit_len),
             "World snapshot output position has already been committed and dropped"
@@ -3674,8 +3673,14 @@ impl World {
 
     #[must_use]
     pub(crate) fn snapshot_is_retained(&self, snapshot: &WorldSnapshot) -> bool {
-        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+        self.snapshot_effects_are_retained(snapshot)
             && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
+    }
+
+    fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
+        snapshot.effect_pos >= self.effect_base
+            && snapshot.effect_pos
+                == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
     }
 
     pub(crate) fn rollback(&mut self, snapshot: &WorldSnapshot) {

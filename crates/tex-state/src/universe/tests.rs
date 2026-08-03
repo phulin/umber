@@ -3134,6 +3134,7 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
     let snapshot = universe.snapshot();
 
     universe.set_meaning(symbol, Meaning::Relax);
+    let origin = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
     universe
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "committed\n");
@@ -3142,11 +3143,16 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
         .commit_effects(effect_pos)
         .expect("memory world commit succeeds");
     let live_hash = universe.testing_state_hash();
+    let provenance = universe.provenance_stats();
+
+    assert!(!universe.can_rollback_to(&snapshot));
 
     let result = catch_unwind(AssertUnwindSafe(|| universe.rollback(&snapshot)));
 
     assert!(result.is_err());
     assert_eq!(universe.meaning(symbol), Meaning::Relax);
+    assert!(universe.origin_if_live(origin).is_some());
+    assert_eq!(universe.provenance_stats(), provenance);
     assert_eq!(universe.testing_state_hash(), live_hash);
 }
 
