@@ -181,7 +181,11 @@ fn rebind_root_input_with_delta(
     // identity remains the command-owned provenance key, while the descriptor
     // and bytes become those of the revised root.
     let id = source.cursor.backing.id;
-    let backing = source.cursor.backing.rebind_generated(id, new).ok()?;
+    let backing = source
+        .cursor
+        .backing
+        .rebind_generated(id, Arc::clone(&new))
+        .ok()?;
     let registered = input
         .registered_sources
         .iter_mut()
@@ -197,9 +201,7 @@ fn rebind_root_input_with_delta(
         .next_line_number
         .checked_add_signed(line_delta)?;
     if let Some(line) = &mut source.cursor.line {
-        line.physical.rehome(id, byte_delta, line_delta)?;
-        line.retained_end = line.retained_end.checked_add_signed(byte_delta)?;
-        line.byte_cursor = line.byte_cursor.checked_add_signed(byte_delta)?;
+        line.rehome_edited_backing(id, &new, source.cursor.backing.mode, byte_delta, line_delta)?;
     }
     for level in &mut input.levels {
         let crate::input::InputLevel::Tokens(tokens) = level else {
