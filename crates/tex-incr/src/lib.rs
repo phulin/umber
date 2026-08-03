@@ -210,6 +210,67 @@ pub struct ReuseMetrics {
     pub acceptance_latency: Duration,
 }
 
+/// Accepted token-delivery telemetry for one editor revision.
+///
+/// These counters belong to the incremental session's accepted-output model:
+/// they describe work attributed to a revision, not live input-stack state.
+/// The canonical command path currently reports the default value until its
+/// finer-grained delivery counters are wired into candidate completion.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExpansionStats {
+    pub token_frame_steps: u64,
+    pub provenance_resolutions: u64,
+    pub character_tokens: u64,
+    pub meaning_lookups: u64,
+    pub literal_spans: u64,
+    pub literal_tokens: u64,
+    pub segmentation_cache_hits: u64,
+    pub segmentation_cache_misses: u64,
+    pub builder_appends: u64,
+    pub source_text_span_attempts: u64,
+    pub source_text_spans: u64,
+    pub source_text_tokens: u64,
+    pub meaning_cache_hits: u64,
+    pub meaning_cache_misses: u64,
+    pub frame_step_nanos: u64,
+    pub provenance_nanos: u64,
+    pub classification_meaning_nanos: u64,
+    pub builder_append_nanos: u64,
+    pub frame_step_timer_samples: u64,
+    pub provenance_timer_samples: u64,
+    pub classification_meaning_timer_samples: u64,
+    pub builder_append_timer_samples: u64,
+}
+
+impl From<tex_lex::ExpansionStats> for ExpansionStats {
+    fn from(stats: tex_lex::ExpansionStats) -> Self {
+        Self {
+            token_frame_steps: stats.token_frame_steps,
+            provenance_resolutions: stats.provenance_resolutions,
+            character_tokens: stats.character_tokens,
+            meaning_lookups: stats.meaning_lookups,
+            literal_spans: stats.literal_spans,
+            literal_tokens: stats.literal_tokens,
+            segmentation_cache_hits: stats.segmentation_cache_hits,
+            segmentation_cache_misses: stats.segmentation_cache_misses,
+            builder_appends: stats.builder_appends,
+            source_text_span_attempts: stats.source_text_span_attempts,
+            source_text_spans: stats.source_text_spans,
+            source_text_tokens: stats.source_text_tokens,
+            meaning_cache_hits: stats.meaning_cache_hits,
+            meaning_cache_misses: stats.meaning_cache_misses,
+            frame_step_nanos: stats.frame_step_nanos,
+            provenance_nanos: stats.provenance_nanos,
+            classification_meaning_nanos: stats.classification_meaning_nanos,
+            builder_append_nanos: stats.builder_append_nanos,
+            frame_step_timer_samples: stats.frame_step_timer_samples,
+            provenance_timer_samples: stats.provenance_timer_samples,
+            classification_meaning_timer_samples: stats.classification_meaning_timer_samples,
+            builder_append_timer_samples: stats.builder_append_timer_samples,
+        }
+    }
+}
+
 /// High-level execution path used to produce one accepted revision.
 ///
 /// Paragraph telemetry remains generic. This attribution distinguishes an
@@ -289,7 +350,7 @@ pub struct PendingRevision {
     reuse: ReuseMetrics,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
-    expansion_stats: tex_lex::ExpansionStats,
+    expansion_stats: ExpansionStats,
     candidate_memo: Option<tex_state::PureMemoRuntime>,
 }
 
@@ -913,7 +974,7 @@ pub struct Session {
     root_source_is_byte_projection: bool,
     command_profile: CommandProfile,
     initex: bool,
-    expansion_stats: tex_lex::ExpansionStats,
+    expansion_stats: ExpansionStats,
     render_maps: RefCell<RenderMapCache>,
 }
 
@@ -1064,7 +1125,7 @@ impl Session {
             root_source_is_byte_projection,
             command_profile: CommandProfile::TEX82,
             initex: true,
-            expansion_stats: tex_lex::ExpansionStats::default(),
+            expansion_stats: ExpansionStats::default(),
             render_maps: RefCell::default(),
         })
     }
@@ -1589,7 +1650,7 @@ impl Session {
         }
         let effects = candidate.universe.world().effect_records().to_vec();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-        let expansion_stats = tex_lex::ExpansionStats::default();
+        let expansion_stats = ExpansionStats::default();
         let CanonicalCandidateCompletion {
             dvi_pages,
             dumped_format,
@@ -1689,7 +1750,7 @@ impl Session {
         } else {
             SameHistoryStop::NoComparableBoundary
         };
-        let expansion_stats = tex_lex::ExpansionStats::default();
+        let expansion_stats = ExpansionStats::default();
         let effects = candidate.universe.world().effect_records().to_vec();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let mut pages_through_stop =
@@ -1975,7 +2036,7 @@ impl Session {
     }
 
     #[must_use]
-    pub const fn accepted_expansion_stats(&self) -> tex_lex::ExpansionStats {
+    pub const fn accepted_expansion_stats(&self) -> ExpansionStats {
         self.expansion_stats
     }
 
@@ -2829,7 +2890,7 @@ struct RevisionRun {
     substrate: GenerationSubstrate,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
-    expansion_stats: tex_lex::ExpansionStats,
+    expansion_stats: ExpansionStats,
     executed_bytes: usize,
     executed_tokens: usize,
     executed_commands: usize,
@@ -2863,7 +2924,7 @@ fn finish_cold_candidate(
     let effects = candidate.universe.world().effect_records().to_vec();
     let artifacts = candidate.universe.world().committed_artifacts().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
-    let expansion_stats = tex_lex::ExpansionStats::default();
+    let expansion_stats = ExpansionStats::default();
     let executed_paragraphs = sink
         .records
         .iter()
@@ -2976,7 +3037,7 @@ fn execute_revision(
         source_text_span_tokens,
         ..
     } = execution_result?;
-    let expansion_stats = input.expansion_stats();
+    let expansion_stats = input.expansion_stats().into();
     pure_memo.accept_paragraph_history(universe.paragraph_origin_resolver());
     let effects = universe.world().effect_records().to_vec();
     let artifacts = universe.world().committed_artifacts().to_vec();
@@ -3028,7 +3089,7 @@ struct AdvanceRun {
     reexecution_latency: Duration,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
-    expansion_stats: tex_lex::ExpansionStats,
+    expansion_stats: ExpansionStats,
     output_snapshot_latency: Duration,
 }
 
@@ -3253,7 +3314,7 @@ fn execute_advance(
     } else {
         SameHistoryStop::NoComparableBoundary
     };
-    let expansion_stats = input.expansion_stats();
+    let expansion_stats = input.expansion_stats().into();
     let output_snapshot_started = Timer::start();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
