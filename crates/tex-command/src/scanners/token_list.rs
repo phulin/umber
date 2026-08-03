@@ -7,6 +7,7 @@
 
 use tex_state::TracedTokenList;
 use tex_state::env::banks::TokParam;
+use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
@@ -39,10 +40,11 @@ impl CommandProcessor<'_> {
     /// `scan_left_brace` recovery.
     pub fn scan_token_register_assignment(
         &mut self,
+        owner: Symbol,
     ) -> Result<ScannedTokenRegisterAssignment, CommandError> {
         let index = self.scan_profile_register_index()?;
         let _ = self.scan_optional_equals()?;
-        let tokens = self.scan_token_list_right_hand_side()?.tokens();
+        let tokens = self.scan_token_list_right_hand_side(owner)?.tokens();
         Ok(ScannedTokenRegisterAssignment { index, tokens })
     }
 
@@ -50,9 +52,12 @@ impl CommandProcessor<'_> {
     ///
     /// Register shorthands installed by `\toksdef` share TeX82's exact
     /// optional-equals and internal-token-list behavior with `\toks<n>`.
-    pub fn scan_token_register_value(&mut self) -> Result<TracedTokenList, CommandError> {
+    pub fn scan_token_register_value(
+        &mut self,
+        owner: Symbol,
+    ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
-        Ok(self.scan_token_list_right_hand_side()?.tokens())
+        Ok(self.scan_token_list_right_hand_side(owner)?.tokens())
     }
 
     /// Scans a token-parameter assignment such as `\everypar={...}`.
@@ -73,9 +78,10 @@ impl CommandProcessor<'_> {
     pub fn scan_token_parameter_assignment(
         &mut self,
         parameter: TokParam,
+        owner: Symbol,
     ) -> Result<TracedTokenList, CommandError> {
         let _ = self.scan_optional_equals()?;
-        let scanned = match self.scan_token_list_right_hand_side()? {
+        let scanned = match self.scan_token_list_right_hand_side(owner)? {
             TokenListRightHandSide::Collected(tokens) => tokens,
             TokenListRightHandSide::Internal(tokens) => return Ok(tokens),
         };
@@ -107,7 +113,10 @@ impl CommandProcessor<'_> {
         Ok(self.state.finish_traced_token_list(&tokens))
     }
 
-    fn scan_token_list_right_hand_side(&mut self) -> Result<TokenListRightHandSide, CommandError> {
+    fn scan_token_list_right_hand_side(
+        &mut self,
+        owner: Symbol,
+    ) -> Result<TokenListRightHandSide, CommandError> {
         let command = self
             .next_non_blank_non_relax_x_token()?
             .ok_or_else(CommandError::input_invariant)?;
@@ -138,6 +147,7 @@ impl CommandProcessor<'_> {
                     self.scan_toks(ScanToksMode::GeneralAfterOpening {
                         expanded: false,
                         primary,
+                        owner: Some(owner),
                     })?
                     .replacement_text,
                 ));
@@ -145,7 +155,11 @@ impl CommandProcessor<'_> {
             _ => {
                 self.back_input(command)?;
                 return Ok(TokenListRightHandSide::Collected(
-                    self.scan_balanced_text(false)?.tokens,
+                    self.scan_toks(ScanToksMode::GeneralFor {
+                        expanded: false,
+                        owner,
+                    })?
+                    .replacement_text,
                 ));
             }
         };

@@ -75,12 +75,14 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
             CommandHostContext::new(&mut capabilities),
         );
         if output {
+            let owner = processor.state.intern_control_sequence("output");
             processor
-                .scan_token_parameter_assignment(tex_state::env::banks::TokParam::OUTPUT)
+                .scan_token_parameter_assignment(tex_state::env::banks::TokParam::OUTPUT, owner)
                 .expect("output assignment scans")
         } else {
+            let owner = processor.state.intern_control_sequence("toks");
             processor
-                .scan_token_register_assignment()
+                .scan_token_register_assignment(owner)
                 .expect("token register assignment scans")
                 .tokens
         }
@@ -125,6 +127,47 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
             ch: 'X',
             cat: Catcode::Letter,
         }]
+    );
+}
+
+#[test]
+fn token_register_runaway_retains_assignment_owner() {
+    // TeX82 §§306/336/1227 keep the selected register shorthand in
+    // `warning_index` throughout its absorbing scan.
+    let mut command = CommandState::default();
+    source(&mut command, br"{\outer}");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let outer = universe.intern("outer").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    universe.set_meaning(
+        outer,
+        Meaning::Macro {
+            flags: MeaningFlags::OUTER,
+            definition,
+        },
+    );
+    let owner = universe.intern("tokens").symbol();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    processor
+        .scan_token_register_value(owner)
+        .expect("outer token recovers");
+    let diagnostics = processor.take_semantic_diagnostics();
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            crate::CommandSemanticDiagnostic::Recoverable { message, .. }
+                if message == "Forbidden control sequence found while scanning text of \\tokens"
+        )),
+        "{diagnostics:?}"
     );
 }
 

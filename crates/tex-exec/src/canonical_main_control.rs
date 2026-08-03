@@ -8398,8 +8398,11 @@ fn scan_command(
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
+            let owner = command.control_sequence().ok_or(ExecError::MissingToken {
+                context: "token-list assignment owner",
+            })?;
             let assignment = processor
-                .scan_token_register_assignment()
+                .scan_token_register_assignment(owner)
                 .map_err(command_error)?;
             Ok(ScannedStep::Toks {
                 index: assignment.index,
@@ -8407,13 +8410,18 @@ fn scan_command(
                 global,
             })
         }
-        Meaning::ToksRegister(index) => Ok(ScannedStep::Toks {
-            index,
-            tokens: processor
-                .scan_token_register_value()
-                .map_err(command_error)?,
-            global,
-        }),
+        Meaning::ToksRegister(index) => {
+            let owner = command.control_sequence().ok_or(ExecError::MissingToken {
+                context: "token-list assignment owner",
+            })?;
+            Ok(ScannedStep::Toks {
+                index,
+                tokens: processor
+                    .scan_token_register_value(owner)
+                    .map_err(command_error)?,
+                global,
+            })
+        }
         Meaning::IntParam(index) => {
             let _ = processor.scan_optional_equals().map_err(command_error)?;
             let value = processor.scan_integer().map_err(command_error)?.value;
@@ -8452,8 +8460,11 @@ fn scan_command(
             Ok(ScannedStep::PageInteger { integer, value })
         }
         Meaning::TokParam(index) => {
+            let owner = command.control_sequence().ok_or(ExecError::MissingToken {
+                context: "token-list assignment owner",
+            })?;
             let tokens = processor
-                .scan_token_parameter_assignment(TokParam::new(index))
+                .scan_token_parameter_assignment(TokParam::new(index), owner)
                 .map_err(command_error)?;
             Ok(ScannedStep::TokParam {
                 index,

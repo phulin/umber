@@ -2336,6 +2336,17 @@ fn trip_loaded_invalid_character_error_precedes_following_trace() {
 }
 
 #[test]
+fn trip_loaded_tokens_runaway_names_assignment_scanner() {
+    // TeX82 §§306/336/1227 retain the current token-register shorthand as
+    // `warning_index` while its balanced right-hand side is absorbed.
+    let log = run_focused_loaded_trip_through(354);
+    assert!(
+        log.contains("Forbidden control sequence found while scanning text of \\tokens."),
+        "{log}"
+    );
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

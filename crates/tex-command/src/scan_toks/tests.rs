@@ -157,6 +157,7 @@ fn general_after_opening_replays_a_begin_group_alias_by_meaning() {
         .scan_toks(ScanToksMode::GeneralAfterOpening {
             expanded: false,
             primary,
+            owner: None,
         })
         .expect("the backed-up semantic begin-group starts collection");
     assert_eq!(

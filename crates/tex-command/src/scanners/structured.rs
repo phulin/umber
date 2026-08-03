@@ -2601,6 +2601,7 @@ impl CommandProcessor<'_> {
         let scanned = self.scan_toks(ScanToksMode::GeneralAfterOpening {
             expanded: false,
             primary: OriginId::UNKNOWN,
+            owner: None,
         })?;
         Ok(scanned.replacement_text)
     }

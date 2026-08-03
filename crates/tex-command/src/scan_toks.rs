@@ -32,13 +32,19 @@ use crate::observation::{
 pub(crate) enum ScanToksMode {
     /// Collect balanced general text; parameter characters are ordinary text.
     General { expanded: bool },
+    /// General text whose caller supplies TeX82's live `warning_index`.
+    GeneralFor { expanded: bool, owner: Symbol },
     /// Collect general text after the caller has validated and backed up the
     /// required opening brace. This is TeX82 §1227's token-list assignment
     /// alone: it reads the right-hand side's first token through `get_x_token`
     /// to tell a braced list from a token register or parameter, then backs
     /// that brace up for `scan_toks`. Every other caller enters §473 directly
     /// and must use `General`, whose absorbing transition precedes the brace.
-    GeneralAfterOpening { expanded: bool, primary: OriginId },
+    GeneralAfterOpening {
+        expanded: bool,
+        primary: OriginId,
+        owner: Option<Symbol>,
+    },
     /// e-TeX 2.6 etex.ch §53a's recursive `scan_general_text`.
     ///
     /// It has the same absorbing-state recovery semantics as TeX82
@@ -113,9 +119,14 @@ impl CommandProcessor<'_> {
         let warning = ScannerWarning(builder.0);
         let status = match mode {
             ScanToksMode::General { .. }
+            | ScanToksMode::GeneralFor { .. }
             | ScanToksMode::GeneralAfterOpening { .. }
             | ScanToksMode::GeneralText { .. } => ScannerStatus::Absorbing(AbsorbingContext {
-                owner: None,
+                owner: match mode {
+                    ScanToksMode::GeneralFor { owner, .. } => Some(owner),
+                    ScanToksMode::GeneralAfterOpening { owner, .. } => owner,
+                    _ => None,
+                },
                 builder,
                 warning,
             }),
@@ -204,9 +215,13 @@ impl CommandProcessor<'_> {
                 transition: "complete",
                 purpose: match mode {
                     ScanToksMode::General { expanded: true }
+                    | ScanToksMode::GeneralFor { expanded: true, .. }
                     | ScanToksMode::GeneralAfterOpening { expanded: true, .. } =>
                         "expanded_scan_toks",
                     ScanToksMode::General { expanded: false }
+                    | ScanToksMode::GeneralFor {
+                        expanded: false, ..
+                    }
                     | ScanToksMode::GeneralAfterOpening {
                         expanded: false, ..
                     } => "scan_toks",
@@ -229,14 +244,16 @@ impl CommandProcessor<'_> {
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
         let (expanded, parameter_text, macro_parameters, hash_brace, primary, malformed_parameter) =
             match mode {
-                ScanToksMode::General { expanded } => {
+                ScanToksMode::General { expanded } | ScanToksMode::GeneralFor { expanded, .. } => {
                     // TeX scans the required opening brace through the ordinary
                     // expanded path even when the replacement text itself is
                     // collected unexpanded.
                     let primary = self.scan_left_brace(true)?.origin();
                     (expanded, Vec::new(), None, None, primary, false)
                 }
-                ScanToksMode::GeneralAfterOpening { expanded, primary } => {
+                ScanToksMode::GeneralAfterOpening {
+                    expanded, primary, ..
+                } => {
                     // The opening command was already classified through
                     // `get_x_token` by §1227 and backed up solely so the
                     // absorbing scanner status precedes its replay. Preserve
