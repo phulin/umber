@@ -377,7 +377,17 @@ impl EngineCheckpoint {
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary
             && self.universe.exact_future_state_matches(&other.universe)
-            && self.continuation == other.continuation
+            && match (&self.continuation, &other.continuation) {
+                (
+                    CheckpointContinuation::Canonical(left),
+                    CheckpointContinuation::Canonical(right),
+                ) => left.exact_future_state_matches(right),
+                (
+                    CheckpointContinuation::LegacyInput(left),
+                    CheckpointContinuation::LegacyInput(right),
+                ) => left == right,
+                _ => false,
+            }
             && self.modes == other.modes
     }
 

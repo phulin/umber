@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::CommandState;
 use crate::conditionals::ConditionStack;
 use crate::input::InputState;
+use crate::input::{InputLevel, TokenPayload};
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState, ScannerStatus};
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
@@ -46,6 +47,55 @@ impl CommandStateSnapshot {
 }
 
 impl CommandSummary {
+    /// Compares future command semantics while normalizing allocation-local
+    /// provenance handles on backed-up tokens through their captured source
+    /// provenance.
+    #[must_use]
+    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
+        let mut normalized = self.clone();
+        let Some((old_backing, expected_backing)) =
+            normalized
+                .input
+                .levels
+                .iter()
+                .find_map(|level| match level {
+                    InputLevel::Source(source) => Some((
+                        source.cursor.backing.bytes.to_vec(),
+                        other.input.levels.iter().find_map(|level| match level {
+                            InputLevel::Source(source) => Some(source.cursor.backing.bytes.clone()),
+                            InputLevel::Tokens(_) => None,
+                        })?,
+                    )),
+                    InputLevel::Tokens(_) => None,
+                })
+        else {
+            return normalized == *other;
+        };
+        if old_backing.as_slice() != expected_backing.as_ref()
+            && !normalized.rebind_root_source(&old_backing, expected_backing)
+        {
+            return false;
+        }
+        if normalized.input.levels.len() != other.input.levels.len() {
+            return false;
+        }
+        for (left, right) in normalized.input.levels.iter_mut().zip(&other.input.levels) {
+            match (left, right) {
+                (InputLevel::Tokens(left), InputLevel::Tokens(right)) => {
+                    if let (TokenPayload::BackedUp(left), TokenPayload::BackedUp(right)) =
+                        (&mut left.payload, &right.payload)
+                        && left.adopt_matching_origins(right).is_none()
+                    {
+                        return false;
+                    }
+                }
+                (InputLevel::Source(_), InputLevel::Source(_)) => {}
+                _ => return false,
+            }
+        }
+        normalized == *other
+    }
+
     /// Returns the immutable profile identity captured by this durable summary.
     #[must_use]
     pub fn profile_fingerprint(&self) -> CommandProfileFingerprint {
