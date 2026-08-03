@@ -13581,7 +13581,6 @@ fn canonical_leader_invalid_glue_replays_after_recovery() {
 }
 
 #[test]
-#[ignore = "umber2-v7t4"]
 fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
     // TeX82 §§1096 and 1132 run `off_save` before `end_graf`, then route its
     // inserted right brace through the active align_group's missing-\cr
@@ -13592,7 +13591,9 @@ fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
     // The blank line closes the malformed row and alignment; the following
     // 20pt hbox must therefore be a sibling of the finished alignment, not
     // material captured inside its final constrained row.
-    let mut universe = Universe::new_with_plain_catcodes();
+    // The malformed row first reports §792's expected extra-tab error; use
+    // nonstop interaction so execution continues into §§1096/1132 recovery.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
         &mut control,
