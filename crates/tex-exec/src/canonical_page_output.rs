@@ -373,18 +373,24 @@ pub(crate) fn prepend_output_heldover(
     // TeX82 §§994/1012 resume the page builder after `fire_up`; without an
     // output routine that continuation discards the chosen penalty after
     // §1013 rewrites it to `inf_penalty`. Canonical main control defers the
-    // output tail to the command-step boundary, so default shipout completes
-    // that one-token continuation here. User output retains it for §1026's
-    // ordinary builder resumption.
-    if discard_rewritten_break
-        && matches!(heldover.first(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
-    {
-        heldover.remove(0);
-    }
-    if discard_rewritten_break
-        && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
-    {
-        let _ = stores.pop_page_contribution_front();
+    // output tail to the command-step boundary, so complete that one-token
+    // continuation only when the rewritten break is the entire suffix.
+    // Material contributed after the fire-up belongs to a later builder
+    // invocation (notably §1196's post-display penalty) and must remain behind
+    // the sentinel in canonical order. User output retains the sentinel for
+    // §1026's ordinary builder resumption.
+    if discard_rewritten_break {
+        let heldover_is_rewritten_break = heldover.len() == 1
+            && matches!(heldover.first(), Some(Node::Penalty(value)) if *value == INF_PENALTY)
+            && stores.page_contributions().is_empty();
+        let contribution_is_rewritten_break = heldover.is_empty()
+            && stores.page_contributions().len() == 1
+            && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY);
+        if heldover_is_rewritten_break {
+            heldover.clear();
+        } else if contribution_is_rewritten_break {
+            let _ = stores.pop_page_contribution_front();
+        }
     }
     heldover.extend(output_nodes);
     stores.start_page_after_output();
