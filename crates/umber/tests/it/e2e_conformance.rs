@@ -2045,6 +2045,18 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
         log.contains("% t=262.41258 plus 80.0 plus 1.0fil plus -803.0fill g=10000.0 b=0 p=7 c="),
         "{log}"
     );
+    assert!(
+        log.as_bytes()
+            .windows(10)
+            .any(|window| window == b"\\bigtr\np -"),
+        "{log}"
+    );
+    assert!(
+        !log.as_bytes()
+            .windows(10)
+            .any(|window| window == b"\\bigtr\0p -"),
+        "{log}"
+    );
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {

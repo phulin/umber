@@ -270,7 +270,7 @@ fn dump_node(
             let _ = writeln!(
                 out,
                 "{} {}",
-                dump_font(stores, *font),
+                font_identifier(stores, *font),
                 dump_character_string(stores, *ch)
             );
         }
@@ -285,7 +285,7 @@ fn dump_node(
             let _ = writeln!(
                 out,
                 "{} {}",
-                dump_font(stores, *font),
+                font_identifier(stores, *font),
                 dump_ligature(stores, *ch, orig, *left_hit, *right_hit)
             );
         }
@@ -828,10 +828,12 @@ fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut Strin
 /// TeX82 §267's `print_esc(font_id_text(f))`, the control sequence a font is
 /// known by, with pdfTeX's optional expansion and file-name annotations.
 pub(crate) fn font_identifier(stores: &Universe, font: tex_state::ids::FontId) -> String {
-    dump_font(stores, font)
+    render_print_string(stores, &font_identifier_raw(stores, font))
 }
 
-fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
+/// Unrendered §267 font identifier for a caller whose enclosing diagnostic
+/// will still send the completed message through `print`.
+pub(crate) fn font_identifier_raw(stores: &Universe, font: tex_state::ids::FontId) -> String {
     let loaded = stores.font(font);
     let (identifier_font, expansion_ratio) = match loaded.construction() {
         tex_fonts::FontConstruction::Expanded { source, ratio } => (
@@ -845,16 +847,34 @@ fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
         |symbol| tex_state::token_show::token_text(stores, Token::Cs(symbol.symbol())),
     );
     if !stores.pdf_font_configuration().traces_fonts() {
-        return expansion_ratio.map_or(identifier.clone(), |ratio| {
+        expansion_ratio.map_or(identifier.clone(), |ratio| {
             format!("{identifier} ({}{ratio})", if ratio > 0 { "+" } else { "" })
-        });
+        })
+    } else {
+        let mut result = format!("{identifier} ({})", loaded.name());
+        if loaded.size() != loaded.design_size() {
+            result.pop();
+            let _ = write!(result, "@{}pt)", format_scaled_without_unit(loaded.size()));
+        }
+        result
     }
-    let mut result = format!("{identifier} ({})", loaded.name());
-    if loaded.size() != loaded.design_size() {
-        result.pop();
-        let _ = write!(result, "@{}pt)", format_scaled_without_unit(loaded.size()));
+}
+
+/// Renders characters that TeX82 §§58--60 would send through `print` before
+/// the surrounding node display becomes a completed `print_rendered` string.
+fn render_print_string(stores: &Universe, raw: &str) -> String {
+    let newline_char = u32::try_from(stores.int_param(IntParam::NEWLINE_CHAR))
+        .ok()
+        .and_then(char::from_u32);
+    let mut rendered = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if newline_char == Some(ch) {
+            rendered.push('\n');
+        } else {
+            append_tex_print_char(ch, &mut rendered);
+        }
     }
-    result
+    rendered
 }
 
 /// TeX82 §68's `print_ASCII`, which renders an unprintable character in

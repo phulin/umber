@@ -393,7 +393,7 @@ fn set_font_dimen_recovering(
         Err(tex_state::FontParameterError::CannotGrow { current_len, .. }) => {
             // TeX.web §579 names the font by `print_esc(font_id_text(f))`,
             // the control sequence it was loaded under, not by its file name.
-            let name = crate::node_dump::font_identifier(stores, font);
+            let name = crate::node_dump::font_identifier_raw(stores, font);
             crate::error_report::report_input_error(
                 input,
                 stores,

@@ -427,6 +427,44 @@ fn short_display_honors_live_newline_character() {
 }
 
 #[test]
+fn short_display_renders_byte_zero_in_a_font_identifier_through_print() {
+    // TeX82 §§58--60/174: `print_esc(font_id_text(f))` sends every character
+    // in the control-sequence name through `print`. Byte zero is therefore a
+    // line break when `\newlinechar=0`, and `^^@` when new lines are disabled;
+    // it is never a raw NUL in the completed diagnostic.
+    let size = Scaled::from_raw(10 * Scaled::UNITY);
+    let loaded = LoadedFont::new(
+        "fixture",
+        "fixture.tfm",
+        [0; 32],
+        0,
+        size,
+        size,
+        vec![Scaled::from_raw(0); 7],
+        FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
+    );
+    let mut stores = Universe::new_with_plain_catcodes();
+    let font = stores.intern_font(loaded);
+    let identifier = stores.intern("bigtr\0p");
+    stores.set_font_identifier_symbol(font, identifier);
+    let nodes = [Node::Char {
+        font,
+        ch: '-',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }];
+
+    stores.set_int_param(IntParam::NEWLINE_CHAR, 0);
+    let rendered = ShortDisplayRenderer::new().render_nodes(&stores, &nodes);
+    assert_eq!(rendered, "\\bigtr\np -");
+    assert!(!rendered.as_bytes().contains(&0));
+
+    stores.set_int_param(IntParam::NEWLINE_CHAR, -1);
+    let rendered = ShortDisplayRenderer::new().render_nodes(&stores, &nodes);
+    assert_eq!(rendered, "\\bigtr^^@p -");
+    assert!(!rendered.as_bytes().contains(&0));
+}
+
+#[test]
 fn short_display_compares_restored_fonts_by_tex_number() {
     // TeX82 §174 retains an integer `font_in_short_display`. Restoring an
     // immutable format can change Umber's owner namespace without changing
