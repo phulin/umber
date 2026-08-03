@@ -405,6 +405,8 @@ pub enum RevisionCandidateResult {
 
 struct AdvanceSetup {
     execution_path: RevisionExecutionPath,
+    replacement_restart_boundary: Option<BoundaryKey>,
+    allow_paragraph_replay: bool,
     next_revision: RevisionId,
     old_source: String,
     old_history: Vec<BoundaryRecord>,
@@ -476,12 +478,11 @@ impl RevisionCandidate {
                     .root_start()
                     .is_some_and(|start| start >= position)
             });
-            if let Some(materialized) = accepted
-                .iter_mut()
-                .find(|accepted| accepted.identity() == region.identity())
+            if may_carry
+                && !accepted
+                    .iter()
+                    .any(|accepted| accepted.identity() == region.identity())
             {
-                *materialized = region.clone();
-            } else if may_carry {
                 region.publish_carried_history(&mut self.universe);
                 accepted.push(region.clone());
             }
@@ -1473,6 +1474,8 @@ impl Session {
         )?;
         let setup = Box::new(AdvanceSetup {
             execution_path: RevisionExecutionPath::ExternalInputDelta,
+            replacement_restart_boundary: None,
+            allow_paragraph_replay: true,
             next_revision: self.revision,
             old_source: self.source.clone(),
             old_history: self.history.clone(),
@@ -1558,6 +1561,8 @@ impl Session {
             } else {
                 RevisionExecutionPath::SlowEdit
             },
+            replacement_restart_boundary: None,
+            allow_paragraph_replay: !force_job_start,
             next_revision,
             old_source,
             old_history,
@@ -1587,6 +1592,7 @@ impl Session {
                 } else {
                     let mut fallback = setup;
                     fallback.execution_path = RevisionExecutionPath::ForcedJobStartFallback;
+                    fallback.replacement_restart_boundary = Some(fallback.old_history[restart].key);
                     self.start_replacement_candidate(fallback)
                 }
             }
@@ -1711,7 +1717,11 @@ impl Session {
         )?;
         let revised_root: Arc<[u8]> = Arc::from(setup.next.as_bytes());
         let mut replay_suffix = Vec::new();
-        for region in &self.canonical_paragraphs {
+        for region in self
+            .canonical_paragraphs
+            .iter()
+            .take_while(|_| setup.allow_paragraph_replay)
+        {
             let coverage = region.input().coverage();
             let intersects_edit = coverage.root_start().is_some_and(|start| {
                 coverage
@@ -1812,6 +1822,7 @@ impl Session {
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
             execution_path: setup.execution_path,
+            restart_boundary: setup.replacement_restart_boundary,
             pages_retyped: artifacts.len(),
             reexecuted_bytes: setup.next.len(),
             reexecuted_tokens: delivered_tokens,
