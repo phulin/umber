@@ -23,7 +23,7 @@ pub(crate) struct InputLevelId(pub(crate) u64);
 /// represented here. Both character profiles use this same level structure.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum InputLevel {
-    Source(SourceLevel),
+    Source(Box<SourceLevel>),
     Tokens(TokenCursor),
 }
 

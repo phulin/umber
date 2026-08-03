@@ -116,7 +116,7 @@ impl InputState {
         if let Some(InputLevel::Source(source)) = levels.iter_mut().find(|level| {
             matches!(level, InputLevel::Source(source) if source.identity == retiring.identity)
         }) {
-            *source = retiring.clone();
+            **source = retiring.clone();
             if let Some(line) = source.cursor.line.as_mut() {
                 line.physical = line.physical.with_number(source.cursor.next_line_number);
             }

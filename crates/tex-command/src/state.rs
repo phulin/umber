@@ -1240,15 +1240,17 @@ impl CommandState {
             self.file_framing_events
                 .push(FileFramingEvent::Open { name });
         }
-        self.input.levels.push(InputLevel::Source(SourceLevel {
-            identity,
-            cursor: SourceCursor::new(registered),
-            name_class,
-            retirement,
-            scanner_at_open: self.scanner.clone(),
-            every_eof,
-            open_depths: None,
-        }));
+        self.input
+            .levels
+            .push(InputLevel::Source(Box::new(SourceLevel {
+                identity,
+                cursor: SourceCursor::new(registered),
+                name_class,
+                retirement,
+                scanner_at_open: self.scanner.clone(),
+                every_eof,
+                open_depths: None,
+            })));
         identity
     }
 
