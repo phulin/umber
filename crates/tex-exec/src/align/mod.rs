@@ -12,6 +12,7 @@ mod noalign;
 pub(crate) mod packaging;
 #[cfg(test)]
 mod preamble;
+#[cfg(test)]
 mod support;
 #[cfg(test)]
 mod template;

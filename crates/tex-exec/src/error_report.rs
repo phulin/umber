@@ -26,6 +26,7 @@ use tex_state::Universe;
 #[cfg(test)]
 use tex_state::token::TracedTokenWord;
 
+#[cfg(test)]
 use crate::diagnostics::show_context;
 
 /// tex.web §73's `print_err`, §79's help lines, and §82's `error`.

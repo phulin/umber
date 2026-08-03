@@ -11,10 +11,12 @@ mod support;
 use tex_state::Universe;
 use tex_state::math::MathFontSize;
 
+#[cfg(test)]
+pub(crate) use lower::finish_math_lists;
+pub(crate) use lower::finish_math_lists_owned;
 pub(crate) use lower::{
     MathConversionErrorContext, finish_inline_math_list_node, finish_math_list_node,
 };
-pub(crate) use lower::{finish_math_lists, finish_math_lists_owned};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MathFontFailure {

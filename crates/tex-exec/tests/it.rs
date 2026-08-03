@@ -636,12 +636,11 @@ fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
             "canonical command control must call canonical paragraph helper `{helper}`"
         );
     }
-    for retired in ["crate::legacy_paragraph_memo"] {
-        assert!(
-            !canonical.contains(retired),
-            "canonical command control must bypass retired paragraph front `{retired}`"
-        );
-    }
+    let retired = "crate::legacy_paragraph_memo";
+    assert!(
+        !canonical.contains(retired),
+        "canonical command control must bypass retired paragraph front `{retired}`"
+    );
 }
 
 #[test]

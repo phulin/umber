@@ -161,15 +161,10 @@ fn owned_execution_run_amortizes_savepoints_across_bounded_command_chunks() {
         ))
         .expect("register canonical source");
 
-    loop {
-        match control
-            .step(&mut stores)
-            .expect("bounded canonical operation")
-        {
-            MainControlStep::Continue => {}
-            MainControlStep::End | MainControlStep::EndOfInput => break,
-        }
-    }
+    while let MainControlStep::Continue = control
+        .step(&mut stores)
+        .expect("bounded canonical operation")
+    {}
     let telemetry = control.advance_telemetry();
     assert_eq!(telemetry.attempts, command_count as u64 + 1);
     assert_eq!(telemetry.commits, telemetry.attempts);
@@ -1517,7 +1512,7 @@ fn illegal_prefix_replays_scanned_token_with_its_origin() {
             }
             _ => None,
         })
-        .last()
+        .next_back()
         .expect("backed-up token is replayed");
     assert!(replayed.provenance.has_origin);
     assert!(terminal_effect_text(&stores).contains("You can't use a prefix"));

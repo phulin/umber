@@ -6,16 +6,15 @@ use tex_typeset::linebreak::WidowPenaltySelector;
 mod hyphenation;
 mod runtime;
 
-pub(crate) use hyphenation::{
-    apply_hyphenation_exceptions, apply_patterns, apply_scanned_hyphenation_exceptions,
-    apply_scanned_patterns, parse_pattern_word, pattern_capacity_error, report_apply_diagnostics,
-};
 #[cfg(test)]
 pub(crate) use hyphenation::{
-    hyphenated_hlist as test_hyphenated_hlist_owned, test_automatic_discretionary,
-    test_hyphenated_word, test_hyphenated_word as test_hyphenated_hlist, test_hyphenated_word_text,
+    apply_hyphenation_exceptions, apply_patterns, hyphenated_hlist as test_hyphenated_hlist_owned,
+    parse_pattern_word, pattern_capacity_error, report_apply_diagnostics,
+    test_automatic_discretionary, test_hyphenated_word,
+    test_hyphenated_word as test_hyphenated_hlist, test_hyphenated_word_text,
     test_language_context, test_physical_post_break_span, test_physical_pre_break_projection,
 };
+pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
 
 pub use runtime::cached_pretolerance_plan;
 pub(crate) use runtime::{

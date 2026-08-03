@@ -7,14 +7,10 @@ fn log_text(stores: &Universe) -> String {
         .effect_records()
         .iter()
         .filter_map(|effect| match effect {
-            tex_state::EffectRecord::StreamWrite { sink, text }
-                if matches!(
-                    sink,
-                    tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
-                ) =>
-            {
-                Some(text.as_str())
-            }
+            tex_state::EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
             _ => None,
         })
         .collect()

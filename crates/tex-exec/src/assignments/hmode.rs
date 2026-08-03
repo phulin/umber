@@ -642,5 +642,4 @@ fn scan_hlist_group(
 /// that is neither a character nor a ligature, leaves the list untouched
 /// (`return` with no append).
 #[cfg(test)]
-#[cfg(test)]
 mod tests;

@@ -6,5 +6,5 @@
 //! control cannot accidentally regain an `InputStack`/`ExecutionContext`
 //! assignment front.
 
-pub(crate) use crate::assignments::*;
 pub use crate::assignments::try_execute_assignment;
+pub(crate) use crate::assignments::*;

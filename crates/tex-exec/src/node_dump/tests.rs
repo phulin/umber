@@ -243,7 +243,7 @@ fn node_dump_honors_live_newline_character_in_ligature_components() {
     };
 
     assert_eq!(
-        dump_node_slice(&stores, &[ligature.clone()], config()),
+        dump_node_slice(&stores, std::slice::from_ref(&ligature), config()),
         "\\f - (ligature [\n])\n",
     );
 

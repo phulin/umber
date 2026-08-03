@@ -46,10 +46,12 @@ fn output_and_transcript_open_retry_preserve_canonical_selector_behavior() {
     let mut world = World::memory_with_clock(JobClock::DEFAULT);
     world.deny_memory_output("paper.dvi");
     world.deny_memory_output("paper.log");
-    world.push_memory_terminal_line("alternate-output").unwrap();
+    world
+        .push_memory_terminal_line("alternate-output")
+        .expect("memory terminal accepts the alternate output name");
     world
         .push_memory_terminal_line("alternate-transcript.log")
-        .unwrap();
+        .expect("memory terminal accepts the alternate transcript name");
     let mut stores = Universe::with_world(world);
     stores.set_interaction_mode(InteractionMode::ErrorStop);
     let mut output = JobOutput::default();

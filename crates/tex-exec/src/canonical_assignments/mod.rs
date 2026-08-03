@@ -3,21 +3,28 @@
 //! This module owns the canonical portion that can act on an already
 //! classified assignment without either legacy token/scanner front.
 
+#[cfg(test)]
 mod admissibility;
 mod primitives;
 pub(crate) mod tracing;
+#[cfg(test)]
 mod variable_access;
 
+#[cfg(test)]
 use tex_state::ids::FontId;
+#[cfg(test)]
 use tex_state::page::{PageDimension, PageInteger};
 
+#[cfg(test)]
 pub(crate) use admissibility::{is_assignment_primitive, math_allows_mode_independent_primitive};
 pub use primitives::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
 };
+#[cfg(test)]
 pub(crate) use variable_access::*;
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Variable {
     IntRegister(u16),

@@ -515,15 +515,15 @@ fn halign_head_for_vmode_replay_preserves_command_origin() {
     let first = commands
         .iter()
         .position(|command| command.command == "halign")
-        .unwrap();
+        .expect("initial halign command");
     let par = commands[first + 1..]
         .iter()
         .find(|command| command.command == "par_end")
-        .unwrap();
+        .expect("paragraph-end replay before alignment");
     let replayed = commands[first + 1..]
         .iter()
         .find(|command| command.command == "halign")
-        .unwrap();
+        .expect("replayed halign command");
 
     assert_eq!(par.command, "par_end");
     assert_eq!(
@@ -541,15 +541,15 @@ fn hrule_head_for_vmode_defers_rule_until_after_paragraph_dispatch() {
     let first = commands
         .iter()
         .position(|command| command.command == "hrule")
-        .unwrap();
+        .expect("initial hrule command");
     let par = commands[first + 1..]
         .iter()
         .position(|command| command.command == "par_end")
-        .unwrap();
+        .expect("paragraph-end replay before rule");
     let replayed = commands[first + 1..]
         .iter()
         .position(|command| command.command == "hrule")
-        .unwrap();
+        .expect("replayed hrule command");
 
     assert!(
         par < replayed,
@@ -570,15 +570,15 @@ fn halign_in_restricted_horizontal_mode_with_open_group_retains_off_save_recover
     let first = commands
         .iter()
         .position(|command| command.command == "halign")
-        .unwrap();
+        .expect("initial halign command");
     let closer = commands[first + 1..]
         .iter()
         .position(|command| command.command == "right_brace")
-        .unwrap();
+        .expect("inserted off-save closer");
     let replayed = commands[first + 1..]
         .iter()
         .position(|command| command.command == "halign")
-        .unwrap();
+        .expect("replayed halign command");
 
     assert!(
         closer < replayed,

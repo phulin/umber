@@ -90,9 +90,6 @@ pub(crate) use crate::canonical_paragraph_end::test_pretolerance_memo_key;
 pub(crate) use crate::canonical_paragraph_end::{
     ParagraphBreakResult, display_line_dimensions, normal_paragraph,
 };
-pub(crate) use crate::canonical_paragraph_end::{
-    apply_scanned_hyphenation_exceptions, apply_scanned_patterns,
-};
 pub(crate) use boxes::scan_math_box;
 pub(crate) use boxes::scan_setbox_target;
 use boxes::*;
@@ -112,12 +109,11 @@ pub(crate) use legacy_scan::{
 use legacy_variables::*;
 use paragraph::*;
 pub(crate) use paragraph::{
-    end_paragraph_with_fuel, ensure_horizontal_for_character, indent_in_hmode,
-    interrupt_paragraph_for_display, make_indent_box, start_canonical_paragraph,
+    end_paragraph_with_fuel, ensure_horizontal_for_character, interrupt_paragraph_for_display,
+    make_indent_box,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
-pub(crate) use pdf_fonts::{GlyphToUnicodeParse, parse_glyph_to_unicode};
 pub(crate) use shipout::shipout_node;
 use shipout::*;
 use tokens::*;
