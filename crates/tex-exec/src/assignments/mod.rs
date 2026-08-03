@@ -2168,7 +2168,11 @@ fn execute_prefixed_command(
                             return Ok(CommandOutcome::continue_only());
                         }
                         crate::Mode::Math | crate::Mode::DisplayMath => {
-                            crate::math::insert_dollar_sign(command.traced, input, stores)?;
+                            crate::math::legacy_front::insert_dollar_sign(
+                                command.traced,
+                                input,
+                                stores,
+                            )?;
                             return Ok(CommandOutcome::continue_only());
                         }
                         _ => {}
@@ -2632,7 +2636,7 @@ fn execute_prefixed_command(
                 // These are the `non_math` cases in tex.web §1043 and
                 // §1147: insert `$`, then reconsider the original command in
                 // math mode instead of consuming it or aborting execution.
-                crate::math::insert_dollar_sign(command.traced, input, stores)?;
+                crate::math::legacy_front::insert_dollar_sign(command.traced, input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::EqNo
@@ -2673,7 +2677,7 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::Underline
             | UnexpandablePrimitive::Overline => {
                 reject_all_prefixes(prefixes)?;
-                crate::math::insert_dollar_sign(command.traced, input, stores)?;
+                crate::math::legacy_front::insert_dollar_sign(command.traced, input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::NoAlign | UnexpandablePrimitive::Omit => {

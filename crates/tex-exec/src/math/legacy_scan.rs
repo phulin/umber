@@ -1,10 +1,11 @@
+//! Retired `Executor` math operand and nested-list scanners.
+
 use tex_expand::{DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen};
 use tex_lex::InputStack;
 use tex_state::TokenListReplayKind;
 use tex_state::env::banks::TokParam;
 use tex_state::math::{
-    FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,
-    NoadKind,
+    FractionThickness, LimitType, MathChoice, MathField, MathNoad, NoadClass, NoadKind,
 };
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::node::Node;
@@ -19,8 +20,8 @@ use crate::mode::IncompleteFraction;
 use crate::packing_params::vpack;
 use crate::{DispatchAction, ExecError, Mode, ModeNest};
 
-use super::dispatch_math_token_with_context;
-use super::support::OFF_SAVE_HELP;
+use super::legacy_front::dispatch_math_token_with_context;
+use super::support::{OFF_SAVE_HELP, finish_current_math_list};
 use crate::error_report::{back_error, report_input_error};
 
 /// tex.web §403's `scan_left_brace` help, shared by every site that requires
@@ -43,8 +44,10 @@ const MISSING_DELIMITER_HELP: [&str; 6] = [
     "nonnegative, or you can use `\\delimiter <delimiter code>'.",
 ];
 
+#[path = "scan/chars.rs"]
 mod chars;
 #[cfg(test)]
+#[path = "scan/tests.rs"]
 mod tests;
 
 pub(crate) use chars::{
@@ -419,42 +422,6 @@ fn close_left_group(
         MathField::SubMlist(content),
     );
     Ok(())
-}
-
-pub(super) fn finish_current_math_list(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-) -> tex_state::ids::NodeListId {
-    let (nodes, incomplete) = {
-        let mut list = nest.current_list_mutation();
-        (list.take_nodes(), list.take_incomplete_fraction())
-    };
-    let nodes = if let Some(incomplete) = incomplete {
-        let denominator = stores.freeze_node_list(&nodes);
-        let mut numerator_nodes: Vec<_> = stores
-            .nodes(incomplete.numerator)
-            .into_iter()
-            .map(|node| node.to_owned())
-            .collect();
-        let leading_left = matches!(numerator_nodes.first(), Some(Node::MathNoad(noad)) if matches!(noad.kind, NoadKind::LeftDelimiter { .. }))
-            .then(|| numerator_nodes.remove(0));
-        let numerator = if leading_left.is_some() {
-            stores.freeze_node_list(&numerator_nodes)
-        } else {
-            incomplete.numerator
-        };
-        let fraction = Node::FractionNoad(MathFraction {
-            numerator,
-            denominator,
-            thickness: incomplete.thickness,
-            left_delimiter: incomplete.left_delimiter,
-            right_delimiter: incomplete.right_delimiter,
-        });
-        leading_left.into_iter().chain([fraction]).collect()
-    } else {
-        nodes
-    };
-    stores.freeze_node_list(&nodes)
 }
 
 pub(super) fn start_fraction(

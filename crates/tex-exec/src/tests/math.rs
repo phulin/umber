@@ -803,8 +803,12 @@ fn equation_number_uses_a_checkpointable_nested_math_level() {
     let mut nest = ModeNest::new();
     nest.push(Mode::DisplayMath).expect("test mode push");
 
-    crate::math::testing_start_eq_no(&mut nest, &mut stores, UnexpandablePrimitive::EqNo)
-        .expect("equation number should enter ordinary math");
+    crate::math::legacy_front::testing_start_eq_no(
+        &mut nest,
+        &mut stores,
+        UnexpandablePrimitive::EqNo,
+    )
+    .expect("equation number should enter ordinary math");
 
     assert_eq!(nest.depth(), 3);
     assert_eq!(nest.current_mode(), Mode::Math);

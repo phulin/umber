@@ -1,5 +1,45 @@
-use tex_state::math::{LimitType, MathStyle, NoadClass, NoadKind};
+use tex_state::Universe;
+use tex_state::math::{LimitType, MathFraction, MathStyle, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
+use tex_state::node::Node;
+
+use crate::ModeNest;
+
+pub(super) fn finish_current_math_list(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+) -> tex_state::ids::NodeListId {
+    let (nodes, incomplete) = {
+        let mut list = nest.current_list_mutation();
+        (list.take_nodes(), list.take_incomplete_fraction())
+    };
+    let nodes = if let Some(incomplete) = incomplete {
+        let denominator = stores.freeze_node_list(&nodes);
+        let mut numerator_nodes: Vec<_> = stores
+            .nodes(incomplete.numerator)
+            .into_iter()
+            .map(|node| node.to_owned())
+            .collect();
+        let leading_left = matches!(numerator_nodes.first(), Some(Node::MathNoad(noad)) if matches!(noad.kind, NoadKind::LeftDelimiter { .. }))
+            .then(|| numerator_nodes.remove(0));
+        let numerator = if leading_left.is_some() {
+            stores.freeze_node_list(&numerator_nodes)
+        } else {
+            incomplete.numerator
+        };
+        let fraction = Node::FractionNoad(MathFraction {
+            numerator,
+            denominator,
+            thickness: incomplete.thickness,
+            left_delimiter: incomplete.left_delimiter,
+            right_delimiter: incomplete.right_delimiter,
+        });
+        leading_left.into_iter().chain([fraction]).collect()
+    } else {
+        nodes
+    };
+    stores.freeze_node_list(&nodes)
+}
 
 pub(super) fn noad_kind_for_constructor(primitive: UnexpandablePrimitive) -> NoadKind {
     match primitive {

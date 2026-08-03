@@ -1,11 +1,10 @@
-use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
-use tex_state::token::{Catcode, OriginId, Token};
+use tex_state::token::{OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
@@ -33,7 +32,7 @@ fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
 }
 
 use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
-use super::scan::finish_current_math_list;
+use super::support::finish_current_math_list;
 
 pub(super) fn start_eq_no(
     nest: &mut ModeNest,
@@ -403,68 +402,6 @@ fn display_alignment_node(mut node: Node) -> Node {
     node
 }
 
-pub(super) fn resume_after_display_alignment(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    active_directions: Vec<tex_state::node::Direction>,
-) -> Result<(), ExecError> {
-    let prev_graf = nest
-        .enclosing_vertical_prev_graf()
-        .checked_add(3)
-        .expect("display-math prev_graf overflow");
-    nest.set_enclosing_vertical_prev_graf(prev_graf);
-    let next = loop {
-        match input.next_traced_token(stores)? {
-            Some(traced)
-                if matches!(
-                    traced.semantic_token(),
-                    Token::Char {
-                        cat: Catcode::Space,
-                        ..
-                    }
-                ) => {}
-            other => break other,
-        }
-    };
-    match next {
-        Some(traced) if is_par_or_end_group(stores, traced.semantic_token()) => {
-            crate::insert_traced_tokens(input, stores, [traced]);
-        }
-        Some(traced) => {
-            nest.push(Mode::Horizontal)?;
-            // §1200's `push_nest` sets `mode_line:=line`.
-            stores.push_paragraph_start_line(stores.current_input_line());
-            nest.current_list_mutation().set_space_factor(1000);
-            nest.current_list_mutation()
-                .append(active_directions.iter().copied().map(Node::Direction));
-            crate::insert_traced_tokens(input, stores, [traced]);
-        }
-        None => {}
-    }
-    build_page_after_display_resume(nest, stores)?;
-    Ok(())
-}
-
-fn is_par_or_end_group(stores: &Universe, token: Token) -> bool {
-    if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    ) {
-        return true;
-    }
-    let Token::Cs(symbol) = token else {
-        return false;
-    };
-    matches!(
-        stores.meaning(symbol),
-        tex_state::meaning::Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par)
-    )
-}
-
 fn above_display_glue_kind(param: GlueParam) -> GlueKind {
     if param == GlueParam::ABOVE_DISPLAY_SHORT_SKIP {
         GlueKind::AboveDisplayShortSkip
@@ -487,39 +424,6 @@ const fn tex_half(x: i32) -> i32 {
     } else {
         x / 2
     }
-}
-
-pub(super) fn resume_after_display(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    active_directions: Vec<tex_state::node::Direction>,
-) -> Result<(), ExecError> {
-    let prev_graf = nest
-        .enclosing_vertical_prev_graf()
-        .checked_add(3)
-        .expect("display-math prev_graf overflow");
-    nest.set_enclosing_vertical_prev_graf(prev_graf);
-    nest.push(Mode::Horizontal)?;
-    // §1200's `push_nest` sets `mode_line:=line` like every other one.
-    stores.push_paragraph_start_line(stores.current_input_line());
-    nest.current_list_mutation().set_space_factor(1000);
-    nest.current_list_mutation()
-        .append(active_directions.iter().copied().map(Node::Direction));
-    match input.next_traced_token(stores)? {
-        Some(traced)
-            if matches!(
-                traced.semantic_token(),
-                Token::Char {
-                    cat: Catcode::Space,
-                    ..
-                }
-            ) => {}
-        Some(traced) => crate::insert_traced_tokens(input, stores, [traced]),
-        None => {}
-    }
-    build_page_after_display_resume(nest, stores)?;
-    Ok(())
 }
 
 pub(crate) fn build_page_after_display_resume(

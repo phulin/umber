@@ -227,6 +227,55 @@ fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_math_family_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src/math");
+    for relative in ["mod.rs", "display.rs", "lower.rs", "support.rs"] {
+        let source = fs::read_to_string(source_root.join(relative))
+            .expect("read canonical math-family source");
+        for forbidden in [
+            "tex_expand",
+            "tex_lex",
+            "InputStack",
+            "ExecutionContext",
+            "crate::executor",
+            "legacy_front::",
+            "legacy_scan::",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "canonical math source {relative} must not reference legacy boundary `{forbidden}`"
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_command_control_has_no_legacy_math_front_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("math::legacy_front"));
+    assert!(!canonical.contains("math::legacy_scan"));
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("math::legacy_front") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some("dispatch.rs" | "paragraph_memo.rs" | "assignments/mod.rs")
+                ),
+                "{} must not call the retired math front",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

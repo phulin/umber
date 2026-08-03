@@ -89,7 +89,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
     }
     let mode = nest.current_mode();
     if matches!(mode, Mode::Math | Mode::DisplayMath) {
-        return crate::math::dispatch_math_token_with_context(
+        return crate::math::legacy_front::dispatch_math_token_with_context(
             nest, traced, input, stores, execution,
         );
     }
@@ -100,7 +100,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             ..
         }
     ) {
-        crate::math::insert_dollar_sign(traced, input, stores)?;
+        crate::math::legacy_front::insert_dollar_sign(traced, input, stores)?;
         if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
             assignments::ensure_horizontal_for_character(
                 nest,
@@ -131,7 +131,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             )?;
             return Ok(DispatchAction::Continue);
         }
-        return crate::math::enter_math(nest, input, stores, execution);
+        return crate::math::legacy_front::enter_math(nest, input, stores, execution);
     }
     let meaning = match token {
         Token::Cs(symbol) => stores.meaning(symbol),
@@ -260,7 +260,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
         }
         Meaning::MathCharGiven(_) => {
-            crate::math::insert_dollar_sign(traced, input, stores)?;
+            crate::math::legacy_front::insert_dollar_sign(traced, input, stores)?;
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
                 assignments::ensure_horizontal_for_character(
                     nest,
@@ -342,7 +342,7 @@ fn dispatch_character_token(
                 )?;
                 Ok(DispatchAction::Continue)
             } else {
-                crate::math::enter_math(nest, input, stores, execution)
+                crate::math::legacy_front::enter_math(nest, input, stores, execution)
             }
         }
         Token::Char {

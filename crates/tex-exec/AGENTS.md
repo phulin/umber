@@ -81,7 +81,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   used only by the synchronous incremental compatibility path; canonical editor
   sessions restore through command-owned checkpoints.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
-- `src/math/`: math-mode stomach front-end that builds frozen mlists, noads, fractions, choices, styles, and mu nodes; split into dispatch, display packaging, lowering, scanner, and support modules.
+- `src/math/mod.rs`: source-free canonical math owner for font validation plus lowering and display-packaging module wiring.
+- `src/math/display.rs`, `src/math/lower.rs`, and `src/math/support.rs`: dependency-clean display construction, mlist lowering, and shared noad/list kernels.
+- `src/math/legacy_front.rs` and `src/math/legacy_scan.rs`: retired `Executor` InputStack command dispatch and operand/nested-list scanners; legacy character scanning remains in `src/math/scan/chars.rs`.
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
 - `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata; alignment brace depth belongs exclusively to `tex-lex`, not this execution-state projection.

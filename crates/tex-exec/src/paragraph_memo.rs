@@ -339,7 +339,7 @@ pub(crate) fn try_reuse_aligned_paragraph(
         continuation,
     )?;
     if continuation == crate::executor::ParagraphContinuation::Display {
-        crate::math::enter_display_after_reused_paragraph(
+        crate::math::legacy_front::enter_display_after_reused_paragraph(
             nest,
             input,
             stores,
