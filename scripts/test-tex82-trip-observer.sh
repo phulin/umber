@@ -251,13 +251,19 @@ for profile in profile-a profile-b; do
   done
 done
 cmp "$work_root/profile-a/profile-initex-events.jsonl" "$work_root/profile-b/profile-initex-events.jsonl"
-cmp "$work_root/profile-a/profile-trip-events.jsonl" "$work_root/profile-b/profile-trip-events.jsonl"
+for profile in profile-a profile-b; do
+  scripts/project-tex82-trip-command.py \
+    "$work_root/$profile/profile-trip-events.jsonl" \
+    "$work_root/$profile/profile-trip-command.jsonl"
+done
+cmp "$work_root/profile-a/profile-trip-command.jsonl" \
+  "$work_root/profile-b/profile-trip-command.jsonl"
 validate_and_publish_geometry
 
 artifact_root="${target_dir}/trip-oracles/trip"
 mkdir -p "$artifact_root"
 cp "$work_root/full-initex-a/root-session.jsonl" "$artifact_root/initex-command.jsonl"
-cp "$work_root/profile-a/profile-trip-events.jsonl" "$artifact_root/format-loaded-command.jsonl"
+cp "$work_root/profile-a/profile-trip-command.jsonl" "$artifact_root/format-loaded-command.jsonl"
 cp "$work_root/clean/clean-initex-terminal.txt" "$artifact_root/initex-terminal.txt"
 cp "$work_root/clean/clean-initex.log" "$artifact_root/initex.log"
 cp "$work_root/clean/clean-trip-terminal.txt" "$artifact_root/format-loaded-terminal.txt"

@@ -85,6 +85,10 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   `--geometry-only` provisions pinned reference channels into the selected
   target and prepares deterministic schema-v3 reference geometry without
   running Umber conformance.
+- `project-tex82-trip-command.py` and `test-project-tex82-trip-command.py`:
+  deterministic bounded-profile projection of TeX82 §483's logical read-stream
+  stop name onto the TRIP fixture's legacy physical-terminal contract, with a
+  hermetic synthetic regression.
 - `test-etex26-trip-observer.sh`: offline two-phase clean, schema-v1 command,
   and schema-v2 geometry e-TeX 2.6 e-TRIP oracle generation and repeatability
   check.

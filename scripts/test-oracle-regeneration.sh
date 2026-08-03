@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+scripts/test-project-tex82-trip-command.py
 scripts/test-etex26-extension-primitive-audit.sh
 scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit --validate-only
 scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
