@@ -91,6 +91,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   that still require one unexpanded semantic token; canonical execution
   receives command delivery from `tex-command`.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
+- `src/packing_params/tests.rs`: source-backed packing-observation ordering tests, including TeX82's pre-readjustment `vpackage` geometry for `\vtop`.
 - `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, tex.web §§987/1005/1006's `\tracingpages` reporting, and detached page-episode reuse up to the output-routine barrier.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.
 - `src/splitting/tests.rs`: direct TeX82 split-top pruning and adjusted split-skip tests.

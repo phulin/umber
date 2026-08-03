@@ -217,10 +217,15 @@ pub fn vtop(
     params: VpackParams,
 ) -> PackedBox {
     let mut packed = vpack(state, list, spec, params);
+    readjust_vtop(state, list, &mut packed);
+    packed
+}
+
+/// Applies TeX82 §1087's post-`vpackage` height/depth adjustment for `\vtop`.
+pub fn readjust_vtop(state: &impl TypesetState, list: NodeListId, packed: &mut PackedBox) {
     let (height, depth) = vtop_split(state, list, packed.node.height, packed.node.depth);
     packed.node.height = height;
     packed.node.depth = depth;
-    packed
 }
 
 #[derive(Clone, Copy, Debug)]

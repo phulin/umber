@@ -9,6 +9,9 @@ use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diagnostics};
 
+#[cfg(test)]
+mod tests;
+
 #[must_use]
 pub(crate) fn hpack_params(stores: &Universe) -> HpackParams {
     HpackParams {
@@ -131,19 +134,9 @@ pub(crate) fn vtop(
     spec: PackSpec,
     params: VpackParams,
 ) -> PackedBox {
-    let packed = tex_typeset::vtop(&*stores, list, spec, params);
-    stores.set_last_badness(packed.badness);
-    stores.record_geometry_observation(GeometryObservation::Vpack {
-        width_sp: i64::from(packed.node.width.raw()),
-        height_sp: i64::from(packed.node.height.raw()),
-        depth_sp: i64::from(packed.node.depth.raw()),
-    });
-    report_pack_diagnostics(
-        stores,
-        PackedDirection::Vertical,
-        &packed.diagnostics,
-        &tex_state::node::Node::VList(packed.node),
-        DiagnosticListLayout::FrozenList,
-    );
+    // TeX82 packages the vertical list in §668, including observation-worthy
+    // dimensions and diagnostics, before §1087 readjusts the returned vtop.
+    let mut packed = vpack(stores, list, spec, params);
+    tex_typeset::readjust_vtop(&*stores, list, &mut packed);
     packed
 }
