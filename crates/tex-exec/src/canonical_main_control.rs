@@ -582,6 +582,9 @@ pub struct CanonicalParagraphRegion {
     effects: std::sync::Arc<[tex_state::EffectRecord]>,
     starting_provenance: ProvenanceStats,
     ending_provenance: ProvenanceStats,
+    dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
+    mutation_entry_in_group: bool,
+    mutations: std::sync::Arc<[tex_state::PureParagraphMutation]>,
 }
 
 impl CanonicalParagraphRegion {
@@ -623,6 +626,12 @@ impl CanonicalParagraphRegion {
     #[must_use]
     pub const fn provenance_bounds(&self) -> (&ProvenanceStats, &ProvenanceStats) {
         (&self.starting_provenance, &self.ending_provenance)
+    }
+
+    /// Validates only the exact state facts read by this paragraph.
+    #[must_use]
+    pub fn dependencies_match(&self, stores: &Universe) -> bool {
+        crate::paragraph_memo::validate_canonical_dependencies(stores, &self.dependencies)
     }
 
     /// Rehomes a region proven wholly before an edited root interval.
@@ -679,6 +688,8 @@ impl CanonicalParagraphRecorder {
             return;
         }
         command.begin_paragraph_input_transaction();
+        stores.begin_dependency_region();
+        stores.begin_pure_paragraph_recording();
         self.lookup_attempted = false;
         self.starting_universe = Some(stores.snapshot_with_exact_identity());
         self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
@@ -723,6 +734,14 @@ impl CanonicalParagraphRecorder {
             .unwrap_or_default()
             .to_vec()
             .into();
+        let dependencies = stores.finish_dependency_region().into();
+        let mutation_summary = stores.finish_pure_paragraph_recording().unwrap_or(
+            tex_state::PureParagraphMutationSummary {
+                entry_in_group: tex_state::ExpansionState::execution_group_depth(stores) != 0,
+                unsupported_group_ownership: false,
+                mutations: Vec::new(),
+            },
+        );
         self.next_identity = self.next_identity.wrapping_add(1);
         let region = CanonicalParagraphRegion {
             identity: self.next_identity,
@@ -740,6 +759,9 @@ impl CanonicalParagraphRecorder {
                 .take()
                 .expect("pending paragraph owns its provenance bound"),
             ending_provenance: stores.provenance_stats(),
+            dependencies,
+            mutation_entry_in_group: mutation_summary.entry_in_group,
+            mutations: mutation_summary.mutations.into(),
         };
         let coverage = region.input.coverage();
         stores.record_canonical_paragraph_region(tex_state::CanonicalParagraphHistoryRecord {
@@ -1806,13 +1828,18 @@ impl CanonicalMainControl {
         if std::mem::replace(&mut self.paragraph_recorder.lookup_attempted, true) {
             return false;
         }
-        let current = stores.snapshot_with_exact_identity();
-        let Some(index) = self
-            .paragraph_recorder
-            .replay
-            .iter()
-            .position(|region| current.exact_future_state_matches(&region.starting_universe))
-        else {
+        let Some(index) = self.paragraph_recorder.replay.iter().position(|region| {
+            region.effects.is_empty()
+                && crate::paragraph_memo::same_mutation_entry_class(
+                    region.mutation_entry_in_group,
+                    tex_state::ExpansionState::execution_group_depth(stores),
+                )
+                && crate::paragraph_memo::validate_canonical_dependencies(
+                    stores,
+                    &region.dependencies,
+                )
+                && crate::paragraph_memo::validate_canonical_mutations(stores, &region.mutations)
+        }) else {
             stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         };
@@ -1832,7 +1859,7 @@ impl CanonicalMainControl {
         self.paragraph_recorder.pending = false;
         self.paragraph_recorder.starting_universe = None;
         self.paragraph_recorder.starting_provenance = None;
-        stores.rollback(&region.ending_universe);
+        crate::paragraph_memo::replay_canonical_mutations(stores, &region.mutations);
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
         self.paragraph_recorder.next_identity =

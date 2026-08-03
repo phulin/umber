@@ -512,6 +512,17 @@ fn validate_paragraph_dependencies(
     })
 }
 
+pub(crate) fn validate_canonical_dependencies(
+    stores: &Universe,
+    observations: &[tex_state::ObservedDependency],
+) -> bool {
+    observations.iter().all(|observation| {
+        stores.dependency_changed_at(observation.key) == observation.changed_at
+            || stores.semantic_dependency_value(observation.key).as_ref()
+                == Some(&observation.value)
+    })
+}
+
 fn projected_break_validation_value(
     stores: &Universe,
     execution: &mut ExecutionContext<'_>,
@@ -570,7 +581,10 @@ fn validate_effects(effects: &[DetachedVirtualEffect]) -> bool {
     })
 }
 
-fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
+pub(crate) fn validate_canonical_mutations(
+    stores: &Universe,
+    mutations: &[tex_state::PureParagraphMutation],
+) -> bool {
     let mut seen = ahash::AHashSet::new();
     mutations.iter().all(|mutation| {
         let key = match *mutation {
@@ -595,6 +609,10 @@ fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMu
             } => font_selector_matches(stores, expected_font, expected_symbol),
         }
     })
+}
+
+fn validate_mutations(stores: &Universe, mutations: &[tex_state::PureParagraphMutation]) -> bool {
+    validate_canonical_mutations(stores, mutations)
 }
 
 fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraphMutation]) {
@@ -639,6 +657,13 @@ fn replay_mutations(stores: &mut Universe, mutations: &[tex_state::PureParagraph
             },
         }
     }
+}
+
+pub(crate) fn replay_canonical_mutations(
+    stores: &mut Universe,
+    mutations: &[tex_state::PureParagraphMutation],
+) {
+    replay_mutations(stores, mutations);
 }
 
 fn font_selector_matches(

@@ -2896,6 +2896,38 @@ fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
 }
 
 #[test]
+fn canonical_paragraph_validation_ignores_an_unrelated_prefix_cell() {
+    let source = b"alpha beta\\par\\end";
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, source);
+    cold_stores.set_count(77, 0);
+    run_to_end(&mut cold, &mut cold_stores);
+    let regions = cold.take_finished_paragraph_regions();
+
+    cold_stores.set_count(77, 41);
+    assert!(regions[0].dependencies_match(&cold_stores));
+}
+
+#[test]
+fn canonical_paragraph_validation_rejects_a_real_dependency_change() {
+    let source = b"alpha \\count0=7 beta\\par\\end";
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, source);
+    run_to_end(&mut cold, &mut cold_stores);
+    let regions = cold.take_finished_paragraph_regions();
+
+    cold_stores.set_count(0, 123_456);
+    assert!(!crate::paragraph_memo::validate_canonical_mutations(
+        &cold_stores,
+        &regions[0].mutations,
+    ));
+}
+
+#[test]
 fn canonical_paragraph_rehome_filters_the_edited_root_region() {
     let old = b"alpha\\par beta\\par\\end";
     let new: std::sync::Arc<[u8]> = std::sync::Arc::from(&b"alpha\\par gamma\\par\\end"[..]);
