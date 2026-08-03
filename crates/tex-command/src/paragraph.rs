@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use crate::input::InputState;
 use crate::{CommandObservation, InputRecord};
-use tex_state::SourceId;
 
 fn root_source_anchor(input: &InputState) -> Option<usize> {
     input.levels.iter().find_map(|level| {
@@ -167,7 +166,6 @@ fn rebind_root_input_with_delta(
     byte_delta: i64,
     line_delta: i64,
 ) -> Option<()> {
-    let id = SourceId::new(u32::try_from(input.next_source_identity).ok()?);
     let source = input.levels.iter_mut().find_map(|level| match level {
         crate::input::InputLevel::Source(source) => Some(source),
         crate::input::InputLevel::Tokens(_) => None,
@@ -175,9 +173,20 @@ fn rebind_root_input_with_delta(
     if source.cursor.backing.bytes.as_ref() != old {
         return None;
     }
+    // A revised editor run registers its root into a fresh CommandState, so
+    // the root keeps the same deterministic source identity. Allocating a new
+    // identity here made the rebound starting input differ from that live
+    // front even when every byte and cursor coordinate outside the edit was
+    // proven unchanged. Rebind the immutable backing in place instead: the
+    // identity remains the command-owned provenance key, while the descriptor
+    // and bytes become those of the revised root.
+    let id = source.cursor.backing.id;
     let backing = source.cursor.backing.rebind_generated(id, new).ok()?;
-    input.next_source_identity += 1;
-    input.registered_sources.push(backing.clone());
+    let registered = input
+        .registered_sources
+        .iter_mut()
+        .find(|registered| registered.id == id)?;
+    *registered = backing.clone();
     source.cursor.backing = backing;
     source.cursor.next_physical_offset = source
         .cursor
@@ -191,6 +200,38 @@ fn rebind_root_input_with_delta(
         line.physical.rehome(id, byte_delta, line_delta)?;
         line.retained_end = line.retained_end.checked_add_signed(byte_delta)?;
         line.byte_cursor = line.byte_cursor.checked_add_signed(byte_delta)?;
+    }
+    for level in &mut input.levels {
+        let crate::input::InputLevel::Tokens(tokens) = level else {
+            continue;
+        };
+        if let crate::input::TokenPayload::BackedUp(buffer) = &mut tokens.payload {
+            buffer.rehome_source(id, byte_delta)?;
+        }
+    }
+    Some(())
+}
+
+fn adopt_live_front_origins(recorded: &mut InputState, live: &InputState) -> Option<()> {
+    if recorded.levels.len() != live.levels.len() {
+        return None;
+    }
+    for (recorded, live) in recorded.levels.iter_mut().zip(&live.levels) {
+        match (recorded, live) {
+            (
+                crate::input::InputLevel::Tokens(recorded),
+                crate::input::InputLevel::Tokens(live),
+            ) => match (&mut recorded.payload, &live.payload) {
+                (
+                    crate::input::TokenPayload::BackedUp(recorded),
+                    crate::input::TokenPayload::BackedUp(live),
+                ) => recorded.adopt_matching_origins(live)?,
+                (recorded, live) if recorded == live => {}
+                _ => return None,
+            },
+            (recorded, live) if recorded == live => {}
+            _ => return None,
+        }
     }
     Some(())
 }
@@ -248,7 +289,10 @@ impl crate::CommandState {
         &mut self,
         transaction: &ParagraphInputTransaction,
     ) -> Result<(), ParagraphInputReplayError> {
-        if self.input != transaction.starting_input {
+        let mut starting_input = transaction.starting_input.clone();
+        if adopt_live_front_origins(&mut starting_input, &self.input).is_none()
+            || self.input != starting_input
+        {
             return Err(ParagraphInputReplayError::StartingInputMismatch);
         }
         self.input = transaction.ending_input.clone();

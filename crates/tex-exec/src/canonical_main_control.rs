@@ -707,6 +707,9 @@ impl CanonicalParagraphRegion {
         rebound.input = self
             .input
             .rebind_unchanged_root_prefix(old, new, unchanged_end)?;
+        if rebound.finished_lines.is_some() {
+            rebound.line_provenance = tex_state::ParagraphLineProvenance::Pending;
+        }
         Some(rebound)
     }
 
@@ -722,6 +725,9 @@ impl CanonicalParagraphRegion {
     ) -> Option<Self> {
         let mut rebound = self.clone();
         rebound.input = self.input.rebind_edited_root(old, new, edited)?;
+        if rebound.finished_lines.is_some() {
+            rebound.line_provenance = tex_state::ParagraphLineProvenance::Pending;
+        }
         Some(rebound)
     }
 }
@@ -1940,6 +1946,12 @@ impl CanonicalMainControl {
         self.paragraph_recorder.pending = false;
         self.paragraph_recorder.starting_universe = None;
         self.paragraph_recorder.starting_provenance = None;
+        // `begin` opened both recorders before the front key was available.
+        // A hit replaces that speculative cold paragraph wholesale, so close
+        // and discard its empty recording phases before the next paragraph
+        // starts.
+        let _ = stores.finish_paragraph_dependency_region();
+        let _ = stores.finish_pure_paragraph_recording();
         crate::paragraph_memo::replay_canonical_mutations(stores, &region.mutations);
         stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())

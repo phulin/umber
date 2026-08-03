@@ -158,6 +158,41 @@ impl SharedBackedUpBuffer {
         tokens.extend(self.0.iter().copied());
         self.0 = tokens.into();
     }
+
+    pub(crate) fn rehome_source(
+        &mut self,
+        source: tex_state::SourceId,
+        byte_delta: i64,
+    ) -> Option<()> {
+        let mut tokens = self.0.to_vec();
+        for token in &mut tokens {
+            if let Some(provenance) = &mut token.source_provenance {
+                provenance.rehome(source, byte_delta)?;
+            }
+        }
+        self.0 = tokens.into();
+        Some(())
+    }
+
+    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
+        if self.0.len() != live.0.len() {
+            return None;
+        }
+        let mut tokens = self.0.to_vec();
+        for (recorded, live) in tokens.iter_mut().zip(live.0.iter()) {
+            if recorded.spelling.token() != live.spelling.token()
+                || recorded.source_provenance != live.source_provenance
+            {
+                return None;
+            }
+            recorded.spelling = tex_state::token::TracedTokenWord::pack(
+                live.spelling.token()?,
+                live.spelling.origin(),
+            );
+        }
+        self.0 = tokens.into();
+        Some(())
+    }
 }
 
 /// One restored command plus the source range committed at its first delivery.

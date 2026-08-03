@@ -3139,9 +3139,140 @@ fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
         assert_eq!(rebound.barriers, barriers);
         assert!(matches!(
             rebound.line_provenance,
-            tex_state::ParagraphLineProvenance::Accepted(_)
+            tex_state::ParagraphLineProvenance::Pending
         ));
     }
+}
+
+#[test]
+fn canonical_paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
+    let old = b"alpha\\par\nbeta\\par\ngamma\\par\n\\end";
+    let new: Arc<[u8]> = Arc::from(&b"alpha\\par\ndelta\\par\ngamma\\par\n\\end"[..]);
+    let edit_start = old
+        .windows(4)
+        .position(|window| window == b"beta")
+        .expect("middle paragraph");
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, old);
+    run_to_end(&mut cold, &mut cold_stores);
+    let regions = cold.take_finished_paragraph_regions();
+    assert_eq!(regions.len(), 3);
+
+    let rebound = regions
+        .iter()
+        .filter_map(|region| {
+            region.rehome_edited_root(
+                old,
+                Arc::clone(&new),
+                edit_start..edit_start + b"beta".len(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rebound.len(),
+        2,
+        "the overlapping middle region is filtered"
+    );
+    assert_eq!(rebound[0].identity(), regions[0].identity());
+    assert_eq!(rebound[1].identity(), regions[2].identity());
+
+    let run = |region| {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, &new);
+        control.install_paragraph_replay_regions([region]);
+        run_to_end(&mut control, &mut stores);
+        stores.pure_memo_stats()
+    };
+    assert_eq!(run(rebound[0].clone()).paragraph_hits, 1);
+    assert_eq!(run(rebound[1].clone()).paragraph_hits, 1);
+}
+
+#[test]
+fn canonical_rebound_front_key_keeps_dependency_validation_selective() {
+    let old = br"alpha \count0=7 beta\par\end";
+    let prefix = b"% revised root\n";
+    let mut revised = prefix.to_vec();
+    revised.extend_from_slice(old);
+    let revised: Arc<[u8]> = revised.into();
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    cold_stores.set_count(0, 0);
+    cold_stores.set_count(77, 0);
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, old);
+    run_to_end(&mut cold, &mut cold_stores);
+    let region = cold
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("cold paragraph")
+        .rehome_edited_root(old, Arc::clone(&revised), 0..0)
+        .expect("unchanged suffix rehomes");
+
+    let run = |count0, count77| {
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+        stores.set_count(0, count0);
+        stores.set_count(77, count77);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        register_source(&mut control, &revised);
+        control.install_paragraph_replay_regions([region.clone()]);
+        run_to_end(&mut control, &mut stores);
+        stores.pure_memo_stats()
+    };
+
+    let unrelated = run(0, 41);
+    assert_eq!(unrelated.paragraph_hits, 1);
+    let related = run(1, 41);
+    assert_eq!(related.paragraph_hits, 0);
+    assert_eq!(related.paragraph.key_misses, 1);
+}
+
+#[test]
+fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
+    let old = br"alpha beta\par\end";
+    let prefix = b"% revised root\n";
+    let mut revised = prefix.to_vec();
+    revised.extend_from_slice(old);
+    let revised: Arc<[u8]> = revised.into();
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, old);
+    run_to_end(&mut cold, &mut cold_stores);
+    let cold_resolver = cold_stores.paragraph_origin_resolver();
+    let mut region = cold
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("cold paragraph");
+    region.accept_line_provenance(cold_resolver);
+    let region = region
+        .rehome_edited_root(old, Arc::clone(&revised), 0..0)
+        .expect("unchanged suffix rehomes");
+    assert!(matches!(
+        region.line_provenance,
+        tex_state::ParagraphLineProvenance::Pending
+    ));
+
+    let mut replay_stores = Universe::new_with_plain_catcodes();
+    replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    register_source(&mut replay, &revised);
+    replay.install_paragraph_replay_regions([region]);
+    run_to_end(&mut replay, &mut replay_stores);
+    let revised_resolver = replay_stores.paragraph_origin_resolver();
+    let mut memo = replay_stores.take_pure_memo_runtime();
+    memo.accept_paragraph_history(Arc::clone(&revised_resolver));
+    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    assert!(accepted.finished_lines.is_some());
+    let tex_state::ParagraphLineProvenance::Accepted(owner) = &accepted.line_provenance else {
+        panic!("accepted finished lines own a provenance resolver");
+    };
+    assert!(Arc::ptr_eq(owner, &revised_resolver));
+    assert_eq!(memo.stats().paragraph_hits, 1);
 }
 
 #[test]
