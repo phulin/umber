@@ -2062,13 +2062,29 @@ pub fn command_token_text(state: &mut tex_state::CommandContext<'_>, token: Toke
     }
 }
 
-fn token_list_text(state: &tex_state::CommandContext<'_>, tokens: TokenListId) -> String {
-    state
-        .tokens(tokens)
-        .iter()
-        .copied()
-        .map(|token| token_list_token_text(state, token))
-        .collect()
+pub(crate) fn token_list_text(
+    state: &tex_state::CommandContext<'_>,
+    tokens: TokenListId,
+) -> String {
+    let tokens = state.tokens(tokens);
+    let mut text = String::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if let Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } = tokens[index]
+            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+        {
+            text.push(ch);
+            text.push(char::from(b'0' + *slot));
+            index += 2;
+            continue;
+        }
+        text.push_str(&token_list_token_text(state, tokens[index]));
+        index += 1;
+    }
+    text
 }
 
 /// The string pdfTeX builds by selecting `new_string` around `show_token_list`.

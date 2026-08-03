@@ -20,12 +20,14 @@ const MACRO_PARAMETER_SLOTS: usize = 9;
 pub struct MacroParameterPattern {
     tokens: Arc<[Token]>,
     offsets: [u32; MACRO_PARAMETER_SLOTS],
+    widths: [u8; MACRO_PARAMETER_SLOTS],
     count: u8,
 }
 
 impl MacroParameterPattern {
     pub fn from_tokens(tokens: &[Token]) -> Self {
         let mut offsets = [0; MACRO_PARAMETER_SLOTS];
+        let mut widths = [0; MACRO_PARAMETER_SLOTS];
         let mut count = 0_usize;
         for (index, token) in tokens.iter().enumerate() {
             if matches!(token, Token::Param(_)) {
@@ -33,13 +35,24 @@ impl MacroParameterPattern {
                     count < MACRO_PARAMETER_SLOTS,
                     "macro has more than nine parameters"
                 );
-                offsets[count] = u32::try_from(index).expect("token list length exceeds u32");
+                let has_spelled_marker = index != 0
+                    && matches!(
+                        tokens[index - 1],
+                        Token::Char {
+                            cat: crate::token::Catcode::Parameter,
+                            ..
+                        }
+                    );
+                offsets[count] = u32::try_from(index - usize::from(has_spelled_marker))
+                    .expect("token list length exceeds u32");
+                widths[count] = if has_spelled_marker { 2 } else { 1 };
                 count += 1;
             }
         }
         Self {
             tokens: Arc::from(tokens),
             offsets,
+            widths,
             count: count as u8,
         }
     }
@@ -61,7 +74,7 @@ impl MacroParameterPattern {
     #[must_use]
     pub fn delimiter_bounds(&self, parameter: usize, token_count: usize) -> (usize, usize) {
         assert!(parameter < self.parameter_count());
-        let start = self.offsets[parameter] as usize + 1;
+        let start = self.offsets[parameter] as usize + usize::from(self.widths[parameter]);
         let end = if parameter + 1 < self.parameter_count() {
             self.offsets[parameter + 1] as usize
         } else {
@@ -79,6 +92,24 @@ impl MacroParameterPattern {
     pub fn delimiter(&self, parameter: usize) -> &[Token] {
         let (start, end) = self.delimiter_bounds(parameter, self.tokens.len());
         &self.tokens[start..end]
+    }
+
+    /// Character code retained by TeX82 §476's match token.
+    #[must_use]
+    pub fn marker(&self, parameter: usize) -> char {
+        assert!(parameter < self.parameter_count());
+        if self.widths[parameter] == 2 {
+            let Token::Char {
+                ch,
+                cat: crate::token::Catcode::Parameter,
+            } = self.tokens[self.offsets[parameter] as usize]
+            else {
+                unreachable!("two-token parameter marker has parameter catcode")
+            };
+            ch
+        } else {
+            '#'
+        }
     }
 }
 

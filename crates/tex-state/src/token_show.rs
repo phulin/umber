@@ -153,8 +153,23 @@ fn append_token_list(
     list: crate::ids::TokenListId,
     text: &mut String,
 ) {
-    for &token in stores.tokens(list) {
+    let tokens = stores.tokens(list);
+    let mut index = 0;
+    while index < tokens.len() {
+        let token = tokens[index];
+        if let Token::Char {
+            ch,
+            cat: Catcode::Parameter,
+        } = token
+            && let Some(Token::Param(slot)) = tokens.get(index + 1)
+        {
+            append_tex_print_char(ch, text);
+            text.push(char::from(b'0' + *slot));
+            index += 2;
+            continue;
+        }
         append_token_show_text(stores, token, text);
+        index += 1;
     }
 }
 

@@ -429,6 +429,17 @@ impl CommandProcessor<'_> {
                 && number == next_parameter
                 && number <= 9
             {
+                if let Token::Char {
+                    ch,
+                    cat: Catcode::Parameter,
+                } = token
+                    && ch != '#'
+                {
+                    // TeX82 §476's match token retains `cur_chr`, i.e. the
+                    // actual parameter-character code. Keep that spelling
+                    // beside the compact slot token when it is not `#`.
+                    output.push(command.spelling());
+                }
                 output.push(TracedTokenWord::pack(
                     Token::Param(number),
                     follower.origin(),

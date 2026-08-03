@@ -2402,6 +2402,12 @@ fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
         !after_first[..missing].contains("Runaway preamble?"),
         "{recovery}"
     );
+    assert!(
+        recovery.contains("\\lo #1#2U3#4#5#6#7#8#989{"),
+        "{recovery}"
+    );
+    assert!(recovery.contains("\nU3<-.\n"), "{recovery}");
+    assert!(!recovery.contains("\\lo #1#2#3#4#5"), "{recovery}");
 }
 
 #[test]

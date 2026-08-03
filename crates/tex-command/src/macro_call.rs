@@ -376,7 +376,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.scan_delimited_argument(flags, delimiter)?
             };
-            self.trace_macro_argument(parameter + 1, &argument);
+            self.trace_macro_argument(pattern.marker(parameter), parameter + 1, &argument);
             observe!(
                 self,
                 CommandObservation::TokenList(TokenListRecord {
@@ -425,12 +425,10 @@ impl CommandProcessor<'_> {
             return;
         }
         let mut text = crate::processor::expand::print_cs_text(&mut self.state, macro_name);
-        for token in self.state.tokens(parameters).to_vec() {
-            text.push_str(&crate::processor::expand::token_list_token_text(
-                &self.state,
-                token,
-            ));
-        }
+        text.push_str(&crate::processor::expand::token_list_text(
+            &self.state,
+            parameters,
+        ));
         text.push_str("->");
         for token in self.state.tokens(replacement).to_vec() {
             text.push_str(&crate::processor::expand::token_list_token_text(
@@ -442,11 +440,16 @@ impl CommandProcessor<'_> {
     }
 
     /// TeX82 §400's `#n<-<argument>` trace in completed-argument order.
-    fn trace_macro_argument(&mut self, parameter: usize, argument: &[TracedTokenWord]) {
+    fn trace_macro_argument(
+        &mut self,
+        marker: char,
+        parameter: usize,
+        argument: &[TracedTokenWord],
+    ) {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return;
         }
-        let mut text = format!("#{parameter}<-");
+        let mut text = format!("{marker}{parameter}<-");
         for word in argument {
             text.push_str(&crate::processor::expand::token_list_token_text(
                 &self.state,

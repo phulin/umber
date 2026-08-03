@@ -1578,6 +1578,59 @@ fn scan_toks_all_parameter_number_success_and_diagnostic_boundaries() {
 }
 
 #[test]
+fn parameter_text_retains_non_hash_match_character_spelling() {
+    let mut command = CommandState::default();
+    let other = |ch| Token::Char {
+        ch,
+        cat: Catcode::Other,
+    };
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '#',
+                cat: Catcode::Parameter,
+            },
+            other('1'),
+            Token::Char {
+                ch: 'U',
+                cat: Catcode::Parameter,
+            },
+            other('2'),
+            other('x'),
+            Token::Char {
+                ch: '{',
+                cat: Catcode::BeginGroup,
+            },
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    let scanned = processor
+        .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+        .expect("parameter text scans");
+    assert_eq!(
+        processor.state.tokens(scanned.parameter_text.token_list()),
+        &[
+            Token::Param(1),
+            Token::Char {
+                ch: 'U',
+                cat: Catcode::Parameter,
+            },
+            Token::Param(2),
+            other('x'),
+        ]
+    );
+}
+
+#[test]
 fn scan_toks_raw_expanded_nested_brace_illegal_hash_and_missing_brace_matrix() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_symbol = universe.intern("m").symbol();
