@@ -32,12 +32,47 @@ fn geometry_translation_captures_active_source_and_observation_line() {
 }
 
 #[test]
-fn detached_evidence_uses_the_pinned_header_and_rejects_schema_confusion() {
-    let oracle = b"{\"schema\":1,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let encoded = canonical_evidence_json_lines(&[], oracle, SchemaVersion::V1)
-        .expect("empty detached stream");
-    assert_eq!(encoded, oracle);
-    assert!(canonical_evidence_json_lines(&[], oracle, SchemaVersion::V2).is_err());
+fn detached_evidence_derives_the_schema_from_the_validated_pinned_header() {
+    for schema in [SchemaVersion::V1, SchemaVersion::V2, SchemaVersion::V3] {
+        let oracle = format!(
+            "{{\"schema\":{},\"manifest\":\"{}\"}}\n",
+            schema.number(),
+            "1".repeat(64)
+        );
+        let encoded =
+            canonical_evidence_json_lines(&[], oracle.as_bytes()).expect("empty detached stream");
+        assert_eq!(encoded, oracle.as_bytes());
+    }
+
+    let stale = b"{\"schema\":4,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    assert!(canonical_evidence_json_lines(&[], stale).is_err());
+}
+
+#[test]
+fn detached_geometry_preserves_v2_reading_and_rejects_real_schema_mismatches() {
+    let header = |schema| {
+        format!(
+            "{{\"schema\":{schema},\"manifest\":\"{}\"}}\n",
+            "1".repeat(64)
+        )
+    };
+    let event = NormalizedEvent {
+        sequence: 0,
+        semantic: Event::Geometry(GeometryEvent::Hpack {
+            width_sp: 1,
+            height_sp: 2,
+            depth_sp: 3,
+            location: None,
+        }),
+    };
+
+    assert!(
+        canonical_evidence_json_lines(std::slice::from_ref(&event), header(1).as_bytes()).is_err()
+    );
+    assert!(
+        canonical_evidence_json_lines(std::slice::from_ref(&event), header(2).as_bytes()).is_ok()
+    );
+    assert!(canonical_evidence_json_lines(&[event], header(3).as_bytes()).is_err());
 }
 
 #[test]

@@ -80,12 +80,9 @@ impl PhaseCapture {
         match self {
             Self::Live(capture) => capture.streams(oracle),
             Self::Detached(evidence) => {
-                let diagnostic = tex_observe::canonical_evidence_json_lines(
-                    &evidence.semantic,
-                    oracle,
-                    SchemaVersion::V1,
-                )
-                .expect("construction semantic evidence encodes under oracle header");
+                let diagnostic =
+                    tex_observe::canonical_evidence_json_lines(&evidence.semantic, oracle)
+                        .expect("construction semantic evidence encodes under oracle header");
                 tex_command_stream::LiveSessionStreams {
                     diagnostic: diagnostic.clone(),
                     stable: diagnostic,
@@ -97,14 +94,38 @@ impl PhaseCapture {
     fn geometry(&self, oracle: &[u8]) -> Vec<u8> {
         match self {
             Self::Live(capture) => capture.geometry(oracle),
-            Self::Detached(evidence) => tex_observe::canonical_evidence_json_lines(
-                &evidence.geometry,
-                oracle,
-                SchemaVersion::V2,
-            )
-            .expect("construction geometry evidence encodes under oracle header"),
+            Self::Detached(evidence) => {
+                tex_observe::canonical_evidence_json_lines(&evidence.geometry, oracle)
+                    .expect("construction geometry evidence encodes under oracle header")
+            }
         }
     }
+}
+
+#[test]
+fn detached_geometry_uses_the_pinned_schema_three_header() {
+    let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let capture = PhaseCapture::Detached(tex_observe::DetachedEvidence {
+        semantic: Vec::new(),
+        geometry: vec![tex_oracle::NormalizedEvent {
+            sequence: 0,
+            semantic: tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                width_sp: 1,
+                height_sp: 2,
+                depth_sp: 3,
+                location: Some(tex_oracle::GeometryLocation {
+                    source: "trip.tex".into(),
+                    line: 105,
+                }),
+            }),
+        }],
+    });
+    let actual = capture.geometry(oracle);
+    let stream = ObservationStream::from_canonical_json_lines(&actual)
+        .expect("schema-v3 detached geometry stream");
+
+    assert_eq!(stream.header.schema, SchemaVersion::V3.number());
+    assert_eq!(stream.events.len(), 1);
 }
 
 struct LiveCapture {

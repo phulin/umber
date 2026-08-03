@@ -67,17 +67,9 @@ pub struct DetachedEvidence {
 pub fn canonical_evidence_json_lines(
     events: &[NormalizedEvent],
     oracle: &[u8],
-    schema: SchemaVersion,
 ) -> Result<Vec<u8>, String> {
     let oracle = ObservationStream::from_canonical_json_lines(oracle)
         .map_err(|error| format!("pinned oracle stream is invalid: {error}"))?;
-    if oracle.header.schema != schema.number() {
-        return Err(format!(
-            "pinned oracle schema {} does not match requested schema {}",
-            oracle.header.schema,
-            schema.number()
-        ));
-    }
     let mut bytes = serde_json::to_vec(&oracle.header).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
     for (sequence, event) in events.iter().enumerate() {
