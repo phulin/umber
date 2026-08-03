@@ -283,6 +283,9 @@ export class HtmlResourceRegistry {
 	#verify;
 	#FontFace;
 	#maxBytes;
+	#maxResourceBytes;
+	#maxChurnBytes;
+	#churnBytes = 0;
 	#entries = new Map();
 	#disposed = false;
 
@@ -291,12 +294,18 @@ export class HtmlResourceRegistry {
 		this.#verify = options.verify ?? verifySha256;
 		this.#FontFace = options.FontFace ?? globalThis.FontFace;
 		this.#maxBytes = options.maxBytes ?? DEFAULT_LIMITS.maxResourceBytes;
+		this.#maxResourceBytes = options.maxResourceBytes ?? 64 * 1024 * 1024;
+		this.#maxChurnBytes = options.maxChurnBytes ?? 1024 * 1024 * 1024;
 	}
 
 	get metrics() {
 		let bytes = 0;
 		for (const entry of this.#entries.values()) bytes += entry.bytes.byteLength;
-		return Object.freeze({ count: this.#entries.size, bytes });
+		return Object.freeze({
+			count: this.#entries.size,
+			bytes,
+			churnBytes: this.#churnBytes,
+		});
 	}
 
 	async stage(additions) {
@@ -306,6 +315,12 @@ export class HtmlResourceRegistry {
 		const staged = new Map();
 		for (const resource of additions) {
 			validateResource(resource);
+			if (resource.bytes.byteLength > this.#maxResourceBytes) {
+				throw new HtmlPatchError(
+					"resource-size",
+					"individual resource budget exceeded",
+				);
+			}
 			const existing =
 				this.#entries.get(resource.identity) ?? staged.get(resource.identity);
 			if (existing) {
@@ -330,6 +345,13 @@ export class HtmlResourceRegistry {
 					"resource digest does not match bytes",
 				);
 			}
+			if (this.#churnBytes + resource.bytes.byteLength > this.#maxChurnBytes) {
+				throw new HtmlPatchError(
+					"resource-churn",
+					"cumulative resource churn exceeded",
+				);
+			}
+			this.#churnBytes += resource.bytes.byteLength;
 			const entry = { ...resource, bytes: resource.bytes.slice(), face: null };
 			if (resource.kind === "font" && this.#FontFace) {
 				entry.face = new this.#FontFace(
@@ -349,12 +371,14 @@ export class HtmlResourceRegistry {
 						"resource-lease",
 						"resource lease already settled",
 					);
-				settled = true;
-				for (const entry of staged.values()) {
-					this.#entries.set(entry.identity, entry);
-					if (entry.face) this.#document?.fonts?.add(entry.face);
-				}
 				const live = new Set(retained);
+				const uniqueReleases = new Set(releases);
+				if (uniqueReleases.size !== releases.length) {
+					throw new HtmlPatchError(
+						"duplicate-release",
+						"resource released more than once",
+					);
+				}
 				for (const identity of releases) {
 					if (live.has(identity)) {
 						throw new HtmlPatchError(
@@ -362,6 +386,19 @@ export class HtmlResourceRegistry {
 							"cannot release a live resource",
 						);
 					}
+					if (!this.#entries.has(identity)) {
+						throw new HtmlPatchError(
+							"unknown-resource",
+							"cannot release an unknown resource",
+						);
+					}
+				}
+				settled = true;
+				for (const entry of staged.values()) {
+					this.#entries.set(entry.identity, entry);
+					if (entry.face) this.#document?.fonts?.add(entry.face);
+				}
+				for (const identity of releases) {
 					this.#remove(identity);
 				}
 			},

@@ -49,8 +49,14 @@ export class HtmlResourceRegistry {
 		) => boolean | Promise<boolean>;
 		FontFace?: typeof FontFace;
 		maxBytes?: number;
+		maxResourceBytes?: number;
+		maxChurnBytes?: number;
 	});
-	readonly metrics: Readonly<{ count: number; bytes: number }>;
+	readonly metrics: Readonly<{
+		count: number;
+		bytes: number;
+		churnBytes: number;
+	}>;
 	stage(additions: readonly unknown[]): Promise<{
 		commit(
 			releases: readonly string[],

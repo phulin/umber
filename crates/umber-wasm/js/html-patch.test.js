@@ -231,13 +231,76 @@ test("resource leases deduplicate, reject conflicts, and reclaim after acknowled
 	};
 	const first = await registry.stage([resource, resource]);
 	await first.commit([], [resource.identity]);
-	assert.deepEqual(registry.metrics, { count: 1, bytes: 3 });
+	assert.deepEqual(registry.metrics, { count: 1, bytes: 3, churnBytes: 3 });
 	await assert.rejects(
 		registry.stage([{ ...resource, bytes: new Uint8Array([9]) }]),
 		/resource identity has conflicting bytes/,
 	);
 	const release = await registry.stage([]);
 	await release.commit([resource.identity], []);
-	assert.deepEqual(registry.metrics, { count: 0, bytes: 0 });
+	assert.deepEqual(registry.metrics, { count: 0, bytes: 0, churnBytes: 3 });
 	await registry.dispose();
+});
+
+test("resource cancellation, font failure, lifetime checks, and churn budgets fail closed", async () => {
+	const document = new FakeDocument();
+	const registry = new HtmlResourceRegistry({
+		document,
+		verify: async () => true,
+		maxResourceBytes: 3,
+		maxBytes: 4,
+		maxChurnBytes: 5,
+		FontFace: class FakeFontFace {
+			async load() {
+				return this;
+			}
+		},
+	});
+	const firstResource = {
+		identity: digest("e"),
+		kind: "font",
+		family: "umber-first",
+		bytes: new Uint8Array([1, 2, 3]),
+	};
+	const cancelled = await registry.stage([firstResource]);
+	await cancelled.rollback();
+	assert.deepEqual(registry.metrics, { count: 0, bytes: 0, churnBytes: 3 });
+	const secondResource = {
+		identity: digest("f"),
+		kind: "asset",
+		bytes: new Uint8Array([4, 5]),
+	};
+	const accepted = await registry.stage([secondResource]);
+	await accepted.commit([], [secondResource.identity]);
+	assert.deepEqual(registry.metrics, { count: 1, bytes: 2, churnBytes: 5 });
+	const release = await registry.stage([]);
+	await assert.rejects(
+		release.commit([secondResource.identity], [secondResource.identity]),
+		/cannot release a live resource/,
+	);
+	assert.equal(registry.metrics.count, 1);
+	await assert.rejects(
+		registry.stage([
+			{
+				identity: digest("9"),
+				kind: "asset",
+				bytes: new Uint8Array([6]),
+			},
+		]),
+		/cumulative resource churn exceeded/,
+	);
+	await registry.dispose();
+	assert.equal(registry.metrics.count, 0);
+
+	const failing = new HtmlResourceRegistry({
+		document,
+		verify: async () => true,
+		FontFace: class FailingFontFace {
+			async load() {
+				throw new Error("font rejected");
+			}
+		},
+	});
+	await assert.rejects(failing.stage([firstResource]), /font rejected/);
+	assert.equal(failing.metrics.count, 0);
 });
