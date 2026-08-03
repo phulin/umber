@@ -581,7 +581,6 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
 }
 
 #[test]
-#[ignore = "umber2-46m5"]
 fn deferred_write_expansion_publishes_direct_the_delivery() {
     // TeX82 §§478 and 1370: shipout expands deferred write text through the
     // active canonical command episode. Although §478 handles `\the`

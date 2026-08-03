@@ -62,6 +62,11 @@ pub struct CommandProcessor<'a> {
     /// metadata: raw delivery neither reads replay provenance nor lets this
     /// value affect input semantics.
     immediate_write_retirement: Option<InputLevelId>,
+    /// TeX82 §1370 drives deferred write text through `scan_toks` from an
+    /// active expanded-command episode. Section 478 consumes `\the` inside
+    /// that collector, so the write driver asks the collector to forward the
+    /// otherwise internal expanded delivery to its observer.
+    pub(crate) observe_write_direct_expansion: bool,
     pending_file_warning_context: Option<(InputLevelId, String)>,
     /// Only the immediately preceding raw delivery may be backed up. This is
     /// processor-local so stamps cannot survive a snapshot or a new episode.
@@ -244,6 +249,7 @@ impl<'a> CommandProcessor<'a> {
             state,
             host,
             observer: None,
+            observe_write_direct_expansion: false,
             fuel: ProcessorFuel::Owned(CommandFuelLedger::default()),
             immediate_write_retirement: None,
             pending_file_warning_context: None,

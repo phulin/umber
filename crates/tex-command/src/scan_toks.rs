@@ -482,10 +482,12 @@ impl CommandProcessor<'_> {
                     ) {
                         // TeX82 §478 handles `\the` directly in `scan_toks`
                         // instead of routing it through §380's ordinary
-                        // expanded-fetch loop. Like every expandable command
-                        // consumed by that loop, the opener has only its raw
-                        // delivery; §465's internal operand is the next
-                        // command to cross an expanded boundary.
+                        // expanded-fetch loop. Ordinary token-list scans keep
+                        // only its raw delivery; §1370's nested write driver
+                        // forwards the active expanded episode explicitly.
+                        if self.observe_write_direct_expansion {
+                            self.observe_expanded_delivery(&command);
+                        }
                         if self.append_direct_the_toks(&mut output)? {
                             continue;
                         }
