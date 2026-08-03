@@ -1991,7 +1991,7 @@ fn classic_tfm_html_acquires_exact_paint_resource_without_changing_dvi() {
 }
 
 #[test]
-fn accepted_html_revision_publishes_acknowledged_snapshot_and_resync() {
+fn accepted_html_revisions_publish_snapshot_then_acknowledged_patch_and_resync() {
     let source = "\\shipout\\hbox{\\vrule width 1pt height 1pt}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         outputs: OutputCapabilitySet::HTML,
@@ -2018,6 +2018,25 @@ fn accepted_html_revision_publishes_acknowledged_snapshot_and_resync() {
     };
     assert_eq!(resync.revision, 1);
     assert_eq!(resync.digest, first_digest);
+
+    let _next_source = apply_text_replacement(&mut session, 2, source, "1pt", "2pt");
+    let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
+        panic!("edited HTML revision should complete");
+    };
+    let RenderUpdate::Patch(envelope) = session.render_update().expect("incremental patch") else {
+        panic!("acknowledged base should produce a patch");
+    };
+    assert_eq!(envelope.patch.base_revision, 1);
+    assert_eq!(envelope.patch.target_revision, 2);
+    let second_digest = envelope.patch.after_digest;
+    session
+        .acknowledge_render_update(2, second_digest)
+        .expect("patch acknowledgement");
+    let Some(RenderUpdate::Snapshot(resync)) = session.render_resync() else {
+        panic!("resync after patch should return the latest accepted snapshot");
+    };
+    assert_eq!(resync.revision, 2);
+    assert_eq!(resync.digest, second_digest);
 }
 
 #[test]

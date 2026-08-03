@@ -987,6 +987,27 @@ fn dvi_bytes(pages: &[DviPagePlan]) -> Result<Vec<u8>, DviError> {
     writer.finish()
 }
 
+/// Projects an artifact prefix into the optional DVI serialization view.
+///
+/// DVI-disabled sessions retain committed page artifacts for HTML/PDF while
+/// deliberately keeping this view empty. When enabled, DVI plans are aligned
+/// one-for-one with artifacts and ordinary slice bounds enforce that invariant.
+fn dvi_page_prefix(pages: &[DviPagePlan], artifact_prefix: usize) -> &[DviPagePlan] {
+    if pages.is_empty() {
+        pages
+    } else {
+        &pages[..artifact_prefix]
+    }
+}
+
+fn dvi_page_suffix(pages: &[DviPagePlan], artifact_prefix: usize) -> &[DviPagePlan] {
+    if pages.is_empty() {
+        pages
+    } else {
+        &pages[artifact_prefix..]
+    }
+}
+
 /// Long-lived incremental session. Live executor state is deliberately private.
 pub struct Session {
     template: Universe,
@@ -1863,7 +1884,8 @@ impl Session {
         let retained_artifact_prefix = setup.old_history[restart]
             .artifact_prefix
             .max(artifact_base);
-        let mut pages_through_stop = setup.old_pages[..retained_artifact_prefix].to_vec();
+        let mut pages_through_stop =
+            dvi_page_prefix(&setup.old_pages, retained_artifact_prefix).to_vec();
         pages_through_stop.extend(dvi_pages);
 
         let roots = tex_exec::RootRehomeContext::new(&setup.old_source, &setup.next);
@@ -1917,7 +1939,7 @@ impl Session {
                     &joined_effects,
                 )?;
                 let mut joined_pages = pages_through_stop;
-                joined_pages.extend_from_slice(&setup.old_pages[old_prefix..]);
+                joined_pages.extend_from_slice(dvi_page_suffix(&setup.old_pages, old_prefix));
                 let mut history = Vec::with_capacity(
                     restart + 1 + setup.old_history.len().saturating_sub(old_index),
                 );
@@ -2564,7 +2586,7 @@ impl Session {
                     &effects,
                 )?;
                 let mut pages = advance.pages_through_stop;
-                pages.extend_from_slice(&old_pages[old_prefix..]);
+                pages.extend_from_slice(dvi_page_suffix(&old_pages, old_prefix));
                 let mut history = Vec::with_capacity(
                     restart_index + 1 + old_history.len().saturating_sub(old_index),
                 );
@@ -3488,7 +3510,7 @@ fn execute_advance(
     let output_snapshot_started = Timer::start();
     let effects = scratch.world().effect_records().to_vec();
     let artifacts = scratch.world().committed_artifacts().to_vec();
-    let mut pages_through_stop = old_pages[..anchor.artifact_prefix].to_vec();
+    let mut pages_through_stop = dvi_page_prefix(old_pages, anchor.artifact_prefix).to_vec();
     pages_through_stop.extend(dvi_pages);
     let output_snapshot_latency = output_snapshot_started.elapsed();
     Ok(AdvanceRun {
