@@ -149,7 +149,6 @@ fn moveleft_in_math_is_ignored_without_consuming_lastbox() {
 }
 
 #[test]
-#[ignore = "umber2-mbnc"]
 fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
     let (stores, executor) = run_math_source(r"$\halign a");
     let nodes = math_nodes(&stores, &executor);

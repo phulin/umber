@@ -6222,6 +6222,12 @@ enum ScannedStep {
     IllegalEqNo {
         token: Token,
     },
+    /// TeX82 §§1051 and 1130's `mmode+halign: if privileged ...`:
+    /// inline math has negative `mmode`, so `privileged` diagnoses the
+    /// command and returns before `init_align` scans any preamble input.
+    IllegalHAlign {
+        token: Token,
+    },
     /// TeX82 §1048's `@<Forbidden cases@>=...,any_mode(last_item),...` (the
     /// same module `IllegalBoxShift`'s `vmode+vmove`/`hmode+hmove`/
     /// `mmode+hmove` triple comes from, and that `IllegalEqNo`'s §1144
@@ -9049,7 +9055,15 @@ fn scan_command(
         // `\halign` is legal directly in vertical mode (TeX82's
         // `vmode+halign:init_align`).
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HAlign) => {
-            if matches!(mode, Mode::Math | Mode::DisplayMath) {
+            if mode == Mode::Math {
+                // TeX82 §1130 tests `privileged` before inspecting the
+                // current group. Inline math is negative `mmode`, so §1051
+                // ignores only the already-delivered command and leaves the
+                // following token untouched.
+                Ok(ScannedStep::IllegalHAlign {
+                    token: command.spelling().semantic_token(),
+                })
+            } else if mode == Mode::DisplayMath {
                 if innermost_group != Some(GroupKind::MathShift) {
                     scan_off_save(processor, command, innermost_group)
                 } else {
@@ -11653,6 +11667,7 @@ fn applied_mutation_observation(
         | ScannedStep::BeginInsert(..)
         | ScannedStep::IllegalInsertOrAdjust { .. }
         | ScannedStep::IllegalEqNo { .. }
+        | ScannedStep::IllegalHAlign { .. }
         | ScannedStep::IllegalLastItem { .. }
         | ScannedStep::InvalidArithmeticTarget { .. }
         | ScannedStep::BoxEndGroup { .. }
@@ -15435,6 +15450,16 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IllegalEqNo { token } => {
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalHAlign { token } => {
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::report_illegal_case_with_context(
                 stores,
