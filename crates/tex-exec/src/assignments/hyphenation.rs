@@ -291,8 +291,10 @@ fn project_physical_pre_break_spans(
             ch: hyphen,
             origin: last_origin,
         });
-        let pre = super::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
-            .map_err(ExecError::Command)?;
+        let pre = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+            stores, &pending, true, false, fuel,
+        )
+        .map_err(ExecError::Command)?;
         let pre = stores.freeze_node_list(&pre);
         let Node::Disc {
             pre: physical_pre, ..
@@ -323,39 +325,7 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<N
     hyphenated_hlist_with_fuel(stores, nodes, fuel.fuel_mut()).expect("test hyphenation fuel")
 }
 
-/// Returns legal character boundaries for pass-1 OpenType shaping.
-pub(super) fn candidate_positions_for_chars(
-    stores: &Universe,
-    language: u8,
-    chars: &[PendingHChar],
-    left: usize,
-    right: usize,
-) -> Vec<usize> {
-    if chars.len() > 63 || chars.len() < left.saturating_add(right) {
-        return Vec::new();
-    }
-    let Some(first) = chars.first() else {
-        return Vec::new();
-    };
-    if !(0..=255).contains(&stores.font_hyphen_char(first.font))
-        || chars.iter().any(|entry| entry.font != first.font)
-    {
-        return Vec::new();
-    }
-    let Some(normalized) = chars
-        .iter()
-        .map(|entry| normalized_hyphen_code(stores, language, entry.ch))
-        .collect::<Option<String>>()
-    else {
-        return Vec::new();
-    };
-    if !normalized.starts_with(first.ch) && stores.int_param(IntParam::UC_HYPH) <= 0 {
-        return Vec::new();
-    }
-    stores.hyphen_positions_for_language(language, &normalized, left, right)
-}
-
-/// Renders the discretionary breaks TeX82 §923's `hyphenate` would find in a
+/// Renders the discretionary breaks/// Renders the discretionary breaks TeX82 §923's `hyphenate` would find in a
 /// single word, using the current `\language`, `\lefthyphenmin`, and
 /// `\righthyphenmin`.
 ///
@@ -809,9 +779,14 @@ fn append_hyphenated_word(
     physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
 ) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes =
-        super::hmode::reconstitute_with_fuel(stores, &pending, no_left_boundary, false, fuel)
-            .map_err(ExecError::Command)?;
+    let nodes = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        &pending,
+        no_left_boundary,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
     let mut position_index = 0;
     let mut char_start = 0;
 
@@ -895,11 +870,23 @@ fn discretionary_through_node(
             origin: word[position - 1].origin,
         });
     }
-    let pre = super::hmode::reconstitute_with_fuel(stores, &pre_pending, true, false, fuel)
-        .map_err(ExecError::Command)?;
+    let pre = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        &pre_pending,
+        true,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = super::hmode::reconstitute_with_fuel(stores, &post_pending, false, false, fuel)
-        .map_err(ExecError::Command)?;
+    let post = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        &post_pending,
+        false,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
 
     let (physical_replace_count, physical_post) =
         physical_discretionary_projection(stores, word, span, &replacement, following, fuel)?;
@@ -938,8 +925,14 @@ fn physical_discretionary_projection(
         .iter()
         .map(WordChar::pending)
         .collect::<Vec<_>>();
-    let minor = super::hmode::reconstitute_with_fuel(stores, &minor_pending, false, false, fuel)
-        .map_err(ExecError::Command)?;
+    let minor = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+        stores,
+        &minor_pending,
+        false,
+        false,
+        fuel,
+    )
+    .map_err(ExecError::Command)?;
 
     let (major_len, minor_len) =
         synchronized_physical_branch_lengths(&major, start, &minor, position, end, word.len());

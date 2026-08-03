@@ -46,7 +46,7 @@ mod pdf_actions;
 mod pdf_fonts;
 pub(crate) mod shipout;
 #[cfg(test)]
-pub(crate) use hmode::test_fix_hyphen_language;
+pub(crate) use crate::canonical_box_runtime::hmode::test_fix_hyphen_language;
 #[cfg(test)]
 pub(crate) use hyphenation::test_language_context;
 #[cfg(test)]
@@ -70,6 +70,10 @@ mod tests;
 pub(crate) use crate::canonical_assignments::math_allows_mode_independent_primitive;
 use crate::canonical_assignments::tracing;
 use crate::canonical_assignments::*;
+pub(crate) use crate::canonical_box_runtime::hmode::{
+    commit_current_list, fixed_infinite_glue, flush_pending_hchars, flush_pending_hchars_with_fuel,
+    norm_min, try_append_character, try_append_tfm_character_span,
+};
 pub(crate) use boxes::append_box_node_to_current_list;
 pub(crate) use boxes::execute_delete_last;
 pub(crate) use boxes::execute_scanned_saved_vertical_discards;
@@ -85,17 +89,9 @@ pub(crate) use canonical_paragraph_end::{
     interrupt_canonical_paragraph_for_display,
 };
 use fonts::*;
-pub(crate) use hmode::fixed_infinite_glue;
-pub(crate) use hmode::flush_pending_hchars_with_fuel;
+pub(crate) use hmode::append_given_char;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
-pub(crate) use hmode::{
-    append_canonical_character_with_fuel, append_canonical_control_space_with_fuel,
-    append_canonical_space_with_fuel, append_given_char, append_italic_correction_with_fuel,
-    append_whatsit, commit_current_list, control_space_glue_spec, flush_pending_hchars,
-    flush_pending_hchars_without_right_boundary, norm_min, try_append_character,
-    try_append_tfm_character_span,
-};
 #[cfg(test)]
 pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
 #[cfg(test)]
@@ -2398,7 +2394,11 @@ fn execute_prefixed_command(
                 }
                 let language = scan_i32(input, stores, execution, command.traced)?;
                 let language = u8::try_from(language).unwrap_or(0);
-                hmode::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+                crate::canonical_box_runtime::flush_pending_hchars(
+                    nest,
+                    stores,
+                    execution.command_fuel(),
+                )?;
                 let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
                 let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
                 crate::vertical::append_node_to_current_list(

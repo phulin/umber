@@ -263,6 +263,7 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                         "lib.rs"
                             | "canonical_main_control.rs"
                             | "canonical_box_runtime/mod.rs"
+                            | "canonical_box_runtime/hmode.rs"
                             | "canonical_box_runtime/packaging.rs"
                             | "canonical_box_runtime/vsplit.rs"
                             | "assignments/boxes/leaders.rs"
@@ -270,6 +271,8 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                             | "assignments/boxes/packaging.rs"
                             | "assignments/boxes/vsplit.rs"
                             | "assignments/hmode.rs"
+                            | "assignments/hyphenation.rs"
+                            | "assignments/mod.rs"
                             | "assignments/paragraph.rs"
                             | "math/display.rs"
                     )
@@ -353,6 +356,53 @@ fn canonical_packaging_physically_owns_its_source_free_closure() {
         "fn hpack_owned_with_overfull_rule(",
         "fn project_short_diagnostic_discs(",
         "fn first_box_node(",
+    ] {
+        assert!(
+            owner.contains(implementation),
+            "canonical owner lacks `{implementation}`"
+        );
+        assert!(
+            !legacy.contains(implementation),
+            "legacy scanner still owns `{implementation}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_hmode_physically_owns_pending_character_runtime() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_box_runtime/hmode.rs"))
+        .expect("read canonical hmode owner");
+    let legacy = fs::read_to_string(source_root.join("assignments/hmode.rs"))
+        .expect("read legacy hmode scanner");
+
+    for forbidden in [
+        "assignments",
+        "legacy",
+        "executor",
+        "ExecutionContext",
+        "InputStack",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical hmode owner references `{forbidden}`"
+        );
+    }
+    for implementation in [
+        "fn append_canonical_character_with_fuel(",
+        "fn flush_pending_hchars(",
+        "fn flush_pending_hchar_run_with_fuel(",
+        "fn append_space_after_flush(",
+        "fn append_hchar_with_fuel(",
+        "fn shape_open_type_chars(",
+        "fn run_tfm_ligature_machine(",
+        "fn reconstitute_with_fuel(",
+        "fn literal_hyphen_disc(",
+        "fn interword_glue(",
+        "fn append_italic_correction_with_fuel(",
     ] {
         assert!(
             owner.contains(implementation),

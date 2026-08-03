@@ -21,6 +21,7 @@ mod tests;
 pub(crate) mod vsplit;
 
 use crate::canonical_box_runtime::first_box_node;
+use crate::canonical_box_runtime::hmode::infinite_glue;
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
 use packaging::{

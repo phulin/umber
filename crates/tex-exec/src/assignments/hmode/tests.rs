@@ -1,12 +1,14 @@
 use super::*;
-use crate::mode::PendingHChar;
+use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{CanonicalMainControl, MainControlStep};
 use std::sync::Arc;
 use tex_command::{
     CommandObservation, CommandObserver, FontResource, RegisteredSourceKind, SourceRegistration,
 };
+use tex_fonts::LigKernCommand;
 use tex_lex::MemoryInput;
 use tex_state::hyphenation::ExceptionSpec;
+use tex_state::ids::FontId;
 use tex_state::node::Node;
 use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::TracedTokenWord;
@@ -683,7 +685,7 @@ fn italic_correction_flushes_a_pending_ligature_before_reading_its_metric() {
         second_origin,
     );
 
-    append_italic_correction(
+    append_italic_correction_with_fuel(
         &mut nest,
         &mut stores,
         tex_command::CommandFuelLedger::default().fuel_mut(),
@@ -756,7 +758,7 @@ fn right_boundary_kern_prevents_a_following_italic_correction() {
     nest.current_list_mutation()
         .begin_pending_hchars(font, 'A', OriginId::UNKNOWN);
 
-    append_italic_correction(
+    append_italic_correction_with_fuel(
         &mut nest,
         &mut stores,
         tex_command::CommandFuelLedger::default().fuel_mut(),

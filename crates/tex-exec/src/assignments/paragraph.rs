@@ -569,7 +569,7 @@ pub(super) fn break_current_paragraph(
     let mut retained_migrated = Vec::new();
     let mut finished_nodes = Vec::new();
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
-        super::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
+        crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         materialize_pdf_line(
             stores,
             &mut broken.nodes,
@@ -959,7 +959,7 @@ fn break_hlist_with_trace(
         let sequence =
             super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
         let (mut hyphenated, physical_nodes) = sequence.take();
-        super::hmode::reshape_open_type_runs(stores, &mut hyphenated);
+        crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let (plan, trace) = if tracing {
             line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)
         } else {
