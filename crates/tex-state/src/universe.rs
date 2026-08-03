@@ -6485,7 +6485,14 @@ impl Universe {
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        self.mark_pure_paragraph_barrier(crate::ParagraphBarrierReason::UnsupportedEscapingWrite);
+        if self
+            .pure_memo
+            .paragraph_local_write_escapes(crate::ExpansionState::execution_group_depth(self))
+        {
+            self.mark_pure_paragraph_barrier(
+                crate::ParagraphBarrierReason::UnsupportedEscapingWrite,
+            );
+        }
         self.stores.set_dimen(index, value);
         self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }

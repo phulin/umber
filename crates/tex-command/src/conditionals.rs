@@ -8,7 +8,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
-use crate::CommandError;
+use crate::{CommandError, CommandState};
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
@@ -379,6 +379,14 @@ impl CommandProcessor<'_> {
     #[must_use]
     pub fn active_conditions(&self) -> Vec<ActiveCondition> {
         self.command.conditions.active_conditions()
+    }
+}
+
+impl CommandState {
+    /// Number of condition frames whose delimiters remain future input.
+    #[must_use]
+    pub fn active_condition_depth(&self) -> usize {
+        self.conditions.frames.len()
     }
 }
 

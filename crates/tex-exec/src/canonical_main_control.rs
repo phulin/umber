@@ -853,6 +853,11 @@ impl CanonicalParagraphRecorder {
         command.begin_paragraph_input_transaction();
         stores.begin_dependency_region();
         stores.begin_pure_paragraph_recording();
+        if command.active_condition_depth() != 0 {
+            stores.mark_pure_paragraph_barrier(
+                tex_state::ParagraphBarrierReason::UnsupportedInputTransition,
+            );
+        }
         self.lookup_attempted = false;
         self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
         self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
@@ -2046,6 +2051,7 @@ impl CanonicalMainControl {
             return false;
         }
         let mut selected = None;
+        let mut rejected = None;
         for (index, region) in self.paragraph_recorder.replay.iter().enumerate() {
             let mut input_probe = self.command.clone();
             if input_probe
@@ -2058,13 +2064,16 @@ impl CanonicalMainControl {
             {
                 continue;
             }
-            if !region.barriers.is_empty()
-                || !crate::canonical_paragraph_memo::same_mutation_entry_class(
+            if !region.barriers.is_empty() {
+                rejected = Some((index, true));
+                break;
+            }
+            if !crate::canonical_paragraph_memo::same_mutation_entry_class(
                     region.mutation_entry_in_group,
                     tex_state::ExpansionState::execution_group_depth(stores),
-                )
-            {
-                continue;
+                ) {
+                rejected = Some((index, false));
+                break;
             }
             if let Some(key) =
                 crate::canonical_paragraph_memo::dependency_failure(stores, &region.dependencies)
@@ -2072,18 +2081,28 @@ impl CanonicalMainControl {
                 stores.record_pure_paragraph_validation_failure(
                     tex_state::ParagraphValidationFailure::from_dependency(key),
                 );
+                rejected = Some((index, false));
                 break;
             }
             if !crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations) {
                 stores.record_pure_paragraph_validation_failure(
                     tex_state::ParagraphValidationFailure::Mutation,
                 );
+                rejected = Some((index, false));
                 break;
             }
             selected = Some(index);
             break;
         }
         let Some(index) = selected else {
+            if let Some((index, invalidates_suffix)) = rejected {
+                let replay = Arc::make_mut(&mut self.paragraph_recorder.replay);
+                if invalidates_suffix {
+                    replay.drain(index..);
+                } else {
+                    replay.remove(index);
+                }
+            }
             stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         };
@@ -15514,10 +15533,12 @@ fn apply_scanned_step(
                         report_improper_setbox(context, stores)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                            bank: tex_state::DependencyBank::Box,
-                            index: u32::from(index),
-                        });
+                        if !stores.paragraph_box_is_locally_owned(index) {
+                            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                                bank: tex_state::DependencyBank::Box,
+                                index: u32::from(index),
+                            });
+                        }
                         if !copy
                             && stores.box_reg(index).is_some()
                             && !stores.paragraph_box_is_locally_owned(index)
@@ -15590,10 +15611,12 @@ fn apply_scanned_step(
             copy,
             ships_out,
         } => {
-            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                bank: tex_state::DependencyBank::Box,
-                index: u32::from(index),
-            });
+            if !stores.paragraph_box_is_locally_owned(index) {
+                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::Box,
+                    index: u32::from(index),
+                });
+            }
             if !copy
                 && stores.box_reg(index).is_some()
                 && !stores.paragraph_box_is_locally_owned(index)
@@ -15616,10 +15639,12 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
-            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                bank: tex_state::DependencyBank::Box,
-                index: u32::from(index),
-            });
+            if !stores.paragraph_box_is_locally_owned(index) {
+                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::Box,
+                    index: u32::from(index),
+                });
+            }
             if stores.box_reg(index).is_some()
                 && !stores.paragraph_box_is_locally_owned(index)
                 && matches!(
@@ -17470,10 +17495,12 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                bank: tex_state::DependencyBank::Box,
-                index: u32::from(index),
-            });
+            if !stores.paragraph_box_is_locally_owned(index) {
+                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                    bank: tex_state::DependencyBank::Box,
+                    index: u32::from(index),
+                });
+            }
             if !copy
                 && stores.box_reg(index).is_some()
                 && !stores.paragraph_box_is_locally_owned(index)

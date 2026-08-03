@@ -1093,6 +1093,10 @@ impl PureMemoRuntime {
         self.paragraph_recording.is_some() && self.paragraph_local_boxes.contains(&index)
     }
 
+    pub(crate) fn paragraph_local_write_escapes(&self, group_depth: u32) -> bool {
+        self.paragraph_recording.is_some() && group_depth <= self.paragraph_recording_group_depth
+    }
+
     pub(crate) fn take_paragraph_recording_barriers(&mut self) -> Vec<ParagraphBarrierReason> {
         std::mem::take(&mut self.paragraph_recording_barriers)
     }
