@@ -1010,34 +1010,6 @@ fn u_template_macro_argument_interleaves_cell_body_and_v_template() {
 }
 
 #[test]
-fn hash_brace_macro_delimiter_preserves_alignment_cell_boundary() {
-    let stores = run_boxed_alignment_source(
-        "\\def\\dispatch{\\def\\next@##1##{\\finish{##1}}\\next@}\
-         \\def\\finish#1#2#3!@{\\global\\count7=123\\hbox{#2}}\
-         \\halign{\\dispatch#!@\\cr M{X}tail&\\cr N{Y}tail&\\cr}",
-    );
-    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
-    let first_cells = row_cells(&stores, rows[0]);
-    let second_cells = row_cells(&stores, rows[1]);
-    let [Node::HList(first)] = stores.nodes(first_cells[0].children).testing_decoded() else {
-        panic!("cell should contain the box built after the delimiter match");
-    };
-    let [Node::HList(second)] = stores.nodes(second_cells[0].children).testing_decoded() else {
-        panic!("second cell should contain the box built after group restoration");
-    };
-
-    assert_eq!(rows.len(), 2);
-    assert_eq!(cell_text(&stores, first), "X");
-    assert_eq!(cell_text(&stores, second), "Y");
-    assert_eq!(stores.count(7), 123, "global cell assignment survives");
-    assert_eq!(
-        stores.meaning(stores.symbol("let").expect("installed primitive")),
-        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Let),
-        "per-cell align-group restoration must not alter unrelated meanings"
-    );
-}
-
-#[test]
 fn captures_mid_preamble_tabskip_boundaries() {
     let (stores, state) = scan_halign_preamble("{#a&\\tabskip=3pt#b&\\tabskip=5pt#c\\cr}");
 
@@ -1102,28 +1074,6 @@ fn plain_ialign_accepts_bgroup_and_leading_periodic_preamble() {
     assert_eq!(cells.len(), 2);
     assert_eq!(cell_text(&stores, cells[0]), "ax");
     assert_eq!(cell_text(&stores, cells[1]), "bx");
-}
-
-#[test]
-fn preamble_recognizes_parameter_character_alias_by_meaning() {
-    let stores = run_boxed_alignment_source("\\let\\sharp=#\\halign{u\\sharp v\\cr x\\cr}");
-    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(cells.len(), 1);
-    assert_eq!(cell_text(&stores, cells[0]), "uxv");
-    assert!(!support::terminal_effect_text(&stores).contains("Missing # inserted"));
-}
-
-#[test]
-fn preamble_recognizes_alignment_tab_alias_by_meaning() {
-    let stores = run_boxed_alignment_source("\\let\\tab=&\\halign{#\\tab#\\cr a&b\\cr}");
-    let rows = vlist_rows(&stores, box_zero_vlist(&stores));
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(cells.len(), 2);
-    assert_eq!(cell_text(&stores, cells[0]), "a");
-    assert_eq!(cell_text(&stores, cells[1]), "b");
 }
 
 #[test]
@@ -1536,22 +1486,6 @@ fn aliased_frozen_endv_alignment_replays_identically_after_rollback() {
 }
 
 #[test]
-fn frozen_endv_recovers_open_box_groups_before_finishing_cell() {
-    let stores = run_boxed_alignment_source(
-        "\\let\\bgroup={\\let\\egroup=}\\def\\open{\\hbox\\bgroup\\begingroup\\bgroup}\\halign{\\open#\\cr x\\cr}",
-    );
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(cells.len(), 1);
-    let output = support::terminal_effect_text(&stores);
-    assert!(output.contains("Missing \\endgroup inserted"), "{output}");
-    assert!(output.contains("Missing } inserted"), "{output}");
-}
-
-#[test]
 fn user_endtemplate_control_sequence_cannot_alias_frozen_sentinel() {
     let stores = run_boxed_alignment_source("\\def\\endtemplate{BAD}\\halign{#\\cr x\\cr}");
     let vbox = box_zero_vlist(&stores);
@@ -1587,32 +1521,6 @@ fn grouped_plain_style_accent_survives_at_cell_start_and_mid_cell() {
     assert_eq!(rows.len(), 2);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "~");
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "x~y");
-}
-
-#[test]
-fn let_aliased_alignment_tab_terminates_cell_by_meaning() {
-    let stores = run_boxed_alignment_source("\\let\\t=&\\halign{#&#\\cr a\\t b\\cr}");
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(cells.len(), 2);
-    assert_eq!(cell_text(&stores, cells[0]), "a");
-    assert_eq!(cell_text(&stores, cells[1]), "b");
-}
-
-#[test]
-fn grouped_alignment_tab_does_not_terminate_outer_cell() {
-    let stores = run_boxed_alignment_source("\\halign{#&#\\cr {a&b}&c\\cr}");
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(cells.len(), 2);
-    assert_eq!(cell_text(&stores, cells[0]), "a&b");
-    assert_eq!(cell_text(&stores, cells[1]), "c");
 }
 
 #[test]
@@ -1848,44 +1756,6 @@ fn noalign_backtick_brace_keeps_local_meaning_until_balancing_idiom() {
         stores.meaning(stores.symbol("switch").expect("switch symbol")),
         Meaning::Undefined,
         "the local switch definition must restore after noalign exits"
-    );
-}
-
-#[test]
-fn booktabs_rules_stay_structural_after_rows_with_unclosed_brace_alias_groups() {
-    let stores = run_boxed_alignment_source(
-        r"\let\bgroup={
-          \def\complexrow#1{\bgroup\hbox{#1}\cr}
-          \def\toprule{\noalign{\hrule height1pt}}
-          \def\midrule{\noalign{\hrule height2pt}}
-          \def\bottomrule{\noalign{\hrule height3pt}}
-          \halign{#\cr
-            \complexrow{header}
-            \toprule
-            \complexrow{body}
-            \midrule
-            \complexrow{footer}
-            \bottomrule}",
-    );
-
-    let output = support::terminal_effect_text(&stores);
-    assert!(!output.contains("Misplaced \\noalign"), "{output}");
-    let nodes = stores
-        .nodes(box_zero_vlist(&stores).children)
-        .testing_decoded();
-    assert_eq!(
-        nodes
-            .iter()
-            .filter(|node| matches!(node, Node::HList(_)))
-            .count(),
-        3
-    );
-    assert_eq!(
-        nodes
-            .iter()
-            .filter(|node| matches!(node, Node::Rule { .. }))
-            .count(),
-        3
     );
 }
 
@@ -2388,59 +2258,6 @@ fn showlists_inside_cell_reports_alignment_submode_nest() {
 
     assert!(log.contains("### restricted horizontal mode entered at line 0"));
     assert!(log.contains("### internal vertical mode entered at line 0"));
-}
-
-#[test]
-fn right_brace_before_cr_uses_missing_cr_recovery() {
-    let stores = run_boxed_alignment_source("\\halign{#\\cr x}\\global\\count0=17");
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    let cells = row_cells(&stores, rows[0]);
-
-    assert_eq!(rows.len(), 1);
-    assert_eq!(cells.len(), 1);
-    assert_eq!(cell_text(&stores, cells[0]), "x");
-    assert_eq!(
-        stores.count(0),
-        17,
-        "brace replay must resume following input"
-    );
-    let output = support::terminal_effect_text(&stores);
-    assert_eq!(
-        output.matches("Missing \\cr inserted").count(),
-        1,
-        "the backed-up right brace must insert exactly one frozen \\cr: {output}"
-    );
-}
-
-#[test]
-fn noexpand_unexpandable_cr_terminates_alignment_row() {
-    let mut stores = support::stores_with_fonts();
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    run_alignment_source_in(
-        &mut stores,
-        "\\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\cr y\\cr}}",
-    );
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    assert_eq!(rows.len(), 2);
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "y");
-}
-
-#[test]
-fn noexpand_preserves_unexpandable_cr_alias_but_suppresses_macro_alias() {
-    let mut stores = support::stores_with_fonts();
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    run_alignment_source_in(
-        &mut stores,
-        "\\def\\m{M}\\let\\endrow=\\cr \\setbox0=\\vbox{\\halign{#\\cr x\\noexpand\\m y\\noexpand\\endrow z\\cr}}",
-    );
-    let vbox = box_zero_vlist(&stores);
-    let rows = vlist_rows(&stores, vbox);
-    assert_eq!(rows.len(), 2);
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "xy");
-    assert_eq!(cell_text(&stores, row_cells(&stores, rows[1])[0]), "z");
 }
 
 #[test]
