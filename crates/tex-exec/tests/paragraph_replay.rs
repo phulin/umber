@@ -57,6 +57,50 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
     }
 }
 
+#[test]
+fn vbox_restores_local_parameters_before_reporting_outer_overfull_box() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\tracingrestores=1\vbadness=10000\vfuzz=0pt
+           \setbox0=\vbox to0pt{\vfuzz=100pt\hrule height10pt}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    let restore = terminal
+        .find("{restoring \\vfuzz=0.0pt}")
+        .expect("vbox-local vfuzz restoration is traced");
+    let diagnostic = terminal
+        .find("Overfull \\vbox (10.0pt too high)")
+        .expect("restored enclosing vfuzz requests the diagnostic");
+    assert!(restore < diagnostic, "{terminal}");
+}
+
+#[test]
+fn vbox_diagnostic_uses_restored_enclosing_vfuzz() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\global\vbadness=10000\global\vfuzz=100pt
+           \setbox0=\vbox to0pt{\vfuzz=0pt\hrule height10pt}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(!terminal.contains("Overfull \\vbox"), "{terminal}");
+    assert_eq!(
+        stores
+            .box_dimension(0, tex_state::BoxDimension::Height)
+            .expect("packed vbox height")
+            .raw(),
+        0,
+        "diagnostic sequencing does not alter the requested box dimension"
+    );
+}
+
 fn run_to_end_observed(control: &mut CanonicalMainControl, stores: &mut Universe) {
     struct Observer;
     impl tex_command::CommandObserver for Observer {

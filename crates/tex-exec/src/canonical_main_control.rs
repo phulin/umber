@@ -16064,6 +16064,23 @@ fn apply_scanned_step(
             let level =
                 crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
             let children = stores.freeze_node_list(level.list().nodes());
+            // e-TeX 2.6 [23.328]'s `group_warning` runs immediately before
+            // every `unsave`, including §1086's hbox/vbox packaging path.
+            // Keeping the hook here preserves save-stack order when one
+            // nested source closes both a box group and a conditional.
+            warn_cross_file_group_close(stores, command);
+            stores
+                .leave_group_with_kind(box_state.group_kind)
+                .map_err(|_| ExecError::MissingToken {
+                    context: "box group",
+                })?;
+            // TeX82 §1086 restores the box group before it calls `hpack` or
+            // `vpack`. Besides putting §283's tracing-restores lines ahead of
+            // §660/§674 diagnostics, this makes the enclosing h/v badness,
+            // fuzz, overfull-rule, and max-depth parameters authoritative for
+            // the completed box. Parameters local to the body already served
+            // paragraph and nested-box construction and must not leak into
+            // the outer package operation.
             let node = if box_state.kind.horizontal() {
                 Node::HList(crate::canonical_box_runtime::hpack_with_overfull_rule(
                     stores,
@@ -16072,16 +16089,7 @@ fn apply_scanned_step(
                 ))
             } else {
                 Node::VList(match box_state.kind {
-                    ReplayBoxKind::VBox => {
-                        crate::packing_params::vpack(
-                            stores,
-                            children,
-                            box_state.packing,
-                            crate::packing_params::vpack_params(stores),
-                        )
-                        .node
-                    }
-                    ReplayBoxKind::VCenter => {
+                    ReplayBoxKind::VBox | ReplayBoxKind::VCenter => {
                         crate::packing_params::vpack(
                             stores,
                             children,
@@ -16100,24 +16108,12 @@ fn apply_scanned_step(
                         .node
                     }
                     ReplayBoxKind::HBox => unreachable!("horizontal box was handled above"),
-                    ReplayBoxKind::Insert(_, _) => {
-                        unreachable!(
-                            "insert/adjust bodies return through finish_insert_or_adjust_group above"
-                        )
-                    }
+                    ReplayBoxKind::Insert(_, _) => unreachable!(
+                        "insert/adjust bodies return through finish_insert_or_adjust_group above"
+                    ),
                 })
             };
             let boxed = stores.freeze_node_list(std::slice::from_ref(&node));
-            // e-TeX 2.6 [23.328]'s `group_warning` runs immediately before
-            // every `unsave`, including §1086's hbox/vbox packaging path.
-            // Keeping the hook here preserves save-stack order when one
-            // nested source closes both a box group and a conditional.
-            warn_cross_file_group_close(stores, command);
-            stores
-                .leave_group_with_kind(box_state.group_kind)
-                .map_err(|_| ExecError::MissingToken {
-                    context: "box group",
-                })?;
             // TeX82 §1168's `vcenter_group` case of `handle_right_brace`:
             //
             //     vcenter_group: begin end_graf; unsave; save_ptr:=save_ptr-2;
