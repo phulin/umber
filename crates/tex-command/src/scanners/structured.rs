@@ -2536,6 +2536,31 @@ impl CommandProcessor<'_> {
             RetirementBehavior::Pop,
             ReplayTrace::Stored(StoredReplayReason::Write),
         );
+        // TeX82 §§323 and 1370 trace the named write_text list at
+        // begin_token_list, before the opening-brace insertion and expanded
+        // scan_toks can report an error. The whole write expansion runs
+        // inside the shipout artifact transaction, so carry this print in the
+        // command diagnostic queue instead of letting staging consume it.
+        if self
+            .state
+            .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
+            > 1
+        {
+            let mut text = crate::processor::expand::print_esc_text(&self.state, "write");
+            text.push_str("->");
+            for token in self.state.tokens(tokens.token_list()).to_vec() {
+                text.push_str(&crate::processor::expand::token_list_token_text(
+                    &self.state,
+                    token,
+                ));
+            }
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+        }
         self.observe_write_list_push(write_level);
         self.push_write_recovery(vec![left_brace], left_brace);
 

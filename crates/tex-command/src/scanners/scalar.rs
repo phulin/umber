@@ -19,6 +19,14 @@ use crate::{
 };
 use crate::{CommandObservation, ScannerRecord};
 
+const IMPROPER_AUXILIARY_DIAGNOSTIC: u64 = 0x6175_785f_0000_0418;
+const IMPROPER_AUXILIARY_HELP: &[&str] = &[
+    "You can refer to \\spacefactor only in horizontal mode;",
+    "you can refer to \\prevdepth only in vertical mode; and",
+    "neither of these is meaningful inside \\write. So",
+    "I'm forgetting what you said and using zero instead.",
+];
+
 fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCode {
     match primitive {
         UnexpandablePrimitive::PdfLpCode => tex_state::PdfFontCode::Lp,
@@ -1782,15 +1790,26 @@ impl CommandProcessor<'_> {
     /// internal value. The value is still published as zero after the report.
     fn improper_auxiliary_error(&mut self, name: &str) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
+        // TeX82 §1370 keeps the write_text level live while expanded
+        // scan_toks calls §418. Shipout expansion is transactional in Umber,
+        // so carry the report (including §82's already-rendered context) over
+        // that boundary in detection order with command traces and earlier
+        // scanner reports.
+        if !self.command.semantic_diagnostics.is_empty() || self.command.expanding_deferred_write()
+        {
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: IMPROPER_AUXILIARY_DIAGNOSTIC,
+                    runaway: None,
+                    message: format!("Improper \\{name}"),
+                    help: IMPROPER_AUXILIARY_HELP,
+                    context,
+                });
+            return Ok(());
+        }
         let mut report = self.state.print_err(&format!("Improper \\{name}"));
-        report
-            .help(&[
-                "You can refer to \\spacefactor only in horizontal mode;",
-                "you can refer to \\prevdepth only in vertical mode; and",
-                "neither of these is meaningful inside \\write. So",
-                "I'm forgetting what you said and using zero instead.",
-            ])
-            .context(context);
+        report.help(IMPROPER_AUXILIARY_HELP).context(context);
         report.error().jump_out()?;
         Ok(())
     }

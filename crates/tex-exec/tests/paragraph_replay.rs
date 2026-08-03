@@ -154,6 +154,50 @@ fn exhausted_ordinary_token_replay_does_not_gain_a_named_hook_trace() {
 }
 
 #[test]
+fn deferred_write_trace_precedes_improper_spacefactor_report_with_live_context() {
+    // TeX82 §§314, 418, and 1370: write_out begins its write_text input level
+    // before expanded scan_toks. The named-list trace therefore precedes the
+    // error, whose §82 context still displays that same live write level.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingmacros=2 \shipout\vbox{\write16{\the\spacefactor}}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    let trace = terminal
+        .find("\\write->\\the \\spacefactor ")
+        .unwrap_or_else(|| panic!("write trace is visible: {terminal:?}"));
+    let improper = terminal
+        .find("Improper \\spacefactor")
+        .unwrap_or_else(|| panic!("improper auxiliary report is visible: {terminal:?}"));
+    let context = terminal[improper..]
+        .find("<write> ")
+        .map(|offset| improper + offset)
+        .unwrap_or_else(|| panic!("write context is live: {terminal:?}"));
+    assert!(trace < improper && improper < context, "{terminal}");
+}
+
+#[test]
+fn immediate_write_reads_horizontal_spacefactor_without_improper_report() {
+    // Negative control: §1370's temporary mode zero, rather than the box's
+    // surrounding horizontal mode, makes the deferred read improper.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\setbox0=\hbox{A\spacefactor=2345\immediate\write16{\the\spacefactor}}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(terminal.contains("2345"), "{terminal}");
+    assert!(!terminal.contains("Improper \\spacefactor"), "{terminal}");
+}
+
+#[test]
 fn output_token_list_push_precedes_its_scanner_owned_opening_brace() {
     // TeX82/pdfTeX §§1025/323: `begin_token_list(output_routine,
     // output_text)` publishes the named input level before `scan_left_brace`
