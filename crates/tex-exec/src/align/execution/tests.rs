@@ -210,7 +210,7 @@ fn execute_test_row(
     stores.enter_group_with_kind(GroupKind::Align);
     let mut input = InputStack::new(MemoryInput::new(source));
     input.begin_alignment();
-    input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
+    input.set_alignment_scanner_phase(tex_state::AlignmentScannerPhase::BetweenEntries);
     let mut nest = ModeNest::new();
     nest.push(alignment_mode(kind)).expect("test mode push");
     let align_level = nest.depth() - 1;

@@ -64,7 +64,7 @@ pub(crate) fn scan_preamble(
     stores.enter_group_with_kind(GroupKind::Align);
     // TeX82 resets the global scanner sentinel after scan_spec has consumed
     // the alignment opener and before copying the preamble.
-    input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::Preamble);
+    input.set_alignment_scanner_phase(tex_state::AlignmentScannerPhase::Preamble);
 
     let end_template = stores.frozen_end_template_token();
     // TeX82 §338's `sprint_cs(warning_index)`: the `\halign` or `\valign`

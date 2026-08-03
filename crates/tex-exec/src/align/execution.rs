@@ -231,7 +231,7 @@ fn align_peek(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Option<TracedTokenWord>, ExecError> {
     loop {
-        input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
+        input.set_alignment_scanner_phase(tex_state::AlignmentScannerPhase::BetweenEntries);
         let Some(token) = next_non_space_protected(input, stores, execution)? else {
             stores.world_mut().write_text(
                 PrintSink::TerminalAndLog,
@@ -321,7 +321,7 @@ fn execute_row(
         }
         // TeX82 fin_col restores the sentinel before fetching the first token
         // of every following column, not only after a spanning column.
-        input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
+        input.set_alignment_scanner_phase(tex_state::AlignmentScannerPhase::BetweenEntries);
         start_token = Some(next_non_space_protected(input, stores, execution)?.ok_or(
             ExecError::MissingToken {
                 context: "alignment cell",
@@ -497,7 +497,7 @@ fn execute_cell(
                     .ok_or(ExecError::ArithmeticOverflow)?;
                 // TeX82 fin_col restores the sentinel before looking for the
                 // first token of the next spanned column.
-                input.set_alignment_scanner_phase(tex_lex::AlignmentScannerPhase::BetweenEntries);
+                input.set_alignment_scanner_phase(tex_state::AlignmentScannerPhase::BetweenEntries);
                 first_token = next_non_space_protected(input, stores, execution)?;
             }
             CellTerminator::AlignmentTab | CellTerminator::Cr => {

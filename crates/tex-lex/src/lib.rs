@@ -22,8 +22,8 @@ use tex_state::source_map::{RegisteredSource, SourceDescriptor};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
-    ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore, InputRecordId,
-    RootSpanId, WorldError,
+    AlignmentScannerPhase, ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore,
+    InputRecordId, RootSpanId, WorldError,
 };
 #[cfg(feature = "profiling")]
 use tex_state::{ProfilingTimer, World};
@@ -1804,24 +1804,6 @@ struct AlignmentCellInput {
 struct AlignmentInput {
     align_state: i32,
     cell: Option<AlignmentCellInput>,
-}
-
-/// The two non-depth sentinels assigned by TeX's alignment driver.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AlignmentScannerPhase {
-    /// Preamble scanning: top-level `&` and `\cr` delimit templates.
-    Preamble,
-    /// Row lookahead and u-template replay: delimiter interception is disabled.
-    BetweenEntries,
-}
-
-impl AlignmentScannerPhase {
-    const fn align_state(self) -> i32 {
-        match self {
-            Self::Preamble => -1_000_000,
-            Self::BetweenEntries => 1_000_000,
-        }
-    }
 }
 
 /// Saved alignment-cell interception state while a nested preamble and body run.

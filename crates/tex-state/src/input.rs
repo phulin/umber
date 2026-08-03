@@ -10,6 +10,26 @@ use std::sync::Arc;
 /// Maximum number of macro arguments TeX permits in one macro body.
 pub const MACRO_ARGUMENT_SLOTS: usize = 9;
 
+/// The two non-depth sentinels assigned by TeX's alignment driver.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AlignmentScannerPhase {
+    /// Preamble scanning: top-level `&` and `\cr` delimit templates.
+    Preamble,
+    /// Row lookahead and u-template replay: delimiter interception is disabled.
+    BetweenEntries,
+}
+
+impl AlignmentScannerPhase {
+    /// Returns TeX's sentinel `align_state` value for this scanner phase.
+    #[must_use]
+    pub const fn align_state(self) -> i32 {
+        match self {
+            Self::Preamble => -1_000_000,
+            Self::BetweenEntries => 1_000_000,
+        }
+    }
+}
+
 /// A frozen semantic token list paired with the per-instance origins that
 /// should be used when replaying it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

@@ -122,9 +122,10 @@ pub use dependency::{
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use font::PdfFontCode;
 pub use input::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
-    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,
-    SourceFrameSummary, SourceId, TokenListReplayKind, TokenListReplayMarker, TracedTokenList,
+    AlignmentScannerPhase, ConditionFrameSummary, ConditionFrameToken, ConditionKind,
+    ConditionLimb, InputFrameSummary, InputSummary, LexerState, MACRO_ARGUMENT_SLOTS,
+    MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
+    TokenListReplayMarker, TracedTokenList,
 };
 pub use memo::{
     DetachedArtifact, DetachedDiagnostic, DetachedInputTransition, DetachedMemoValue,
