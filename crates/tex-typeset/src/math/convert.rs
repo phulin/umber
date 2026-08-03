@@ -226,14 +226,22 @@ fn first_pass<S: MathTypesetState>(
                 {
                     index += 1;
                 }
-                let spec = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
-                    spacing::math_glue(ctx.state.glue(*spec), ctx.mu)
+                let (spec, kind) = if matches!(kind, tex_state::node::GlueKind::MuSkip) {
+                    // TeX82 §732 converts both parts of an unconditional
+                    // math-glue node: `math_glue` rewrites its specification
+                    // and `subtype(q):=normal` records that the result is now
+                    // ordinary glue. Named math spacing and leader subtypes do
+                    // not enter this branch.
+                    (
+                        spacing::math_glue(ctx.state.glue(*spec), ctx.mu),
+                        GlueKind::Normal,
+                    )
                 } else {
-                    ctx.state.glue(*spec)
+                    (ctx.state.glue(*spec), *kind)
                 };
                 out.push(WorkItem::Node(MathNode::Glue {
                     spec,
-                    kind: *kind,
+                    kind,
                     leader: *leader,
                 }));
             }

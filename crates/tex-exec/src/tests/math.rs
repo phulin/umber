@@ -1805,7 +1805,7 @@ fn restricted_inline_math_finishing_suppresses_line_break_penalties() {
 }
 
 #[test]
-fn converted_math_glue_preserves_explicit_and_named_provenance() {
+fn converted_math_glue_becomes_ordinary_while_named_spacing_and_leaders_keep_their_subtypes() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let explicit = stores.intern_glue(tex_state::glue::GlueSpec::ZERO);
     let content = stores.freeze_node_list(&[
@@ -1837,6 +1837,15 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
             spec: explicit,
             kind: GlueKind::MuSkip,
             leader: None,
+        },
+        Node::Glue {
+            spec: explicit,
+            kind: GlueKind::Leaders,
+            leader: Some(tex_state::node::LeaderPayload::Rule {
+                width: None,
+                height: None,
+                depth: None,
+            }),
         },
     ]);
     let list = MathListNode {
@@ -1880,11 +1889,23 @@ fn converted_math_glue_preserves_explicit_and_named_provenance() {
         nodes.iter().any(|node| matches!(
             node,
             Node::Glue {
-                kind: GlueKind::MuSkip,
+                kind: GlueKind::Normal,
+                leader: None,
                 ..
             }
         )),
-        "explicit \\mskip should remain plain mu skip provenance"
+        "TeX82 §732 converts explicit \\mskip to ordinary glue"
+    );
+    assert!(
+        nodes.iter().any(|node| matches!(
+            node,
+            Node::Glue {
+                kind: GlueKind::Leaders,
+                leader: Some(_),
+                ..
+            }
+        )),
+        "leader glue does not take TeX82 §732's mu-glue conversion branch"
     );
 }
 
