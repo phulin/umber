@@ -47,6 +47,34 @@ fn process_print_line_limit_wraps_terminal_and_log_independently() {
 }
 
 #[test]
+fn adjacent_print_calls_wrap_only_after_reaching_the_line_limit() {
+    // TeX82 §58 meters every `print_char` against the live sink offset,
+    // including characters supplied by separate `print` calls. This is the
+    // boundary exercised by §1296's inline `> \\box<n>=void` branch.
+    let widths = ErrorContextWidths::new(64, 32)
+        .and_then(|widths| widths.with_max_print_line(60))
+        .expect("minimum valid print width");
+
+    let mut exact = Universe::new();
+    exact.set_error_context_widths(widths);
+    Printer::new(&mut exact, Selector::LogOnly).print(&"x".repeat(56));
+    Printer::new(&mut exact, Selector::LogOnly).print("void");
+    assert_eq!(
+        sink_text(&exact, PrintSink::Log),
+        format!("{}void\n", "x".repeat(56))
+    );
+
+    let mut over = Universe::new();
+    over.set_error_context_widths(widths);
+    Printer::new(&mut over, Selector::LogOnly).print(&"x".repeat(57));
+    Printer::new(&mut over, Selector::LogOnly).print("void");
+    assert_eq!(
+        sink_text(&over, PrintSink::Log),
+        format!("{}voi\nd", "x".repeat(57))
+    );
+}
+
+#[test]
 fn render_error_context_respects_width_and_context_line_limits() {
     let widths = ErrorContextWidths::new(64, 32).expect("valid TeX82 context widths");
     let levels = vec![

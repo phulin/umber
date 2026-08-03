@@ -332,8 +332,13 @@ pub(crate) fn execute_showbox(
     // TeX82 §1296's `<Show the current contents of a box>`: `begin_diagnostic`
     // and `print_nl("> \box"); print_int; print_char("=")`, then `show_box`
     // or `"void"`.
-    let mut text = format!("> \\box{index}=\n");
+    let mut text = format!("> \\box{index}=");
     if let Some(id) = stores.box_reg(index) {
+        // TeX82 §198's `show_box` enters `show_node_list`, whose first
+        // visible node is opened by `print_ln`; the structural break belongs
+        // only to this branch. Section 1296 prints `"void"` directly after
+        // the equals sign when the register is null.
+        text.push('\n');
         text.push_str(&dump_node_list(
             stores,
             id,

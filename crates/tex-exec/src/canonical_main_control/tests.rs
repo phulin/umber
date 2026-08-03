@@ -8203,8 +8203,8 @@ fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
     assert!(output.contains("> \\box0="), "{output}");
     assert!(output.contains("\\kern 1.0"), "{output}");
     assert!(output.contains("> \\box255="), "{output}");
-    assert!(output.contains("> \\box1="), "{output}");
-    assert!(output.contains("\nvoid"), "{output}");
+    assert!(output.contains("> \\box1=void"), "{output}");
+    assert!(!output.contains("> \\box1=\nvoid"), "{output}");
 }
 
 #[test]
