@@ -38,7 +38,7 @@ pub struct Tex82TraceFixture {
     pub seams: Vec<String>,
 }
 
-/// The committed, geometry-only schema-v2 TeX82 microfixture.
+/// The committed, geometry-only schema-v3 TeX82 microfixture.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tex82GeometryTraceFixture {
     pub selector: String,
@@ -51,7 +51,7 @@ pub struct Tex82GeometryTraceFixture {
 ///
 /// The projection remains outside the schema-v1 command-fixture manifest:
 /// its all-zero manifest field is the reference builder's explicit detached
-/// projection sentinel. The stream must be schema v2 and geometry-only.
+/// projection sentinel. The stream must be schema v3 and geometry-only.
 pub fn validate_tex82_geometry_trace_fixture(
     repository: impl AsRef<Path>,
 ) -> Result<Tex82GeometryTraceFixture, String> {
@@ -60,11 +60,11 @@ pub fn validate_tex82_geometry_trace_fixture(
     let event_bytes = read(&repository.join(TEX82_GEOMETRY_EVENTS))?;
     let stream = ObservationStream::from_canonical_json_lines(&event_bytes)
         .map_err(|error| format!("{TEX82_GEOMETRY_EVENTS} is invalid: {error}"))?;
-    if stream.header.schema != SchemaVersion::V2.number() {
+    if stream.header.schema != SchemaVersion::V3.number() {
         return Err(format!(
             "{TEX82_GEOMETRY_EVENTS} uses schema {}, expected {}",
             stream.header.schema,
-            SchemaVersion::V2.number()
+            SchemaVersion::V3.number()
         ));
     }
     if stream.events.is_empty()
@@ -78,7 +78,7 @@ pub fn validate_tex82_geometry_trace_fixture(
         ));
     }
     Ok(Tex82GeometryTraceFixture {
-        selector: "tex82/geometry-v2".into(),
+        selector: "tex82/geometry-v3".into(),
         source,
         stream,
         identity: sha256(&event_bytes),

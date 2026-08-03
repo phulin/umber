@@ -352,12 +352,12 @@ fn committed_tex82_fixture_is_consumed_hermetically() {
 }
 
 #[test]
-fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
+fn committed_tex82_geometry_projection_is_pinned_and_schema_v3() {
     let repository = test_support::repository_root();
     let fixture =
         validate_tex82_geometry_trace_fixture(repository).expect("committed geometry fixture");
-    assert_eq!(fixture.selector, "tex82/geometry-v2");
-    assert_eq!(fixture.stream.header.schema, SchemaVersion::V2.number());
+    assert_eq!(fixture.selector, "tex82/geometry-v3");
+    assert_eq!(fixture.stream.header.schema, SchemaVersion::V3.number());
     assert_eq!(fixture.stream.events.len(), 11);
     assert!(
         fixture
@@ -384,6 +384,16 @@ fn committed_tex82_geometry_projection_is_pinned_and_schema_v2() {
         event.semantic,
         Event::Geometry(GeometryEvent::Shipout { .. })
     )));
+    assert!(fixture.stream.events.iter().all(|event| {
+        match &event.semantic {
+            Event::Geometry(GeometryEvent::Hpack { location, .. })
+            | Event::Geometry(GeometryEvent::Vpack { location, .. })
+            | Event::Geometry(GeometryEvent::Shipout { location, .. }) => location
+                .as_ref()
+                .is_some_and(|location| location.source == "geometry.tex" && location.line > 0),
+            _ => false,
+        }
+    }));
 }
 
 #[test]
