@@ -1618,7 +1618,7 @@ impl CanonicalMainControl {
     pub(crate) fn engine_state_snapshot_for_test(
         &self,
         stores: &Universe,
-    ) -> tex_expand::EngineStateSnapshot {
+    ) -> tex_state::EngineStateSnapshot {
         self.modes.engine_state_snapshot(stores)
     }
 

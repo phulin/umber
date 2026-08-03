@@ -52,6 +52,7 @@ mod command_context;
 pub mod dependency;
 pub mod diagnostic;
 pub mod env;
+mod engine_state;
 pub mod epoch;
 pub mod etex_tracing;
 pub mod file_framing;
@@ -111,6 +112,7 @@ pub use stores::EngineUsageStatistics;
 pub mod world;
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
+pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,

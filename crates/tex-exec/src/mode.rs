@@ -1,6 +1,5 @@
 use smallvec::{SmallVec, smallvec};
 use std::sync::Arc;
-use tex_expand::{EngineMode, EngineStateSnapshot};
 use tex_state::ids::FontId;
 use tex_state::ids::GlueId;
 use tex_state::ids::NodeListId;
@@ -9,7 +8,7 @@ use tex_state::math::FractionThickness;
 use tex_state::node::Node;
 use tex_state::scaled::Scaled;
 use tex_state::token::OriginId;
-use tex_state::{EngineBoundaryHasher, Universe};
+use tex_state::{EngineBoundaryHasher, EngineMode, EngineStateSnapshot, Universe};
 
 use crate::ExecError;
 

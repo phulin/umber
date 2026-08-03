@@ -16,12 +16,10 @@ use tex_lex::{
     InputSource, InputStack, LexError, MacroArguments, MacroReplaySite, TokenListReplayKind,
     TracedExpansionToken,
 };
-use tex_state::glue::GlueSpec;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
-use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 pub use tex_state::{
     DependencyBank as ReadBank, DependencyCodeTable as ReadCodeTable,
@@ -29,7 +27,8 @@ pub use tex_state::{
     DependencyKey as ReadDependency,
 };
 use tex_state::{
-    ExpansionState, FileContent, InputReadState, JobClock, MeaningCacheGuard, Universe,
+    EngineMode, EngineStateSnapshot, ExpansionState, FileContent, InputReadState, JobClock,
+    MeaningCacheGuard, Universe,
 };
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
@@ -326,47 +325,6 @@ pub enum ExpandableOpcode {
     Else,
     Or,
     Fi,
-}
-
-/// Current semantic mode as reported by the engine driver.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum EngineMode {
-    #[default]
-    Vertical,
-    Horizontal,
-    Math,
-}
-
-/// Read-only execution facts needed by expansion-time internal quantities.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct EngineStateSnapshot {
-    pub mode: EngineMode,
-    pub is_inner_mode: bool,
-    pub space_factor: i32,
-    pub prev_depth: Scaled,
-    pub prev_graf: i32,
-    pub par_shape_len: i32,
-    pub last_penalty: i32,
-    pub last_kern: Scaled,
-    pub last_skip: GlueSpec,
-    pub last_node_type: i32,
-}
-
-impl Default for EngineStateSnapshot {
-    fn default() -> Self {
-        Self {
-            mode: EngineMode::Vertical,
-            is_inner_mode: false,
-            space_factor: 1000,
-            prev_depth: Scaled::from_raw(0),
-            prev_graf: 0,
-            par_shape_len: 0,
-            last_penalty: 0,
-            last_kern: Scaled::from_raw(0),
-            last_skip: GlueSpec::ZERO,
-            last_node_type: -1,
-        }
-    }
 }
 
 /// Result of one expansion dispatch.
