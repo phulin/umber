@@ -7,9 +7,7 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Token, TracedTokenWord};
 
 use super::*;
-use crate::vertical::{
-    append_node_to_current_list, append_vertical_contribution, build_page_if_outer_vertical,
-};
+use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};
 use crate::{ExecError, Mode, ModeNest};
 
 mod leaders;
@@ -21,8 +19,9 @@ pub(crate) mod vsplit;
 use crate::canonical_box_runtime::hmode::infinite_glue;
 use crate::canonical_box_runtime::{
     acquire_box_register, append_box_node_to_current_list, append_box_register,
-    apply_box_shift_delta, assign_box_dimension, box_dimension_for_primitive,
-    execute_scanned_saved_vertical_discards, execute_scanned_unbox, first_box_node, take_last_box,
+    append_node_to_current_list, apply_box_shift_delta, assign_box_dimension,
+    box_dimension_for_primitive, execute_scanned_saved_vertical_discards, execute_scanned_unbox,
+    first_box_node, take_last_box,
 };
 use leaders::{scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;

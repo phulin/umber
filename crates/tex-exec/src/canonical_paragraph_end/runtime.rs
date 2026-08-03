@@ -1004,11 +1004,11 @@ use tex_typeset::linebreak::{
 };
 
 use crate::canonical_box_runtime::{
-    commit_current_list, flush_pending_hchars_with_fuel, hpack_owned_with_overfull_rule,
+    append_node_to_current_list, commit_current_list, flush_pending_hchars_with_fuel,
+    hpack_owned_with_overfull_rule,
 };
 use crate::mode::ParagraphParams;
 use crate::vertical::{
-    append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
-    build_page_if_outer_vertical,
+    append_migrated_contribution, append_vertical_contribution, build_page_if_outer_vertical,
 };
 use crate::{ExecError, ModeNest};

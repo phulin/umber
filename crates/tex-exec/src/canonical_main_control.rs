@@ -13826,7 +13826,7 @@ fn apply_scanned_step(
             // a mistake"), unlike `append_penalty` (§1103); no page build
             // follows here.
             let spec = stores.intern_glue(value);
-            crate::vertical::append_node_to_current_list(
+            crate::canonical_box_runtime::append_node_to_current_list(
                 modes,
                 stores,
                 Node::Glue {
@@ -13843,7 +13843,7 @@ fn apply_scanned_step(
             // `append_glue`, no paragraph start, no page build.
             let spec =
                 stores.intern_glue(crate::canonical_box_runtime::fixed_infinite_glue(primitive));
-            crate::vertical::append_node_to_current_list(
+            crate::canonical_box_runtime::append_node_to_current_list(
                 modes,
                 stores,
                 Node::Glue {

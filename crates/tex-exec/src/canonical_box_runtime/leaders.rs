@@ -7,7 +7,9 @@ use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 
 use crate::canonical_box_runtime::hmode::infinite_glue;
-use crate::vertical::{append_node_to_current_list, build_page_if_outer_vertical};
+use crate::vertical::build_page_if_outer_vertical;
+
+use super::append_node_to_current_list;
 use crate::{ExecError, ModeNest};
 
 pub(crate) fn payload_from_node(node: Node) -> Option<LeaderPayload> {

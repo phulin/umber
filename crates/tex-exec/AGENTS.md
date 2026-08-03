@@ -30,7 +30,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   tracing.
 - `src/canonical_box_runtime/`: typed canonical box-register, material,
   packing/migration, horizontal contribution, spacing, indentation, whatsit,
-  and list-commit runtime surface; `packaging.rs` physically owns horizontal
+  and list-commit runtime surface; `mod.rs` owns pending-character flush before
+  generic current-list appends; `packaging.rs` physically owns horizontal
   packing/diagnostic projection, box lookup, and `\lastbox` removal/diagnostics;
   `vsplit.rs` owns vertical-box register splitting; `hmode.rs` owns pending-character, ligature, shaping,
   hyphen-boundary, spacing, and italic-correction runtime, while scanner fronts
@@ -142,7 +143,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `tests/it.rs`: external-boundary compile-fail coverage for the public checkpoint API.
 - `tests/ui/engine_checkpoint_forgery_forbidden.rs`: compile-fail fixture proving callers cannot forge named engine checkpoints.
 - `tests/ui/execution_transaction_private.rs`: compile-fail fixture proving live-stack transactions cannot escape as public capabilities.
-- `src/vertical.rs`: vertical-list appends, baseline skip insertion, prevdepth, and list contribution helpers.
+- `src/vertical.rs`: already-flushed current-list routing, vertical-list
+  appends, baseline skip insertion, prevdepth, and list contribution helpers.
 - `src/whatsits/tests.rs`: canonical-replay and white-box tests for whatsit construction, ownership, passive list visitation, and language-state boundaries.
 
 ## Validation

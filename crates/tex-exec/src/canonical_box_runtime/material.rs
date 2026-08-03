@@ -4,9 +4,9 @@ use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::{BoxDimension, TakeUnboxResult, UnboxKind, Universe};
 
-use crate::vertical::{
-    append_node_to_current_list, append_vertical_contribution, is_outer_vertical,
-};
+use crate::vertical::{append_vertical_contribution, is_outer_vertical};
+
+use super::append_node_to_current_list;
 use crate::{ExecError, Mode, ModeNest};
 
 use crate::canonical_box_runtime::first_box_node;

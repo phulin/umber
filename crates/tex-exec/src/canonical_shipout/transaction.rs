@@ -1,18 +1,12 @@
-#[cfg(any())]
-use tex_lex::InputStack;
 use tex_out::dvi::DviPagePlan;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::node::Node;
-#[cfg(any())]
-use tex_state::token::TracedTokenWord;
 use tex_state::{
     ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
     PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
 };
 
 use crate::ExecError;
-#[cfg(any())]
-use crate::assignments::scan_box_value_node;
 use crate::dispatch::PreparedDviPage;
 
 use super::direct;
@@ -65,62 +59,6 @@ pub fn retry_unavailable_stream_open(
 // `direct`: mutation and rare-node normalization finish first, then one live
 // compact-list traversal writes canonical artifact bytes and DVI plan bytes.
 // No detached node tree or per-list snapshot crosses that traversal.
-
-#[cfg(any())]
-pub(super) fn execute_shipout(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Option<PreparedDviPage>, ExecError> {
-    let Some(node) = scan_box_value_node(input, stores, execution, context)? else {
-        return Ok(None);
-    };
-    shipout_node(node, input, stores, execution)
-}
-
-#[cfg(any())]
-pub(crate) fn shipout_node(
-    node: Node,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Option<PreparedDviPage>, ExecError> {
-    let input_summary = input.publication_summary(stores);
-    let emit_dvi = execution.emits_dvi();
-    // The legacy path prints no progress marker of its own, so every live
-    // effect is genuine carried-forward whatsit output.
-    let pending_end = stores.world().effect_records().len();
-    let announce_openout = stores.pdf_output_enabled();
-    execution.with_nested(|expansion| {
-        let expansion = std::cell::RefCell::new(expansion);
-        let mut legacy_write_expander = |stores: &mut Universe, _: tex_state::PrintSink, tokens| {
-            crate::legacy_output::expand_shipout_write(stores, &mut expansion.borrow_mut(), tokens)
-        };
-        let mut legacy_replay_expander = |stores: &mut Universe, kind, tokens| {
-            crate::legacy_output::expand_shipout_text(
-                stores,
-                &mut expansion.borrow_mut(),
-                kind,
-                tokens,
-            )
-        };
-        shipout_node_with_input_summary(
-            node,
-            input_summary,
-            ShipoutOrigin {
-                output_open_context: None,
-                pending_end,
-                // TeX82 §1374 is silent; pdfTeX retains Web2C's notice.
-                announce_openout,
-            },
-            stores,
-            emit_dvi,
-            &mut legacy_write_expander,
-            &mut legacy_replay_expander,
-        )
-    })
-}
 
 /// What the surrounding job already was when a `\shipout` began.
 ///

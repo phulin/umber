@@ -11,8 +11,8 @@ use tex_state::node::{Node, Whatsit};
 use tex_state::token_show::token_text;
 use tex_state::{InputOpenState, PrintSink, StreamSlot};
 
+use crate::canonical_box_runtime::append_node_to_current_list;
 use crate::diagnostics::print_text_with_newlinechar;
-use crate::vertical::append_node_to_current_list;
 
 pub(in crate::assignments) fn execute_stream_command(
     primitive: UnexpandablePrimitive,

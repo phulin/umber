@@ -424,7 +424,7 @@ fn execute_pdf_form(
             .ok()
             .and_then(|object| stores.pdf_form(object))
             .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-        crate::vertical::append_node_to_current_list(
+        crate::canonical_box_runtime::append_node_to_current_list(
             nest,
             stores,
             Node::Whatsit(tex_state::node::Whatsit::PdfRefXForm {
@@ -897,7 +897,7 @@ fn execute_pdf_annotation(
             .create_pdf_annotation(data)
             .map_err(|_| ExecError::PdfObjectCapacity)?,
     };
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfAnnotation {
@@ -1007,7 +1007,7 @@ fn execute_pdf_destination(
         warn_pdf_destination_duplicate(stores, &state_identity);
         return Ok(());
     }
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfDestination(Box::new(
@@ -1110,7 +1110,7 @@ fn execute_pdf_thread(
         TokenListId::EMPTY
     };
     let identifier = scan_pdf_thread_identifier(context, input, stores, execution)?;
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfThread(Box::new(
@@ -1133,7 +1133,7 @@ fn execute_pdf_end_thread(
     if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
         return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
     }
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfEndThread),
@@ -1212,7 +1212,7 @@ fn execute_pdf_start_link(
             .reserve_pdf_destination(identity, true)
             .map_err(|_| ExecError::PdfObjectCapacity)?;
     }
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfLinkStart {
@@ -1315,7 +1315,7 @@ fn execute_pdf_end_link(
             "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n",
         );
     }
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfLinkEnd {
@@ -1338,7 +1338,7 @@ fn execute_pdf_running_link(
             "pdfrunninglinkoff"
         }));
     }
-    crate::vertical::append_node_to_current_list(
+    crate::canonical_box_runtime::append_node_to_current_list(
         nest,
         stores,
         Node::Whatsit(tex_state::node::Whatsit::PdfRunningLink(enabled)),
@@ -1374,7 +1374,7 @@ fn execute_pdf_accessibility_control(
         return Err(ExecError::PdfExtensionInDviMode(name));
     }
     if let Some(control) = control {
-        crate::vertical::append_node_to_current_list(
+        crate::canonical_box_runtime::append_node_to_current_list(
             nest,
             stores,
             Node::Whatsit(tex_state::node::Whatsit::PdfAccessibility(control)),
@@ -2398,7 +2398,7 @@ fn execute_prefixed_command(
                 )?;
                 let left_hyphen_min = norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
                 let right_hyphen_min = norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
-                crate::vertical::append_node_to_current_list(
+                crate::canonical_box_runtime::append_node_to_current_list(
                     nest,
                     stores,
                     tex_state::node::Node::Whatsit(tex_state::node::Whatsit::Language {
@@ -2763,7 +2763,7 @@ fn execute_prefixed_command(
                     .ok()
                     .filter(|object| stores.pdf_raw_object(*object).is_some())
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-                crate::vertical::append_node_to_current_list(
+                crate::canonical_box_runtime::append_node_to_current_list(
                     nest,
                     stores,
                     tex_state::node::Node::Whatsit(tex_state::node::Whatsit::PdfReferenceObject {
@@ -2873,7 +2873,7 @@ fn execute_prefixed_command(
                     .and_then(|id| stores.pdf_external_image_record(id))
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
                 let dimensions = image.dimensions();
-                crate::vertical::append_node_to_current_list(
+                crate::canonical_box_runtime::append_node_to_current_list(
                     nest,
                     stores,
                     Node::Whatsit(tex_state::node::Whatsit::PdfRefXImage {

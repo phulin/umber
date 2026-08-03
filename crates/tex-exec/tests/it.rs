@@ -111,7 +111,14 @@ fn legacy_output_has_no_shipped_command_control_callers() {
             assert!(
                 matches!(
                     relative.to_str(),
-                    Some("lib.rs" | "executor.rs" | "align/execution.rs" | "legacy_output.rs")
+                    Some(
+                        "lib.rs"
+                            | "executor.rs"
+                            | "align/legacy_execution.rs"
+                            | "assignments/mod.rs"
+                            | "assignments/shipout.rs"
+                            | "legacy_output.rs"
+                    )
                 ),
                 "{} must not call the retired output front",
                 relative.display()
@@ -268,12 +275,16 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                             | "canonical_box_runtime/material.rs"
                             | "canonical_box_runtime/packaging.rs"
                             | "canonical_box_runtime/vsplit.rs"
+                            | "canonical_paragraph_end.rs"
+                            | "canonical_paragraph_end/hyphenation.rs"
+                            | "canonical_paragraph_end/runtime.rs"
                             | "assignments/boxes/leaders.rs"
                             | "assignments/boxes/mod.rs"
                             | "assignments/boxes/packaging.rs"
                             | "assignments/boxes/vsplit.rs"
                             | "assignments/hmode.rs"
                             | "assignments/hyphenation.rs"
+                            | "assignments/legacy_variables/streams.rs"
                             | "assignments/mod.rs"
                             | "assignments/paragraph.rs"
                             | "align/legacy_execution.rs"
@@ -1084,13 +1095,20 @@ fn production_backed_up_input_stays_on_the_input_stack_owner() {
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn executor_resource_results_stay_on_the_execution_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let host_api =
+        fs::read_to_string(source_root.join("host_api.rs")).expect("read execution host API");
     let executor = fs::read_to_string(source_root.join("executor.rs")).expect("read executor");
     let public_surface =
         fs::read_to_string(source_root.join("lib.rs")).expect("read public surface");
 
-    assert!(executor.contains("pub enum ResourceLookup<T>"));
-    assert!(executor.contains("pub struct ResourceNeed"));
-    for (source_name, source) in [("executor", executor), ("public surface", public_surface)] {
+    assert!(host_api.contains("pub enum ResourceLookup<T>"));
+    assert!(host_api.contains("pub struct ResourceNeed"));
+    assert!(executor.contains("ResourceLookup"));
+    for (source_name, source) in [
+        ("execution host API", host_api),
+        ("executor", executor),
+        ("public surface", public_surface),
+    ] {
         for forbidden in [
             "tex_expand::ResourceLookup",
             "tex_expand::ResourceResult",

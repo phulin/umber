@@ -8,13 +8,13 @@ use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::{ParagraphShapeLine, PenaltyArrayKind, Universe};
 
 use super::*;
+use crate::canonical_box_runtime::append_node_to_current_list;
 use crate::canonical_paragraph_end::{
     ParagraphBreakResult, break_current_paragraph, normal_paragraph,
 };
 use crate::legacy_paragraph_memo::ParagraphMemoConsumer;
 use crate::vertical::{
-    append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
-    build_page_if_outer_vertical,
+    append_migrated_contribution, append_vertical_contribution, build_page_if_outer_vertical,
 };
 use crate::{ExecError, Mode, ModeNest};
 
