@@ -870,13 +870,13 @@ fn publish_recorded_region(
             return true;
         };
         let reason = match *domain {
-            tex_expand::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN => {
+            tex_state::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN => {
                 Some(tex_state::ParagraphBarrierReason::Scantokens)
             }
-            tex_expand::PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN => {
+            tex_state::PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN => {
                 Some(tex_state::ParagraphBarrierReason::MidParagraphInputOpen)
             }
-            tex_expand::PARAGRAPH_END_INPUT_BARRIER_DOMAIN => {
+            tex_state::PARAGRAPH_END_INPUT_BARRIER_DOMAIN => {
                 Some(tex_state::ParagraphBarrierReason::EndInput)
             }
             _ => None,
@@ -888,19 +888,7 @@ fn publish_recorded_region(
             true
         }
     });
-    for barrier in expansion_barriers {
-        recording.barriers.insert(match barrier {
-            tex_expand::ParagraphExpansionBarrier::InputOpen => {
-                tex_state::ParagraphBarrierReason::MidParagraphInputOpen
-            }
-            tex_expand::ParagraphExpansionBarrier::EndInput => {
-                tex_state::ParagraphBarrierReason::EndInput
-            }
-            tex_expand::ParagraphExpansionBarrier::Scantokens => {
-                tex_state::ParagraphBarrierReason::Scantokens
-            }
-        });
-    }
+    recording.barriers.extend(expansion_barriers);
     if let Some(reads) = &mut recording.inline_math {
         append_inline_math_dependency_keys(stores, reads, &mut keys);
     }

@@ -28,23 +28,10 @@ pub use tex_state::{
 };
 use tex_state::{
     EngineMode, EngineStateSnapshot, ExpansionState, FileContent, InputReadState, JobClock,
-    MeaningCacheGuard, Universe,
+    MeaningCacheGuard, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN, ParagraphBarrierReason, Universe,
 };
 
 const MEANING_SITE_CACHE_LEN: usize = 64;
-pub const PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN: u32 = 0x5053_434e;
-pub const PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN: u32 = 0x5049_4e50;
-pub const PARAGRAPH_END_INPUT_BARRIER_DOMAIN: u32 = 0x5045_4e44;
-
-/// Expansion-side operations which prevent a containing paragraph region
-/// from being replayed. `\csname` is intentionally absent: the meaning of its
-/// constructed symbol is recorded like any other meaning read.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum ParagraphExpansionBarrier {
-    InputOpen,
-    EndInput,
-    Scantokens,
-}
 
 #[derive(Clone, Copy, Debug)]
 struct MeaningSiteCacheEntry {
@@ -838,7 +825,7 @@ pub struct ExpansionContext<'a> {
     /// definition. Reads remain source-proven until the defining group exits.
     paragraph_local_meanings: Vec<(u32, u32)>,
     paragraph_recording_generation: u32,
-    paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
+    paragraph_barriers: BTreeSet<ParagraphBarrierReason>,
 }
 
 /// Owned expansion state retained between executor steps.
@@ -867,7 +854,7 @@ pub struct ExpansionSessionState {
     paragraph_meaning_marks: Vec<u32>,
     paragraph_local_meanings: Vec<(u32, u32)>,
     paragraph_recording_generation: u32,
-    paragraph_barriers: BTreeSet<ParagraphExpansionBarrier>,
+    paragraph_barriers: BTreeSet<ParagraphBarrierReason>,
 }
 
 /// Opaque rollback root for one bounded executor step.
@@ -1187,7 +1174,7 @@ impl<'a> ExpansionContext<'a> {
     #[doc(hidden)]
     pub fn finish_paragraph_recording(
         &mut self,
-    ) -> (Vec<ReadDependency>, Vec<ParagraphExpansionBarrier>) {
+    ) -> (Vec<ReadDependency>, Vec<ParagraphBarrierReason>) {
         let mut reads = self.paragraph_reads.take().unwrap_or_default();
         self.paragraph_read_tracking = false;
         self.paragraph_local_meanings.clear();
@@ -1204,7 +1191,7 @@ impl<'a> ExpansionContext<'a> {
         (reads, barriers)
     }
 
-    pub(crate) fn mark_paragraph_barrier(&mut self, barrier: ParagraphExpansionBarrier) {
+    pub(crate) fn mark_paragraph_barrier(&mut self, barrier: ParagraphBarrierReason) {
         if self.paragraph_reads.is_some() {
             self.paragraph_barriers.insert(barrier);
             self.stop_paragraph_read_tracking();
@@ -1498,7 +1485,7 @@ impl<'a> ExpansionContext<'a> {
         input: &mut dyn InputReadState,
         name: &str,
     ) -> ResourceResult<Box<dyn InputSource>> {
-        self.mark_paragraph_barrier(ParagraphExpansionBarrier::InputOpen);
+        self.mark_paragraph_barrier(ParagraphBarrierReason::MidParagraphInputOpen);
         self.record_dependency(ReadDependency::Query {
             domain: PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
             identity: 0,

@@ -94,6 +94,27 @@ fn production_mode_snapshots_stay_on_the_state_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_paragraph_barriers_stay_on_the_state_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        for forbidden in [
+            "tex_expand::ParagraphExpansionBarrier",
+            "tex_expand::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN",
+            "tex_expand::PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN",
+            "tex_expand::PARAGRAPH_END_INPUT_BARRIER_DOMAIN",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must use the tex-state-owned paragraph barrier contract instead of `{forbidden}`",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn executor_resource_results_stay_on_the_execution_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let executor = fs::read_to_string(source_root.join("executor.rs")).expect("read executor");

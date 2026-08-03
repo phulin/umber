@@ -401,11 +401,11 @@ macro_rules! dispatch_match {
                 mode.dispatch_inverted_raw_token(target, input, stores, expansion)
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Scantokens) => {
-                expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::Scantokens);
+                expansion.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::Scantokens);
                 crate::record_dependency!(
                     expansion,
                     crate::ReadDependency::Query {
-                        domain: crate::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN,
+                        domain: tex_state::PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN,
                         identity: 0,
                     }
                 );
@@ -702,11 +702,11 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Input) => $input_arm,
             Meaning::ExpandablePrimitive(ExpandablePrimitive::EndInput) => {
-                expansion.mark_paragraph_barrier(crate::ParagraphExpansionBarrier::EndInput);
+                expansion.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::EndInput);
                 crate::record_dependency!(
                     expansion,
                     crate::ReadDependency::Query {
-                        domain: crate::PARAGRAPH_END_INPUT_BARRIER_DOMAIN,
+                        domain: tex_state::PARAGRAPH_END_INPUT_BARRIER_DOMAIN,
                         identity: 0,
                     }
                 );

@@ -9,6 +9,11 @@ use ahash::AHashMap;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Stable dependency domains recording paragraph-invalidating expansion work.
+pub const PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN: u32 = 0x5053_434e;
+pub const PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN: u32 = 0x5049_4e50;
+pub const PARAGRAPH_END_INPUT_BARRIER_DOMAIN: u32 = 0x5045_4e44;
+
 /// A monotonically increasing revision at which an observable fact changed.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ChangedAt(u64);

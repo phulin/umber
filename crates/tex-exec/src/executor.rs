@@ -1096,7 +1096,7 @@ impl<'a> ExecutionContext<'a> {
         &mut self,
     ) -> (
         Vec<tex_state::DependencyKey>,
-        Vec<tex_expand::ParagraphExpansionBarrier>,
+        Vec<tex_state::ParagraphBarrierReason>,
     ) {
         self.expansion.finish_paragraph_recording()
     }
