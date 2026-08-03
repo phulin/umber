@@ -1070,7 +1070,7 @@ fn scan_parameter_text(
     let mut pending_parameter: Option<TracedTokenWord> = None;
 
     loop {
-        let traced = crate::next_semantic_raw_token(input, stores)?
+        let traced = tex_lex::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInParameterText { context })?;
         let token = traced_semantic_token(traced);
 
@@ -1186,7 +1186,7 @@ fn scan_replacement_text(
     let mut pending_parameter: Option<TracedTokenWord> = None;
 
     loop {
-        let traced = crate::next_semantic_raw_token(input, stores)?
+        let traced = tex_lex::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
 
@@ -1265,7 +1265,7 @@ fn scan_general_text_body(
     let mut origins = stores.origin_list_builder();
     let mut brace_level = 1_u32;
     loop {
-        let traced = crate::next_semantic_raw_token(input, stores)?
+        let traced = tex_lex::next_semantic_raw_token(input, stores)?
             .ok_or(ScanToksError::EndOfInputInReplacementText { context })?;
         let token = traced_semantic_token(traced);
         if is_outer_macro(stores, token) {

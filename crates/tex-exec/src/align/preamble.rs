@@ -333,7 +333,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
     }
 
     fn next_raw(&mut self) -> Result<Option<PreambleToken>, ExecError> {
-        let Some(traced) = tex_expand::next_semantic_raw_token(
+        let Some(traced) = tex_lex::next_semantic_raw_token(
             self.input,
             &mut tex_state::ExpansionContext::new(self.stores),
         )?

@@ -183,14 +183,16 @@ pub(super) fn execute_futurelet(
     // TeX.web future_let uses get_token for both lookahead tokens. This is
     // observable inside alignments: fetching the second token can intercept a
     // cell delimiter and expose the v-template's frozen end marker instead.
-    let first = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
-        .ok_or(ExecError::MissingToken {
-            context: "\\futurelet lookahead",
-        })?;
-    let second = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
-        .ok_or(ExecError::MissingToken {
-            context: "\\futurelet lookahead",
-        })?;
+    let first =
+        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
+            .ok_or(ExecError::MissingToken {
+                context: "\\futurelet lookahead",
+            })?;
+    let second =
+        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
+            .ok_or(ExecError::MissingToken {
+                context: "\\futurelet lookahead",
+            })?;
     let meaning = token_meaning_for_let(second, stores, execution)?;
     let global = apply_globaldefs(prefixes.global, stores);
     execution.mark_paragraph_local_meaning(stores, target, global);

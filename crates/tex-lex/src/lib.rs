@@ -36,6 +36,98 @@ pub use tex_state::{
     SourceId, TokenListReplayKind, TracedTokenList,
 };
 
+/// Classifies and applies TeX's alignment-sensitive raw-token delivery.
+pub fn intercept_alignment_token(
+    input: &mut InputStack,
+    stores: &impl ExpansionState,
+    traced: TracedTokenWord,
+) -> bool {
+    if !input.has_active_alignment() {
+        return false;
+    }
+    let (delivery, terminator) = classify_alignment_token(stores, traced);
+    input.intercept_alignment_token(traced, delivery, terminator)
+}
+
+/// Classifies one token for alignment-state accounting and interception.
+pub fn classify_alignment_token(
+    stores: &impl ExpansionState,
+    traced: TracedTokenWord,
+) -> (AlignmentTokenDelivery, Option<AlignmentTerminator>) {
+    let token = traced.semantic_token();
+    let meaning = match token {
+        Token::Cs(symbol) => Some(stores.meaning(symbol)),
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores
+            .active_character_symbol(ch)
+            .map(|symbol| stores.meaning(symbol)),
+        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
+    };
+    let delivery = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::BeginGroup,
+            ..
+        }
+    ) {
+        AlignmentTokenDelivery::LeftBrace
+    } else if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::EndGroup,
+            ..
+        }
+    ) {
+        AlignmentTokenDelivery::RightBrace
+    } else {
+        AlignmentTokenDelivery::Other
+    };
+    let terminator = if matches!(
+        token,
+        Token::Char {
+            cat: Catcode::AlignmentTab,
+            ..
+        }
+    ) || matches!(
+        meaning,
+        Some(tex_state::meaning::Meaning::CharToken {
+            cat: Catcode::AlignmentTab,
+            ..
+        })
+    ) {
+        Some(AlignmentTerminator::Tab)
+    } else {
+        match meaning {
+            Some(tex_state::meaning::Meaning::UnexpandablePrimitive(
+                tex_state::meaning::UnexpandablePrimitive::Cr
+                | tex_state::meaning::UnexpandablePrimitive::CrCr,
+            )) => Some(AlignmentTerminator::Cr),
+            Some(tex_state::meaning::Meaning::UnexpandablePrimitive(
+                tex_state::meaning::UnexpandablePrimitive::Span,
+            )) => Some(AlignmentTerminator::Span),
+            _ => None,
+        }
+    };
+    (delivery, terminator)
+}
+
+/// Delivers one raw token under TeX's alignment-sensitive `get_next` rules.
+pub fn next_semantic_raw_token(
+    input: &mut InputStack,
+    stores: &mut tex_state::ExpansionContext<'_>,
+) -> Result<Option<TracedTokenWord>, LexError> {
+    loop {
+        let Some(traced) = input.next_traced_token(stores)? else {
+            return Ok(None);
+        };
+        if !intercept_alignment_token(input, stores, traced) {
+            return Ok(Some(traced));
+        }
+    }
+}
+
 /// One invalid editor layout encountered while freezing its lexer cursor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LayoutCursorError {

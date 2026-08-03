@@ -81,6 +81,30 @@ fn production_replay_kinds_stay_on_the_state_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        for forbidden in [
+            "tex_expand::next_semantic_raw_token",
+            "tex_expand::get_token",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must use the input owner's raw delivery instead of `{forbidden}`",
+                path.display()
+            );
+        }
+    }
+    let expand =
+        fs::read_to_string(test_support::repository_root().join("crates/tex-expand/src/lib.rs"))
+            .expect("read expansion public surface");
+    assert!(!expand.contains("pub fn next_semantic_raw_token("));
+    assert!(!expand.contains("pub fn get_token("));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_mode_snapshots_stay_on_the_state_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

@@ -411,7 +411,7 @@ where
     // TeX's `scan_int` reads the token following a backtick directly, rather
     // than through `get_x_token`. In particular, `\{` is a valid character
     // constant here even if that control symbol has no meaning.
-    let Some(token) = crate::next_semantic_raw_token(input, stores)? else {
+    let Some(token) = tex_lex::next_semantic_raw_token(input, stores)? else {
         return Ok(missing_number(prefix));
     };
     let value = match semantic_token(token) {

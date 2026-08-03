@@ -150,7 +150,7 @@ macro_rules! dispatch_match {
                 )))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::String) => {
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::String,
                         context: call_context,
@@ -198,7 +198,7 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Meaning) => {
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::Meaning,
                         context: call_context,
@@ -381,7 +381,7 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Unless) => {
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::Unless,
                         context: call_context,
@@ -676,7 +676,7 @@ macro_rules! dispatch_match {
                 ))
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfPrimitive) => {
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::PdfPrimitive,
                         context: call_context,
@@ -1116,7 +1116,7 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfDefined) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(18, $invert));
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::IfDefined,
                         context: call_context,
@@ -1147,7 +1147,7 @@ macro_rules! dispatch_match {
             }
             Meaning::ExpandablePrimitive(ExpandablePrimitive::IfPdfPrimitive) => {
                 let frame_token = begin_if_evaluation(input, call_context, ConditionMetadata::new(21, $invert));
-                let Some(target) = crate::next_semantic_raw_token(input, stores)? else {
+                let Some(target) = tex_lex::next_semantic_raw_token(input, stores)? else {
                     return Err(ExpandError::MissingTokenAfterPrimitive {
                         opcode: ExpandableOpcode::IfPdfPrimitive,
                         context: call_context,

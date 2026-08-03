@@ -18,7 +18,7 @@ use tex_lex::{
 };
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
-use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::provenance::{DiagnosticSite, InsertedOriginKind};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 pub use tex_state::{
@@ -1654,7 +1654,7 @@ pub trait ExpansionMode {
         // TeX's `back_input` cancels the first `get_token` delivery before
         // the saved token is read again. Without this, a brace held by
         // `\expandafter` changes `align_state` twice.
-        input.undo_alignment_delivery(classify_alignment_token(stores, saved).0);
+        input.undo_alignment_delivery(tex_lex::classify_alignment_token(stores, saved).0);
         if saved_suppresses_expansion {
             push_noexpand_token(input, stores, saved);
         } else {
@@ -2065,7 +2065,8 @@ fn get_x_token_with_context_inner(
         let symbol = match expandable_symbol_for_token(stores, token) {
             Some(symbol) => symbol,
             None => {
-                if !alignment_prepared && intercept_alignment_token(input, stores, traced) {
+                if !alignment_prepared && tex_lex::intercept_alignment_token(input, stores, traced)
+                {
                     continue;
                 }
                 return Ok(Some(traced));
@@ -2097,7 +2098,7 @@ fn get_x_token_with_context_inner(
                 return Ok(Some(token));
             }
             Dispatch::Deliver(token) => {
-                if !alignment_prepared && intercept_alignment_token(input, stores, token) {
+                if !alignment_prepared && tex_lex::intercept_alignment_token(input, stores, token) {
                     continue;
                 }
                 return Ok(Some(token));
@@ -2131,111 +2132,10 @@ pub(crate) fn next_prepared_expansion_token(
         let intercepted = if read.suppress_expansion() {
             intercept_suppressed_alignment_token(input, stores, traced)
         } else {
-            intercept_alignment_token(input, stores, traced)
+            tex_lex::intercept_alignment_token(input, stores, traced)
         };
         if !intercepted {
             return Ok(Some(PreparedExpansionToken(read)));
-        }
-    }
-}
-
-pub(crate) fn intercept_alignment_token(
-    input: &mut InputStack,
-    stores: &impl ExpansionState,
-    traced: TracedTokenWord,
-) -> bool {
-    if !input.has_active_alignment() {
-        return false;
-    }
-    let (delivery, terminator) = classify_alignment_token(stores, traced);
-    input.intercept_alignment_token(traced, delivery, terminator)
-}
-
-fn classify_alignment_token(
-    stores: &impl ExpansionState,
-    traced: TracedTokenWord,
-) -> (
-    tex_lex::AlignmentTokenDelivery,
-    Option<tex_lex::AlignmentTerminator>,
-) {
-    let token = semantic_token(traced);
-    let meaning = match token {
-        Token::Cs(symbol) => Some(stores.meaning(symbol)),
-        Token::Char {
-            ch,
-            cat: Catcode::Active,
-        } => stores
-            .active_character_symbol(ch)
-            .map(|symbol| stores.meaning(symbol)),
-        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => None,
-    };
-    // tex.web updates align_state only in the character-token branch of
-    // get_next. Control-sequence aliases such as \bgroup and \egroup still
-    // delimit semantic groups, but they do not change alignment brace depth.
-    let delivery = if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    ) {
-        tex_lex::AlignmentTokenDelivery::LeftBrace
-    } else if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    ) {
-        tex_lex::AlignmentTokenDelivery::RightBrace
-    } else {
-        tex_lex::AlignmentTokenDelivery::Other
-    };
-    let terminator = if matches!(
-        token,
-        Token::Char {
-            cat: Catcode::AlignmentTab,
-            ..
-        }
-    ) || matches!(
-        meaning,
-        Some(Meaning::CharToken {
-            cat: Catcode::AlignmentTab,
-            ..
-        })
-    ) {
-        Some(tex_lex::AlignmentTerminator::Tab)
-    } else {
-        match meaning {
-            Some(Meaning::UnexpandablePrimitive(
-                UnexpandablePrimitive::Cr | UnexpandablePrimitive::CrCr,
-            )) => Some(tex_lex::AlignmentTerminator::Cr),
-            Some(Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Span)) => {
-                Some(tex_lex::AlignmentTerminator::Span)
-            }
-            _ => None,
-        }
-    };
-    (delivery, terminator)
-}
-
-/// Canonical TeX `get_next`-style raw semantic delivery.
-///
-/// Expansion primitives and scanners must use this path whenever they consume
-/// a raw token. It applies alignment brace accounting and cell-terminator
-/// interception before the token can be observed. The lower-level
-/// `InputStack` reads remain reserved for the expansion loop and `\noexpand`,
-/// which must first classify one-shot suppression.
-pub fn next_semantic_raw_token(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-) -> Result<Option<TracedTokenWord>, tex_lex::LexError> {
-    loop {
-        let Some(traced) = input.next_traced_token(stores)? else {
-            return Ok(None);
-        };
-        if !intercept_alignment_token(input, stores, traced) {
-            return Ok(Some(traced));
         }
     }
 }
@@ -2285,7 +2185,7 @@ fn intercept_suppressed_alignment_token(
     if expandable {
         input.intercept_alignment_token(traced, tex_lex::AlignmentTokenDelivery::Other, None)
     } else {
-        intercept_alignment_token(input, stores, traced)
+        tex_lex::intercept_alignment_token(input, stores, traced)
     }
 }
 
@@ -2327,7 +2227,7 @@ pub fn back_error_input<I>(
 {
     let mut buffer = input.take_transient_token_buffer();
     for token in tokens {
-        input.undo_alignment_delivery(classify_alignment_token(stores, token).0);
+        input.undo_alignment_delivery(tex_lex::classify_alignment_token(stores, token).0);
         buffer.push(token);
     }
     if buffer.is_empty() {
@@ -2351,7 +2251,7 @@ fn back_input_with_kind<I>(
     let Some(first) = traced.next() else {
         return;
     };
-    input.undo_alignment_delivery(classify_alignment_token(stores, first).0);
+    input.undo_alignment_delivery(tex_lex::classify_alignment_token(stores, first).0);
     let Some(second) = traced.next() else {
         if input.rewind_last_macro_token_delivery(first) {
             return;
@@ -2365,13 +2265,13 @@ fn back_input_with_kind<I>(
         return;
     };
 
-    input.undo_alignment_delivery(classify_alignment_token(stores, second).0);
+    input.undo_alignment_delivery(tex_lex::classify_alignment_token(stores, second).0);
     let (lower, _) = traced.size_hint();
     let mut buffer = input.take_transient_token_buffer();
     buffer.reserve(lower.saturating_add(2));
     buffer.extend([first, second]);
     for token in traced {
-        input.undo_alignment_delivery(classify_alignment_token(stores, token).0);
+        input.undo_alignment_delivery(tex_lex::classify_alignment_token(stores, token).0);
         buffer.push(token);
     }
     input.push_transient_tokens(buffer, replay_kind);
@@ -2411,15 +2311,6 @@ pub fn insert_input<I>(
     input.push_transient_tokens(traced, TokenListReplayKind::Inserted);
 }
 
-/// Implements TeX's unexpanded `get_token`, including alignment delimiter
-/// interception performed by `get_next` before the token reaches its caller.
-pub fn get_token(
-    input: &mut InputStack,
-    stores: &mut tex_state::ExpansionContext<'_>,
-) -> Result<Option<TracedTokenWord>, ExpandError> {
-    Ok(next_semantic_raw_token(input, stores)?)
-}
-
 pub(crate) fn get_token_with_context(
     input: &mut InputStack,
     stores: &mut tex_state::ExpansionContext<'_>,
@@ -2455,7 +2346,7 @@ pub fn expand_once_then_get_token_with_context(
         meaning,
     )?;
     push_dispatch_result(input, stores, dispatch);
-    get_token(input, stores)
+    Ok(tex_lex::next_semantic_raw_token(input, stores)?)
 }
 
 pub(crate) fn get_x_token_without_input_open(
@@ -2484,7 +2375,7 @@ pub(crate) fn get_x_token_without_input_open(
         let symbol = match expandable_symbol(stores, traced) {
             Some(symbol) => symbol,
             None => {
-                if intercept_alignment_token(input, stores, traced) {
+                if tex_lex::intercept_alignment_token(input, stores, traced) {
                     continue;
                 }
                 return Ok(Some(traced));
@@ -2518,7 +2409,7 @@ pub(crate) fn get_x_token_without_input_open(
                 return Ok(Some(token));
             }
             Dispatch::Deliver(token) => {
-                if intercept_alignment_token(input, stores, token) {
+                if tex_lex::intercept_alignment_token(input, stores, token) {
                     continue;
                 }
                 return Ok(Some(token));

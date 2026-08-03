@@ -445,7 +445,7 @@ fn next_token_without_par_check(
     expansion: &mut ExpansionContext<'_>,
     context: MacroCallContext,
 ) -> Result<TracedTokenWord, MacroCallError> {
-    let token = match crate::next_semantic_raw_token(input, stores)? {
+    let token = match tex_lex::next_semantic_raw_token(input, stores)? {
         Some(token) => token,
         None => {
             // TeX.web §§336--340's `check_outer_validity` inserts one `\par`

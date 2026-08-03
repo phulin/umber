@@ -2090,7 +2090,7 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
 
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(
+            tex_lex::next_semantic_raw_token(
                 &mut input,
                 &mut tex_state::ExpansionContext::new(&mut stores)
             )
@@ -2101,7 +2101,7 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
     );
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(
+            tex_lex::next_semantic_raw_token(
                 &mut input,
                 &mut tex_state::ExpansionContext::new(&mut stores)
             )
@@ -2112,7 +2112,7 @@ fn everyeof_is_visible_to_raw_scanners_before_the_outer_source() {
     );
     assert_eq!(
         crate::semantic_token(
-            crate::next_semantic_raw_token(
+            tex_lex::next_semantic_raw_token(
                 &mut input,
                 &mut tex_state::ExpansionContext::new(&mut stores)
             )

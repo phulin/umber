@@ -289,7 +289,7 @@ fn scan_balanced_text_after_open_group(
     let mut depth = 1usize;
     let mut builder = stores.token_list_builder();
     while let Some(traced) =
-        tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
+        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
     {
         let token = traced.semantic_token();
         let meaning = token_meaning(stores, token);
