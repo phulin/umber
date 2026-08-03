@@ -1,4 +1,5 @@
 import { compile } from "/package/compile.js";
+import { HtmlPatchMount } from "/package/html-patch.js";
 import { HttpManifestResolver } from "/package/manifest-resolver.js";
 import { renderedSourceLocationFromPoint } from "/package/source-map.js";
 import initWasm, {
@@ -117,6 +118,7 @@ async function integration() {
 	);
 
 	await initWasm();
+	const incrementalDom = await verifyIncrementalDomPatch();
 	const cmr10 = new Uint8Array(
 		await fetch("/fixture-cmr10.tfm").then((response) =>
 			response.arrayBuffer(),
@@ -361,7 +363,118 @@ async function integration() {
 		geometry: generatedGeometry,
 		explicitOpenType,
 		mathGeometry,
+		incrementalDom,
 	};
+}
+
+async function verifyIncrementalDomPatch() {
+	const root = document.createElement("main");
+	root.style.height = "100px";
+	root.style.overflow = "auto";
+	document.body.append(root);
+	const sessionId = "a".repeat(32);
+	const node = (key, text) => ({
+		key,
+		kind: "text",
+		xSp: 0,
+		baselineSp: 20,
+		text,
+		family: `umber-font-${"b".repeat(24)}`,
+		fontSizeSp: 655_360,
+	});
+	const page = (key, ordinal, child) => ({
+		key,
+		ordinal,
+		widthSp: 10_000,
+		heightSp: 20_000,
+		originXSp: 0,
+		originYSp: 0,
+		mag: 1_000,
+		nodes: [child],
+	});
+	const changedPageKey = "1".repeat(32);
+	const changedNodeKey = "2".repeat(32);
+	const stablePageKey = "3".repeat(32);
+	const stableNodeKey = "4".repeat(32);
+	const mount = new HtmlPatchMount(root);
+	await mount.mountSnapshot({
+		kind: "snapshot",
+		schemaVersion: 1,
+		sessionId,
+		revision: 1,
+		digest: "1".repeat(64),
+		title: "Incremental browser fixture",
+		language: "en",
+		resources: [],
+		pages: [
+			page(changedPageKey, 1, node(changedNodeKey, "initial")),
+			page(stablePageKey, 2, node(stableNodeKey, "stable")),
+		],
+	});
+	const stablePage = mount.nodeForKey(stablePageKey);
+	const stableNode = mount.nodeForKey(stableNodeKey);
+	const mutations = [];
+	const observer = new MutationObserver((records) =>
+		mutations.push(...records),
+	);
+	observer.observe(stablePage, {
+		attributes: true,
+		characterData: true,
+		childList: true,
+		subtree: true,
+	});
+	const started = performance.now();
+	let beforeDigest = "1".repeat(64);
+	for (let revision = 2; revision <= 201; revision += 1) {
+		const afterDigest = (revision % 16).toString(16).repeat(64);
+		await mount.applyPatch({
+			kind: "patch",
+			schemaVersion: 1,
+			sessionId,
+			baseRevision: revision - 1,
+			targetRevision: revision,
+			beforeDigest,
+			afterDigest,
+			resourceAdditions: [],
+			resourceReleases: [],
+			operations: [
+				{
+					kind: "update-node",
+					page: changedPageKey,
+					node: node(changedNodeKey, `revision ${revision}`),
+				},
+			],
+		});
+		beforeDigest = afterDigest;
+	}
+	const elapsedMilliseconds = performance.now() - started;
+	await Promise.resolve();
+	assert(
+		mount.nodeForKey(stablePageKey) === stablePage,
+		"unchanged page identity drifted",
+	);
+	assert(
+		mount.nodeForKey(stableNodeKey) === stableNode,
+		"unchanged node identity drifted",
+	);
+	assert(mutations.length === 0, "unchanged subtree received a DOM mutation");
+	assert(
+		root.children.length === 2,
+		"ordinary patches replaced the mounted document",
+	);
+	assert(
+		elapsedMilliseconds < 1_000,
+		`200 DOM patches took ${elapsedMilliseconds} ms`,
+	);
+	const metrics = mount.metrics;
+	assert(
+		metrics.patches === 200 && metrics.updated === 200,
+		"patch metrics drifted",
+	);
+	observer.disconnect();
+	await mount.dispose();
+	root.remove();
+	return { elapsedMilliseconds, patches: metrics.patches };
 }
 
 async function compileExplicitOpenType(woff2) {

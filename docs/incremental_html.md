@@ -160,3 +160,38 @@ bounded edits and complete reclamation after disposal.
 - A stale or out-of-order patch leaves the mounted revision untouched and asks
   for a bounded full snapshot. Full snapshots are never an ordinary diff
   shortcut.
+
+## Enforced operational budgets
+
+Schema 1 uses the following default ceilings. Hosts may lower them through the
+mount or native planner options, but cannot turn validation off.
+
+| Quantity                                        | Default or fast-gate budget |
+| ----------------------------------------------- | --------------------------: |
+| Pages in a mounted snapshot                     |                      16,384 |
+| Canonical nodes in a mounted snapshot           |                   1,000,000 |
+| Operations in one patch                         |                     250,000 |
+| Aggregate resident resource bytes               |                     256 MiB |
+| One font resource                               |                      64 MiB |
+| Cumulative resource churn per registry          |                       1 GiB |
+| Delivered patches awaiting acknowledgement      |                           1 |
+| Coalesced complete candidate behind that patch  |                           1 |
+| Chromium application of 200 single-node patches |              under 1,000 ms |
+
+The fast canonical gate performs 5,000 deterministic insert, delete, move,
+replace, duplicate-content, and node-count transitions. Every transition must
+apply to the exact freshly constructed target. The artifact-level gate also
+rebuilds representative page artifacts from scratch, which catches drift in
+lowering and identity assignment rather than only exercising the abstract
+model.
+
+The browser package gate applies 200 ordinary updates to one page in the same
+mounted document. It requires exactly one operation and one replaced node per
+revision, no root replacement, stable object identity for the other page and
+text node, zero `MutationObserver` records under that unchanged page, bounded
+application time, and complete disposal. Resource tests separately require a
+resident-byte plateau under deduplicated acquisition, acknowledgement-gated
+release, rollback after cancellation and font failure, cumulative-churn
+rejection, and zero entries after disposal. Global reflow or protocol recovery
+is observable as an explicit page operation or snapshot; it is never reported
+as an ordinary local update.

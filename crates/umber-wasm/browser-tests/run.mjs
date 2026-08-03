@@ -67,6 +67,8 @@ for (const required of [
 	"manifest-resolver.d.ts",
 	"html-preview.js",
 	"html-preview.d.ts",
+	"html-patch.js",
+	"html-patch.d.ts",
 	"source-map.js",
 	"source-map.d.ts",
 	"umber_wasm.js",
