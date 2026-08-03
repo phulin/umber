@@ -78,14 +78,15 @@ fn finish_math_list_node_with_reads(
     (nodes, sink.family_mask.get())
 }
 
-pub(super) fn convert_math_hlist(
+pub(super) fn convert_math_hlist_with_error_context(
     stores: &mut Universe,
     input: NodeListId,
     style: Style,
     penalties: bool,
     params: &MathParams,
+    error_context: Option<&MathConversionErrorContext>,
 ) -> Vec<Node> {
-    let mut sink = LoweredMathSink::new(stores, None);
+    let mut sink = LoweredMathSink::new(stores, error_context);
     convert_math_hlist_with_sink(&mut sink, input, style, penalties, params)
 }
 

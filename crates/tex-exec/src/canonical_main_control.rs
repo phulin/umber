@@ -3866,7 +3866,15 @@ impl CanonicalMainControl {
         ),
         ExecError,
     > {
-        let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
+        let conversion_error_context = crate::math::MathConversionErrorContext::new(
+            self.command.output_open_context(&stores.command_context()),
+        );
+        let finished = crate::math::display::finish_eq_no(
+            stores,
+            eq.side,
+            content,
+            Some(&conversion_error_context),
+        );
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
@@ -3922,6 +3930,9 @@ impl CanonicalMainControl {
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
     ) -> Result<(), ExecError> {
+        let conversion_error_context = crate::math::MathConversionErrorContext::new(
+            self.command.output_open_context(&stores.command_context()),
+        );
         // TeX82 §1194 performs this check before every display `fin_mlist`,
         // including the saved outer mlist after an equation number.
         let math_font_context = self.command.output_open_context(&stores.command_context());
@@ -3937,7 +3948,13 @@ impl CanonicalMainControl {
                 .ok_or(ExecError::MissingToken {
                     context: "display interrupt",
                 })?;
-        crate::math::display::finish_display_math(&mut self.modes, stores, content, eq_no)?;
+        crate::math::display::finish_display_math(
+            &mut self.modes,
+            stores,
+            content,
+            eq_no,
+            Some(&conversion_error_context),
+        )?;
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {

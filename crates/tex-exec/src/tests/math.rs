@@ -1812,6 +1812,60 @@ fn undefined_math_family_reports_closing_source_context_before_help() {
     }
 }
 
+/// TeX82 §§82/721: display conversion happens after the closing math shifts,
+/// but `error` still calls `show_context` before printing the help lines.
+#[test]
+fn undefined_display_math_family_reports_token_context_before_help() {
+    let source = "\\font\\symbol=cmsy10 \\font\\extension=cmex10\n\
+        \\textfont2=\\symbol \\scriptfont2=\\symbol \\scriptscriptfont2=\\symbol\n\
+        \\textfont3=\\extension \\scriptfont3=\\extension \\scriptscriptfont3=\\extension\n\
+        before\n\
+        $$\\mathchar\"0037$X after\\end";
+    let (stores, _) =
+        run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, source, true);
+    let output = terminal_effect_text(&stores);
+
+    let message = output
+        .find("\\textfont 0 is undefined (character 7)")
+        .unwrap_or_else(|| panic!("missing undefined-family message in {output:?}"));
+    let context = output[message..]
+        .find("<to be read again>")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("missing token context header in {output:?}"));
+    let source_line = output[message..]
+        .find("l.5 $$")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("missing display source line in {output:?}"));
+    let help = output[message..]
+        .find("Somewhere in the math formula just ended")
+        .map(|offset| message + offset)
+        .unwrap_or_else(|| panic!("missing undefined-family help in {output:?}"));
+    assert!(
+        message < context && context < source_line && source_line < help,
+        "{output:?}"
+    );
+}
+
+#[test]
+fn detached_math_conversion_without_input_context_prints_help_directly() {
+    let (mut stores, control) = run_math_source_with_text_math_fonts("$\\mathchar\"0F61");
+    let list = unfinished_math_list(&mut stores, &control);
+    let baseline = terminal_effect_text(&stores).len();
+
+    let _ = crate::math::finish_math_list_node(&mut stores, list, false);
+
+    let output = &terminal_effect_text(&stores)[baseline..];
+    assert!(
+        output.contains("\\textfont 15 is undefined (character a)"),
+        "{output:?}"
+    );
+    assert!(
+        output.contains("Somewhere in the math formula just ended"),
+        "{output:?}"
+    );
+    assert!(!output.contains("<to be read again>"), "{output:?}");
+}
+
 #[test]
 fn detached_math_conversion_error_context_survives_snapshot_rollback() {
     let (mut stores, control) = run_math_source_with_text_math_fonts("$\\mathchar\"0F61");

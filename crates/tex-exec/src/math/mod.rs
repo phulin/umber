@@ -373,6 +373,9 @@ fn finish_math(
     let mut level =
         crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     if display {
+        let conversion_error_context = MathConversionErrorContext::new(
+            crate::diagnostics::show_context(stores, &input.summary()),
+        );
         let interrupt = level.list_mutation().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
@@ -381,7 +384,7 @@ fn finish_math(
                 operation: "display interrupt state",
             },
         )?;
-        finish_display_math(nest, stores, content, None)?;
+        finish_display_math(nest, stores, content, None, Some(&conversion_error_context))?;
         if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
             leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
             execution.paragraph_group_exited(stores);
@@ -472,7 +475,9 @@ fn finish_equation_number(
     if font_failure {
         eq_no.display = stores.freeze_node_list(&[]);
     }
-    let finished_eq_no = finish_eq_no(stores, eq_no.side, content);
+    let conversion_error_context =
+        MathConversionErrorContext::new(crate::diagnostics::show_context(stores, &input.summary()));
+    let finished_eq_no = finish_eq_no(stores, eq_no.side, content, Some(&conversion_error_context));
     leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
     execution.paragraph_group_exited(stores);
 
@@ -492,7 +497,15 @@ fn finish_equation_number(
             origin: OriginId::UNKNOWN,
             operation: "display interrupt state",
         })?;
-    finish_display_math(nest, stores, eq_no.display, Some(finished_eq_no))?;
+    let conversion_error_context =
+        MathConversionErrorContext::new(crate::diagnostics::show_context(stores, &input.summary()));
+    finish_display_math(
+        nest,
+        stores,
+        eq_no.display,
+        Some(finished_eq_no),
+        Some(&conversion_error_context),
+    )?;
     if stores.innermost_group_kind() == Some(tex_state::GroupKind::MathShift) {
         leave_group_with_origin(input, stores, tex_state::GroupKind::MathShift, origin)?;
         execution.paragraph_group_exited(stores);

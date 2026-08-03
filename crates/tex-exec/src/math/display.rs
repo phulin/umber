@@ -32,7 +32,7 @@ fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
     Scaled::from_raw(i32::try_from(product).expect("display-math scaled multiplication overflow"))
 }
 
-use super::lower::convert_math_hlist;
+use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
 use super::scan::finish_current_math_list;
 
 pub(super) fn start_eq_no(
@@ -83,9 +83,17 @@ pub(crate) fn finish_eq_no(
     stores: &mut Universe,
     side: EqNoSide,
     content: tex_state::ids::NodeListId,
+    error_context: Option<&MathConversionErrorContext>,
 ) -> FinishedEqNo {
     let params = MathParams::read(stores);
-    let nodes = convert_math_hlist(stores, content, Style::TEXT, false, &params);
+    let nodes = convert_math_hlist_with_error_context(
+        stores,
+        content,
+        Style::TEXT,
+        false,
+        &params,
+        error_context,
+    );
     let list = stores.freeze_node_list(&nodes);
     let mut boxed = hpack_nodes(stores, list, PackSpec::Natural, hpack_params(stores)).node;
     boxed.box_lr = tex_state::node::BoxLr::DList;
@@ -97,6 +105,7 @@ pub(crate) fn finish_display_math(
     stores: &mut Universe,
     content: tex_state::ids::NodeListId,
     eq_no: Option<FinishedEqNo>,
+    error_context: Option<&MathConversionErrorContext>,
 ) -> Result<(), ExecError> {
     let (display_content, mut eq_box, left_eq_no) = match eq_no {
         Some(eq_no) => (content, Some(eq_no.boxed), eq_no.side == EqNoSide::Left),
@@ -104,7 +113,14 @@ pub(crate) fn finish_display_math(
     };
     // AppG rule 22
     let params = MathParams::read(stores);
-    let display_nodes = convert_math_hlist(stores, display_content, Style::DISPLAY, false, &params);
+    let display_nodes = convert_math_hlist_with_error_context(
+        stores,
+        display_content,
+        Style::DISPLAY,
+        false,
+        &params,
+        error_context,
+    );
     let shrink = hlist_shrink(stores, &display_nodes);
     let display_list = stores.freeze_node_list(&display_nodes);
     let mut display_box = hpack_nodes(
