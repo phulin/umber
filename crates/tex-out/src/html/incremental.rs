@@ -420,6 +420,9 @@ pub fn build_positioned_render_revision<R: HtmlFontAssets>(
     }
     reuse_page_keys(previous.map(|old| old.pages.as_slice()), &mut built);
     for page in &mut built {
+        for (index, node) in page.nodes.iter_mut().enumerate() {
+            node.key = derive_key(page.key, node.digest, index as u64, revision);
+        }
         let old = previous.and_then(|revision| {
             revision
                 .pages

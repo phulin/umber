@@ -174,6 +174,32 @@ test("valid patch preserves untouched DOM identity, focus, scroll, and mounted r
 	assert.equal(mount.metrics.updated, 1);
 });
 
+test("page removal derives descendants from the validated base model", async () => {
+	const document = new FakeDocument();
+	const root = new FakeNode(document, "main");
+	const mount = new HtmlPatchMount(root, { document });
+	await mount.mountSnapshot(snapshot());
+	const retainedPage = mount.nodeForKey(key("3"));
+	const patch = {
+		kind: "patch",
+		schemaVersion: 1,
+		sessionId: key("a"),
+		baseRevision: 1,
+		targetRevision: 2,
+		beforeDigest: digest("b"),
+		afterDigest: digest("c"),
+		resourceAdditions: [],
+		resourceReleases: [],
+		operations: [{ kind: "remove-page", key: key("1") }],
+	};
+
+	await mount.applyPatch(patch);
+	assert.equal(mount.nodeForKey(key("1")), null);
+	assert.equal(mount.nodeForKey(key("2")), null);
+	assert.equal(mount.nodeForKey(key("3")), retainedPage);
+	assert.equal(root.children.length, 1);
+});
+
 test("invalid and hostile patches perform no mutation and request recovery", async () => {
 	const document = new FakeDocument();
 	const root = new FakeNode(document, "main");

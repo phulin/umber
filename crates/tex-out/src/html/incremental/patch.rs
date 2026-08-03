@@ -544,3 +544,123 @@ fn validate_keys_and_resources(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::digest::{node_value_digest, page_digest, revision_digest};
+    use super::super::{RENDER_SCHEMA_VERSION, RenderNodeValue};
+    use super::*;
+    use crate::MathRule;
+
+    #[test]
+    fn five_thousand_generated_model_edits_equal_fresh_targets() {
+        let session_id = RenderSessionId::from_bytes([31; 16]);
+        let mut model = vec![(1_u32, 10_i32), (2, 20), (3, 30)];
+        let mut mounted = revision(session_id, 1, &model);
+        let mut random = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next_id = 4_u32;
+
+        for revision_number in 2..=5_001 {
+            random = random
+                .wrapping_mul(2_862_933_555_777_941_757)
+                .wrapping_add(3_037_000_493);
+            let choice = (random >> 32) as usize;
+            match choice % 4 {
+                0 if model.len() < 16 => {
+                    let index = choice % (model.len() + 1);
+                    model.insert(index, (next_id, random as i32));
+                    next_id += 1;
+                }
+                1 if model.len() > 1 => {
+                    model.remove(choice % model.len());
+                }
+                2 if model.len() > 1 => {
+                    let value = model.remove(choice % model.len());
+                    let index = (random as usize) % (model.len() + 1);
+                    model.insert(index, value);
+                }
+                _ => {
+                    let index = choice % model.len();
+                    model[index].1 = model[index].1.wrapping_add((random >> 16) as i32 | 1);
+                }
+            }
+
+            let fresh = revision(session_id, revision_number, &model);
+            let patch =
+                plan_patch(&mounted, &fresh, PatchLimits::default()).expect("generated patch");
+            mounted = apply_patch(&mounted, &patch, PatchLimits::default())
+                .unwrap_or_else(|error| panic!("revision {revision_number}: {error:?}"));
+            assert_eq!(mounted, fresh, "revision {revision_number}");
+        }
+    }
+
+    fn revision(
+        session_id: RenderSessionId,
+        revision: u64,
+        model: &[(u32, i32)],
+    ) -> RenderRevision {
+        let mut pages = model
+            .iter()
+            .enumerate()
+            .map(|(ordinal, &(id, content))| page(id, content, ordinal as u32))
+            .collect::<Vec<_>>();
+        for page in &mut pages {
+            page.digest = page_digest(page);
+        }
+        let resources = Vec::new();
+        let digest = revision_digest("", "en", &pages, &resources);
+        RenderRevision {
+            schema_version: RENDER_SCHEMA_VERSION,
+            session_id,
+            revision,
+            title: String::new(),
+            language: "en".to_owned(),
+            pages,
+            resources,
+            digest,
+        }
+    }
+
+    fn page(id: u32, content: i32, ordinal: u32) -> RenderPage {
+        let node_count = content.unsigned_abs() as usize % 3 + 1;
+        let mut nodes = (0..node_count)
+            .map(|slot| {
+                let value = RenderNodeValue::MathRule(MathRule {
+                    x: Scaled::from_raw(slot as i32),
+                    y: Scaled::from_raw(0),
+                    width: Scaled::from_raw(content.wrapping_add(slot as i32)),
+                    height: Scaled::from_raw(1),
+                });
+                RenderNode {
+                    key: key(id, slot as u32 + 1),
+                    digest: node_value_digest(&value, false),
+                    match_digest: node_value_digest(&value, true),
+                    value,
+                }
+            })
+            .collect::<Vec<_>>();
+        if content & 1 != 0 {
+            nodes.reverse();
+        }
+        RenderPage {
+            key: key(id, 0),
+            digest: RenderDigest([0; 32]),
+            match_digest: RenderDigest([content as u8; 32]),
+            ordinal,
+            width: Scaled::from_raw(100),
+            height: Scaled::from_raw(200),
+            origin_x: Scaled::from_raw(0),
+            origin_y: Scaled::from_raw(0),
+            mag: 1_000,
+            counts: [content, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            nodes,
+        }
+    }
+
+    fn key(id: u32, slot: u32) -> RenderKey {
+        let mut bytes = [0; 16];
+        bytes[..4].copy_from_slice(&id.to_le_bytes());
+        bytes[4..8].copy_from_slice(&slot.to_le_bytes());
+        RenderKey(bytes)
+    }
+}

@@ -924,6 +924,127 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
     );
 }
 
+#[test]
+fn generated_artifact_edit_sequences_equal_fresh_canonical_renders() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([14; 16]);
+    let mut source_pages = vec![generated_page(1), generated_page(2), generated_page(3)];
+    let mut mounted = build_render_revision(
+        &source_pages,
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("initial generated revision");
+    let mut random = 0x4d59_5df4_d0f3_3173_u64;
+
+    for revision in 2..=41 {
+        random = random
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let choice = (random >> 32) as usize;
+        match choice % 5 {
+            0 if source_pages.len() < 8 => {
+                let index = choice % (source_pages.len() + 1);
+                source_pages.insert(index, generated_page((random >> 8) as i32));
+            }
+            1 if source_pages.len() > 1 => {
+                source_pages.remove(choice % source_pages.len());
+            }
+            2 if source_pages.len() > 1 => {
+                let from = choice % source_pages.len();
+                let page = source_pages.remove(from);
+                let to = ((random >> 16) as usize) % (source_pages.len() + 1);
+                source_pages.insert(to, page);
+            }
+            3 => {
+                let index = choice % source_pages.len();
+                source_pages[index] = generated_page((random >> 8) as i32);
+            }
+            _ if source_pages.len() < 8 => {
+                let index = choice % source_pages.len();
+                let duplicate = source_pages[index].clone();
+                source_pages.insert(index, duplicate);
+            }
+            _ => source_pages.rotate_left(1),
+        }
+
+        let target = build_render_revision(
+            &source_pages,
+            &resolver,
+            &options,
+            session,
+            revision,
+            Some(&mounted),
+            RenderLimits::default(),
+        )
+        .expect("generated target revision");
+        let fresh = build_render_revision(
+            &source_pages,
+            &resolver,
+            &options,
+            session,
+            revision,
+            None,
+            RenderLimits::default(),
+        )
+        .expect("fresh generated revision");
+        assert_render_semantics(&target, &fresh, revision);
+
+        let patch =
+            plan_patch(&mounted, &target, PatchLimits::default()).expect("generated patch plan");
+        mounted = apply_patch(&mounted, &patch, PatchLimits::default())
+            .unwrap_or_else(|error| panic!("revision {revision}: {error:?}; patch {patch:#?}"));
+        assert_eq!(mounted, target, "revision {revision}");
+    }
+}
+
+fn assert_render_semantics(
+    retained: &super::incremental::RenderRevision,
+    fresh: &super::incremental::RenderRevision,
+    revision: u64,
+) {
+    assert_eq!(retained.title, fresh.title, "revision {revision}");
+    assert_eq!(retained.language, fresh.language, "revision {revision}");
+    assert_eq!(retained.resources, fresh.resources, "revision {revision}");
+    assert_eq!(
+        retained.pages.len(),
+        fresh.pages.len(),
+        "revision {revision}"
+    );
+    for (left, right) in retained.pages.iter().zip(&fresh.pages) {
+        assert_eq!(left.ordinal, right.ordinal, "revision {revision}");
+        assert_eq!(left.width, right.width, "revision {revision}");
+        assert_eq!(left.height, right.height, "revision {revision}");
+        assert_eq!(left.origin_x, right.origin_x, "revision {revision}");
+        assert_eq!(left.origin_y, right.origin_y, "revision {revision}");
+        assert_eq!(left.mag, right.mag, "revision {revision}");
+        assert_eq!(left.counts, right.counts, "revision {revision}");
+        assert_eq!(left.nodes.len(), right.nodes.len(), "revision {revision}");
+        for (left, right) in left.nodes.iter().zip(&right.nodes) {
+            assert_eq!(left.value, right.value, "revision {revision}");
+        }
+    }
+}
+
+fn generated_page(identity: i32) -> crate::PageArtifact {
+    let mut value = page();
+    value.testing_mut().counts[0] = identity;
+    let PageNode::HList(root) = &mut value.testing_mut().root else {
+        unreachable!()
+    };
+    root.width = sp(200_i32.saturating_add(identity.rem_euclid(1_000)));
+    let PageNode::Char { ch, .. } = &mut root.children[0] else {
+        unreachable!()
+    };
+    *ch = u32::from(b'A') + identity.unsigned_abs() % 2;
+    value
+}
+
 fn page() -> crate::PageArtifact {
     let font = FontResource {
         font_id: 7,
