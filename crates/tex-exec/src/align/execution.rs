@@ -2,7 +2,8 @@ use tex_expand::{get_alignment_x_or_protected_with_context, get_x_token_with_con
 #[cfg(test)]
 mod tests;
 
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::TokParam;
 use tex_state::node::{GlueKind, Node};
 use tex_state::token::{Token, TracedTokenWord};

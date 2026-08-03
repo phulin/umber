@@ -1,5 +1,6 @@
 use tex_expand::get_x_token_with_context;
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::TokParam;
 use tex_state::ids::NodeListId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};

@@ -1,7 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 
-use tex_lex::TokenListReplayKind;
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::TokenListId;
 use tex_state::macro_store::MacroMeaning;

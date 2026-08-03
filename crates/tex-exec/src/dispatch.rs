@@ -551,7 +551,7 @@ where
         return;
     }
     let token_list = stores.intern_token_list(&tokens);
-    input.push_token_list(token_list, tex_lex::TokenListReplayKind::Inserted);
+    input.push_token_list(token_list, tex_state::TokenListReplayKind::Inserted);
 }
 
 pub(crate) fn push_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)

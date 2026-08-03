@@ -8,7 +8,7 @@ use tex_expand::{
     DriverExpansionMode, ExpandError, append_token_string_text, get_command_token_with_context,
     get_x_token_with_context, scan_dimen, scan_glue, scan_int, scan_optional_keyword_with_context,
 };
-use tex_lex::{InputStack, LexError, TokenListReplayKind};
+use tex_lex::{InputStack, LexError};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -21,7 +21,8 @@ use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{
-    ExpansionState, GroupKind, InputOpenState, InteractionMode, PdfDocumentFragmentKind, Universe,
+    ExpansionState, GroupKind, InputOpenState, InteractionMode, PdfDocumentFragmentKind,
+    TokenListReplayKind, Universe,
 };
 use tex_state::{PdfAnnotationData, PdfAnnotationDimensions};
 

@@ -1,5 +1,6 @@
 use tex_expand::{DriverExpansionMode, ExpandError, get_x_token_with_context, scan_dimen};
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::TokParam;
 use tex_state::math::{
     FractionThickness, LimitType, MathChoice, MathField, MathFraction, MathNoad, NoadClass,

@@ -1,5 +1,5 @@
 use tex_expand::{get_x_or_protected_with_context, scan_dimen::DimensionDiagnostic};
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
@@ -9,6 +9,7 @@ use tex_out::{
     MarginKernSide as PageMarginKernSide, PageEffect, PageNode, PageToken, TokenCatcode,
     V10ArtifactBuilder, V10NodeListWriter,
 };
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};

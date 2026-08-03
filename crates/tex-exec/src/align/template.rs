@@ -1,4 +1,5 @@
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
+use tex_state::TokenListReplayKind;
 use tex_state::Universe;
 use tex_state::ids::TokenListId;
 

@@ -46,6 +46,27 @@ fn production_token_rendering_stays_on_the_state_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_replay_kinds_stay_on_the_state_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        assert!(
+            !source.contains("tex_lex::TokenListReplayKind"),
+            "{} must use tex_state::TokenListReplayKind",
+            path.display()
+        );
+        assert!(
+            !source
+                .lines()
+                .any(|line| line.contains("tex_lex::{") && line.contains("TokenListReplayKind")),
+            "{} must not import TokenListReplayKind through tex-lex",
+            path.display()
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn executor_resource_results_stay_on_the_execution_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let executor = fs::read_to_string(source_root.join("executor.rs")).expect("read executor");

@@ -1,4 +1,5 @@
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
+use tex_state::TokenListReplayKind;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::font::PdfFontCode;
 use tex_state::glue::Order;

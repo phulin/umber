@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_lex::{InputStack, TokenListReplayKind};
+use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -10,7 +10,7 @@ use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::{GroupKind, Universe};
+use tex_state::{GroupKind, TokenListReplayKind, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
 use crate::assignments::shipout_node;
