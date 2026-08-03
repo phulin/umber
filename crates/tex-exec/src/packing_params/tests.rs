@@ -1,10 +1,55 @@
 use tex_state::glue::GlueSpec;
-use tex_state::node::{GlueKind, Node};
+use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{GeometryObservation, Universe};
-use tex_typeset::{PackSpec, VpackParams};
+use tex_state::{EffectRecord, GeometryObservation, Universe};
+use tex_typeset::{HpackParams, PackSpec, VpackParams};
 
-use super::vtop;
+use super::{hpack, vtop};
+
+fn log_text(stores: &Universe) -> String {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { sink, text }
+                if matches!(
+                    sink,
+                    tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
+                ) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn ordinary_hpack_reports_once_without_decorating_its_list() {
+    let mut stores = Universe::new();
+    stores.set_interaction_mode(tex_state::InteractionMode::Batch);
+    let list = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(2 * Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+
+    let packed = hpack(
+        &mut stores,
+        list,
+        PackSpec::Exactly(Scaled::from_raw(Scaled::UNITY)),
+        HpackParams {
+            hbadness: 0,
+            hfuzz: Scaled::from_raw(0),
+            overfull_rule: Scaled::from_raw(5 * Scaled::UNITY),
+        },
+    );
+
+    let log = log_text(&stores);
+    assert_eq!(log.matches("Overfull \\hbox").count(), 1, "{log}");
+    assert_eq!(packed.node.children, list);
+    assert!(!log.contains("\n|\n"), "{log}");
+}
 
 #[test]
 fn vtop_observes_vpackage_before_readjusting_height_and_depth() {

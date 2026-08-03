@@ -1,4 +1,55 @@
 use super::*;
+use tex_typeset::PackSpec;
+
+fn log_text(stores: &Universe) -> String {
+    stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite { sink, text }
+                if matches!(
+                    sink,
+                    tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog
+                ) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn frozen_hpack_reports_decorated_overfull_list_once() {
+    let mut stores = Universe::new();
+    stores.set_interaction_mode(tex_state::InteractionMode::Batch);
+    stores.set_dimen_param(
+        tex_state::env::banks::DimenParam::OVERFULL_RULE,
+        Scaled::from_raw(5 * Scaled::UNITY),
+    );
+    let children = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(2 * Scaled::UNITY),
+        kind: tex_state::node::KernKind::Explicit,
+    }]);
+
+    let packed = super::packaging::hpack_with_overfull_rule(
+        &mut stores,
+        children,
+        PackSpec::Exactly(Scaled::from_raw(Scaled::UNITY)),
+    );
+
+    let log = log_text(&stores);
+    assert_eq!(log.matches("Overfull \\hbox").count(), 1, "{log}");
+    assert!(log.contains("\n|\n"), "{log}");
+    assert!(matches!(
+        stores.nodes(packed.children).last(),
+        Some(tex_state::node_arena::NodeRef::Rule {
+            width: Some(width),
+            ..
+        }) if width.raw() == 5 * Scaled::UNITY
+    ));
+}
 
 #[test]
 fn short_diagnostic_pairs_discretionaries_across_ligature_expansion() {

@@ -9,9 +9,7 @@ use tex_state::token::{Catcode, TracedTokenWord};
 use tex_state::{ExpansionState, GeometryObservation, GroupKind, Universe};
 use tex_typeset::{PackDiagnostic, PackSpec, plan_hpack_nodes};
 
-use crate::packing_params::{
-    hpack, hpack_params, recover_texxet_directions, vpack, vpack_params, vtop,
-};
+use crate::packing_params::{hpack_params, recover_texxet_directions, vpack, vpack_params, vtop};
 use crate::{ExecError, Mode, ModeNest, leave_group, push_traced_tokens};
 
 use super::super::{
@@ -389,18 +387,19 @@ pub(crate) fn hpack_with_overfull_rule(
     spec: PackSpec,
 ) -> tex_state::node::BoxNode {
     let params = hpack_params(stores);
-    let mut packed = hpack(stores, children, spec, params);
+    let (mut packed, lr_problems) =
+        crate::packing_params::hpack_unreported(stores, children, spec, params);
     // TeX's hpack overfull branch is guarded by list_ptr(r) <> null. An
     // explicitly negative-width empty hbox is therefore not decorated even
     // when \overfullrule is positive.
-    if !stores.nodes(children).is_empty()
+    if !stores.nodes(packed.node.children).is_empty()
         && params.overfull_rule.raw() > 0
         && packed
             .diagnostics
             .iter()
             .any(|diagnostic| matches!(diagnostic, PackDiagnostic::Overfull { .. }))
     {
-        let mut nodes = stores.nodes(children).to_vec();
+        let mut nodes = stores.nodes(packed.node.children).to_vec();
         nodes.push(Node::Rule {
             width: Some(params.overfull_rule),
             height: None,
@@ -408,6 +407,7 @@ pub(crate) fn hpack_with_overfull_rule(
         });
         packed.node.children = stores.freeze_node_list(&nodes);
     }
+    crate::packing_params::report_hpack(stores, &packed, lr_problems);
     packed.node
 }
 

@@ -36,6 +36,22 @@ pub(crate) fn hpack(
     spec: PackSpec,
     params: HpackParams,
 ) -> PackedBox {
+    let (packed, lr_problems) = hpack_unreported(stores, list, spec, params);
+    report_hpack(stores, &packed, lr_problems);
+    packed
+}
+
+/// Packs a frozen horizontal list without issuing its diagnostics yet.
+///
+/// TeX's overfull-rule branch mutates the packed list before §663 displays
+/// it, so callers that own that branch must finish decoration before calling
+/// [`report_hpack`]. Ordinary callers use [`hpack`], which reports once.
+pub(crate) fn hpack_unreported(
+    stores: &mut Universe,
+    list: NodeListId,
+    spec: PackSpec,
+    params: HpackParams,
+) -> (PackedBox, Option<(usize, usize)>) {
     let mut recovered = stores.nodes(list).to_vec();
     let lr_problems = recover_texxet_directions(stores, &mut recovered);
     let list = if lr_problems.is_some() {
@@ -50,6 +66,14 @@ pub(crate) fn hpack(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
     });
+    (packed, lr_problems)
+}
+
+pub(crate) fn report_hpack(
+    stores: &mut Universe,
+    packed: &PackedBox,
+    lr_problems: Option<(usize, usize)>,
+) {
     report_pack_diagnostics(
         stores,
         PackedDirection::Horizontal,
@@ -66,7 +90,6 @@ pub(crate) fn hpack(
             DiagnosticListLayout::FrozenList,
         );
     }
-    packed
 }
 
 pub(crate) fn recover_texxet_directions(

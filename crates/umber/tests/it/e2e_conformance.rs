@@ -2004,6 +2004,30 @@ fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
     // establishes the page, paragraph, and three preceding \vadjust states.
     // Replaying INITEX source cannot reproduce the dumped font ligature and
     // hyphenation state responsible for this diagnostic.
+    let log = run_focused_loaded_trip_through(203);
+    assert!(
+        log.contains(concat!(
+            "Underfull \\hbox (badness 10000) in paragraph at lines 109--109\n",
+            " [] []\\rip BB-B-BBB\n",
+        )),
+        "{log}"
+    );
+    assert!(!log.contains(" [] []\\rip BB-BBBB\n"), "{log}");
+}
+
+#[test]
+fn trip_loaded_display_diagnostic_includes_overfull_rule() {
+    let log = run_focused_loaded_trip_through(285);
+    assert!(
+        log.contains(concat!(
+            "Overfull \\hbox (48.4746pt too wide) detected at line 193\n",
+            "[][][] [] [] []|\n",
+        )),
+        "{log}"
+    );
+}
+
+fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
     let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
@@ -2022,7 +2046,7 @@ fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
     let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
     let lines = text.lines().collect::<Vec<_>>();
     let source: Arc<[u8]> =
-        Arc::from(format!("{}\n\\end\n", lines[92..203].join("\n")).into_bytes());
+        Arc::from(format!("{}\n\\end\n", lines[92..last_source_line].join("\n")).into_bytes());
     let mut observer = TripObservers::default();
     let loaded = provider
         .run(
@@ -2057,15 +2081,7 @@ fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
         )
         .expect("focused loaded TRIP run");
     let (_, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
-    let log = String::from_utf8(log).expect("TRIP log is UTF-8");
-    assert!(
-        log.contains(concat!(
-            "Underfull \\hbox (badness 10000) in paragraph at lines 109--109\n",
-            " [] []\\rip BB-B-BBB\n",
-        )),
-        "{log}"
-    );
-    assert!(!log.contains(" [] []\\rip BB-BBBB\n"), "{log}");
+    String::from_utf8(log).expect("TRIP log is UTF-8")
 }
 
 #[test]
