@@ -2556,9 +2556,14 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn record_canonical_paragraph_lookup(&mut self, hit: bool, commands: usize) {
+    pub fn record_canonical_paragraph_lookup(
+        &mut self,
+        hit: bool,
+        commands: usize,
+        mutations: usize,
+    ) {
         self.pure_memo
-            .record_canonical_paragraph_lookup(hit, commands);
+            .record_canonical_paragraph_lookup(hit, commands, mutations);
     }
 
     #[doc(hidden)]

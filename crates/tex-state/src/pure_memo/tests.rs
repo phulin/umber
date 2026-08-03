@@ -28,8 +28,8 @@ fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
         line_provenance: ParagraphLineProvenance::Pending,
     };
     runtime.record_canonical_paragraph_region(record.clone());
-    runtime.record_canonical_paragraph_lookup(false, 0);
-    runtime.record_canonical_paragraph_lookup(true, 3);
+    runtime.record_canonical_paragraph_lookup(false, 0, 0);
+    runtime.record_canonical_paragraph_lookup(true, 3, 2);
     assert!(runtime.accepted_canonical_paragraphs().is_empty());
     runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
     assert_eq!(
@@ -42,6 +42,7 @@ fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
     assert_eq!(stats.paragraph_hits, 1);
     assert_eq!(stats.paragraph.key_misses, 1);
     assert_eq!(stats.paragraph_commands_skipped, 3);
+    assert_eq!(stats.paragraph_mutations_replayed, 2);
     assert_eq!(stats.paragraph_opportunities.published.regions, 1);
     assert_eq!(stats.paragraph_opportunities.published.bytes, 64);
 }

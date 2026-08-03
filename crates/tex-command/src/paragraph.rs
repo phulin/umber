@@ -63,6 +63,8 @@ pub struct ParagraphInputTransaction {
     pub(crate) ending_input: InputState,
     pub(crate) starting_parameters: crate::macro_call::ParameterState,
     pub(crate) ending_parameters: crate::macro_call::ParameterState,
+    pub(crate) starting_conditions: crate::conditionals::ConditionStack,
+    pub(crate) ending_conditions: crate::conditionals::ConditionStack,
     coverage: ParagraphInputCoverage,
 }
 
@@ -453,6 +455,7 @@ fn rebase_ending_parameters(
 pub(crate) struct ActiveParagraphInputTransaction {
     starting_input: InputState,
     starting_parameters: crate::macro_call::ParameterState,
+    starting_conditions: crate::conditionals::ConditionStack,
     root_start: Option<usize>,
     delivered_commands: usize,
     transitions: Vec<InputRecord>,
@@ -471,6 +474,7 @@ impl crate::CommandState {
         self.paragraph_input_transaction = Some(ActiveParagraphInputTransaction {
             starting_input: self.input.clone(),
             starting_parameters: self.parameters.clone(),
+            starting_conditions: self.conditions.clone(),
             root_start: root_source_anchor(&self.input),
             delivered_commands: 0,
             transitions: Vec::new(),
@@ -485,6 +489,8 @@ impl crate::CommandState {
             ending_input: self.input.clone(),
             starting_parameters: active.starting_parameters,
             ending_parameters: self.parameters.clone(),
+            starting_conditions: active.starting_conditions,
+            ending_conditions: self.conditions.clone(),
             coverage: ParagraphInputCoverage {
                 root_start: active.root_start,
                 root_end: root_source_anchor(&self.input),
@@ -524,6 +530,12 @@ impl crate::CommandState {
         let live_next = self.input.next_level_identity;
         let recorded_activation_next = transaction.starting_parameters.next_activation_identity;
         let live_activation_next = self.parameters.next_activation_identity;
+        let ending_conditions = crate::conditionals::ConditionStack::rebase_paragraph_transition(
+            &transaction.starting_conditions,
+            &transaction.ending_conditions,
+            &self.conditions,
+        )
+        .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
         let Some(activation_front) = parameter_front_identities(
             &transaction.starting_parameters,
             &self.parameters,
@@ -565,6 +577,7 @@ impl crate::CommandState {
         .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
         self.input = ending_input;
         self.parameters = ending_parameters;
+        self.conditions = ending_conditions;
         Ok(())
     }
 

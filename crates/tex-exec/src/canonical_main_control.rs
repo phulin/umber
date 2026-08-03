@@ -2165,7 +2165,7 @@ impl CanonicalMainControl {
                     replay.remove(index);
                 }
             }
-            stores.record_canonical_paragraph_lookup(false, 0);
+            stores.record_canonical_paragraph_lookup(false, 0, 0);
             return false;
         };
         let input = self.paragraph_recorder.replay[index].input.clone();
@@ -2178,7 +2178,7 @@ impl CanonicalMainControl {
             })
             .is_err()
         {
-            stores.record_canonical_paragraph_lookup(false, 0);
+            stores.record_canonical_paragraph_lookup(false, 0, 0);
             return false;
         }
         let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
@@ -2186,8 +2186,11 @@ impl CanonicalMainControl {
         if finished_nodes.is_some() {
             stores.record_pure_paragraph_line_hit();
         }
-        stores
-            .record_canonical_paragraph_lookup(true, region.input.coverage().delivered_commands());
+        stores.record_canonical_paragraph_lookup(
+            true,
+            region.input.coverage().delivered_commands(),
+            region.mutations.len(),
+        );
         self.command.abandon_paragraph_input_transaction();
         self.paragraph_recorder.pending = false;
         self.paragraph_recorder.starting_universe = None;

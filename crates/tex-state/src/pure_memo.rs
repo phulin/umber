@@ -1180,7 +1180,12 @@ impl PureMemoRuntime {
         self.recorded_canonical_paragraphs.push(record);
     }
 
-    pub(crate) fn record_canonical_paragraph_lookup(&mut self, hit: bool, commands: usize) {
+    pub(crate) fn record_canonical_paragraph_lookup(
+        &mut self,
+        hit: bool,
+        commands: usize,
+        mutations: usize,
+    ) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1193,6 +1198,10 @@ impl PureMemoRuntime {
                 .stats
                 .paragraph_commands_skipped
                 .saturating_add(commands as u64);
+            cache.stats.paragraph_mutations_replayed = cache
+                .stats
+                .paragraph_mutations_replayed
+                .saturating_add(mutations as u64);
         } else {
             cache.stats.paragraph.key_misses = cache.stats.paragraph.key_misses.saturating_add(1);
         }

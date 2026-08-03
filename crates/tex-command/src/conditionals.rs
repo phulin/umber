@@ -258,6 +258,43 @@ pub(crate) struct ConditionStack {
 }
 
 impl ConditionStack {
+    pub(crate) fn rebase_paragraph_transition(
+        recorded_start: &Self,
+        recorded_end: &Self,
+        live: &Self,
+    ) -> Option<Self> {
+        if recorded_start.frames.len() != live.frames.len() {
+            return None;
+        }
+        let mut front = Vec::with_capacity(live.frames.len());
+        for (recorded, live) in recorded_start.frames.iter().zip(&live.frames) {
+            if recorded.kind != live.kind
+                || recorded.limit != live.limit
+                || recorded.inverted != live.inverted
+            {
+                return None;
+            }
+            front.push((recorded.identity, live.clone()));
+        }
+        let mut ending = recorded_end.clone();
+        for frame in &mut ending.frames {
+            if let Some((_, live)) = front.iter().find(|(id, _)| *id == frame.identity) {
+                *frame = live.clone();
+            } else if frame.identity.0 >= recorded_start.next_identity {
+                frame.identity.0 = frame
+                    .identity
+                    .0
+                    .checked_sub(recorded_start.next_identity)?
+                    .checked_add(live.next_identity)?;
+            }
+        }
+        ending.next_identity = ending
+            .next_identity
+            .checked_sub(recorded_start.next_identity)?
+            .checked_add(live.next_identity)?;
+        Some(ending)
+    }
+
     #[cfg(test)]
     pub(crate) fn push(&mut self, kind: ConditionalKind, source_line: u32) -> ConditionId {
         self.push_with_inversion(kind, source_line, false)
