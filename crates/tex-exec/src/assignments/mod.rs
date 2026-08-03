@@ -74,12 +74,11 @@ pub(crate) use boxes::append_box_node_to_current_list;
 pub(crate) use boxes::execute_delete_last;
 pub(crate) use boxes::execute_scanned_saved_vertical_discards;
 pub(crate) use boxes::execute_scanned_unbox;
-pub(crate) use boxes::hpack_with_overfull_rule;
 pub(crate) use boxes::scan_math_box;
 pub(crate) use boxes::scan_setbox_target;
 pub(crate) use boxes::split_hpack_migrations;
 use boxes::*;
-pub(crate) use boxes::{apply_box_shift_delta, first_box_node, take_last_box};
+pub(crate) use boxes::{apply_box_shift_delta, take_last_box};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 pub(crate) use canonical_paragraph_end::{
     end_canonical_paragraph_with_fuel, end_canonical_paragraph_without_source,

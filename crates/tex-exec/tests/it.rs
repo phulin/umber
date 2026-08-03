@@ -263,8 +263,15 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                         "lib.rs"
                             | "canonical_main_control.rs"
                             | "canonical_box_runtime/mod.rs"
+                            | "canonical_box_runtime/packaging.rs"
                             | "canonical_box_runtime/vsplit.rs"
+                            | "assignments/boxes/leaders.rs"
+                            | "assignments/boxes/mod.rs"
+                            | "assignments/boxes/packaging.rs"
                             | "assignments/boxes/vsplit.rs"
+                            | "assignments/hmode.rs"
+                            | "assignments/paragraph.rs"
+                            | "math/display.rs"
                     )
                 ),
                 "{} must not bypass the canonical box runtime owner",
@@ -316,6 +323,46 @@ fn canonical_vsplit_physically_owns_its_source_free_closure() {
         );
     }
     assert!(legacy.contains("crate::canonical_box_runtime::split_vbox_register"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_packaging_physically_owns_its_source_free_closure() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_box_runtime/packaging.rs"))
+        .expect("read canonical packaging owner");
+    let legacy = fs::read_to_string(source_root.join("assignments/boxes/packaging.rs"))
+        .expect("read legacy packaging scanner");
+
+    for forbidden in [
+        "assignments",
+        "legacy",
+        "executor",
+        "ExecutionContext",
+        "InputStack",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical packaging owner references `{forbidden}`"
+        );
+    }
+    for implementation in [
+        "fn hpack_with_overfull_rule(",
+        "fn hpack_owned_with_overfull_rule(",
+        "fn project_short_diagnostic_discs(",
+        "fn first_box_node(",
+    ] {
+        assert!(
+            owner.contains(implementation),
+            "canonical owner lacks `{implementation}`"
+        );
+        assert!(
+            !legacy.contains(implementation),
+            "legacy scanner still owns `{implementation}`"
+        );
+    }
 }
 
 #[test]

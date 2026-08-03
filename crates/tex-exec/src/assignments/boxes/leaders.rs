@@ -12,8 +12,9 @@ use super::super::{
     infinite_glue, next_non_space_traced_x, push_tokens, push_traced_tokens, scan_glue_id,
     scan_register_index, scan_rule_node,
 };
-use super::packaging::{first_box_node, kind_for_primitive, scan_box_node};
+use super::packaging::{kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
+use crate::canonical_box_runtime::first_box_node;
 
 pub(super) fn scan_leader_payload(
     input: &mut InputStack,

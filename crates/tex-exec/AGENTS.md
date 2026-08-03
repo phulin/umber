@@ -28,8 +28,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   tracing.
 - `src/canonical_box_runtime/`: typed canonical box-register, material,
   packing/migration, horizontal contribution, spacing, indentation, whatsit,
-  and list-commit runtime surface; `vsplit.rs` physically owns source-free
-  vertical-box register splitting while scanner fronts remain under assignments.
+  and list-commit runtime surface; `packaging.rs` physically owns horizontal
+  packing/diagnostic projection and box lookup, and `vsplit.rs` owns vertical-box
+  register splitting, while scanner fronts remain under assignments.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
 - `src/assignments/boxes/tests.rs`: focused box-list operation tests, including pdfTeX margin-kern removal and immutable source-list identity during unboxing.
 - `src/assignments/boxes/vsplit/tests.rs`: direct TeX82 `\vsplit` void-box and wrong-box recovery tests.

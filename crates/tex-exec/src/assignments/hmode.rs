@@ -1803,7 +1803,11 @@ fn execute_accent(
         nest.current_list_mutation().push(accent_node);
     } else {
         let children = stores.freeze_node_list(&[accent_node]);
-        let mut boxed = super::boxes::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
+        let mut boxed = crate::canonical_box_runtime::hpack_with_overfull_rule(
+            stores,
+            children,
+            PackSpec::Natural,
+        );
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;

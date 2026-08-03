@@ -20,13 +20,13 @@ mod packaging;
 mod tests;
 pub(crate) mod vsplit;
 
+use crate::canonical_box_runtime::first_box_node;
 use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
 use packaging::{
     BoxScanContext, ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value,
 };
-pub(crate) use packaging::{first_box_node, scan_box_group, scan_pack_spec, take_last_box};
-pub(crate) use packaging::{hpack_owned_with_overfull_rule, hpack_with_overfull_rule};
+pub(crate) use packaging::{scan_box_group, scan_pack_spec, take_last_box};
 use vsplit::scan_vsplit_node;
 
 pub(super) fn execute_make_box(

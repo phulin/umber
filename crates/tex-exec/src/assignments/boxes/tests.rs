@@ -33,7 +33,7 @@ fn frozen_hpack_reports_decorated_overfull_list_once() {
         kind: tex_state::node::KernKind::Explicit,
     }]);
 
-    let packed = super::packaging::hpack_with_overfull_rule(
+    let packed = crate::canonical_box_runtime::hpack_with_overfull_rule(
         &mut stores,
         children,
         PackSpec::Exactly(Scaled::from_raw(Scaled::UNITY)),
@@ -108,7 +108,8 @@ fn short_diagnostic_pairs_discretionaries_across_ligature_expansion() {
         },
     ];
 
-    let projected = super::packaging::project_short_diagnostic_discs(&physical, &semantic);
+    let projected =
+        crate::canonical_box_runtime::project_short_diagnostic_discs(&physical, &semantic);
     let Node::Disc {
         pre,
         replace,

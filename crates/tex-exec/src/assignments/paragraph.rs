@@ -15,8 +15,8 @@ use tex_typeset::linebreak::{
     try_line_break_without_hyphenation, try_line_break_without_hyphenation_traced,
 };
 
-use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
+use crate::canonical_box_runtime::hpack_owned_with_overfull_rule;
 use crate::legacy_paragraph_memo::ParagraphMemoConsumer;
 use crate::mode::ParagraphParams;
 use crate::vertical::{
