@@ -482,6 +482,7 @@ fn batch_mode_routes_pack_headline_and_box_dump_to_log_only() {
             excess: Scaled::from_raw(2 * Scaled::UNITY),
         }],
         &packed,
+        DiagnosticListLayout::FrozenList,
     );
 
     assert_eq!(sink_text(&stores, true), "");
@@ -507,6 +508,7 @@ fn nonstop_mode_keeps_pack_headline_before_dump_on_both_channels() {
             excess: Scaled::from_raw(2 * Scaled::UNITY),
         }],
         &packed,
+        DiagnosticListLayout::FrozenList,
     );
 
     let terminal = sink_text(&stores, true);
@@ -536,6 +538,7 @@ fn output_active_vbox_dump_supplies_the_headline_newline() {
                 excess: Scaled::from_raw(2 * Scaled::UNITY),
             }],
             &packed,
+            DiagnosticListLayout::FrozenList,
         );
 
         let origin = if output_active {
@@ -585,6 +588,7 @@ fn pack_diagnostic_origin_contexts() {
                     excess: Scaled::from_raw(Scaled::UNITY),
                 }],
                 &packed,
+                DiagnosticListLayout::FrozenList,
             );
 
             let expected_headline = format!("\nUnderfull \\hbox (badness 10000{origin}\n\n");

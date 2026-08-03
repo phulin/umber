@@ -7,7 +7,7 @@ use tex_state::scaled::Scaled;
 use tex_state::{GeometryObservation, Universe};
 use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
-use crate::pack_report::{PackedDirection, report_pack_diagnostics};
+use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diagnostics};
 
 #[must_use]
 pub(crate) fn hpack_params(stores: &Universe) -> HpackParams {
@@ -52,9 +52,16 @@ pub(crate) fn hpack(
         PackedDirection::Horizontal,
         &packed.diagnostics,
         &tex_state::node::Node::HList(packed.node),
+        DiagnosticListLayout::FrozenList,
     );
     if let Some((missing, extra)) = lr_problems {
-        crate::pack_report::report_lr_problems(stores, missing, extra, &Node::HList(packed.node));
+        crate::pack_report::report_lr_problems(
+            stores,
+            missing,
+            extra,
+            &Node::HList(packed.node),
+            DiagnosticListLayout::FrozenList,
+        );
     }
     packed
 }
@@ -113,6 +120,7 @@ pub(crate) fn vpack(
         PackedDirection::Vertical,
         &packed.diagnostics,
         &tex_state::node::Node::VList(packed.node),
+        DiagnosticListLayout::FrozenList,
     );
     packed
 }
@@ -135,6 +143,7 @@ pub(crate) fn vtop(
         PackedDirection::Vertical,
         &packed.diagnostics,
         &tex_state::node::Node::VList(packed.node),
+        DiagnosticListLayout::FrozenList,
     );
     packed
 }

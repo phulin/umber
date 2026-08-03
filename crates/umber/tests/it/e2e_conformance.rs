@@ -1999,6 +1999,76 @@ fn e2e_conformance_trip_canonical() {
 }
 
 #[test]
+fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
+    // Construct the real TRIP format, then retain the loaded-job prefix that
+    // establishes the page, paragraph, and three preceding \vadjust states.
+    // Replaying INITEX source cannot reproduce the dumped font ligature and
+    // hyphenation state responsible for this diagnostic.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
+    let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
+    let tfm: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).unwrap());
+    let recipe = trip_format_recipe(
+        TripEngineProfile::Tex82,
+        "trip",
+        "trip.tex",
+        Arc::clone(&trip),
+        Arc::clone(&tripos),
+        Arc::clone(&tfm),
+    );
+    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
+        .expect("focused TRIP format provider");
+    let prepared = provider.prepare(&recipe).expect("focused TRIP format");
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..203].join("\n")).into_bytes());
+    let mut observer = TripObservers::default();
+    let loaded = provider
+        .run(
+            &prepared,
+            PreparedFormatJob {
+                engine: EngineMode::Tex82,
+                engine_binary: EngineMode::Tex82.binary_identity(),
+                backend: OutputCapability::Dvi,
+                clock: recipe.clock,
+                interaction: tex_state::InteractionMode::Nonstop,
+                error_context_widths: recipe.construction_error_context_widths,
+                guards: recipe.guards,
+                startup_line: "&trip focused.tex".into(),
+                source_name: "focused.tex".into(),
+                source_kind: RegisteredSourceKind::Generated,
+                source,
+                resources: vec![
+                    LoadedFormatResource::Input {
+                        logical_name: "tripos.tex".into(),
+                        resolved_name: "./tripos.tex".into(),
+                        source_kind: RegisteredSourceKind::Generated,
+                        bytes: tripos,
+                    },
+                    LoadedFormatResource::Tfm {
+                        logical_name: "trip.tfm".into(),
+                        bytes: tfm,
+                    },
+                ],
+                terminal_input: Vec::new(),
+                observer: &mut observer,
+            },
+        )
+        .expect("focused loaded TRIP run");
+    let (_, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
+    let log = String::from_utf8(log).expect("TRIP log is UTF-8");
+    assert!(
+        log.contains(concat!(
+            "Underfull \\hbox (badness 10000) in paragraph at lines 109--109\n",
+            " [] []\\rip BB-B-BBB\n",
+        )),
+        "{log}"
+    );
+    assert!(!log.contains(" [] []\\rip BB-BBBB\n"), "{log}");
+}
+
+#[test]
 #[ignore = "manual full-document e-TRIP parity; run through scripts/trip.sh"]
 fn e2e_conformance_etrip() {
     assets::with_gate("etrip", |gate| {

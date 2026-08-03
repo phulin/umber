@@ -47,6 +47,17 @@ pub(crate) enum PackedDirection {
     Vertical,
 }
 
+/// Representation of discretionary replacement nodes in a diagnostic list.
+///
+/// Storage in the node arena does not determine this: paragraph diagnostics
+/// freeze a detached projection before reporting, while ordinary packed lists
+/// are frozen engine lists with TeX's physical replacement counts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiagnosticListLayout {
+    DetachedProjection,
+    FrozenList,
+}
+
 impl PackedDirection {
     const fn box_name(self) -> &'static str {
         match self {
@@ -73,9 +84,10 @@ pub(crate) fn report_pack_diagnostics(
     direction: PackedDirection,
     diagnostics: &[PackDiagnostic],
     packed: &Node,
+    list_layout: DiagnosticListLayout,
 ) {
     for diagnostic in diagnostics {
-        report_one(stores, direction, diagnostic, packed);
+        report_one(stores, direction, diagnostic, packed, list_layout);
     }
 }
 
@@ -86,6 +98,7 @@ pub(crate) fn report_lr_problems(
     missing: usize,
     extra: usize,
     packed: &Node,
+    list_layout: DiagnosticListLayout,
 ) {
     let Node::HList(boxed) = packed else {
         unreachable!("LR recovery belongs to hpack")
@@ -93,7 +106,7 @@ pub(crate) fn report_lr_problems(
     let mut headline = format!("\n\\endL or \\endR problem ({missing} missing, {extra} extra");
     headline.push_str(&origin_text(stores));
     headline.push('\n');
-    headline.push_str(&short_display(stores, boxed.children));
+    headline.push_str(&short_display(stores, boxed.children, list_layout));
     headline.push('\n');
     stores.printer().print_rendered(&headline);
 
@@ -112,6 +125,7 @@ fn report_one(
     direction: PackedDirection,
     diagnostic: &PackDiagnostic,
     packed: &Node,
+    list_layout: DiagnosticListLayout,
 ) {
     let children = match packed {
         Node::HList(node) | Node::VList(node) => node.children,
@@ -155,7 +169,7 @@ fn report_one(
     if direction == PackedDirection::Horizontal {
         // §663: `font_in_short_display:=null_font; short_display(list_ptr(r));
         // print_ln`. §675's vertical half has no such line.
-        headline.push_str(&short_display(stores, children));
+        headline.push_str(&short_display(stores, children, list_layout));
         headline.push('\n');
     }
     // TeX82 §§660/674 use the ordinary `print_ln`/`print_nl` primitives for
@@ -212,8 +226,8 @@ fn origin_text(stores: &Universe) -> String {
 /// a discretionary's own pre-break and post-break text followed by skipping
 /// its replacement count. e-TeX 2.6's §175 change prints its L/R direction
 /// subtypes as `[]` instead of ordinary math `$` markers.
-fn short_display(stores: &Universe, list: NodeListId) -> String {
-    ShortDisplayRenderer::new().render_list(stores, list)
+fn short_display(stores: &Universe, list: NodeListId, list_layout: DiagnosticListLayout) -> String {
+    ShortDisplayRenderer::new().render_list_with_layout(stores, list, list_layout)
 }
 
 /// TeX82 §174's stateful `short_display` renderer.
@@ -259,8 +273,17 @@ impl ShortDisplayRenderer {
     }
 
     fn render_list(&mut self, stores: &Universe, list: NodeListId) -> String {
+        self.render_list_with_layout(stores, list, DiagnosticListLayout::FrozenList)
+    }
+
+    fn render_list_with_layout(
+        &mut self,
+        stores: &Universe,
+        list: NodeListId,
+        list_layout: DiagnosticListLayout,
+    ) -> String {
         let mut out = String::new();
-        append_short_display(stores, list, &mut self.font, &mut out);
+        append_short_display(stores, list, list_layout, &mut self.font, &mut out);
         out
     }
 }
@@ -268,6 +291,7 @@ impl ShortDisplayRenderer {
 fn append_short_display(
     stores: &Universe,
     list: NodeListId,
+    list_layout: DiagnosticListLayout,
     font_in_short_display: &mut Option<u32>,
     out: &mut String,
 ) {
@@ -275,7 +299,10 @@ fn append_short_display(
     append_short_display_nodes(
         stores,
         &nodes,
-        DiscReplacementLayout::FrozenList,
+        match list_layout {
+            DiagnosticListLayout::DetachedProjection => DiscReplacementLayout::DetachedProjection,
+            DiagnosticListLayout::FrozenList => DiscReplacementLayout::FrozenList,
+        },
         font_in_short_display,
         out,
     );
@@ -338,8 +365,20 @@ fn append_short_display_nodes(
                 physical_replace_count,
                 ..
             } => {
-                append_short_display(stores, *pre, font_in_short_display, out);
-                append_short_display(stores, *post, font_in_short_display, out);
+                append_short_display(
+                    stores,
+                    *pre,
+                    DiagnosticListLayout::FrozenList,
+                    font_in_short_display,
+                    out,
+                );
+                append_short_display(
+                    stores,
+                    *post,
+                    DiagnosticListLayout::FrozenList,
+                    font_in_short_display,
+                    out,
+                );
                 // TeX82 §174 advances past the replacement nodes linked after
                 // the discretionary. Frozen engine lists carry that count
                 // explicitly; paragraph tracing instead supplies a detached

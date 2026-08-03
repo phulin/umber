@@ -446,6 +446,11 @@ pub(crate) fn hpack_owned_with_overfull_rule(
     let short_diagnostic_nodes = diagnostic_nodes
         .as_deref()
         .map(|physical| project_short_diagnostic_discs(physical, nodes));
+    let diagnostic_list_layout = if short_diagnostic_nodes.is_some() {
+        crate::pack_report::DiagnosticListLayout::DetachedProjection
+    } else {
+        crate::pack_report::DiagnosticListLayout::FrozenList
+    };
     let children = stores.freeze_node_list_owned(nodes);
     let mut packed = plan.finish(children);
     stores.set_last_badness(packed.badness);
@@ -472,6 +477,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         crate::pack_report::PackedDirection::Horizontal,
         &packed.diagnostics,
         &tex_state::node::Node::HList(diagnostic_box),
+        diagnostic_list_layout,
     );
     if let Some((missing, extra)) = lr_problems {
         crate::pack_report::report_lr_problems(
@@ -479,6 +485,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
             missing,
             extra,
             &tex_state::node::Node::HList(diagnostic_box),
+            diagnostic_list_layout,
         );
     }
     packed.node
