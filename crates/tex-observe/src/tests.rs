@@ -13,6 +13,7 @@ fn geometry_translation_captures_active_source_and_observation_line() {
             height_sp: 20,
             depth_sp: 3,
             line: 47,
+            source: None,
         }),
         &mut AlignmentNesting::default(),
         false,

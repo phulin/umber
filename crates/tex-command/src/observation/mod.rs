@@ -662,12 +662,14 @@ pub enum GeometryRecord {
         height_sp: i64,
         depth_sp: i64,
         line: u32,
+        source: Option<tex_state::SourceId>,
     },
     Vpack {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
         line: u32,
+        source: Option<tex_state::SourceId>,
     },
     Shipout {
         page_width_sp: i64,
@@ -675,6 +677,7 @@ pub enum GeometryRecord {
         /// TeX82 §617's `count0..count9` BOP snapshot.
         counts: [i32; 10],
         line: u32,
+        source: Option<tex_state::SourceId>,
     },
 }
 

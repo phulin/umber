@@ -320,6 +320,17 @@ fn opening_a_named_file_source_queues_exactly_one_open_event() {
 }
 
 #[test]
+fn current_file_source_identity_matches_the_line_owner() {
+    let mut state = CommandState::default();
+    let source = register_named(&mut state, "show-box.tex", b"x\n");
+    state
+        .open_registered_source(source)
+        .expect("named source opens as a text file");
+
+    assert_eq!(state.current_file_source_id(), Some(source));
+}
+
+#[test]
 fn exhausting_a_named_file_source_queues_exactly_one_close_event() {
     // §362 prints `)` once a text file's last line is consumed.
     let mut state = CommandState::default();

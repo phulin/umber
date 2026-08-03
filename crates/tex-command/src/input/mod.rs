@@ -440,4 +440,19 @@ impl InputState {
             })
             .unwrap_or(0)
     }
+
+    pub(crate) fn current_file_source_id(&self) -> Option<tex_state::SourceId> {
+        self.levels.iter().rev().find_map(|level| match level {
+            InputLevel::Source(source)
+                if matches!(
+                    source.name_class,
+                    SourceNameClass::Scantokens(_) | SourceNameClass::File
+                ) =>
+            {
+                Some(source.cursor.current_backing().id)
+            }
+            InputLevel::Source(_) => None,
+            InputLevel::Tokens(_) => None,
+        })
+    }
 }

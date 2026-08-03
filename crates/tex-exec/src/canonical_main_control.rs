@@ -2129,8 +2129,9 @@ impl CanonicalMainControl {
     fn enter_main_control(&mut self, stores: &mut Universe) -> bool {
         // Seeds `line` before the first command is delivered; every step
         // republishes it after delivery (see `step_once`).
-        stores.set_current_input_line(
+        stores.set_current_input_position(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+            self.command.current_file_source_id(),
         );
         if std::mem::replace(&mut self.main_control_entered, true) {
             return false;
@@ -2223,8 +2224,9 @@ impl CanonicalMainControl {
         // §1091's `mode_line` both name the line the command is *on*, and a
         // command that is the first thing on a line is scanned by a step
         // that began on the previous one.
-        stores.set_current_input_line(
+        stores.set_current_input_position(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+            self.command.current_file_source_id(),
         );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
@@ -2895,8 +2897,9 @@ impl CanonicalMainControl {
         // §1091's `mode_line` both name the line the command is *on*, and a
         // command that is the first thing on a line is scanned by a step
         // that began on the previous one.
-        stores.set_current_input_line(
+        stores.set_current_input_position(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+            self.command.current_file_source_id(),
         );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);
@@ -4353,33 +4356,39 @@ impl CanonicalMainControl {
                 height_sp,
                 depth_sp,
                 line,
+                source,
             } => GeometryRecord::Hpack {
                 width_sp,
                 height_sp,
                 depth_sp,
                 line,
+                source,
             },
             GeometryObservation::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
                 line,
+                source,
             } => GeometryRecord::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
                 line,
+                source,
             },
             GeometryObservation::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
                 line,
+                source,
             } => GeometryRecord::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
                 line,
+                source,
             },
         };
         CommandObservation::Geometry(record)
@@ -4526,8 +4535,9 @@ impl CanonicalMainControl {
         // §1091's `mode_line` both name the line the command is *on*, and a
         // command that is the first thing on a line is scanned by a step
         // that began on the previous one.
-        stores.set_current_input_line(
+        stores.set_current_input_position(
             i32::try_from(self.command.current_file_line_number()).unwrap_or(i32::MAX),
+            self.command.current_file_source_id(),
         );
         report_pending_diagnostics(stores, diagnostics)?;
         self.drain_file_framing_events(stores);

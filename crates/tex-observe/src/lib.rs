@@ -87,7 +87,7 @@ pub fn canonical_evidence_json_lines(
 }
 
 /// Versioned hard limits for detached construction-evidence transport.
-pub const EVIDENCE_CODEC_SCHEMA: u32 = 1;
+pub const EVIDENCE_CODEC_SCHEMA: u32 = 2;
 pub const MAX_EVIDENCE_EVENTS_PER_STREAM: usize = 1_000_000;
 pub const MAX_EVIDENCE_EVENT_BYTES: usize = 1024 * 1024;
 pub const MAX_EVIDENCE_STRING_BYTES: usize = 256 * 1024;
@@ -325,6 +325,7 @@ pub struct LiveSessionStreams {
 /// the engine has returned, including after an early failure.
 pub struct LiveSessionTranslator {
     sources: Vec<ActiveSource>,
+    known_source_names: Vec<(SourceId, String)>,
     alignment_nesting: AlignmentNesting,
     events: Vec<ObservedEvent>,
     geometry: bool,
@@ -355,9 +356,10 @@ impl LiveSessionTranslator {
                 bytes: Arc::from(&b""[..]),
                 line_starts: Arc::from([0]),
             }],
+            known_source_names: Vec::new(),
             alignment_nesting: AlignmentNesting::default(),
             events: Vec::new(),
-            geometry: schema == SchemaVersion::V2,
+            geometry: schema >= SchemaVersion::V2,
             preserve_macro_reference_operands: false,
         }
     }
@@ -490,9 +492,13 @@ impl LiveSessionTranslator {
     }
 
     pub fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
+        let name = name.into();
         let line_starts = source_line_starts(&bytes);
+        if !self.known_source_names.iter().any(|(id, _)| *id == source) {
+            self.known_source_names.push((source, name.clone()));
+        }
         self.sources.push(ActiveSource {
-            name: name.into(),
+            name,
             source: Some(source),
             bytes,
             line_starts,
@@ -533,6 +539,17 @@ fn encode_observed_stream<'a>(
     }
     ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
     Ok(bytes)
+}
+
+fn geometry_source(observation: &CommandObservation) -> Option<SourceId> {
+    match observation {
+        CommandObservation::Geometry(
+            GeometryRecord::Hpack { source, .. }
+            | GeometryRecord::Vpack { source, .. }
+            | GeometryRecord::Shipout { source, .. },
+        ) => *source,
+        _ => None,
+    }
 }
 
 impl CommandObserver for Recorder {
@@ -582,6 +599,13 @@ impl CommandObserver for Recorder {
                 Arc::clone(&source.line_starts),
             )
         };
+        let source_name = geometry_source(&observation)
+            .and_then(|source| {
+                self.known_source_names
+                    .iter()
+                    .find_map(|(id, name)| (*id == source).then_some(name.clone()))
+            })
+            .unwrap_or(source_name);
         self.events.push(translate_observation(
             &source_name,
             source_id,

@@ -56,12 +56,14 @@ fn nested_sub_mlist_publishes_structural_hpack_geometry() {
                 height_sp: 0,
                 depth_sp: 0,
                 line: 0,
+                source: None,
             },
             tex_state::GeometryObservation::Hpack {
                 width_sp: 0,
                 height_sp: 0,
                 depth_sp: 0,
                 line: 0,
+                source: None,
             },
         ],
         "TeX82 §651's structural pack and §724's dimensions pack must cross the execution observer boundary"

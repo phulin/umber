@@ -1,7 +1,7 @@
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{EffectRecord, GeometryObservation, Universe};
+use tex_state::{EffectRecord, GeometryObservation, SourceId, Universe};
 use tex_typeset::{HpackParams, PackSpec, VpackParams};
 
 use super::{hpack, vtop};
@@ -59,7 +59,7 @@ fn vtop_observes_vpackage_before_readjusting_height_and_depth() {
     const NEGATIVE_THREE_MM: Scaled = Scaled::from_raw(-559_403);
     let mut stores = Universe::new();
     stores.enable_geometry_observation();
-    stores.set_current_input_line(330);
+    stores.set_current_input_position(330, Some(SourceId::new(7)));
     let glue = stores.intern_glue(GlueSpec {
         width: NEGATIVE_THREE_MM,
         ..GlueSpec::ZERO
@@ -88,6 +88,7 @@ fn vtop_observes_vpackage_before_readjusting_height_and_depth() {
             height_sp: i64::from(NEGATIVE_THREE_MM.raw()),
             depth_sp: 0,
             line: 330,
+            source: Some(SourceId::new(7)),
         }]
     );
     assert_eq!(packed.node.height, Scaled::from_raw(0));

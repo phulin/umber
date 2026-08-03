@@ -128,6 +128,65 @@ fn detached_geometry_uses_the_pinned_schema_three_header() {
     assert_eq!(stream.events.len(), 1);
 }
 
+#[test]
+fn trip_construction_geometry_is_complete_schema_three_evidence() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
+    let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
+    let tfm: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tfm")).unwrap());
+    let recipe = trip_format_recipe(
+        TripEngineProfile::Tex82,
+        "trip",
+        "trip.tex",
+        source,
+        tripos,
+        tfm,
+    );
+    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
+        .expect("focused TRIP format provider");
+    let prepared = provider.prepare(&recipe).expect("focused TRIP format");
+    let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let actual = tex_observe::canonical_evidence_json_lines(
+        &prepared.construction_evidence().geometry,
+        oracle,
+    )
+    .expect("actual construction geometry validates as schema v3");
+    let stream = ObservationStream::from_canonical_json_lines(&actual).expect("geometry stream");
+    let mut hpack = 0;
+    let mut vpack = 0;
+    let mut shipout = 0;
+    for event in &stream.events {
+        match &event.semantic {
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                location: Some(location),
+                ..
+            }) => {
+                hpack += 1;
+                assert_eq!(location.source, "trip.tex");
+                assert!(location.line > 0);
+            }
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Vpack {
+                location: Some(location),
+                ..
+            }) => {
+                vpack += 1;
+                assert_eq!(location.source, "trip.tex");
+                assert!(location.line > 0);
+            }
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Shipout {
+                location: Some(location),
+                ..
+            }) => {
+                shipout += 1;
+                assert_eq!(location.source, "trip.tex");
+                assert!(location.line > 0);
+            }
+            event => panic!("unattributed construction geometry: {event:?}"),
+        }
+    }
+    assert_eq!((hpack, vpack, shipout), (4, 4, 0));
+}
+
 struct LiveCapture {
     root: LiveSource,
     observations: Vec<tex_command::CommandObservation>,
@@ -160,13 +219,14 @@ impl LiveCapture {
     }
 
     fn geometry(&self, oracle: &[u8]) -> Vec<u8> {
-        let mut observer = parity_harness::TripGeometryObserver::default();
-        for observation in self.observations.iter().cloned() {
-            observer.committed(observation);
-        }
-        observer
-            .canonical_json_lines(oracle)
-            .expect("geometry observations translate")
+        let mut translator =
+            LiveSessionTranslator::for_root(SchemaVersion::V3, "terminal", self.root.clone());
+        translator.translate_captured(self.observations.iter().cloned());
+        tex_observe::canonical_evidence_json_lines(
+            &translator.finalize_detached_evidence().geometry,
+            oracle,
+        )
+        .expect("geometry observations translate")
     }
 }
 

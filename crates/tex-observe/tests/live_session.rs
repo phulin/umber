@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use tex_command::{
-    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
-    DiagnosticRecord, EffectRecord, GeneratedSourceRecord, GeometryRecord, ObservedToken,
-    OpenedSourceSnapshot, SourceLocation as CommandSourceLocation,
+    CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandObserver,
+    CommandProvenance, DiagnosticRecord, EffectRecord, GeneratedSourceRecord, GeometryRecord,
+    ObservedToken, OpenedSourceSnapshot, SourceLocation as CommandSourceLocation,
 };
 use tex_observe::{LiveSessionOutcome, LiveSessionTranslator, LiveSource};
 use tex_oracle::{
@@ -87,6 +87,7 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
             height_sp: 20,
             depth_sp: 3,
             line: 0,
+            source: None,
         }),
     ]);
 
@@ -109,6 +110,38 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
     ));
     assert!(matches!(evidence.semantic[2].semantic, Event::Effect(_)));
     assert!(matches!(evidence.geometry[0].semantic, Event::Geometry(_)));
+}
+
+#[test]
+fn delayed_geometry_uses_its_captured_source_instead_of_the_live_frame() {
+    let root = SourceId::new(1);
+    let nested = SourceId::new(2);
+    let mut translator = LiveSessionTranslator::for_root(
+        SchemaVersion::V3,
+        "terminal",
+        LiveSource {
+            name: "root.tex".into(),
+            source: root,
+            bytes: Arc::from(&b"root\n"[..]),
+        },
+    );
+    translator.activate_source("nested.tex", nested, Arc::from(&b"nested\n"[..]));
+    translator.committed(CommandObservation::Geometry(GeometryRecord::Shipout {
+        page_width_sp: 10,
+        page_height_sp: 20,
+        counts: [0; 10],
+        line: 7,
+        source: Some(root),
+    }));
+
+    let evidence = translator.finalize_detached_evidence();
+    assert!(matches!(
+        &evidence.geometry[0].semantic,
+        Event::Geometry(tex_oracle::GeometryEvent::Shipout {
+            location: Some(location),
+            ..
+        }) if location.source == "root.tex" && location.line == 7
+    ));
 }
 
 fn canonical(events: impl IntoIterator<Item = Event>) -> Vec<u8> {

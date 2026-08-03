@@ -186,6 +186,7 @@ pub(crate) fn translate_observation(
                     height_sp,
                     depth_sp,
                     line,
+                    source: _,
                 } => GeometryEvent::Hpack {
                     width_sp,
                     height_sp,
@@ -200,6 +201,7 @@ pub(crate) fn translate_observation(
                     height_sp,
                     depth_sp,
                     line,
+                    source: _,
                 } => GeometryEvent::Vpack {
                     width_sp,
                     height_sp,
@@ -214,6 +216,7 @@ pub(crate) fn translate_observation(
                     page_height_sp,
                     counts,
                     line,
+                    source: _,
                 } => GeometryEvent::Shipout {
                     page_width_sp,
                     page_height_sp,

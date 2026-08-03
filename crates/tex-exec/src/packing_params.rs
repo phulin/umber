@@ -66,6 +66,7 @@ pub(crate) fn hpack_unreported(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
         line: stores.current_input_line().max(0) as u32,
+        source: stores.current_input_source(),
     });
     (packed, lr_problems)
 }
@@ -142,6 +143,7 @@ pub(crate) fn vpack(
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
         line: stores.current_input_line().max(0) as u32,
+        source: stores.current_input_source(),
     });
     report_pack_diagnostics(
         stores,

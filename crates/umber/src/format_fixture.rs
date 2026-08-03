@@ -31,7 +31,8 @@ const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
 // Version 3 includes TeX82 §962's zero/nonletter edge-of-word pattern
 // semantics in generated hyphenation tries.
 const PRODUCER_CONTRACT_VERSION: u32 = 3;
-const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 1;
+// Version 2 carries the producing source identity on geometry observations.
+const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
 /// Positive cumulative limits for one format construction or loaded job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -606,7 +607,7 @@ pub(crate) fn construct_format_in_worker(
         Arc::clone(&recipe.construction_source),
     )?;
     let mut observer = LiveSessionTranslator::for_root(
-        SchemaVersion::V2,
+        SchemaVersion::V3,
         "terminal",
         LiveSource {
             name: recipe.construction_source_name.clone(),

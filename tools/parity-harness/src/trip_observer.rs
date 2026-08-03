@@ -163,6 +163,7 @@ impl CommandObserver for TripGeometryObserver {
                 height_sp,
                 depth_sp,
                 line: _,
+                source: _,
             } => GeometryEvent::Hpack {
                 width_sp,
                 height_sp,
@@ -174,6 +175,7 @@ impl CommandObserver for TripGeometryObserver {
                 height_sp,
                 depth_sp,
                 line: _,
+                source: _,
             } => GeometryEvent::Vpack {
                 width_sp,
                 height_sp,
@@ -185,6 +187,7 @@ impl CommandObserver for TripGeometryObserver {
                 page_height_sp,
                 counts,
                 line: _,
+                source: _,
             } => GeometryEvent::Shipout {
                 page_width_sp,
                 page_height_sp,

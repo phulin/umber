@@ -1276,6 +1276,7 @@ struct DiagnosticPosition {
     /// The line number of the innermost open file, or 0 when input is not
     /// coming from a file.
     line: i32,
+    source: Option<SourceId>,
     /// §661's `pack_begin_line`: 0 outside line breaking and alignment,
     /// §804's positive `mode_line` while `post_line_break` packs a
     /// paragraph's lines, §768's negative `mode_line` while `fin_align`
@@ -1306,18 +1307,21 @@ pub enum GeometryObservation {
         height_sp: i64,
         depth_sp: i64,
         line: u32,
+        source: Option<SourceId>,
     },
     Vpack {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
         line: u32,
+        source: Option<SourceId>,
     },
     Shipout {
         page_width_sp: i64,
         page_height_sp: i64,
         counts: [i32; 10],
         line: u32,
+        source: Option<SourceId>,
     },
 }
 
@@ -3452,6 +3456,17 @@ impl Universe {
 
     pub const fn set_current_input_line(&mut self, line: i32) {
         self.diagnostic_position.line = line;
+        self.diagnostic_position.source = None;
+    }
+
+    pub const fn set_current_input_position(&mut self, line: i32, source: Option<SourceId>) {
+        self.diagnostic_position.line = line;
+        self.diagnostic_position.source = source;
+    }
+
+    #[must_use]
+    pub const fn current_input_source(&self) -> Option<SourceId> {
+        self.diagnostic_position.source
     }
 
     /// tex.web §661's `pack_begin_line`.

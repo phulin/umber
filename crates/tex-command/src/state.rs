@@ -207,6 +207,11 @@ impl CommandState {
         u32::try_from(self.input.current_file_line_number()).unwrap_or(0)
     }
 
+    #[must_use]
+    pub fn current_file_source_id(&self) -> Option<tex_state::SourceId> {
+        self.input.current_file_source_id()
+    }
+
     /// Captures TeX82 §530's current input display before deferred shipout
     /// releases the command processor borrow.
     #[must_use]
