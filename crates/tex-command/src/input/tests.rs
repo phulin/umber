@@ -145,3 +145,31 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
         "\n<template> \\A \n              \\endtemplate "
     );
 }
+
+#[test]
+fn token_context_pseudoprints_nul_in_control_sequence_names() {
+    // TeX82 §§59/262/315 route token-list context through `print`, so a
+    // control sequence's non-printable name bytes never reach the log raw.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR, -1);
+    let symbol = universe.intern("a\0\0a").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from([
+            tex_state::token::TracedTokenWord::pack(
+                tex_state::token::Token::Cs(symbol),
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+        ]))),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+
+    let context = command.output_open_context(&universe.command_context());
+    assert_eq!(
+        context,
+        "\n<to be read again> \n                   \\a^^@^^@a "
+    );
+    assert!(!context.contains('\0'));
+}

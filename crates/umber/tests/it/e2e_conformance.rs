@@ -2347,6 +2347,19 @@ fn trip_loaded_tokens_runaway_names_assignment_scanner() {
 }
 
 #[test]
+fn trip_loaded_runaway_context_escapes_nul_control_sequence_name() {
+    // TeX82 §§59/262/315 pseudoprint token-list context through the active
+    // selector, so NUL bytes use printable double-caret notation.
+    let log = run_focused_loaded_trip_through(354);
+    let runaway = log
+        .rfind("Forbidden control sequence found while scanning text of \\tokens.")
+        .expect("line-354 tokens runaway");
+    let report = &log[runaway..];
+    assert!(report.contains("\\a^^@^^@a"), "{report}");
+    assert!(!report.contains('\0'), "{report:?}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

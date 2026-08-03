@@ -303,9 +303,16 @@ impl InputState {
             stores: &tex_state::CommandContext<'_>,
             tokens: impl Iterator<Item = tex_state::token::Token>,
         ) -> String {
-            tokens
-                .map(|token| crate::processor::expand::token_list_token_text(stores, token))
-                .collect()
+            // TeX82 §§59/262/315 pseudoprint through the active selector;
+            // unlike a `new_string` result, control bytes in both character
+            // and control-sequence tokens therefore use canonical `^^`
+            // notation (and the live `\newlinechar` remains a newline).
+            let mut rendered = String::new();
+            for token in tokens {
+                let raw = crate::processor::expand::token_list_token_text(stores, token);
+                stores.append_selector_string_text(&raw, &mut rendered);
+            }
+            rendered
         }
 
         let (before, mut after) = match &tokens.payload {
