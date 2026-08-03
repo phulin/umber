@@ -613,6 +613,7 @@ pub struct CanonicalParagraphRegion {
     identity: u64,
     input: tex_command::ParagraphInputTransaction,
     owned_input: Arc<tex_command::OwnedCommandContinuation>,
+    entry_outer_parskip: bool,
     // Paragraph boundaries are immutable after capture and are copied into
     // every scalar command savepoint while a paragraph is active. Sharing
     // them keeps that rollback bookkeeping constant-time without changing
@@ -644,11 +645,13 @@ impl CanonicalParagraphRegion {
             .pop()
             .expect("paragraph-owned continuation contains its input transaction");
         assert!(inputs.is_empty());
-        self.owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-            &summary,
-            [(&self.input, None)],
-            destination,
-        ));
+        self.owned_input = Arc::new(
+            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                &summary,
+                [(&self.input, None)],
+                destination,
+            ),
+        );
     }
 
     /// Whether a cold replacement may enter this region without first
@@ -667,11 +670,13 @@ impl CanonicalParagraphRegion {
     ) {
         self.input = input;
         let summary = self.owned_input.materialize(destination);
-        self.owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-            &summary,
-            [(&self.input, None)],
-            destination,
-        ));
+        self.owned_input = Arc::new(
+            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                &summary,
+                [(&self.input, None)],
+                destination,
+            ),
+        );
     }
 
     pub(crate) fn remap_meaning_dependencies(
@@ -857,12 +862,14 @@ impl CanonicalParagraphRegion {
         unchanged_end: usize,
     ) -> Option<Self> {
         let mut rebound = self.clone();
-        rebound.input = self
-            .input
-            .rebind_unchanged_root_prefix(old, Arc::clone(&new), unchanged_end)?;
-        if !Arc::make_mut(&mut rebound.owned_input)
-            .rebind_paragraph_unchanged_root_prefix(old, new, unchanged_end)
-        {
+        rebound.input =
+            self.input
+                .rebind_unchanged_root_prefix(old, Arc::clone(&new), unchanged_end)?;
+        if !Arc::make_mut(&mut rebound.owned_input).rebind_paragraph_unchanged_root_prefix(
+            old,
+            new,
+            unchanged_end,
+        ) {
             return None;
         }
         Some(rebound)
@@ -882,9 +889,7 @@ impl CanonicalParagraphRegion {
         rebound.input = self
             .input
             .rebind_edited_root(old, Arc::clone(&new), edited.clone())?;
-        if !Arc::make_mut(&mut rebound.owned_input)
-            .rebind_paragraph_edited_root(old, new, edited)
-        {
+        if !Arc::make_mut(&mut rebound.owned_input).rebind_paragraph_edited_root(old, new, edited) {
             return None;
         }
         Some(rebound)
@@ -902,6 +907,7 @@ struct CanonicalParagraphRecorder {
     effect_start: usize,
     starting_provenance: Option<ProvenanceStats>,
     starting_prev_graf: i32,
+    entry_outer_parskip: bool,
     // Aggregate command savepoints clone the recorder before every command.
     // Paragraph histories must therefore remain persistent roots: copying all
     // prior regions here makes a document's command cost grow with every
@@ -960,6 +966,7 @@ impl CanonicalParagraphRecorder {
         self.effect_start = stores.world().effect_records().len();
         self.starting_provenance = Some(stores.provenance_stats());
         self.starting_prev_graf = modes.enclosing_vertical_prev_graf();
+        self.entry_outer_parskip = modes.current_mode() == Mode::Horizontal && modes.depth() == 2;
         self.pending = true;
     }
 
@@ -970,13 +977,15 @@ impl CanonicalParagraphRecorder {
         let Some(input) = command.finish_paragraph_input_transaction() else {
             return;
         };
-        let owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-            &command
-                .publish_summary()
-                .expect("finished paragraph leaves a publishable command boundary"),
-            [(&input, None)],
-            stores,
-        ));
+        let owned_input = Arc::new(
+            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                &command
+                    .publish_summary()
+                    .expect("finished paragraph leaves a publishable command boundary"),
+                [(&input, None)],
+                stores,
+            ),
+        );
         let finished = modes.take_completed_paragraph_nodes().unwrap_or_default();
         let finished_lines = (!finished.is_empty()).then(|| {
             let list = stores.freeze_node_list(&finished);
@@ -1033,6 +1042,7 @@ impl CanonicalParagraphRecorder {
             identity: self.next_identity,
             input,
             owned_input,
+            entry_outer_parskip: self.entry_outer_parskip,
             starting_universe: self
                 .starting_universe
                 .take()
@@ -2273,6 +2283,19 @@ impl CanonicalMainControl {
             return false;
         }
         let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
+        if region.entry_outer_parskip {
+            crate::vertical::append_vertical_contribution(
+                &mut self.modes,
+                stores,
+                Node::Glue {
+                    spec: stores.glue_param(GlueParam::PAR_SKIP),
+                    kind: GlueKind::ParSkip,
+                    leader: None,
+                },
+            );
+            crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
+                .expect("validated paragraph entry contribution must replay");
+        }
         let finished_nodes = region.materialize_finished_nodes(stores);
         if finished_nodes.is_some() {
             stores.record_pure_paragraph_line_hit();
@@ -3345,20 +3368,28 @@ impl CanonicalMainControl {
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        let artifact_count = stores.world().artifact_commits().len();
+        let effect_count = stores.world().effect_records().len();
+        let prepared_page_count = self.prepared_dvi_pages.len();
         if mode == Mode::Vertical
             && self.modes.depth() == 1
+            && scanned.starts_paragraph_from_vertical()
             && !self.paragraph_recorder.replay.is_empty()
         {
             self.paragraph_recorder
                 .begin(&mut self.command, &mut self.modes, stores);
             if self.try_replay_paragraph_before_delivery(stores) {
-                return Ok(ReplayStep::Continue);
+                return self.finish_host_owned_step(
+                    Ok(ReplayStep::Continue),
+                    outer_paragraph_was_active,
+                    artifact_count,
+                    effect_count,
+                    prepared_page_count,
+                    stores,
+                );
             }
         }
         let parking = self.suspend_main_control_parking(&scanned);
-        let artifact_count = stores.world().artifact_commits().len();
-        let effect_count = stores.world().effect_records().len();
-        let prepared_page_count = self.prepared_dvi_pages.len();
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
@@ -6814,6 +6845,24 @@ enum MathShiftPairing {
 }
 
 impl ScannedStep {
+    /// Whether applying this already-scanned step in vertical mode owns
+    /// TeX82 §1090's transition through `new_graf`.
+    fn starts_paragraph_from_vertical(&self) -> bool {
+        matches!(
+            self,
+            Self::ParagraphStart
+                | Self::Character {
+                    cat: Catcode::Letter | Catcode::Other,
+                    ..
+                }
+                | Self::CharacterCode { .. }
+                | Self::HorizontalSkip { .. }
+                | Self::ControlSpace
+                | Self::FixedHorizontalGlue { .. }
+                | Self::ParagraphIndent { .. }
+        )
+    }
+
     const fn fires_afterassignment(&self) -> bool {
         matches!(
             self,
