@@ -146,15 +146,30 @@ fn unboxing_removes_margin_kerns_without_mutating_source_or_reordering_material(
         Node::Penalty(3),
     ];
     let children = stores.freeze_node_list(&source_nodes);
+    let source_box = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: tex_state::node::BoxLr::Normal,
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
+            children,
+        },
+    ))]);
+    stores.set_box_reg(7, source_box);
     let mut nest = ModeNest::new();
     nest.push(Mode::RestrictedHorizontal)
         .expect("test mode push");
     let mut fuel = tex_command::CommandFuelLedger::default();
 
-    append_unboxed(
+    crate::canonical_box_runtime::execute_scanned_unbox(
+        UnexpandablePrimitive::UnHCopy,
+        7,
         &mut nest,
         &mut stores,
-        Some(UnboxSource::PinnedSurvivor(children)),
         fuel.fuel_mut(),
     )
     .expect("unbox succeeds");

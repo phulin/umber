@@ -32,7 +32,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   packing/diagnostic projection and box lookup, and `vsplit.rs` owns vertical-box
   register splitting; `hmode.rs` owns pending-character, ligature, shaping,
   hyphen-boundary, spacing, and italic-correction runtime, while scanner fronts
-  remain under assignments.
+  remain under assignments; `material.rs` owns post-scan box-register reads,
+  unboxing, saved discards, delete-last behavior, migration, contribution, and
+  shifts.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
 - `src/assignments/boxes/tests.rs`: focused box-list operation tests, including pdfTeX margin-kern removal and immutable source-list identity during unboxing.
 - `src/assignments/boxes/vsplit/tests.rs`: direct TeX82 `\vsplit` void-box and wrong-box recovery tests.

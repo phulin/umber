@@ -264,6 +264,7 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                             | "canonical_main_control.rs"
                             | "canonical_box_runtime/mod.rs"
                             | "canonical_box_runtime/hmode.rs"
+                            | "canonical_box_runtime/material.rs"
                             | "canonical_box_runtime/packaging.rs"
                             | "canonical_box_runtime/vsplit.rs"
                             | "assignments/boxes/leaders.rs"
@@ -274,6 +275,7 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                             | "assignments/hyphenation.rs"
                             | "assignments/mod.rs"
                             | "assignments/paragraph.rs"
+                            | "align/legacy_execution.rs"
                             | "math/display.rs"
                     )
                 ),
@@ -403,6 +405,53 @@ fn canonical_hmode_physically_owns_pending_character_runtime() {
         "fn literal_hyphen_disc(",
         "fn interword_glue(",
         "fn append_italic_correction_with_fuel(",
+    ] {
+        assert!(
+            owner.contains(implementation),
+            "canonical owner lacks `{implementation}`"
+        );
+        assert!(
+            !legacy.contains(implementation),
+            "legacy scanner still owns `{implementation}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_box_material_physically_owns_post_scan_mutations() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_box_runtime/material.rs"))
+        .expect("read canonical box material owner");
+    let legacy = fs::read_to_string(source_root.join("assignments/boxes/mod.rs"))
+        .expect("read legacy box scanner");
+
+    for forbidden in [
+        "assignments",
+        "legacy",
+        "executor",
+        "ExecutionContext",
+        "InputStack",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical material owner references `{forbidden}`"
+        );
+    }
+    for implementation in [
+        "fn execute_scanned_unbox(",
+        "fn execute_scanned_saved_vertical_discards(",
+        "fn execute_delete_last(",
+        "fn execute_delete_last_outer_vertical(",
+        "fn append_box_register(",
+        "fn append_box_node_to_current_list(",
+        "fn extract_box_migrations(",
+        "fn split_hpack_migrations(",
+        "fn append_unboxed(",
+        "fn report_incompatible_unbox(",
+        "fn apply_box_shift_delta(",
     ] {
         assert!(
             owner.contains(implementation),

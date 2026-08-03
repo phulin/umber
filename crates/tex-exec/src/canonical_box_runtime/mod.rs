@@ -5,6 +5,7 @@
 //! remain private to the legacy assignment front.
 
 pub(crate) mod hmode;
+mod material;
 mod packaging;
 mod vsplit;
 
@@ -21,9 +22,10 @@ pub(crate) use hmode::{
     commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
     flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
 };
-
-pub(crate) use crate::assignments::{
-    append_box_node_to_current_list, apply_box_shift_delta, execute_delete_last,
-    execute_scanned_saved_vertical_discards, execute_scanned_unbox, indent_in_hmode, norm_min,
-    split_hpack_migrations, take_last_box,
+pub(crate) use material::{
+    append_box_node_to_current_list, append_box_register, apply_box_shift_delta,
+    execute_delete_last, execute_scanned_saved_vertical_discards, execute_scanned_unbox,
+    split_hpack_migrations,
 };
+
+pub(crate) use crate::assignments::{indent_in_hmode, norm_min, take_last_box};

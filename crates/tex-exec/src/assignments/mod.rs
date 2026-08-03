@@ -70,19 +70,15 @@ mod tests;
 pub(crate) use crate::canonical_assignments::math_allows_mode_independent_primitive;
 use crate::canonical_assignments::tracing;
 use crate::canonical_assignments::*;
+use crate::canonical_box_runtime::execute_delete_last;
 pub(crate) use crate::canonical_box_runtime::hmode::{
     commit_current_list, fixed_infinite_glue, flush_pending_hchars, flush_pending_hchars_with_fuel,
     norm_min, try_append_character, try_append_tfm_character_span,
 };
-pub(crate) use boxes::append_box_node_to_current_list;
-pub(crate) use boxes::execute_delete_last;
-pub(crate) use boxes::execute_scanned_saved_vertical_discards;
-pub(crate) use boxes::execute_scanned_unbox;
 pub(crate) use boxes::scan_math_box;
 pub(crate) use boxes::scan_setbox_target;
-pub(crate) use boxes::split_hpack_migrations;
+pub(crate) use boxes::take_last_box;
 use boxes::*;
-pub(crate) use boxes::{apply_box_shift_delta, take_last_box};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 pub(crate) use canonical_paragraph_end::{
     end_canonical_paragraph_with_fuel, end_canonical_paragraph_without_source,
