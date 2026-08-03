@@ -2354,10 +2354,11 @@ fn paragraph_mount_rejects_unsupported_handle_bearing_nodes() {
 }
 
 #[test]
-fn paragraph_mount_rejects_a_font_missing_from_the_current_store() {
+fn paragraph_mount_restores_post_checkpoint_font_closure() {
     let mut universe = Universe::new();
     let before_font = universe.snapshot();
-    let font = universe.intern_font(test_font("transient", b"transient"));
+    let prefix_font = universe.intern_font(test_font("prefix", b"prefix"));
+    let font = universe.intern_font(test_font("retained", b"retained"));
     let origin = universe.synthetic_origin(SyntheticOriginKind::Test);
     let graph = universe.freeze_node_list(&[Node::Char {
         font,
@@ -2368,7 +2369,19 @@ fn paragraph_mount_rejects_a_font_missing_from_the_current_store() {
 
     assert!(universe.can_mount_retained_paragraph_result(&retained));
     universe.rollback(&before_font);
-    assert!(!universe.can_mount_retained_paragraph_result(&retained));
+    assert!(universe.can_mount_retained_paragraph_result(&retained));
+    assert_eq!(
+        universe.mount_retained_paragraph_result(&retained, &[], &[]),
+        Some(retained.id())
+    );
+    assert_eq!(
+        universe.font_name(FontId::testing_new(prefix_font.raw())),
+        "prefix"
+    );
+    assert_eq!(
+        universe.font_name(FontId::testing_new(font.raw())),
+        "retained"
+    );
 }
 
 #[test]

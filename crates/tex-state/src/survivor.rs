@@ -3,8 +3,9 @@
 //! Promotion copies an epoch-rooted node graph into one contiguous allocation
 //! and rewrites child spans to be relative to the survivor root.
 
+use crate::font::RetainedFont;
 use crate::glue::GlueSpec;
-use crate::ids::{ArenaRef, FontId, GlueId, NodeListId, SurvivorRootId};
+use crate::ids::{ArenaRef, GlueId, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
 use crate::node_arena::{
@@ -254,7 +255,7 @@ pub struct RetainedNodeList {
     id: NodeListId,
     payload: Arc<SurvivorPayload>,
     glues: Arc<[(GlueId, GlueSpec)]>,
-    fonts: Arc<[FontId]>,
+    fonts: Arc<[RetainedFont]>,
     mountable: bool,
 }
 
@@ -268,7 +269,7 @@ impl RetainedNodeList {
         &self.glues
     }
 
-    pub(crate) fn fonts(&self) -> &[FontId] {
+    pub(crate) fn fonts(&self) -> &[RetainedFont] {
         &self.fonts
     }
 
@@ -283,7 +284,7 @@ impl RetainedNodeList {
             .saturating_add(
                 self.fonts
                     .len()
-                    .saturating_mul(core::mem::size_of::<FontId>()),
+                    .saturating_mul(core::mem::size_of::<RetainedFont>()),
             )
     }
 }
@@ -488,7 +489,7 @@ impl SurvivorArena {
         &self,
         id: NodeListId,
         glues: Vec<(GlueId, GlueSpec)>,
-        fonts: Vec<FontId>,
+        fonts: Vec<RetainedFont>,
         mountable: bool,
     ) -> RetainedNodeList {
         let ArenaRef::Survivor(_) = id.arena() else {

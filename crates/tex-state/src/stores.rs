@@ -2125,6 +2125,7 @@ impl Stores {
         glues.sort_unstable_by_key(|id| id.raw());
         glues.dedup_by_key(|id| id.raw());
         let glues = glues.into_iter().map(|id| (id, self.glue(id))).collect();
+        let fonts = self.fonts.retain_prefix_for(&fonts);
         let retained = self.prepare_box_value(id);
         self.survivor_pins.push(retained);
         self.survivors.retain(retained, glues, fonts, mountable)
@@ -2144,10 +2145,7 @@ impl Stores {
     pub fn can_mount_retained_paragraph_result(&self, retained: &RetainedNodeList) -> bool {
         retained.is_mountable()
             && self.glue.can_restore_retained(retained.glues())
-            && retained
-                .fonts()
-                .iter()
-                .all(|font| self.fonts.resolve_stored(*font).is_some())
+            && self.fonts.can_restore_retained(retained.fonts())
     }
 
     /// Mounts current-revision provenance over an already validated immutable
@@ -2175,6 +2173,9 @@ impl Stores {
         if !self.glue.restore_retained(retained.glues()) {
             return None;
         }
+        if !self.fonts.restore_retained(retained.fonts()) {
+            return None;
+        }
         let id = retained.id();
         let newly_mounted = self.survivors.mount(retained)?;
         if newly_mounted {
@@ -2197,6 +2198,9 @@ impl Stores {
         if !self.glue.restore_retained(retained.glues()) {
             return None;
         }
+        if !self.fonts.restore_retained(retained.fonts()) {
+            return None;
+        }
         let id = retained.id();
         let newly_mounted = self.survivors.mount(retained)?;
         if newly_mounted {
@@ -2217,6 +2221,9 @@ impl Stores {
         resolver: Arc<crate::ParagraphOriginResolver>,
     ) -> Option<NodeListId> {
         if !self.glue.restore_retained(retained.glues()) {
+            return None;
+        }
+        if !self.fonts.restore_retained(retained.fonts()) {
             return None;
         }
         let id = retained.id();
