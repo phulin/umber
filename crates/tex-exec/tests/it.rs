@@ -276,6 +276,63 @@ fn canonical_command_control_has_no_legacy_math_front_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_alignment_family_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src/align");
+    let mut canonical = vec![
+        source_root.join("mod.rs"),
+        source_root.join("canonical_execution.rs"),
+        source_root.join("packaging.rs"),
+        source_root.join("support.rs"),
+        source_root.join("transitions.rs"),
+    ];
+    canonical.extend(production_rust_sources(&source_root.join("widths")));
+    for path in canonical {
+        let source = fs::read_to_string(&path).expect("read canonical alignment source");
+        for forbidden in [
+            "tex_expand",
+            "tex_lex",
+            "InputStack",
+            "ExecutionContext",
+            "crate::executor",
+            "legacy_front::",
+            "legacy_execution::",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "canonical alignment source {} must not reference legacy boundary `{forbidden}`",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_command_control_has_no_legacy_alignment_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("align::legacy_front"));
+    assert!(!canonical.contains("align::legacy_execution"));
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("align::legacy_front") || source.contains("align::legacy_execution") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some("dispatch.rs" | "assignments/mod.rs" | "math/legacy_front.rs")
+                ),
+                "{} must not call the retired alignment front",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

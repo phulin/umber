@@ -1039,7 +1039,9 @@ fn finish_display_halign(
             operation: "display interrupt state",
         },
     )?;
-    let nodes = crate::align::execute_display_halign(context, nest, input, stores, execution)?;
+    let nodes = crate::align::legacy_front::execute_display_halign(
+        context, nest, input, stores, execution,
+    )?;
     finish_display_alignment_assignments(input, stores, execution)?;
     let closing_origin =
         consume_display_alignment_closer(input, stores, execution, context.origin())?;

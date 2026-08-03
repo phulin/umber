@@ -70,7 +70,9 @@ fn scan_noalign_group(
                 return Ok(());
             }
         }
-        super::execution::dispatch_and_drain(nest, token, input, stores, execution, &mut stats)?;
+        super::legacy_execution::dispatch_and_drain(
+            nest, token, input, stores, execution, &mut stats,
+        )?;
     }
 }
 

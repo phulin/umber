@@ -2074,7 +2074,7 @@ fn execute_prefixed_command(
                     ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())?;
                     return Ok(CommandOutcome::continue_only());
                 }
-                crate::align::execute_alignment(
+                crate::align::legacy_front::execute_alignment(
                     primitive,
                     command.traced,
                     nest,

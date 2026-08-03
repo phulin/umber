@@ -1,0 +1,39 @@
+//! Source-free canonical alignment completion and list contribution.
+
+use tex_state::Universe;
+use tex_state::node::Node;
+
+use crate::vertical::append_vertical_contribution;
+use crate::{Mode, ModeNest};
+
+pub(crate) struct FinishedAlignment {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
+    pub(crate) aux_space_factor: Option<i32>,
+}
+
+pub(crate) fn append_finished_alignment(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    finished: FinishedAlignment,
+) {
+    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical)
+        && let Some(prev_depth) = finished.aux_prev_depth
+    {
+        nest.current_list_mutation().set_prev_depth(prev_depth);
+    }
+    if matches!(
+        nest.current_mode(),
+        Mode::Horizontal | Mode::RestrictedHorizontal
+    ) && let Some(space_factor) = finished.aux_space_factor
+    {
+        nest.current_list_mutation().set_space_factor(space_factor);
+    }
+    for node in finished.nodes {
+        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
+            append_vertical_contribution(nest, stores, node);
+        } else {
+            nest.current_list_mutation().push(node);
+        }
+    }
+}

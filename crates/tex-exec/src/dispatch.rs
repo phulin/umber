@@ -78,9 +78,12 @@ pub(crate) fn dispatch_delivered_token_with_context(
 ) -> Result<DispatchAction, ExecError> {
     let token = traced.semantic_token();
     if token.is_frozen_endv() {
-        match crate::align::do_endv(traced, input, stores)? {
-            crate::align::DoEndV::Recovered => return Ok(DispatchAction::Continue),
-            crate::align::DoEndV::NotApplicable | crate::align::DoEndV::FinishCell => {}
+        match crate::align::legacy_execution::do_endv(traced, input, stores)? {
+            crate::align::legacy_execution::DoEndV::Recovered => {
+                return Ok(DispatchAction::Continue);
+            }
+            crate::align::legacy_execution::DoEndV::NotApplicable
+            | crate::align::legacy_execution::DoEndV::FinishCell => {}
         }
     }
     let origin = traced.origin();

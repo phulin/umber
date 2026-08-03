@@ -1,5 +1,6 @@
 use tex_expand::{get_alignment_x_or_protected_with_context, get_x_token_with_context};
 #[cfg(test)]
+#[path = "execution/tests.rs"]
 mod tests;
 
 use tex_lex::InputStack;
@@ -13,6 +14,7 @@ use super::support::{
     align_kind, align_state, alignment_mode, cell_mode, is_alignment_tab, is_cr, is_crcr,
     is_end_group, is_noalign, is_omit, is_span, mutate_align_state, row_mode,
 };
+use super::{FinishedAlignment, append_finished_alignment};
 use crate::assignments::flush_pending_hchars;
 use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
 use crate::error_report::{back_tokens, report_input_error};
@@ -97,43 +99,6 @@ pub(crate) fn execute_alignment(
         append_finished_alignment(nest, stores, finished);
         build_page_if_outer_vertical(nest, stores)?;
         Ok(())
-    }
-}
-
-pub(crate) struct FinishedAlignment {
-    pub(crate) nodes: Vec<Node>,
-    pub(crate) aux_prev_depth: Option<tex_state::scaled::Scaled>,
-    pub(crate) aux_space_factor: Option<i32>,
-}
-
-pub(crate) fn append_finished_alignment(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    finished: FinishedAlignment,
-) {
-    if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical)
-        && let Some(prev_depth) = finished.aux_prev_depth
-    {
-        // TeX.web fin_align restores the alignment level's aux wholesale
-        // before splicing nodes whose dimensions may have been transformed.
-        nest.current_list_mutation().set_prev_depth(prev_depth);
-    }
-    if matches!(
-        nest.current_mode(),
-        Mode::Horizontal | Mode::RestrictedHorizontal
-    ) && let Some(space_factor) = finished.aux_space_factor
-    {
-        // TeX82 §800 restores the alignment level's `aux_field` into the
-        // enclosing list after `pop_nest`; for a `\valign` this is the
-        // alignment's live space factor, including `\noalign` assignments.
-        nest.current_list_mutation().set_space_factor(space_factor);
-    }
-    for node in finished.nodes {
-        if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
-            append_vertical_contribution(nest, stores, node);
-        } else {
-            nest.current_list_mutation().push(node);
-        }
     }
 }
 

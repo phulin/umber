@@ -28,11 +28,11 @@ pub(super) fn replay_template(
             if template_finished(input, stores, replay_marker) {
                 return Ok(None);
             }
-            match super::execution::run_one_main_control_token(
+            match super::legacy_execution::run_one_main_control_token(
                 nest, input, stores, execution, &mut stats,
             )? {
-                super::execution::TemplateStep::Continue => {}
-                super::execution::TemplateStep::EndV(command) => return Ok(Some(command)),
+                super::legacy_execution::TemplateStep::Continue => {}
+                super::legacy_execution::TemplateStep::EndV(command) => return Ok(Some(command)),
             }
         }
     }
