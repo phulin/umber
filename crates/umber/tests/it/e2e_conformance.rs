@@ -2275,6 +2275,23 @@ fn trip_loaded_radical_overbar_uses_normal_kerns() {
     assert!(overbar, "normal-kern radical overbar:\n{log}");
 }
 
+#[test]
+fn trip_loaded_empty_operator_box_keeps_axis_shift() {
+    // Full format-loaded history is required. Its malformed class-Op noad
+    // reaches TeX82 §749 with a missing math character; the resulting empty
+    // hbox must still pass through the common math-axis centering step.
+    let source: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let log = run_loaded_trip_source(source);
+    assert!(
+        log.contains(
+            ".............\\hbox(0.0+0.0)x0.0, shifted -7.0\n.............\\glue(\\nonscript)"
+        ),
+        "shifted operator nucleus is absent"
+    );
+}
+
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),

@@ -40,6 +40,41 @@ fn character_operator_observes_clean_box_hpack() {
 }
 
 #[test]
+fn missing_character_operator_still_centers_its_empty_box() {
+    // TeX82 §749 continues from a failed `fetch` to the common operator-axis
+    // centering step. TRIP reaches this through a malformed class-Op noad.
+    let mut stores = setup_universe();
+    let missing = MathChar {
+        family: 15,
+        character: '\u{10ffff}',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    };
+    let params = MathParams::read(&stores);
+    let expected = -params.for_size(MathFontSize::Text).symbols.axis_height;
+
+    let operator = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Operator(LimitType::NoLimits),
+        MathField::MathChar(missing),
+    ))]);
+    let layout = mlist_to_hlist(&stores, operator, Style::TEXT, false, &params);
+    let [MathNode::HList(boxed)] = root_nodes(&layout).as_slice() else {
+        panic!("missing operator character must leave one empty hbox");
+    };
+    assert_eq!(
+        (boxed.width, boxed.height, boxed.depth),
+        (sc(0), sc(0), sc(0))
+    );
+    assert_eq!(boxed.shift, expected);
+
+    let ordinary = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(missing),
+    ))]);
+    let layout = mlist_to_hlist(&stores, ordinary, Style::TEXT, false, &params);
+    assert!(root_nodes(&layout).is_empty());
+}
+
+#[test]
 fn displayed_limits_use_shared_rebox_completion() {
     // TRIP's final `\mathop...\limits^\mathchoice` reaches TeX82 §715 from
     // displayed limits. The operator path must publish the shared rebox's

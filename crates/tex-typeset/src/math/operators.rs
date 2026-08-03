@@ -134,7 +134,13 @@ fn operator_nucleus(
     let mut boxed = match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             let Some(fetched) = fetch(ctx, ch, ctx.style) else {
-                return ctx.layout.hpack(ctx.layout.empty());
+                // TeX82 §749 still reaches the common operator-centering
+                // step after `fetch` reports a nonexistent math character.
+                // The resulting empty hbox therefore carries the axis shift.
+                let mut missing = ctx.layout.hpack(ctx.layout.empty());
+                let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
+                missing.shift = neg(axis);
+                return missing;
             };
             let (mut boxed, selected_delta) = if ctx.style.is_display()
                 && let MathMetricsSource::OpenType(math) =
