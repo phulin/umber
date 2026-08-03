@@ -1275,6 +1275,35 @@ fn showlists_reports_unfinished_math_noad_fields() {
     assert!(log.contains("\\mathchoice"));
 }
 
+/// TeX82 §1151 allocates each ordinary noad before `scan_math` enters a
+/// braced subsidiary field. Section 218 therefore displays that parent noad,
+/// without a nucleus child, after the nested math level and before the outer
+/// display level. The complete §687 ordinary-noad interval proves that the
+/// ownership rule is generic rather than specific to `ord_noad`.
+#[test]
+fn showlists_inside_braced_fields_displays_the_reserved_parent_noad_matrix() {
+    for (constructor, noad_name) in [
+        (r"\mathord", r"\mathord"),
+        (r"\mathop", r"\mathop"),
+        (r"\mathbin", r"\mathbin"),
+        (r"\mathrel", r"\mathrel"),
+        (r"\mathopen", r"\mathopen"),
+        (r"\mathclose", r"\mathclose"),
+        (r"\mathpunct", r"\mathpunct"),
+        (r"\mathinner", r"\mathinner"),
+    ] {
+        let source = format!(
+            r"\nonstopmode\showboxdepth=10\showboxbreadth=10$\displaystyle{constructor}{{\showlists}}$\end"
+        );
+        let stores = super::core::run_canonical_tex82(&source);
+        let log = terminal_effect_text(&stores);
+        let expected = format!(
+            "### math mode entered at line 1\n### math mode entered at line 1\n\\displaystyle\n{noad_name}\n"
+        );
+        assert!(log.contains(&expected), "{constructor}: {log}");
+    }
+}
+
 #[test]
 fn showlists_reports_incomplete_fraction_numerator() {
     let stores = super::core::run_canonical_tex82(

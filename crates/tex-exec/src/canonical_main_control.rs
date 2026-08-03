@@ -2948,6 +2948,20 @@ impl CanonicalMainControl {
                 )?;
             }
             CanonicalMathRequest::TextField(kind) => {
+                // TeX82 §1151's caller has already allocated the noad and
+                // passes `nucleus(tail)` to `scan_math`.  This is observable
+                // while a braced field is being scanned: `\showlists` in the
+                // nested math level must still display the enclosing noad in
+                // its parent level, with an empty subsidiary field.  Reserve
+                // that exact parent-list position before entering the live
+                // group, then fill it after the scan completes.
+                let node_index = self.modes.current_list().nodes().len();
+                self.modes
+                    .current_list_mutation()
+                    .push(Node::MathNoad(MathNoad::new(
+                        noad_kind_for_text(kind),
+                        MathField::Empty,
+                    )));
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 // TeX82 §1186's second brace simplification: when a braced
@@ -2963,14 +2977,21 @@ impl CanonicalMainControl {
                 {
                     self.modes
                         .current_list_mutation()
-                        .push(Node::MathNoad(accent.clone()));
+                        .with_node_mut(node_index, |node| {
+                            *node = Node::MathNoad(accent.clone());
+                        })
+                        .expect("reserved math noad must remain present");
                 } else {
                     self.modes
                         .current_list_mutation()
-                        .push(Node::MathNoad(MathNoad::new(
-                            noad_kind_for_text(kind),
-                            field,
-                        )));
+                        .with_node_mut(node_index, |node| {
+                            let Node::MathNoad(noad) = node else {
+                                unreachable!("reserved math noad must remain a noad")
+                            };
+                            debug_assert!(matches!(noad.nucleus, MathField::Empty));
+                            noad.nucleus = field;
+                        })
+                        .expect("reserved math noad must remain present");
                 }
             }
             CanonicalMathRequest::Script(script) => {
