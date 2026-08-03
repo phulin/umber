@@ -1756,6 +1756,51 @@ mod tests {
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 
     #[test]
+    fn tracingcommands_display_end_probe_reports_restored_mode() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode$\\fi}\\hss\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        )
+        .into_owned();
+        assert!(
+            output.contains("{math shift character $}\n! Math formula deleted:")
+                && output.contains("{internal vertical mode: \\ifvmode}\n{false}"),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn tracingcommands_same_mode_conditional_omits_mode_prefix() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\ifvmode\\fi\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode$\\fi}\\hss\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+        assert!(
+            output.contains("{vertical mode: \\tracingonline}\n{\\ifvmode}\n{true}"),
+            "{output}"
+        );
+        assert!(!output.contains("{vertical mode: \\ifvmode}"), "{output}");
+    }
+
+    #[test]
     fn public_file_root_retains_world_identity_across_typed_input_retry() {
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_run_stores(&mut stores);

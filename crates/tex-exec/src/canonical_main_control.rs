@@ -3795,6 +3795,7 @@ impl CanonicalMainControl {
                         display,
                         Some(finished),
                         false,
+                        None,
                     )?;
                 } else {
                     debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
@@ -3820,12 +3821,18 @@ impl CanonicalMainControl {
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
-                let content = self.prepare_canonical_math_list(stores)?;
+                let (content, display_level) = self.prepare_canonical_display_math_list(stores)?;
                 let paired = self.scan_canonical_display_end(stores)?;
                 if !paired {
                     report_unpaired_display_end(&self.command, stores)?;
                 }
-                self.finish_canonical_display_math_content(stores, content, None, true)?;
+                self.finish_canonical_display_math_content(
+                    stores,
+                    content,
+                    None,
+                    true,
+                    Some(display_level),
+                )?;
             }
             Mode::Vertical | Mode::InternalVertical => {
                 unreachable!("vertical math shifts retry through ParagraphStart")
@@ -3848,6 +3855,21 @@ impl CanonicalMainControl {
         } else {
             content
         })
+    }
+
+    /// TeX82 §§1185/1194/1197's display `fin_mlist(null)`: detach the
+    /// completed display mode before expanding the required second `$`.
+    fn prepare_canonical_display_math_list(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<(tex_state::ids::NodeListId, crate::mode::ModeLevelSummary), ExecError> {
+        let content = self.prepare_canonical_math_list(stores)?;
+        let level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
+        Ok((content, level))
     }
 
     fn scan_canonical_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
@@ -4071,6 +4093,7 @@ impl CanonicalMainControl {
         mut content: tex_state::ids::NodeListId,
         eq_no: Option<crate::math::display::FinishedEqNo>,
         fonts_checked: bool,
+        display_level: Option<crate::mode::ModeLevelSummary>,
     ) -> Result<(), ExecError> {
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
             self.command.output_open_context(&stores.command_context()),
@@ -4081,11 +4104,14 @@ impl CanonicalMainControl {
         if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
-        let mut level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let mut level = match display_level {
+            Some(level) => level,
+            None => crate::canonical_box_runtime::commit_current_list(
+                &mut self.modes,
+                stores,
+                self.fuel.fuel_mut(),
+            )?,
+        };
         let interrupt =
             level
                 .list_mutation()
