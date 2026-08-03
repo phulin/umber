@@ -4,7 +4,7 @@ use crate::math::{MathLayoutReader, MathParams, Style, mlist_to_hlist};
 use tex_state::math::{FractionThickness, MathFontSize, MathFraction};
 
 #[test]
-fn classic_character_operator_observes_clean_box_hpack() {
+fn character_operator_observes_clean_box_hpack() {
     // TeX82 §749 calls clean_box for a character operator nucleus, and
     // §720 packages that character with hpack(q,natural). The completed
     // operator then reaches §724's independent check_dimensions pack.

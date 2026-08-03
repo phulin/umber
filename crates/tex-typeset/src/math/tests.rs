@@ -270,6 +270,16 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     ]);
     let params = MathParams::read(&universe);
     let formula = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+    assert_eq!(
+        formula.pack_observations()[9],
+        MathPackObservation {
+            axis: BoxAxis::Horizontal,
+            width: Scaled::from_raw(728_760),
+            height: Scaled::from_raw(602_276),
+            depth: Scaled::from_raw(266_076),
+        },
+        "TeX82 §749 publishes the selected display operator through §720 hpack"
+    );
     assert!(params.text.extension.default_rule_thickness.raw() > 0);
     assert!(all_math_glyphs(&formula).iter().all(Option::is_some));
     assert!(all_math_glyphs(&formula).len() >= 7);

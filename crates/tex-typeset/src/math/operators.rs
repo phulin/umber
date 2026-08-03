@@ -142,15 +142,17 @@ fn operator_nucleus(
                 ) {
                 variant
             } else {
-                let boxed = char_box(ctx, fetched, ch.origin);
-                // TeX82 §749 sends a character operator nucleus through
-                // `clean_box`; its §720 character branch completes
-                // `hpack(q,natural)`. The direct character-box construction
-                // above is dimensionally equivalent, but must still publish
-                // that completed packaging call.
-                ctx.layout.observe_completed_pack(&boxed);
-                (boxed, fetched.metrics.italic_correction)
+                (
+                    char_box(ctx, fetched, ch.origin),
+                    fetched.metrics.italic_correction,
+                )
             };
+            // TeX82 §749 sends every character operator nucleus through
+            // `clean_box`; its §720 character branch completes
+            // `hpack(q,natural)`. Both direct classic boxes and OpenType
+            // display variants replace that call in this kernel, so publish
+            // the completion after either selection path.
+            ctx.layout.observe_completed_pack(&boxed);
             *delta = selected_delta;
             if !matches!(effective_limits, LimitType::Limits)
                 && !matches!(noad.subscript, MathField::Empty)
