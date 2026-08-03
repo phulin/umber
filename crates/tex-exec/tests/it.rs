@@ -229,6 +229,81 @@ fn canonical_assignment_owner_has_only_declared_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner_root = source_root.join("canonical_box_runtime");
+    for path in production_rust_sources(&owner_root) {
+        let source = fs::read_to_string(&path).expect("read canonical box runtime source");
+        for forbidden in [
+            "tex_expand",
+            "tex_lex",
+            "InputStack",
+            "ExecutionContext",
+            "crate::executor",
+            "legacy_assignments",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must not reference legacy boundary `{forbidden}`",
+                path.strip_prefix(&source_root)
+                    .expect("canonical box source below root")
+                    .display()
+            );
+        }
+    }
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("canonical_box_runtime") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some("lib.rs" | "canonical_main_control.rs" | "canonical_box_runtime/mod.rs")
+                ),
+                "{} must not bypass the canonical box runtime owner",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_main_has_no_mixed_box_or_hmode_calls() {
+    let source = fs::read_to_string(
+        test_support::repository_root().join("crates/tex-exec/src/canonical_main_control.rs"),
+    )
+    .expect("read canonical command control");
+    for retired in [
+        "assignments::append_box_node_to_current_list",
+        "assignments::append_canonical_",
+        "assignments::append_italic_correction_with_fuel",
+        "assignments::append_whatsit",
+        "assignments::apply_box_shift_delta",
+        "assignments::commit_current_list",
+        "assignments::control_space_glue_spec",
+        "assignments::execute_delete_last",
+        "assignments::execute_scanned_",
+        "assignments::first_box_node",
+        "assignments::fixed_infinite_glue",
+        "assignments::flush_pending_hchars",
+        "assignments::hpack_with_overfull_rule",
+        "assignments::indent_in_hmode",
+        "assignments::norm_min",
+        "assignments::split_hpack_migrations",
+        "assignments::split_vbox_register",
+        "assignments::take_last_box",
+    ] {
+        assert!(
+            !source.contains(retired),
+            "canonical command control must bypass mixed runtime `{retired}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_command_control_bypasses_legacy_assignment_front() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))

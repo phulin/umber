@@ -2445,7 +2445,7 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars_with_fuel(
+        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -2485,8 +2485,11 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
-        let level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         // TeX82 §1121 advances `q` across the admissible prefix and, on the
         // first forbidden node `p`, severs `link(q)`. Thus the prefix remains
         // this discretionary part while `show_box(p)` reports and flushes the
@@ -2621,7 +2624,7 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars_with_fuel(
+        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -3045,7 +3048,7 @@ impl CanonicalMainControl {
         ) {
             start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::assignments::flush_pending_hchars_with_fuel(
+        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -3309,8 +3312,11 @@ impl CanonicalMainControl {
                 stores,
             )?;
         }
-        let level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         finish_canonical_math_list(
             level.list().nodes(),
             level.list().incomplete_fraction(),
@@ -3656,7 +3662,7 @@ impl CanonicalMainControl {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 debug_assert_ne!(pairing, MathShiftPairing::ProbeDisplayEnd);
-                crate::assignments::flush_pending_hchars_with_fuel(
+                crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
                     &mut self.modes,
                     stores,
                     self.fuel.fuel_mut(),
@@ -3839,8 +3845,11 @@ impl CanonicalMainControl {
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
-        let _ =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let _ = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             stores,
@@ -3867,8 +3876,11 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<crate::mode::DisplayEqNo, ExecError> {
-        let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let mut level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         let eq = level
             .list_mutation()
             .take_display_eq_no()
@@ -3924,8 +3936,11 @@ impl CanonicalMainControl {
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
-        let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let mut level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         let interrupt =
             level
                 .list_mutation()
@@ -3964,8 +3979,11 @@ impl CanonicalMainControl {
         if !fonts_checked && crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
-        let mut level =
-            crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        let mut level = crate::canonical_box_runtime::commit_current_list(
+            &mut self.modes,
+            stores,
+            self.fuel.fuel_mut(),
+        )?;
         let interrupt =
             level
                 .list_mutation()
@@ -4131,7 +4149,7 @@ impl CanonicalMainControl {
                     // `\left` or `\middle` are restored before the next
                     // segment starts.
                     let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                    let _ = crate::assignments::commit_current_list(
+                    let _ = crate::canonical_box_runtime::commit_current_list(
                         &mut self.modes,
                         stores,
                         self.fuel.fuel_mut(),
@@ -4198,7 +4216,7 @@ impl CanonicalMainControl {
                     return Ok(ReplayStep::Continue);
                 }
                 let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                let _ = crate::assignments::commit_current_list(
+                let _ = crate::canonical_box_runtime::commit_current_list(
                     &mut self.modes,
                     stores,
                     self.fuel.fuel_mut(),
@@ -10256,7 +10274,7 @@ fn apply_pdf_navigation_request(
                             .create_pdf_annotation(data)
                             .map_err(|_| ExecError::PdfObjectCapacity)?,
                     };
-                    crate::assignments::append_whatsit(
+                    crate::canonical_box_runtime::append_whatsit(
                         modes,
                         stores,
                         fuel,
@@ -10290,7 +10308,7 @@ fn apply_pdf_navigation_request(
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, action)?;
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -10315,7 +10333,7 @@ fn apply_pdf_navigation_request(
             if open.nesting_depth != stores.execution_group_depth() {
                 stores.world_mut().write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -10359,7 +10377,7 @@ fn apply_pdf_navigation_request(
                 crate::assignments::warn_pdf_destination_duplicate(stores, &identity);
                 return Ok(ReplayStep::Continue);
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -10384,7 +10402,7 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode(primitive));
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -10401,7 +10419,12 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
-            crate::assignments::append_whatsit(modes, stores, fuel, Whatsit::PdfEndThread)?;
+            crate::canonical_box_runtime::append_whatsit(
+                modes,
+                stores,
+                fuel,
+                Whatsit::PdfEndThread,
+            )?;
         }
     }
     Ok(ReplayStep::Continue)
@@ -10664,7 +10687,7 @@ fn apply_pdf_form_request(
                 .ok()
                 .and_then(|object| stores.pdf_form(object))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -12644,7 +12667,7 @@ fn capture_replay_alignment_cell(
     {
         stores.close_hyphenation_patterns();
     }
-    let mut cell = crate::assignments::commit_current_list(modes, stores, fuel)?;
+    let mut cell = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 remove its insertions, marks, and `\vadjust` contents
@@ -12654,7 +12677,7 @@ fn capture_replay_alignment_cell(
         let material =
             crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
         let (retained, mut pre_migrated, migrated) =
-            crate::assignments::split_hpack_migrations(stores, material);
+            crate::canonical_box_runtime::split_hpack_migrations(stores, material);
         pre_migrated.extend(migrated);
         active.row_migrations.extend(pre_migrated);
         retained
@@ -12701,7 +12724,7 @@ fn finish_replay_alignment_row(
         return Ok(());
     }
 
-    let mut row = crate::assignments::commit_current_list(modes, stores, fuel)?;
+    let mut row = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
     let children = stores.freeze_node_list(&row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
@@ -12762,7 +12785,7 @@ fn finish_replay_alignment(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, fuel)?;
-    let mut alignment = crate::assignments::commit_current_list(modes, stores, fuel)?;
+    let mut alignment = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
     // TeX82 §800 makes §661's box-diagnostic origin negative for the whole
     // `fin_align` setting pass. The magnitude is the alignment level's
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the
@@ -13088,12 +13111,20 @@ fn apply_scanned_step(
             // the ligature loop. The command itself has no list effect, but
             // it is still a word boundary: `?\\relax\\char96` must not form
             // the `?`` ligature across the relax.
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TextDirection { direction, enabled } => {
             if enabled {
-                crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+                crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                    modes,
+                    stores,
+                    command.fuel,
+                )?;
                 modes
                     .current_list_mutation()
                     .push(Node::Direction(direction));
@@ -13319,7 +13350,11 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(value),
                 kind: GlueKind::Normal,
@@ -13337,7 +13372,11 @@ fn apply_scanned_step(
             // vertical list is represented by the page contribution queue,
             // so it still uses the shared contribution splice (contrast
             // `\penalty`, §1103, which also calls `build_page` there).
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -13355,13 +13394,22 @@ fn apply_scanned_step(
             // vertical mode, matching `append_vertical_contribution`'s own
             // `is_outer_vertical` gate and (unlike `\vskip`'s `append_glue`,
             // §1057) always followed by a page-builder call in that case.
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeleteLast(primitive) => {
-            crate::assignments::execute_delete_last(primitive, modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::execute_delete_last(
+                primitive,
+                modes,
+                stores,
+                command.fuel,
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SetInteractionMode(primitive) => {
@@ -13407,7 +13455,7 @@ fn apply_scanned_step(
         ScannedStep::ItalicCorrection => {
             match modes.current_mode() {
                 Mode::Horizontal | Mode::RestrictedHorizontal => {
-                    crate::assignments::append_italic_correction_with_fuel(
+                    crate::canonical_box_runtime::append_italic_correction_with_fuel(
                         modes,
                         stores,
                         command.fuel,
@@ -13465,7 +13513,7 @@ fn apply_scanned_step(
         }
         ScannedStep::NoBoundary { suppress_right } => {
             if suppress_right {
-                crate::assignments::flush_pending_hchars_without_right_boundary(
+                crate::canonical_box_runtime::flush_pending_hchars_without_right_boundary(
                     modes,
                     stores,
                     command.fuel,
@@ -13518,7 +13566,7 @@ fn apply_scanned_step(
             modes
                 .current_list_mutation()
                 .set_no_boundary(suppress_left_boundary);
-            crate::assignments::append_canonical_character_with_fuel(
+            crate::canonical_box_runtime::append_canonical_character_with_fuel(
                 modes,
                 stores,
                 ch,
@@ -13534,7 +13582,7 @@ fn apply_scanned_step(
                     // TeX82 §1030's `mmode+ex_space: goto append_normal_space`
                     // (§1041) appends real interword glue in math mode, unlike
                     // an ordinary `mmode+spacer`, which §1045 makes a no-op.
-                    let spec = crate::assignments::control_space_glue_spec(stores);
+                    let spec = crate::canonical_box_runtime::control_space_glue_spec(stores);
                     modes.current_list_mutation().push(Node::Glue {
                         spec: stores.intern_glue(spec),
                         kind: GlueKind::Normal,
@@ -13543,14 +13591,14 @@ fn apply_scanned_step(
                 }
                 Mode::Vertical | Mode::InternalVertical => {
                     start_canonical_paragraph(command.state, modes, stores, true)?;
-                    crate::assignments::append_canonical_control_space_with_fuel(
+                    crate::canonical_box_runtime::append_canonical_control_space_with_fuel(
                         modes,
                         stores,
                         command.fuel,
                     )?;
                 }
                 _ => {
-                    crate::assignments::append_canonical_control_space_with_fuel(
+                    crate::canonical_box_runtime::append_canonical_control_space_with_fuel(
                         modes,
                         stores,
                         command.fuel,
@@ -13651,9 +13699,14 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, true)?;
             }
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             modes.current_list_mutation().push(Node::Glue {
-                spec: stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive)),
+                spec: stores
+                    .intern_glue(crate::canonical_box_runtime::fixed_infinite_glue(primitive)),
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -13684,7 +13737,8 @@ fn apply_scanned_step(
         ScannedStep::FixedVerticalGlue { primitive } => {
             // See `ScannedStep::VerticalSkip` above: same §1054/§1057
             // `append_glue`, no paragraph start, no page build.
-            let spec = stores.intern_glue(crate::assignments::fixed_infinite_glue(primitive));
+            let spec =
+                stores.intern_glue(crate::canonical_box_runtime::fixed_infinite_glue(primitive));
             crate::vertical::append_node_to_current_list(
                 modes,
                 stores,
@@ -13711,7 +13765,7 @@ fn apply_scanned_step(
             ) {
                 start_canonical_paragraph(command.state, modes, stores, indent)?;
             } else {
-                crate::assignments::indent_in_hmode(modes, stores, indent, command.fuel)?;
+                crate::canonical_box_runtime::indent_in_hmode(modes, stores, indent, command.fuel)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -14280,7 +14334,7 @@ fn apply_scanned_step(
                 .and_then(|id| stores.pdf_external_image_record(id))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             let dimensions = image.dimensions();
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14314,7 +14368,7 @@ fn apply_scanned_step(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14330,7 +14384,7 @@ fn apply_scanned_step(
                     "pdfrunninglinkoff"
                 }));
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14360,7 +14414,7 @@ fn apply_scanned_step(
                 .ok()
                 .filter(|object| stores.pdf_raw_object(*object).is_some())
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14544,7 +14598,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredOpenOut { stream, file_name } => {
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14556,7 +14610,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredCloseOut { stream } => {
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14567,7 +14621,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredWrite { stream, tokens } => {
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14582,7 +14636,7 @@ fn apply_scanned_step(
             deferred: true,
             tokens,
         } => {
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14601,7 +14655,7 @@ fn apply_scanned_step(
             for &token in stores.tokens(tokens.token_list()) {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
-            crate::assignments::append_whatsit(
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14630,10 +14684,11 @@ fn apply_scanned_step(
             // language that was current while it was being built.
             let clang = u8::try_from(language).unwrap_or(0);
             let left_hyphen_min =
-                crate::assignments::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-            let right_hyphen_min =
-                crate::assignments::norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
-            crate::assignments::append_whatsit(
+                crate::canonical_box_runtime::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+            let right_hyphen_min = crate::canonical_box_runtime::norm_min(
+                stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
+            );
+            crate::canonical_box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -14963,7 +15018,7 @@ fn apply_scanned_step(
             // TeX82 §218 observes the synchronous linked list built by
             // main_control. Materialize Umber's batched character tail before
             // traversing its diagnostic physical projection.
-            crate::assignments::flush_pending_hchars(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars(modes, stores, command.fuel)?;
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_showlists(stores, modes, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
@@ -15092,12 +15147,16 @@ fn apply_scanned_step(
                         if copy && let Some(id) = id {
                             stores.pin_survivor(id);
                         }
-                        let node = crate::assignments::first_box_node(stores, id);
+                        let node = crate::canonical_box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
                     ScannedBoxShiftPayload::LastBox => {
-                        let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
+                        let node = crate::canonical_box_runtime::take_last_box(
+                            modes,
+                            stores,
+                            command.fuel,
+                        )?;
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
@@ -15105,7 +15164,7 @@ fn apply_scanned_step(
                         if split.missing_to {
                             report_missing_vsplit_to(command.state, stores)?;
                         }
-                        let node = crate::assignments::split_vbox_register(
+                        let node = crate::canonical_box_runtime::split_vbox_register(
                             stores,
                             split.index,
                             split.height,
@@ -15130,7 +15189,11 @@ fn apply_scanned_step(
             if split.missing_to {
                 report_missing_vsplit_to(command.state, stores)?;
             }
-            let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
+            let node = crate::canonical_box_runtime::split_vbox_register(
+                stores,
+                split.index,
+                split.height,
+            )?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -15148,13 +15211,13 @@ fn apply_scanned_step(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            let node = crate::assignments::first_box_node(stores, id);
+            let node = crate::canonical_box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
-            crate::assignments::execute_scanned_unbox(
+            crate::canonical_box_runtime::execute_scanned_unbox(
                 primitive,
                 index,
                 modes,
@@ -15164,7 +15227,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SavedVerticalDiscards(primitive) => {
-            crate::assignments::execute_scanned_saved_vertical_discards(
+            crate::canonical_box_runtime::execute_scanned_saved_vertical_discards(
                 primitive,
                 modes,
                 stores,
@@ -15173,7 +15236,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LastBox => {
-            let node = crate::assignments::take_last_box(modes, stores, command.fuel)?;
+            let node = crate::canonical_box_runtime::take_last_box(modes, stores, command.fuel)?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -15385,7 +15448,11 @@ fn apply_scanned_step(
             // No `build_page` call afterward (unlike `\penalty`/`\insert`):
             // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
             // node in every mode and leave page building to a later trigger.
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -15513,7 +15580,7 @@ fn apply_scanned_step(
                 command.fuel,
             )?;
             let output_level =
-                crate::assignments::commit_current_list(modes, stores, command.fuel)?;
+                crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
             stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
@@ -15572,17 +15639,29 @@ fn apply_scanned_step(
             // run when the next expanded command is not a character. A brace
             // is therefore a real text boundary on both entry and exit:
             // `{f}i` must not form `fi` across the closing brace.
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             enter_canonical_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             enter_canonical_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndSemiSimpleGroup => {
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::SemiSimple)
@@ -15654,7 +15733,11 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
-            crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                modes,
+                stores,
+                command.fuel,
+            )?;
             warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
@@ -15727,10 +15810,11 @@ fn apply_scanned_step(
             // are dropped along with the popped mode level instead of ever
             // becoming node.
 
-            let level = crate::assignments::commit_current_list(modes, stores, command.fuel)?;
+            let level =
+                crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
             let children = stores.freeze_node_list(level.list().nodes());
             let node = if box_state.kind.horizontal() {
-                Node::HList(crate::assignments::hpack_with_overfull_rule(
+                Node::HList(crate::canonical_box_runtime::hpack_with_overfull_rule(
                     stores,
                     children,
                     box_state.packing,
@@ -15841,9 +15925,9 @@ fn apply_scanned_step(
                 // here.
                 let mut node = node;
                 if let Some(shift) = box_state.shift {
-                    crate::assignments::apply_box_shift_delta(&mut node, shift.delta)?;
+                    crate::canonical_box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
-                crate::assignments::append_box_node_to_current_list(
+                crate::canonical_box_runtime::append_box_node_to_current_list(
                     modes,
                     stores,
                     node,
@@ -16263,7 +16347,7 @@ fn apply_scanned_step(
                         modes.current_mode(),
                         Mode::Horizontal | Mode::RestrictedHorizontal
                     ) {
-                        crate::assignments::append_canonical_space_with_fuel(
+                        crate::canonical_box_runtime::append_canonical_space_with_fuel(
                             modes,
                             stores,
                             command.fuel,
@@ -16280,7 +16364,7 @@ fn apply_scanned_step(
                     modes
                         .current_list_mutation()
                         .set_no_boundary(suppress_left_boundary);
-                    crate::assignments::append_canonical_character_with_fuel(
+                    crate::canonical_box_runtime::append_canonical_character_with_fuel(
                         modes,
                         stores,
                         ch,
@@ -16971,12 +17055,12 @@ fn apply_box_shift(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            let node = crate::assignments::first_box_node(stores, id);
+            let node = crate::canonical_box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox => {
-            let node = crate::assignments::take_last_box(modes, stores, fuel)?;
+            let node = crate::canonical_box_runtime::take_last_box(modes, stores, fuel)?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
@@ -16984,7 +17068,11 @@ fn apply_box_shift(
             if split.missing_to {
                 report_missing_vsplit_to(command, stores)?;
             }
-            let node = crate::assignments::split_vbox_register(stores, split.index, split.height)?;
+            let node = crate::canonical_box_runtime::split_vbox_register(
+                stores,
+                split.index,
+                split.height,
+            )?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
@@ -17193,8 +17281,8 @@ fn append_shifted_box(
     let Some(mut node) = node else {
         return Ok(());
     };
-    crate::assignments::apply_box_shift_delta(&mut node, delta)?;
-    crate::assignments::append_box_node_to_current_list(modes, stores, node, fuel)?;
+    crate::canonical_box_runtime::apply_box_shift_delta(&mut node, delta)?;
+    crate::canonical_box_runtime::append_box_node_to_current_list(modes, stores, node, fuel)?;
     crate::vertical::build_page_if_outer_vertical(modes, stores)
 }
 
@@ -17269,7 +17357,7 @@ fn apply_scanned_rule(
         // finished the current word. Materialize Umber's pending character
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
-        crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
         modes.current_list_mutation().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
@@ -17354,8 +17442,11 @@ fn apply_accent_nodes(
         modes.current_list_mutation().push(accent_node);
     } else {
         let children = stores.freeze_node_list(&[accent_node]);
-        let mut boxed =
-            crate::assignments::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
+        let mut boxed = crate::canonical_box_runtime::hpack_with_overfull_rule(
+            stores,
+            children,
+            PackSpec::Natural,
+        );
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
@@ -17538,14 +17629,14 @@ fn finish_insert_or_adjust_group(
         .map_err(|_| ExecError::MissingToken {
             context: "insert group",
         })?;
-    let level = crate::assignments::commit_current_list(modes, stores, command.fuel)?;
+    let level = crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
-    crate::assignments::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+    crate::canonical_box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })
     } else {
