@@ -57,8 +57,9 @@ pub use canonical_main_control::{
 pub use canonical_paragraph_end::cached_pretolerance_plan;
 pub use canonical_shipout::retry_unavailable_stream_open;
 pub use checkpoint::{
-    CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
-    EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
+    CanonicalCheckpointRestoreError, CanonicalEditorFork, CheckpointSink,
+    ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary, EngineCheckpoint,
+    RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
 pub use error::{ExecError, FrozenDiagnosticOrigin};

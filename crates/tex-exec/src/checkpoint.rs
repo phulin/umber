@@ -73,6 +73,15 @@ pub struct RootRehomeContext<'a> {
     new_content_hash: ContentHash,
 }
 
+/// Complete editor-root replacement supplied to one canonical checkpoint fork.
+pub struct CanonicalEditorFork<'a> {
+    pub old_source: &'a [u8],
+    pub new_source: std::sync::Arc<[u8]>,
+    pub fragments: &'a FragmentStore,
+    pub layout: &'a tex_state::EditorLayout,
+    pub paragraphs: &'a [crate::CanonicalParagraphRegion],
+}
+
 impl<'a> RootRehomeContext<'a> {
     #[must_use]
     pub fn new(old_source: &'a str, new_source: &'a str) -> Self {
@@ -208,11 +217,13 @@ impl EngineCheckpoint {
         self.fork_canonical_editor_with_paragraphs(
             control,
             substrate,
-            old_source,
-            new_source,
-            fragments,
-            layout,
-            &[],
+            CanonicalEditorFork {
+                old_source,
+                new_source,
+                fragments,
+                layout,
+                paragraphs: &[],
+            },
         )
         .map(|(universe, latency, _, _)| (universe, latency))
     }
@@ -223,11 +234,7 @@ impl EngineCheckpoint {
         &self,
         control: &mut crate::CanonicalMainControl,
         substrate: &GenerationSubstrate,
-        old_source: &[u8],
-        new_source: std::sync::Arc<[u8]>,
-        fragments: &FragmentStore,
-        layout: &tex_state::EditorLayout,
-        paragraphs: &[crate::CanonicalParagraphRegion],
+        request: CanonicalEditorFork<'_>,
     ) -> Result<
         (
             Universe,
@@ -237,6 +244,13 @@ impl EngineCheckpoint {
         ),
         EditorRestoreError,
     > {
+        let CanonicalEditorFork {
+            old_source,
+            new_source,
+            fragments,
+            layout,
+            paragraphs,
+        } = request;
         if self.root_content_hash != Some(ContentHash::from_bytes(old_source)) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -271,7 +285,7 @@ impl EngineCheckpoint {
         };
         let (materialized, materialized_paragraphs) =
             owned.materialize_with_paragraphs(&mut universe);
-        *command = Box::new(materialized);
+        **command = materialized;
         if !command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }

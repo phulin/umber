@@ -1590,11 +1590,13 @@ impl Session {
             anchor.checkpoint().fork_canonical_editor_with_paragraphs(
                 &mut control,
                 substrate,
-                setup.old_source.as_bytes(),
-                Arc::from(self.source_file_bytes(&setup.next)),
-                &setup.fragments,
-                &setup.next_layout,
-                &replay_suffix,
+                tex_exec::CanonicalEditorFork {
+                    old_source: setup.old_source.as_bytes(),
+                    new_source: Arc::from(self.source_file_bytes(&setup.next)),
+                    fragments: &setup.fragments,
+                    layout: &setup.next_layout,
+                    paragraphs: &replay_suffix,
+                },
             )?;
         control.install_paragraph_replay_regions(replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
