@@ -1010,7 +1010,7 @@ fn rebox_observes_each_tex82_packaging_call() {
 }
 
 #[test]
-fn clean_math_character_observes_tex82_hpack_completion() {
+fn clean_math_character_observes_both_tex82_hpack_completions() {
     // TeX82 §720 routes a math-character field through a temporary mlist
     // and then hpack(q, natural), even though the resulting box can be built
     // directly from the same character metrics.
@@ -1036,7 +1036,7 @@ fn clean_math_character_observes_tex82_hpack_completion() {
     };
     let layout = ctx.layout.finish(boxed.list);
 
-    assert_eq!(layout.pack_observations(), &[expected]);
+    assert_eq!(layout.pack_observations(), &[expected, expected]);
 }
 
 #[test]

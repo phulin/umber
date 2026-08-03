@@ -765,6 +765,10 @@ pub(crate) fn clean_box(
                 // simplification, but its construction alone does not cross
                 // §651's observable hpack return seam.
                 let boxed = char_box(ctx, fetched, ch.origin);
+                // The shortcut stands in for two distinct TeX82 package
+                // calls: the temporary one-noad mlist's §724 dimensions
+                // check, followed by §720's common clean-box hpack.
+                ctx.layout.observe_completed_pack(&boxed);
                 ctx.layout.observe_completed_pack(&boxed);
                 boxed
             } else {
