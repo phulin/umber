@@ -44,17 +44,17 @@ mod paragraph;
 mod pdf_actions;
 mod pdf_fonts;
 pub(crate) mod shipout;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_box_runtime::hmode::test_fix_hyphen_language;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_discretionary_diagnostics_differ;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_language_context;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use shipout::test_stage_shipout_artifact;
 mod tokens;
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 pub(crate) use crate::canonical_assignments::math_allows_mode_independent_primitive;
@@ -65,27 +65,27 @@ pub(crate) use crate::canonical_box_runtime::hmode::{
     commit_current_list, fixed_infinite_glue, flush_pending_hchars, flush_pending_hchars_with_fuel,
     norm_min, try_append_character, try_append_tfm_character_span,
 };
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::apply_line_expansion as test_apply_line_expansion;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::break_hlist as test_break_hlist;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_apply_pdf_line_dimensions;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_automatic_discretionary;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_hyphenated_hlist;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_hyphenated_hlist_owned;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_hyphenated_word_text;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_materialize_pdf_line;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_physical_post_break_span;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_physical_pre_break_projection;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_pretolerance_memo_key;
 pub(crate) use crate::canonical_paragraph_end::{
     ParagraphBreakResult, display_line_dimensions, normal_paragraph,

@@ -3,6 +3,9 @@ name = "tex-exec"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+test = false
+
 [features]
 profiling = ["tex-state/profiling"]
 
@@ -18,8 +21,6 @@ tex-typeset = { path = "../tex-typeset" }
 
 [dev-dependencies]
 tex-command = { path = "../tex-command" }
-tex-expand = { path = "../tex-expand" }
-tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 
 test-support = { path = "../test-support" }

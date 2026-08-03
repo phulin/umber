@@ -1,9 +1,9 @@
 //! Source-free canonical math validation, lowering, and display packaging.
 
 pub(crate) mod display;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) mod legacy_front;
-#[cfg(test)]
+#[cfg(any())]
 mod legacy_scan;
 mod lower;
 mod support;
@@ -11,7 +11,7 @@ mod support;
 use tex_state::Universe;
 use tex_state::math::MathFontSize;
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use lower::finish_math_lists;
 pub(crate) use lower::finish_math_lists_owned;
 pub(crate) use lower::{
@@ -88,7 +88,7 @@ pub(crate) fn reject_invalid_math_fonts(
     Ok(true)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static str> {
     math_font_failure(stores).map(|failure| match failure {
         MathFontFailure::Symbol => "symbol",
@@ -96,7 +96,7 @@ pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static st
     })
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn testing_finish_current_math_list(
     nest: &mut crate::ModeNest,
     stores: &mut Universe,

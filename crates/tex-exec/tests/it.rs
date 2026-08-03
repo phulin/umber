@@ -1501,7 +1501,7 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn production_cutover_keeps_legacy_execution_out_of_the_shipping_graph() {
+fn compatibility_collapse_removes_legacy_execution_from_every_graph() {
     let root = test_support::repository_root().join("crates/tex-exec");
     let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read tex-exec manifest");
     let normal_dependencies = manifest
@@ -1517,6 +1517,19 @@ fn production_cutover_keeps_legacy_execution_out_of_the_shipping_graph() {
             "shipping tex-exec must not retain a normal {dependency} edge"
         );
     }
+    let dev_dependencies = manifest
+        .split("[dev-dependencies]")
+        .nth(1)
+        .and_then(|tail| tail.split("[lints]").next())
+        .expect("bounded dev dependency section");
+    for dependency in ["tex-expand", "tex-lex"] {
+        assert!(
+            !dev_dependencies
+                .lines()
+                .any(|line| line.trim_start().starts_with(dependency)),
+            "tex-exec must not retain a dev {dependency} edge"
+        );
+    }
 
     let lib = fs::read_to_string(root.join("src/lib.rs")).expect("read tex-exec root");
     for module in [
@@ -1530,8 +1543,8 @@ fn production_cutover_keeps_legacy_execution_out_of_the_shipping_graph() {
         "raw_delivery",
     ] {
         assert!(
-            lib.contains(&format!("#[cfg(test)]\nmod {module};")),
-            "retired {module} must be absent from the shipping module graph"
+            !lib.contains(&format!("mod {module};")),
+            "retired {module} must be absent from every module graph"
         );
     }
     for export in [
@@ -1539,12 +1552,9 @@ fn production_cutover_keeps_legacy_execution_out_of_the_shipping_graph() {
         "pub use legacy_assignments::",
         "pub use legacy_dispatch::",
     ] {
-        let position = lib
-            .find(export)
-            .expect("retained test-only compatibility export");
         assert!(
-            lib[..position].ends_with("#[cfg(test)]\n"),
-            "{export} must not be reachable from a normal build"
+            !lib.contains(export),
+            "retired compatibility export {export} must be absent"
         );
     }
 

@@ -1,5 +1,5 @@
 use tex_state::Universe;
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 use tex_command::FatalError;

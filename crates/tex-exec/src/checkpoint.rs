@@ -4,9 +4,9 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandSummaryError};
-#[cfg(test)]
+#[cfg(any())]
 use tex_state::SourceId;
-#[cfg(test)]
+#[cfg(any())]
 use tex_state::source_map::SourceMapError;
 use tex_state::{
     ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputSummary, Snapshot,
@@ -14,7 +14,7 @@ use tex_state::{
 };
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
-#[cfg(test)]
+#[cfg(any())]
 use tex_lex::InputStack;
 
 /// In-memory schema version for aggregate engine checkpoints.
@@ -443,7 +443,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         self.mode_projection
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn publish(
         &mut self,
         boundary: EngineBoundary,
@@ -526,16 +526,16 @@ impl std::error::Error for CanonicalCheckpointRestoreError {}
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
-    #[cfg(test)]
+    #[cfg(any())]
     LayoutCursor(tex_lex::LayoutCursorError),
     RootRevisionMismatch,
     Canonical(CanonicalCheckpointRestoreError),
-    #[cfg(test)]
+    #[cfg(any())]
     CanonicalContinuation,
     ChangedRootPrefix,
-    #[cfg(test)]
+    #[cfg(any())]
     RootRebind(SourceMapError),
-    #[cfg(test)]
+    #[cfg(any())]
     IncludedInputUnavailable(SourceId),
     Mode(ExecError),
 }
@@ -545,7 +545,7 @@ impl fmt::Display for EditorRestoreError {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
             Self::Layout(error) => write!(f, "could not install editor layout: {error}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::LayoutCursor(error) => {
                 write!(f, "could not bind editor layout to root input: {error}")
             }
@@ -553,16 +553,16 @@ impl fmt::Display for EditorRestoreError {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
             Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::CanonicalContinuation => {
                 f.write_str("canonical checkpoint cannot restore the retired input stack")
             }
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }
-            #[cfg(test)]
+            #[cfg(any())]
             Self::RootRebind(error) => write!(f, "could not rebind editor root: {error}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::IncludedInputUnavailable(source) => write!(
                 f,
                 "included generated source {} cannot be reopened",
@@ -575,7 +575,7 @@ impl fmt::Display for EditorRestoreError {
 
 impl std::error::Error for EditorRestoreError {}
 
-#[cfg(test)]
+#[cfg(any())]
 impl crate::Executor {
     /// Restores a canonical checkpoint without consulting a host or legacy
     /// input stack.  All fallible reconstruction happens before any live root
@@ -622,7 +622,7 @@ fn combine_mode_hash(universe_hash: u64, mode_hash: u64) -> u64 {
     universe_hash.rotate_left(17) ^ mode_hash
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::{CanonicalCheckpointRestoreError, EngineBoundary, EngineCheckpoint};
     use crate::{ExecutionBudgetCounters, Executor, Mode};

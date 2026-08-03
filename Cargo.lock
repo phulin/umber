@@ -1207,9 +1207,7 @@ dependencies = [
  "smallvec",
  "test-support",
  "tex-command",
- "tex-expand",
  "tex-fonts",
- "tex-lex",
  "tex-out",
  "tex-shape",
  "tex-state",
@@ -1220,13 +1218,7 @@ dependencies = [
 name = "tex-expand"
 version = "0.1.0"
 dependencies = [
- "ahash",
- "md-5",
- "posix-regex",
- "test-support",
  "tex-command",
- "tex-lex",
- "tex-state",
 ]
 
 [[package]]

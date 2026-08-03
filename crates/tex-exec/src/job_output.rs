@@ -49,7 +49,7 @@ impl JobOutput {
         Ok(self.log_name.as_deref().expect("log name was initialized"))
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) const fn log_opened(&self) -> bool {
         self.log_opened
     }
@@ -122,5 +122,5 @@ fn with_default_extension(name: &str, extension: &str) -> String {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

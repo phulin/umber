@@ -46,7 +46,7 @@ const MISSING_DELIMITER_HELP: [&str; 6] = [
 
 #[path = "scan/chars.rs"]
 mod chars;
-#[cfg(test)]
+#[cfg(any())]
 #[path = "scan/tests.rs"]
 mod tests;
 

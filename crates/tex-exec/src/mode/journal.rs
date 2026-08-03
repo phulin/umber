@@ -204,7 +204,7 @@ impl ListJournal<'_> {
 }
 
 impl ModeNest {
-    #[cfg(test)]
+    #[cfg(any())]
     pub(super) fn reset_journal_for_test(&mut self) {
         assert!(self.journal.frames.is_empty());
         self.journal.generation = self.journal.generation.wrapping_add(1);
@@ -248,7 +248,7 @@ impl ModeNest {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(super) fn journal_inverse_len_for_test(&self) -> usize {
         self.journal.inverses.len()
     }

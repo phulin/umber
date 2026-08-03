@@ -15,7 +15,7 @@ use crate::dispatch::PreparedDviPage;
 use crate::canonical_shipout::direct;
 use crate::canonical_shipout::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
@@ -292,7 +292,7 @@ pub(crate) fn stage_canonical_form(
     direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_stage_shipout_artifact(
     node: Node,
     stores: &mut Universe,

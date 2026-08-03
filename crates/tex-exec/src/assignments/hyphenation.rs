@@ -4,7 +4,7 @@ use tex_state::token::{Catcode, Token};
 
 use super::*;
 use crate::ExecError;
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use crate::canonical_paragraph_end::test_hyphenated_word;
 use crate::canonical_paragraph_end::{
     apply_hyphenation_exceptions, apply_patterns, parse_pattern_word, pattern_capacity_error,

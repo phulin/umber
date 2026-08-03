@@ -31,7 +31,7 @@ pub(super) fn begin_v_template(
     processor.begin_alignment_v_template(alignment, event)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
 

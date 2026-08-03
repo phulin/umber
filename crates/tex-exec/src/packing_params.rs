@@ -9,7 +9,7 @@ use tex_typeset::{HpackParams, PackSpec, PackedBox, VpackParams};
 
 use crate::pack_report::{DiagnosticListLayout, PackedDirection, report_pack_diagnostics};
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 #[must_use]

@@ -254,7 +254,7 @@ fn discretionary_diagnostics_differ(
     semantic.next().is_some()
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_discretionary_diagnostics_differ(
     stores: &Universe,
     physical: &[Node],
@@ -279,7 +279,7 @@ fn materialize_pdf_line(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_materialize_pdf_line(
     stores: &mut Universe,
     nodes: &mut Vec<Node>,
@@ -442,7 +442,7 @@ fn pdf_line_dimensions(stores: &Universe) -> PdfLineDimensions {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_apply_pdf_line_dimensions(
     stores: &Universe,
     lines: &mut [tex_state::node::BoxNode],
@@ -473,7 +473,7 @@ fn active_text_directions(nodes: &[Node]) -> Vec<Direction> {
     active
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn break_hlist(
     stores: &mut Universe,
     hlist: Vec<Node>,
@@ -484,7 +484,7 @@ pub(crate) fn break_hlist(
         .expect("default paragraph reconstruction fuel")
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn break_hlist_with_fuel(
     stores: &mut Universe,
     hlist: Vec<Node>,
@@ -724,7 +724,7 @@ fn pretolerance_memo_key(
     )
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_pretolerance_memo_key(
     stores: &Universe,
     hlist: &[Node],

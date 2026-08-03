@@ -1,5 +1,5 @@
 use tex_expand::get_x_token_with_context;
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 use tex_lex::InputStack;

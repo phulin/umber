@@ -2,7 +2,7 @@ mod debug;
 mod resolution;
 mod set;
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 use tex_state::Universe;

@@ -10,7 +10,7 @@ mod material;
 mod packaging;
 mod vsplit;
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use packaging::project_short_diagnostic_discs;
 pub(crate) use packaging::{
     first_box_node, hpack_owned_with_overfull_rule, hpack_with_overfull_rule, take_last_box,
@@ -23,12 +23,12 @@ pub(crate) use hmode::{
     commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
     flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
 };
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use leaders::infinite_glue_for_skip_primitive;
 pub(crate) use leaders::{
     append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,
 };
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use material::{
     acquire_box_register, append_box_register, assign_box_dimension, box_dimension_for_primitive,
 };

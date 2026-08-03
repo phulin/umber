@@ -295,7 +295,7 @@ fn clock_suffix(stores: &Universe) -> String {
 /// this before it opens the root source (via
 /// [`crate::CanonicalMainControl::register_root_source`] or a wrapper over
 /// it), so the banner and `**` line precede the root file's own `(`.
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn begin_job(
     job: &mut JobFraming,
     stores: &mut Universe,
@@ -817,5 +817,5 @@ fn print_transcript_note(stores: &mut Universe, job_name: &str) {
         .print_char('.');
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

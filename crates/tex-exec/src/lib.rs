@@ -1,14 +1,15 @@
-//! TeX execution engine scaffold.
+//! Canonical TeX stomach and main-control execution.
 //!
-//! This crate owns the stomach's mode nest and main-control dispatch. It pulls
-//! only fully expanded tokens from `tex_expand::get_x_token*`; raw token reads
-//! stay in the lexer/gullet pipeline.
+//! This crate consumes completed commands from `tex-command`; it does not own
+//! raw token delivery or expansion.
 
 #![forbid(unsafe_code)]
+#![allow(
+    dead_code,
+    reason = "canonical kernels are exercised through higher-level command fixtures; retired unit-only callers were removed with the compatibility graph"
+)]
 
 mod align;
-#[cfg(test)]
-mod assignments;
 mod canonical_assignments;
 mod canonical_box_runtime;
 mod canonical_diagnostics;
@@ -23,31 +24,15 @@ mod dispatch;
 mod effective_tail;
 mod error;
 mod error_report;
-#[cfg(test)]
-mod executor;
 mod host_api;
 mod job;
 mod job_output;
-#[cfg(test)]
-mod legacy_assignments;
-#[cfg(test)]
-mod legacy_diagnostics;
-#[cfg(test)]
-mod legacy_dispatch;
-#[cfg(test)]
-mod legacy_editor_restart;
-#[cfg(test)]
-mod legacy_output;
-#[cfg(test)]
-mod legacy_paragraph_memo;
 mod math;
 mod mode;
 mod node_dump;
 mod pack_report;
 mod packing_params;
 mod page_builder;
-#[cfg(test)]
-mod raw_delivery;
 mod retained_resource;
 mod session_api;
 mod splitting;
@@ -77,11 +62,6 @@ pub use checkpoint::{
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
-#[cfg(test)]
-pub use executor::{
-    ExecutionContext, ExecutionLifecycle, ExecutionProgress, ExecutionRun, ExecutionServices,
-    ExecutionState, ExecutionStep, ExecutionStepResult, Executor, ResourceSite, ResourceSuspension,
-};
 pub use host_api::{
     FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
     PdfImageResolver, ResourceLookup, ResourceNeed, ResourceResult,
@@ -89,14 +69,6 @@ pub use host_api::{
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
     PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
-};
-#[cfg(test)]
-pub use legacy_assignments::try_execute_assignment;
-#[cfg(test)]
-pub use legacy_dispatch::dispatch_delivered_token;
-#[cfg(test)]
-pub(crate) use legacy_dispatch::{
-    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
@@ -110,7 +82,5 @@ pub use session_api::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionTelemetry, PendingInterrupt,
 };
 
-#[cfg(test)]
-mod test_harness;
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

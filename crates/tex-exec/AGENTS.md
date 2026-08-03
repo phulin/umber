@@ -4,13 +4,14 @@ Read the repository-level `AGENTS.md` before editing here. This crate owns TeX's
 
 ## Crate Role
 
-`tex-exec` consumes fully expanded tokens from `tex-expand` and applies unexpandable TeX semantics to `tex-state::Universe`. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal/vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits execution diagnostics through the state/world boundary.
+`tex-exec` consumes completed commands from `tex-command` and applies unexpandable TeX semantics to `tex-state::Universe`. It installs and dispatches unexpandable primitives, manages the mode nest, performs assignments and grouping-sensitive state changes, builds horizontal/vertical material, invokes pure typesetting kernels, lowers shipped pages into `tex-out` artifacts, and emits execution diagnostics through the state/world boundary.
 
 Use this crate when behavior mutates live engine state or depends on TeX's current mode. Keep assignment scanning thin: decode the primitive operand, create a short-lived `tex_state::ExpansionContext` over the owning `Universe`, scan the value through the shared expansion scanners, then write through the `Universe` facade.
 
 ## Boundaries
 
-- Do not read raw input directly here except through the gullet interfaces required by TeX semantics; ordinary execution should pull expanded tokens from `tex-expand`.
+- Do not read raw input directly. Ordinary execution consumes canonical
+  `tex-command` delivery.
 - Do not bypass `Universe` or expose raw substores, checkpoint internals, or handle constructors.
 - Keep pure list algorithms in `tex-typeset`, immutable font parsing in `tex-fonts`, artifact serialization in `tex-out`, and file/clock/random effects behind `World`.
 - Preserve the mode boundary: stomach-side code owns baseline/interline side effects and list contribution, while pure packing/linebreaking routines should stay side-effect free.
@@ -111,7 +112,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/math/legacy_front.rs` and `src/math/legacy_scan.rs`: retired `Executor` InputStack command dispatch and operand/nested-list scanners; legacy character scanning remains in `src/math/scan/chars.rs`.
 - `src/math/tests.rs`: direct TeX82 display-alignment finish, inline/display entry, equation-number, exit, lookahead, and recovery tests.
 - `src/math/scan/tests.rs`: focused math scanner coverage for numeric delimiter bounds and traced-token recovery.
-- `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata; alignment brace depth belongs exclusively to `tex-lex`, not this execution-state projection.
+- `src/mode.rs`: mode nest, mode summaries, pending horizontal chars, paragraph state, and list metadata; alignment brace depth belongs exclusively to `tex-command`, not this execution-state projection.
 - `src/mode/journal.rs`: production generation-checked nested inverse journal behind the typed mode-list mutation boundary and the authoritative canonical aggregate mode rollback path.
 - `src/mode/tests.rs`: mode-summary root sharing, restoration, and copy-on-write isolation tests.
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.

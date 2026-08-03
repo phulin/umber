@@ -646,7 +646,7 @@ impl<'a> ExecutionContext<'a> {
         self
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn with_command_fuel_limit(mut self, limit: u64) -> Self {
         self.command_fuel =
             Some(tex_command::CommandFuelLedger::new(limit).expect("valid test fuel limit"));

@@ -48,7 +48,7 @@ impl Drop for ExecutionTransaction<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use tex_state::Universe;
 

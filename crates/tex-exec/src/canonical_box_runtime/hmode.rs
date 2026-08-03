@@ -116,7 +116,7 @@ pub(crate) fn append_canonical_character_with_fuel(
     append_hchar_with_fuel(nest, stores, ch, origin, etex_extended, fuel)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn append_canonical_character(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -458,7 +458,7 @@ pub(crate) fn append_hchar_with_fuel(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn append_hchar(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -475,7 +475,7 @@ pub(crate) fn append_hchar(
     )
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_fix_hyphen_language(nest: &mut ModeNest, stores: &mut Universe, mode: Mode) {
     fix_hyphen_language(nest, stores, mode).expect("test ligature run is fueled");
 }
@@ -538,7 +538,7 @@ pub(crate) fn indent_in_hmode(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn fix_hyphen_language(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -823,7 +823,7 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn reconstitute(
     stores: &mut Universe,
     pending: &[crate::mode::PendingHChar],

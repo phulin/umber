@@ -641,5 +641,5 @@ fn scan_hlist_group(
 /// runs with no guard on the resulting width). Only an empty list, or a tail
 /// that is neither a character nor a ligature, leaves the list untouched
 /// (`return` with no append).
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

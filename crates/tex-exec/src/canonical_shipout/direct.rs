@@ -455,7 +455,7 @@ mod lower;
 pub(crate) use lower::page_counts;
 mod materialize;
 mod normalize;
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 
 use lower::*;

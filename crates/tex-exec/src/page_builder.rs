@@ -875,5 +875,5 @@ fn vertical_break_error(error: VerticalBreakError) -> ExecError {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

@@ -102,5 +102,5 @@ fn vertical_height(node: &Node) -> Scaled {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

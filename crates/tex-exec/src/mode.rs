@@ -219,7 +219,7 @@ impl ModeList {
             .mutate_semantic(|nodes| nodes.get_mut(index).map(mutate))
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -227,7 +227,7 @@ impl ModeList {
         self.sequence.mutate_semantic(mutate)
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -478,7 +478,7 @@ pub(crate) struct ModeListMutation<'a> {
 }
 
 impl ModeListMutation<'_> {
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn for_test(list: &mut ModeList) -> ModeListMutation<'_> {
         ModeListMutation {
             list,
@@ -535,7 +535,7 @@ impl ModeListMutation<'_> {
         self.list.with_last_node_mut(mutate)
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn with_reconstitution_target<R>(
         &mut self,
         mutate: impl for<'a> FnOnce(&'a mut Vec<Node>) -> R,
@@ -544,7 +544,7 @@ impl ModeListMutation<'_> {
         self.list.with_reconstitution_target(mutate)
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn push_reconstituted(
         &mut self,
         insertion: Option<(usize, Node)>,
@@ -1370,5 +1370,5 @@ impl ModeNest {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

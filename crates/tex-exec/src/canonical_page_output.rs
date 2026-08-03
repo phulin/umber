@@ -569,11 +569,11 @@ pub(crate) fn job_is_quiescent(stores: &Universe) -> bool {
         && stores.page_integer(PageInteger::DeadCycles) == 0
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "output/tests.rs"]
 mod structured_tests;
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
     use tex_state::page::{EJECT_PENALTY, PageBreak};

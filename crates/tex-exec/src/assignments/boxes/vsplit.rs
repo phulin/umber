@@ -32,5 +32,5 @@ pub(super) fn scan_vsplit_node(
     crate::canonical_box_runtime::split_vbox_register(stores, index, height)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests;

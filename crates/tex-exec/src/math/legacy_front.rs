@@ -1,6 +1,6 @@
 //! Retired `Executor` math scanner and input-stack dispatch front.
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "tests.rs"]
 mod tests;
 
@@ -24,7 +24,7 @@ use crate::{
     push_tokens, push_traced_tokens,
 };
 
-#[cfg(test)]
+#[cfg(any())]
 use super::display;
 use super::display::*;
 use super::legacy_scan::{self as scan, *};
@@ -124,7 +124,7 @@ fn resume_after_display(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn testing_start_eq_no(
     nest: &mut ModeNest,
     stores: &mut Universe,

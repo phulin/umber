@@ -1,22 +1,15 @@
 [package]
 name = "tex-expand"
 version.workspace = true
+autotests = false
 edition.workspace = true
 
 [features]
-shadow = ["tex-state/shadow"]
-profiling = ["tex-lex/profiling", "tex-state/profiling"]
+shadow = []
+profiling = []
 
 [dependencies]
-md-5.workspace = true
-posix-regex.workspace = true
 tex-command = { path = "../tex-command" }
-tex-lex = { path = "../tex-lex" }
-tex-state = { path = "../tex-state" }
-
-[dev-dependencies]
-ahash.workspace = true
-test-support = { path = "../test-support" }
 
 [lints]
 workspace = true

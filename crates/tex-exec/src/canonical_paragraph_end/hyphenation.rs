@@ -123,7 +123,7 @@ fn install_hyphenation_exceptions(
     diagnostics
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn hyphenated_hlist_with_fuel(
     stores: &mut Universe,
     nodes: Vec<Node>,
@@ -272,7 +272,7 @@ fn project_physical_pre_break_spans(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_physical_pre_break_projection(
     stores: &mut Universe,
     nodes: &[Node],
@@ -284,7 +284,7 @@ pub(crate) fn test_physical_pre_break_projection(
     projected
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<Node> {
     let mut fuel = tex_command::CommandFuelLedger::default();
     hyphenated_hlist_with_fuel(stores, nodes, fuel.fuel_mut()).expect("test hyphenation fuel")
@@ -298,7 +298,7 @@ pub(crate) fn hyphenated_hlist(stores: &mut Universe, nodes: Vec<Node>) -> Vec<N
 /// packing the word into an over-wide `\vbox` and reading the underfull-box
 /// report. Tests that only need the pattern/exception/hyphen-code decision
 /// ask for it directly instead of asserting on box-display text.
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_hyphenated_word_text(stores: &Universe, word: &str) -> String {
     let language = current_language(stores);
     let Some(normalized) = word
@@ -321,7 +321,7 @@ pub(crate) fn test_hyphenated_word_text(stores: &Universe, word: &str) -> String
     text
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec<Node> {
     let glue = stores.glue_param(tex_state::env::banks::GlueParam::PAR_SKIP);
     let boundary = Node::Glue {
@@ -341,7 +341,7 @@ pub(crate) fn test_hyphenated_word(stores: &mut Universe, nodes: &[Node]) -> Vec
     hyphenated
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_language_context(nodes: &[Node]) -> (u8, usize, usize) {
     let mut language = 0;
     let mut left = 1;
@@ -885,7 +885,7 @@ fn synchronized_physical_branch_lengths(
     )
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_physical_post_break_span(
     word_len: usize,
     span: (usize, usize, usize),
@@ -905,7 +905,7 @@ pub(crate) fn test_physical_post_break_span(
 }
 
 /// Freezes a §914 automatic discretionary when §918's replacement count fits.
-#[cfg(test)]
+#[cfg(any())]
 fn automatic_discretionary(
     stores: &mut Universe,
     pre: &[Node],
@@ -950,7 +950,7 @@ fn automatic_physical_replace_count(replace: &[Node]) -> Option<u8> {
     u8::try_from(count).ok().filter(|&count| count <= 127)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_automatic_discretionary(
     stores: &mut Universe,
     replace: &[Node],

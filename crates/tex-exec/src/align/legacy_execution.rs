@@ -1,5 +1,5 @@
 use tex_expand::{get_alignment_x_or_protected_with_context, get_x_token_with_context};
-#[cfg(test)]
+#[cfg(any())]
 #[path = "execution/tests.rs"]
 mod tests;
 

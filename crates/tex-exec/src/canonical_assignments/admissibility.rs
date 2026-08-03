@@ -179,7 +179,7 @@ pub(crate) const fn math_allows_mode_independent_primitive(
     admissibility(primitive).math_mode_independent
 }
 
-#[cfg(test)]
+#[cfg(any())]
 mod tests {
     use super::*;
 

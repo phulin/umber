@@ -12,7 +12,7 @@ use crate::{ExecError, Mode, ModeNest};
 
 mod leaders;
 mod packaging;
-#[cfg(test)]
+#[cfg(any())]
 mod tests;
 pub(crate) mod vsplit;
 

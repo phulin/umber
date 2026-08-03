@@ -270,7 +270,7 @@ pub(crate) fn stage_canonical_form(
     direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_stage_shipout_artifact(
     node: Node,
     stores: &mut Universe,

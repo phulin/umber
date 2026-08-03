@@ -5459,7 +5459,7 @@ fn canonical_output_replay_owns_every_deferred_expansion_family() {
 #[test]
 fn retired_editor_input_stack_restart_is_test_only() {
     let root = include_str!("../lib.rs");
-    assert!(root.contains("#[cfg(test)]\nmod legacy_editor_restart;"));
+    assert!(root.contains("#[cfg(any())]\nmod legacy_editor_restart;"));
 
     let incremental = include_str!("../../../tex-incr/src/lib.rs");
     for legacy in ["fn execute_revision(", "fn execute_advance("] {

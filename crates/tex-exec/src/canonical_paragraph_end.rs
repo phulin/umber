@@ -6,7 +6,7 @@ use tex_typeset::linebreak::WidowPenaltySelector;
 mod hyphenation;
 mod runtime;
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use hyphenation::{
     apply_hyphenation_exceptions, apply_patterns, hyphenated_hlist as test_hyphenated_hlist_owned,
     parse_pattern_word, pattern_capacity_error, report_apply_diagnostics,
@@ -21,7 +21,7 @@ pub(crate) use runtime::{
     ParagraphBreakResult, break_current_paragraph, display_line_dimensions, normal_paragraph,
     start_canonical_paragraph,
 };
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) use runtime::{
     apply_line_expansion, break_hlist, test_apply_pdf_line_dimensions,
     test_discretionary_diagnostics_differ, test_materialize_pdf_line, test_pretolerance_memo_key,

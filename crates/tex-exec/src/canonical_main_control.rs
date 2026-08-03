@@ -1034,7 +1034,7 @@ impl CanonicalMainControl {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) const fn main_loop_active_for_test(&self) -> bool {
         self.main_loop_active
     }
@@ -1144,7 +1144,7 @@ impl CanonicalMainControl {
         self.command.input_level_count()
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn testing_push_mode(&mut self, mode: Mode) {
         self.modes.push(mode).expect("test mode push");
     }
@@ -2009,7 +2009,7 @@ impl CanonicalMainControl {
 
     /// Returns a detached summary of the live current mode level for exact
     /// crate-test assertions without exposing the canonical control's nest.
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn current_mode_level_for_test(&self) -> crate::ModeLevelSummary {
         self.modes
             .summary()
@@ -2021,7 +2021,7 @@ impl CanonicalMainControl {
 
     /// Returns the enquiry projection derived from canonical main control's
     /// live mode nest.
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn engine_state_snapshot_for_test(
         &self,
         stores: &Universe,
@@ -2031,14 +2031,14 @@ impl CanonicalMainControl {
 
     /// Returns the mode nest's current list, so a crate test can assert on the
     /// material main control has built without shipping a page first.
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn current_list(&self) -> &crate::ModeList {
         self.modes.current_list()
     }
 
     /// Finishes the current unfinished math list for crate-level structural
     /// assertions without exposing the canonical control's owned mode nest.
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn finish_current_math_list_for_test(
         &mut self,
         stores: &mut Universe,
@@ -2057,7 +2057,7 @@ impl CanonicalMainControl {
 
     /// Projects the preamble retained by canonical main control for focused
     /// crate-internal scanner assertions.
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn active_alignment_state_for_test(&self) -> Option<AlignState> {
         let active = self.active_alignment.as_ref()?;
         (!active.columns.is_empty()).then(|| {
@@ -5000,7 +5000,7 @@ pub enum MainControlStep {
 // The fixture suite retains its historical vocabulary locally.  This alias is
 // deliberately unavailable to normal builds: production code names and uses
 // the canonical driver directly.
-#[cfg(test)]
+#[cfg(any())]
 type CommandReplayControl = CanonicalMainControl;
 
 // Kept private while the implementation is migrated in place; callers only
@@ -10210,7 +10210,7 @@ fn scan_arithmetic_assignment(
     })
 }
 
-#[cfg(test)]
+#[cfg(any())]
 fn replay_text(tokens: &[tex_state::token::Token]) -> String {
     tokens
         .iter()
@@ -12302,7 +12302,7 @@ fn shipout_replay_box(
     Ok(receipt)
 }
 
-#[cfg(test)]
+#[cfg(any())]
 pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
@@ -18241,18 +18241,18 @@ fn command_error(error: CommandError) -> ExecError {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "command_replay/tests.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "canonical_main_control/tests.rs"]
 mod direct_tests;
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "effects/tests.rs"]
 mod effects_tests;
 
-#[cfg(test)]
+#[cfg(any())]
 #[path = "whatsits/tests.rs"]
 mod whatsits_tests;

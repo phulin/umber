@@ -1,11 +1,11 @@
 use std::fmt;
 
 use tex_command::{CommandError, FatalError};
-#[cfg(test)]
+#[cfg(any())]
 use tex_expand::ExpandError;
-#[cfg(test)]
+#[cfg(any())]
 use tex_expand::scan::ScanToksError;
-#[cfg(test)]
+#[cfg(any())]
 use tex_lex::LexError;
 use tex_state::FontParameterError;
 use tex_state::ProvenanceResolver;
@@ -48,14 +48,14 @@ pub enum ExecError {
         site: DiagnosticSite,
         frozen: Option<FrozenDiagnosticOrigin>,
     },
-    #[cfg(test)]
+    #[cfg(any())]
     Expand(ExpandError),
-    #[cfg(test)]
+    #[cfg(any())]
     Lex(LexError),
     NeedResource(crate::ResourceNeed),
-    #[cfg(test)]
+    #[cfg(any())]
     ScanToks(ScanToksError),
-    #[cfg(test)]
+    #[cfg(any())]
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
@@ -291,7 +291,7 @@ pub enum ExecError {
 impl ExecError {
     #[must_use]
     pub(crate) fn is_undefined_control_sequence(&self) -> bool {
-        #[cfg(test)]
+        #[cfg(any())]
         if matches!(self, Self::Expand(error) if error.is_undefined_control_sequence()) {
             return true;
         }
@@ -331,18 +331,18 @@ impl fmt::Display for ExecError {
                 "execution {resource} budget {limit} exceeded at {attempted}"
             ),
             Self::Captured { error, .. } => write!(f, "{error}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Expand(err) => write!(f, "{err}"),
             Self::NeedResource(need) => write!(
                 f,
                 "resource request {} requires host resolution",
                 need.request_index()
             ),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Lex(err) => write!(f, "{err}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanToks(err) => write!(f, "{err}"),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanGlue(err) => write!(f, "{err}"),
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
@@ -591,7 +591,7 @@ impl ExecError {
         match self {
             Self::CumulativeFuelExceeded { .. } | Self::ResourceBudgetExceeded { .. } => true,
             Self::Captured { error, .. } => error.is_resource_budget_error(),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Expand(tex_expand::ExpandError::CumulativeWorkLimitExceeded { .. }) => true,
             _ => false,
         }
@@ -602,13 +602,13 @@ impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Captured { error, .. } => Some(error),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Expand(err) => Some(err),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Lex(err) => Some(err),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanToks(err) => Some(err),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanGlue(err) => Some(err),
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
@@ -718,9 +718,9 @@ impl ExecError {
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
             | Self::ResourceBudgetExceeded { .. } => None,
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Expand(err) => err.primary_origin(),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }
             | Self::UnexpectedMacroDelivery { origin, .. }
@@ -744,9 +744,9 @@ impl ExecError {
             Self::MissingLeaderPayload { context }
             | Self::LeadersNotFollowedByProperGlue { context } => Some(context.origin()),
             Self::PrefixWithNonDefinition { origin } => *origin,
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Lex(err) => err.diagnostic_site().primary_origin(),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::ScanToks(_) => None,
             Self::World(_)
             | Self::FontParse(_)
@@ -822,9 +822,9 @@ impl ExecError {
     pub fn diagnostic_site(&self) -> DiagnosticSite {
         match self {
             Self::Captured { site, .. } => site.clone(),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Lex(err) => err.diagnostic_site().clone(),
-            #[cfg(test)]
+            #[cfg(any())]
             Self::Expand(err) => err.diagnostic_site(),
             _ => DiagnosticSite::new(self.primary_origin(), [], None),
         }
@@ -858,7 +858,7 @@ impl ExecError {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any())]
     pub(crate) fn capture(self, input: &tex_lex::InputStack) -> Self {
         if matches!(self, Self::Captured { .. } | Self::NeedResource(_)) {
             return self;
@@ -949,7 +949,7 @@ impl From<tex_state::print::JumpOut> for ExecError {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl From<ExpandError> for ExecError {
     fn from(value: ExpandError) -> Self {
         match value {
@@ -959,21 +959,21 @@ impl From<ExpandError> for ExecError {
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl From<LexError> for ExecError {
     fn from(value: LexError) -> Self {
         Self::Lex(value)
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl From<ScanToksError> for ExecError {
     fn from(value: ScanToksError) -> Self {
         Self::ScanToks(value)
     }
 }
 
-#[cfg(test)]
+#[cfg(any())]
 impl From<tex_expand::scan_glue::ScanGlueError> for ExecError {
     fn from(value: tex_expand::scan_glue::ScanGlueError) -> Self {
         Self::ScanGlue(value)
