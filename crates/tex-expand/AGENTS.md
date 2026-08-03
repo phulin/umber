@@ -31,7 +31,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
   TeX82, e-TeX 2.6, and pdfTeX 1.40.27 primitive installation functions are
   compatibility forwards to `tex-command`; test-only LaTeX forwards keep the
   retired crate's internal tests concise, while shipped LaTeX identity and
-  installation policy belong exclusively to `tex-command`.
+  installation policy belong exclusively to `tex-command`. Recoverable
+  expansion diagnostic queue values are compatibility re-exports from
+  `tex-state`.
 - `src/primitives.rs`: implementations for expandable primitive helpers such as `\expandafter`, `\csname`, and `\input` name scanning.
 - `src/pdf_strings.rs`: pdfTeX-compatible expanded byte-string conversion, escaping, hexadecimal decoding, and comparison.
 - `src/pdf_files.rs`: pdfTeX-compatible creation/file dates, virtual file enquiries, byte dumps, and MD5 hashing.

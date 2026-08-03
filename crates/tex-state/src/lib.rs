@@ -55,6 +55,7 @@ mod engine_state;
 pub mod env;
 pub mod epoch;
 pub mod etex_tracing;
+mod expansion_diagnostic;
 pub mod file_framing;
 pub mod font;
 mod format_container;
@@ -110,6 +111,8 @@ pub use pdf::{
 };
 pub use stores::EngineUsageStatistics;
 pub mod world;
+
+pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
 pub use dependency::{

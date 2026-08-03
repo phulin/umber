@@ -76,16 +76,16 @@ fn report_recoverable_expansion_diagnostics(
 ) -> Result<(), ExecError> {
     for diagnostic in execution.take_recoverable_diagnostics() {
         match diagnostic {
-            tex_expand::RecoverableExpansionDiagnostic::UndefinedControlSequence { .. } => {
+            tex_state::RecoverableExpansionDiagnostic::UndefinedControlSequence { .. } => {
                 report_undefined_control_sequence(input, stores)?;
             }
-            tex_expand::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
+            tex_state::RecoverableExpansionDiagnostic::MacroDoesNotMatchDefinition {
                 macro_name,
                 ..
             } => {
                 report_macro_does_not_match(input, stores, &macro_name)?;
             }
-            tex_expand::RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
+            tex_state::RecoverableExpansionDiagnostic::FileEndedWhileScanningMacro {
                 macro_name,
                 partial,
                 ..
@@ -101,7 +101,7 @@ fn report_recoverable_expansion_diagnostics(
                     RUNAWAY_RECOVERY_HELP,
                 )?;
             }
-            tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
+            tex_state::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
                 // §428's `Complain that \the can't do this; give zero result`.
                 let token = tex_state::token_show::meaning_text(stores, context.semantic_token());
                 report_input_error(
@@ -111,7 +111,7 @@ fn report_recoverable_expansion_diagnostics(
                     &["I'm forgetting what you said and using zero instead."],
                 )?;
             }
-            tex_expand::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { .. } => {
+            tex_state::RecoverableExpansionDiagnostic::MissingGeneralTextBeginGroup { .. } => {
                 // §403's `scan_toks`. tex.web reports this with `back_error`;
                 // the general-text scanner has already backed the offending
                 // token up, so §82's context shows it as `<to be read again>`.

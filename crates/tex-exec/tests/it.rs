@@ -150,6 +150,27 @@ fn production_dimension_diagnostics_stay_on_the_command_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_recoverable_expansion_diagnostics_stay_on_the_state_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        assert!(
+            !source.contains("tex_expand::RecoverableExpansionDiagnostic"),
+            "{} must use tex_state::RecoverableExpansionDiagnostic",
+            path.display()
+        );
+        assert!(
+            !source.lines().any(|line| {
+                line.contains("tex_expand::{") && line.contains("RecoverableExpansionDiagnostic")
+            }),
+            "{} must not import RecoverableExpansionDiagnostic through tex-expand",
+            path.display()
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_paragraph_barriers_stay_on_the_state_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

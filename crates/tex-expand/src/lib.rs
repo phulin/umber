@@ -306,30 +306,7 @@ pub enum Dispatch {
     },
 }
 
-/// A TeX error that expansion reports and recovers from without aborting the
-/// enclosing scanner. The driver owns presentation of these diagnostics.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RecoverableExpansionDiagnostic {
-    UndefinedControlSequence {
-        name: String,
-        context: TracedTokenWord,
-    },
-    MacroDoesNotMatchDefinition {
-        macro_name: String,
-        context: TracedTokenWord,
-    },
-    FileEndedWhileScanningMacro {
-        macro_name: String,
-        context: TracedTokenWord,
-        partial: Vec<Token>,
-    },
-    InvalidTheTarget {
-        context: TracedTokenWord,
-    },
-    MissingGeneralTextBeginGroup {
-        context: TracedTokenWord,
-    },
-}
+pub use tex_state::RecoverableExpansionDiagnostic;
 
 /// A host resource lookup that distinguishes authoritative absence from a
 /// request which can be satisfied before replaying the current operation.
