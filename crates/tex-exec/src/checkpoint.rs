@@ -7,8 +7,8 @@ use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandS
 use tex_lex::{InputSource, InputStack, LayoutCursor, MemoryInput, WorldInput};
 use tex_state::source_map::SourceMapError;
 use tex_state::{
-    ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputRecordId,
-    InputSummary, Snapshot, SourceId, Universe,
+    ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputSummary, Snapshot,
+    SourceId, Universe,
 };
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
@@ -492,14 +492,6 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
     }
 }
 
-/// Failure to restore an engine checkpoint.
-#[derive(Debug)]
-pub enum EngineRestoreError<E> {
-    Input(E),
-    Mode(ExecError),
-    CanonicalContinuation,
-}
-
 /// Failure to restore a canonical command checkpoint.
 #[derive(Debug)]
 pub enum CanonicalCheckpointRestoreError {
@@ -570,20 +562,6 @@ impl fmt::Display for EditorRestoreError {
 
 impl std::error::Error for EditorRestoreError {}
 
-impl<E: fmt::Display> fmt::Display for EngineRestoreError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Input(error) => write!(f, "could not reopen checkpoint input: {error}"),
-            Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
-            Self::CanonicalContinuation => {
-                f.write_str("canonical checkpoint cannot restore the retired input stack")
-            }
-        }
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for EngineRestoreError<E> {}
-
 impl crate::Executor {
     /// Binds the canonical frozen editor layout to the retired executor's root
     /// delivery state. The layout remains owned by `tex-state`; callers do not
@@ -612,32 +590,6 @@ impl crate::Executor {
         checkpoint: &EngineCheckpoint,
     ) -> Result<(), CanonicalCheckpointRestoreError> {
         checkpoint.restore_canonical_state(command, &mut self.nest, universe)?;
-        self.budget_counters = checkpoint.budget_counters;
-        Ok(())
-    }
-
-    /// Restores every engine-owned root from a published checkpoint.
-    pub fn restore_checkpoint<E, F, T>(
-        &mut self,
-        input: &mut InputStack,
-        universe: &mut Universe,
-        checkpoint: &EngineCheckpoint,
-        reopen_source: F,
-    ) -> Result<(), EngineRestoreError<E>>
-    where
-        F: FnMut(SourceId, Option<InputRecordId>, &tex_state::SourceFrameSummary) -> Result<T, E>,
-        T: InputSource + 'static,
-    {
-        let CheckpointContinuation::LegacyInput(input_summary) = &checkpoint.continuation else {
-            return Err(EngineRestoreError::CanonicalContinuation);
-        };
-        let restored_input = InputStack::from_summary(input_summary, reopen_source)
-            .map_err(EngineRestoreError::Input)?;
-        let restored_modes =
-            ModeNest::from_summary(checkpoint.modes.clone()).map_err(EngineRestoreError::Mode)?;
-        universe.rollback(&checkpoint.universe);
-        *input = restored_input;
-        self.nest = restored_modes;
         self.budget_counters = checkpoint.budget_counters;
         Ok(())
     }

@@ -341,10 +341,11 @@ fn engine_checkpoint_cannot_be_forged_by_callers() {
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
-    let checkpoint = fs::read_to_string(
-        test_support::repository_root().join("crates/tex-exec/src/checkpoint.rs"),
-    )
-    .expect("read checkpoint boundary");
+    let crate_root = test_support::repository_root().join("crates/tex-exec");
+    let checkpoint =
+        fs::read_to_string(crate_root.join("src/checkpoint.rs")).expect("read checkpoint boundary");
+    let public_surface =
+        fs::read_to_string(crate_root.join("src/lib.rs")).expect("read public surface");
 
     assert!(checkpoint.contains("enum CheckpointContinuation"));
     assert!(checkpoint.contains("Canonical(Box<CommandSummary>)"));
@@ -357,6 +358,12 @@ fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
         !checkpoint.contains("input: InputSummary::default()"),
         "canonical checkpoints must not encode absent legacy input with a sentinel"
     );
+    assert!(
+        !checkpoint.contains("pub fn restore_checkpoint<E"),
+        "the dead generic InputStack reconstruction API must not return"
+    );
+    assert!(!checkpoint.contains("pub enum EngineRestoreError"));
+    assert!(!public_surface.contains("EngineRestoreError"));
 }
 
 #[test]

@@ -47,7 +47,7 @@ pub use canonical_main_control::{
 };
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
-    EditorRestoreError, EngineBoundary, EngineCheckpoint, EngineRestoreError, RootRehomeContext,
+    EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage, dispatch_delivered_token};
 pub(crate) use dispatch::{
