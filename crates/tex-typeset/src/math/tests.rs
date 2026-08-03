@@ -1334,7 +1334,7 @@ fn fraction_reuses_single_explicit_numerator_box() {
 }
 
 #[test]
-fn direct_sub_box_nucleus_records_source_and_check_dimensions_packs() {
+fn direct_sub_box_nucleus_does_not_republish_its_source_pack() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);
     let explicit = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -1358,20 +1358,12 @@ fn direct_sub_box_nucleus_records_source_and_check_dimensions_packs() {
 
     assert_eq!(
         layout.pack_observations(),
-        &[
-            MathPackObservation {
-                axis: BoxAxis::Horizontal,
-                width: sc(120),
-                height: sc(7),
-                depth: sc(1),
-            },
-            MathPackObservation {
-                axis: BoxAxis::Horizontal,
-                width: sc(120),
-                height: sc(7),
-                depth: sc(1),
-            },
-        ]
+        &[MathPackObservation {
+            axis: BoxAxis::Horizontal,
+            width: sc(120),
+            height: sc(7),
+            depth: sc(1),
+        }]
     );
 
     let empty = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(

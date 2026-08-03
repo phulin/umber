@@ -619,12 +619,10 @@ fn translate_noad<S: MathTypesetState>(
         ),
         (_, MathField::Empty) => ctx.layout.empty(),
         (_, MathField::SubBox(list)) => {
-            let list = source_list(ctx, *list);
-            if let Some(MathNode::HList(boxed)) = ctx.layout.single_node(list) {
-                let boxed = boxed.clone();
-                ctx.layout.observe_source_box_pack(&boxed);
-            }
-            list
+            // The source box crossed TeX82 §1086's package seam when it was
+            // built. Appendix G reuses that completed box here; it does not
+            // publish the historical hpack a second time.
+            source_list(ctx, *list)
         }
         (_, MathField::SubMlist(list)) => {
             // TeX82's mlist2 branch always hpacks a sub-mlist nucleus. This

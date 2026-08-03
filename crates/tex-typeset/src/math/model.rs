@@ -277,15 +277,6 @@ impl MathLayoutBuilder {
         self.span(start, end, meas)
     }
 
-    pub(crate) fn observe_source_box_pack(&mut self, boxed: &MathBox) {
-        self.pack_observations.push(MathPackObservation {
-            axis: BoxAxis::Horizontal,
-            width: boxed.width,
-            height: boxed.height,
-            depth: boxed.depth,
-        });
-    }
-
     /// Records one completed TeX packaging call at its common return seam.
     pub(crate) fn observe_completed_pack(&mut self, boxed: &MathBox) {
         self.pack_observations.push(MathPackObservation {

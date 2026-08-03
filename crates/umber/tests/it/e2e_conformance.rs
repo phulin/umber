@@ -2316,7 +2316,55 @@ fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     run_loaded_trip_source(source)
 }
 
+#[test]
+fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..210].join("\n")).into_bytes());
+    let (_, observer) = run_loaded_trip_source_observed(source);
+    let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let geometry = observer
+        .geometry
+        .canonical_json_lines(oracle)
+        .expect("focused geometry stream");
+    let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
+    let hpacks = stream
+        .events
+        .iter()
+        .filter_map(|event| match event.semantic {
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            }) => Some((width_sp, height_sp, depth_sp)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(hpacks.windows(3).any(|packs| {
+        packs
+            == [
+                (7_864_320, 0, 0),
+                (7_864_320, 0, 0),
+                (6_553_600, 458_752, 65_536),
+            ]
+    }));
+    assert!(
+        !hpacks
+            .windows(3)
+            .any(|packs| { packs == [(7_864_320, 0, 0), (7_864_320, 0, 0), (7_864_320, 0, 0),] })
+    );
+}
+
 fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
+    run_loaded_trip_source_observed(source).0
+}
+
+fn run_loaded_trip_source_observed(source: Arc<[u8]>) -> (String, TripObservers) {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
     );
@@ -2373,7 +2421,7 @@ fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
         )
         .expect("focused loaded TRIP run");
     let (_, log) = transcript_channels(&loaded.universe, &loaded.result.effects);
-    String::from_utf8(log).expect("TRIP log is UTF-8")
+    (String::from_utf8(log).expect("TRIP log is UTF-8"), observer)
 }
 
 #[test]
