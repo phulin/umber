@@ -2695,7 +2695,9 @@ impl CanonicalMainControl {
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
-                    if matches!(error, ExecError::Captured { .. }) {
+                    if matches!(error, ExecError::Captured { .. })
+                        && fatal != FatalError::TooManyErrors
+                    {
                         let rolled_back = snapshot.can_rollback(stores);
                         let result = self.finish_failed_step(snapshot, stores, error);
                         self.advance_telemetry.live_savepoints -= 1;
@@ -2706,6 +2708,12 @@ impl CanonicalMainControl {
                         }
                         return result;
                     }
+                    // §81 `jump_out` cuts across every active frame. A
+                    // diagnostic-site wrapper on §82's hundred-error exit
+                    // preserves provenance; it does not turn that non-local
+                    // fatal exit into an ordinary failed operation that may
+                    // roll back or escape to the host. Other captured fatal
+                    // reports retain the existing host error contract.
                     self.commit_step(snapshot);
                     self.advance_telemetry.live_savepoints -= 1;
                     self.advance_telemetry.commits += 1;

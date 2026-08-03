@@ -9169,7 +9169,6 @@ fn the_hundredth_insert255_error_terminates_before_opening_its_group() {
 }
 
 #[test]
-#[ignore = "umber2-lvds"]
 fn openout_and_insert_share_the_restricted_integer_hundred_error_limit() {
     let mut source = String::new();
     for _ in 0..50 {
@@ -9943,7 +9942,6 @@ fn restricted_integer_error_commits_once_after_input_resource_retry() {
 }
 
 #[test]
-#[ignore = "umber2-lvds"]
 fn the_hundredth_restricted_integer_error_terminates_canonical_replay() {
     let mut source = String::new();
     for _ in 0..100 {

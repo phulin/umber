@@ -37,16 +37,19 @@ fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
         ))
         .expect("register canonical source");
 
-    let error = loop {
+    loop {
         match control.step(&mut stores) {
             Ok(MainControlStep::Continue) => {}
-            Ok(step) => panic!("hundredth macro-scan error must be fatal, got {step:?}"),
-            Err(error) => break error,
+            Ok(MainControlStep::End) => break,
+            Ok(MainControlStep::EndOfInput) => {
+                panic!("source ended before the hundredth macro-scan error")
+            }
+            Err(error) => panic!("hundredth macro-scan error escaped main control: {error}"),
         }
-    };
+    }
 
     assert_eq!(
-        error.as_fatal(),
+        control.fatal_error(),
         Some(tex_command::FatalError::TooManyErrors)
     );
     assert_eq!(stores.count(0), 0, "fatal exit skips the later assignment");
