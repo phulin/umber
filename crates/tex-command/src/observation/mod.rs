@@ -661,17 +661,20 @@ pub enum GeometryRecord {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
+        line: u32,
     },
     Vpack {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
+        line: u32,
     },
     Shipout {
         page_width_sp: i64,
         page_height_sp: i64,
         /// TeX82 §617's `count0..count9` BOP snapshot.
         counts: [i32; 10],
+        line: u32,
     },
 }
 

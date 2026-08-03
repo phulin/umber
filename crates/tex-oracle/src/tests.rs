@@ -13,9 +13,10 @@ use crate::{
     AlignmentEvent, AlignmentTransition, CanonicalCitation, CanonicalCommand, CanonicalValue,
     CommandDelivery, CommandEvent, CommittedFixture, DisabledObserver, EngineDialect,
     EngineIdentity, Event, EventObserver, FixtureArtifact, FixtureManifest, FixtureProfile,
-    GeometryEvent, JsonLinesObserver, MacroEvent, Manifest, ManifestInput, Normalizer,
-    ObservationHeader, ObservationStream, OracleToken, RecoveryEvent, RecoveryKind, SCHEMA_VERSION,
-    SchemaVersion, ToolIdentity, validate_tex82_geometry_trace_fixture,
+    GeometryEvent, GeometryLocation, JsonLinesObserver, LATEST_SCHEMA_VERSION, MacroEvent,
+    Manifest, ManifestInput, Normalizer, ObservationHeader, ObservationStream, OracleToken,
+    RecoveryEvent, RecoveryKind, SCHEMA_VERSION, SchemaVersion, ToolIdentity,
+    validate_tex82_geometry_trace_fixture,
 };
 
 const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -523,11 +524,12 @@ fn geometry() -> GeometryEvent {
         width_sp: 65_536,
         height_sp: 12,
         depth_sp: -3,
+        location: None,
     }
 }
 
 #[test]
-fn schema_v2_geometry_round_trips_with_scaled_point_units() {
+fn geometry_round_trips_with_scaled_point_units() {
     let geometry = geometry();
     let bytes = serde_json::to_vec(&geometry).expect("encode geometry");
     assert_eq!(
@@ -537,6 +539,60 @@ fn schema_v2_geometry_round_trips_with_scaled_point_units() {
     let text = String::from_utf8(bytes).expect("utf8");
     assert!(text.contains("\"width_sp\":65536"));
     assert!(!text.contains("point"));
+}
+
+#[test]
+fn schema_v3_geometry_round_trips_source_provenance_and_accepts_legacy_v2_shape() {
+    let attributed = GeometryEvent::Hpack {
+        width_sp: 1,
+        height_sp: 2,
+        depth_sp: 3,
+        location: Some(GeometryLocation {
+            source: "chapters/math.tex".into(),
+            line: 47,
+        }),
+    };
+    let bytes = serde_json::to_vec(&attributed).expect("encode attributed geometry");
+    assert_eq!(
+        serde_json::from_slice::<GeometryEvent>(&bytes).expect("decode attributed geometry"),
+        attributed
+    );
+    assert_eq!(
+        serde_json::from_str::<GeometryEvent>(
+            r#"{"transition":"hpack","width_sp":1,"height_sp":2,"depth_sp":3}"#,
+        )
+        .expect("decode legacy v2 geometry"),
+        GeometryEvent::Hpack {
+            width_sp: 1,
+            height_sp: 2,
+            depth_sp: 3,
+            location: None,
+        }
+    );
+}
+
+#[test]
+fn geometry_source_is_canonically_normalized_without_changing_its_line() {
+    let mut normalizer = Normalizer::new();
+    let normalized = normalizer.normalize(Event::Geometry(GeometryEvent::Vpack {
+        width_sp: 1,
+        height_sp: 2,
+        depth_sp: 3,
+        location: Some(GeometryLocation {
+            source: "part\r\nname.tex".into(),
+            line: 12,
+        }),
+    }));
+    let Event::Geometry(GeometryEvent::Vpack { location, .. }) = normalized.semantic else {
+        panic!("expected vpack");
+    };
+    assert_eq!(
+        location,
+        Some(GeometryLocation {
+            source: "part\nname.tex".into(),
+            line: 12,
+        })
+    );
 }
 
 #[test]
@@ -570,7 +626,7 @@ fn geometry_rejects_malformed_input_and_v1_manifest() {
         .is_err()
     );
     let mut v1 = manifest();
-    v1.schema = SchemaVersion::V2.number() + 1;
+    v1.schema = LATEST_SCHEMA_VERSION + 1;
     assert!(v1.to_canonical_json().is_err());
 }
 
@@ -581,7 +637,8 @@ fn geometry_uses_finalized_signed_scaled_points() {
         GeometryEvent::Hpack {
             width_sp: 65_536,
             height_sp: 12,
-            depth_sp: -3
+            depth_sp: -3,
+            location: None,
         }
     );
     assert_eq!(
@@ -589,11 +646,13 @@ fn geometry_uses_finalized_signed_scaled_points() {
             page_width_sp: 65_536,
             page_height_sp: 98_304,
             counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            location: None,
         },
         GeometryEvent::Shipout {
             page_width_sp: 65_536,
             page_height_sp: 98_304,
             counts: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            location: None,
         }
     );
 }

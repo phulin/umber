@@ -162,28 +162,34 @@ impl CommandObserver for TripGeometryObserver {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line: _,
             } => GeometryEvent::Hpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                location: None,
             },
             GeometryRecord::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line: _,
             } => GeometryEvent::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                location: None,
             },
             GeometryRecord::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
+                line: _,
             } => GeometryEvent::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
+                location: None,
             },
         };
         self.events.push(Event::Geometry(event));

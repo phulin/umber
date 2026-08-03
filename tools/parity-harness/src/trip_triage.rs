@@ -1059,6 +1059,7 @@ mod tests {
             page_width_sp: 10,
             page_height_sp: 20,
             counts,
+            location: None,
         });
         let mut out =
             format!("{{\"schema\":2,\"manifest\":\"{}\"}}\n", "b".repeat(64)).into_bytes();

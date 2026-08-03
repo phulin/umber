@@ -529,6 +529,7 @@ enum AlignmentKey<'a> {
     },
     Geometry {
         transition: &'static str,
+        location: Option<(&'a str, u32)>,
     },
 }
 
@@ -588,14 +589,23 @@ fn alignment_key(event: &Event) -> AlignmentKey<'_> {
             kind: effect.kind,
             channel: &effect.channel,
         },
-        Event::Geometry(GeometryEvent::Hpack { .. }) => AlignmentKey::Geometry {
+        Event::Geometry(GeometryEvent::Hpack { location, .. }) => AlignmentKey::Geometry {
             transition: "hpack",
+            location: location
+                .as_ref()
+                .map(|location| (location.source.as_str(), location.line)),
         },
-        Event::Geometry(GeometryEvent::Vpack { .. }) => AlignmentKey::Geometry {
+        Event::Geometry(GeometryEvent::Vpack { location, .. }) => AlignmentKey::Geometry {
             transition: "vpack",
+            location: location
+                .as_ref()
+                .map(|location| (location.source.as_str(), location.line)),
         },
-        Event::Geometry(GeometryEvent::Shipout { .. }) => AlignmentKey::Geometry {
+        Event::Geometry(GeometryEvent::Shipout { location, .. }) => AlignmentKey::Geometry {
             transition: "shipout",
+            location: location
+                .as_ref()
+                .map(|location| (location.source.as_str(), location.line)),
         },
     }
 }

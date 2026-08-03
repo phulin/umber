@@ -53,11 +53,13 @@ fn nested_sub_mlist_publishes_structural_hpack_geometry() {
                 width_sp: 0,
                 height_sp: 0,
                 depth_sp: 0,
+                line: 0,
             },
             tex_state::GeometryObservation::Hpack {
                 width_sp: 0,
                 height_sp: 0,
                 depth_sp: 0,
+                line: 0,
             },
         ],
         "TeX82 §651's structural pack and §724's dimensions pack must cross the execution observer boundary"
@@ -111,6 +113,7 @@ fn unequal_fraction_fields_publish_rebox_completion_geometry() {
                 width_sp,
                 height_sp,
                 depth_sp,
+                ..
             } if (*width_sp, *height_sp, *depth_sp) == (i64::from(sp(2).raw()), i64::from(sp(3).raw()), i64::from(sp(1).raw()))
         )),
         "TeX82 §715's exact-width fraction rebox must cross the execution geometry seam"

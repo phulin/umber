@@ -51,7 +51,7 @@ impl ObservationStream {
             ObservationError::InvalidStream("event stream is missing its header".into())
         })?;
         let header: ObservationHeader = decode_canonical_line(header_line)?;
-        let _schema =
+        let schema =
             SchemaVersion::try_from(header.schema).map_err(ObservationError::InvalidStream)?;
         validate_identity("manifest", &header.manifest)?;
 
@@ -68,9 +68,17 @@ impl ObservationStream {
                     event.sequence
                 )));
             }
-            if matches!(event.semantic, Event::Geometry(_)) && _schema == SchemaVersion::V1 {
+            if matches!(event.semantic, Event::Geometry(_)) && schema == SchemaVersion::V1 {
                 return Err(ObservationError::InvalidStream(
                     "schema v1 does not permit geometry events".into(),
+                ));
+            }
+            if let Event::Geometry(geometry) = &event.semantic
+                && schema == SchemaVersion::V3
+                && geometry_location(geometry).is_none()
+            {
+                return Err(ObservationError::InvalidStream(
+                    "schema v3 geometry events require source provenance".into(),
                 ));
             }
             events.push(event);
@@ -89,6 +97,14 @@ impl ObservationStream {
         let mut hasher = StreamHasher::new(schema);
         hasher.update(bytes);
         hasher.finish()
+    }
+}
+
+fn geometry_location(event: &crate::GeometryEvent) -> Option<&crate::GeometryLocation> {
+    match event {
+        crate::GeometryEvent::Hpack { location, .. }
+        | crate::GeometryEvent::Vpack { location, .. }
+        | crate::GeometryEvent::Shipout { location, .. } => location.as_ref(),
     }
 }
 

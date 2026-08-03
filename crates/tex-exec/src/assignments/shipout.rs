@@ -342,6 +342,7 @@ fn shipout_geometry(node: &Node, stores: &Universe) -> Option<GeometryObservatio
         page_width_sp: i64::from(node.width.raw()),
         page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
         counts: direct::page_counts(stores),
+        line: stores.current_input_line().max(0) as u32,
     })
 }
 

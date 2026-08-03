@@ -1,8 +1,8 @@
 use super::*;
 
 use tex_oracle::{
-    CommandDelivery, InputReason, InputTransition, RecoveryKind, ScannerEvent, SourceLocation,
-    StateTarget,
+    CommandDelivery, GeometryEvent, GeometryLocation, InputReason, InputTransition, RecoveryKind,
+    ScannerEvent, SourceLocation, StateTarget,
 };
 
 use crate::ObservedEvent;
@@ -15,6 +15,18 @@ fn location(line: u32, byte: u32) -> Option<SourceLocation> {
         source: "case.tex".into(),
         line,
         byte,
+    })
+}
+
+fn hpack(line: u32, height_sp: i64) -> Event {
+    Event::Geometry(GeometryEvent::Hpack {
+        width_sp: 100,
+        height_sp,
+        depth_sp: 5,
+        location: Some(GeometryLocation {
+            source: "case.tex".into(),
+            line,
+        }),
     })
 }
 
@@ -83,6 +95,23 @@ fn recurrences_that_differ_only_in_position_collapse_into_one_site() {
     // The cascade a group stands in for is the sum over its members, so
     // collapsing recurrences never loses the scale of what they suppress.
     assert_eq!(sites[0].suppressed_cascade(), 4 + 9 + 21);
+}
+
+#[test]
+fn geometry_recurrences_group_by_root_while_representative_retains_attribution() {
+    let divergences = vec![
+        mismatch(4, hpack(10, 20), hpack(10, 21), Repair::Changed),
+        mismatch(9, hpack(40, 20), hpack(40, 21), Repair::Changed),
+    ];
+    let sites = group(&divergences);
+    assert_eq!(counts(&sites), vec![2]);
+    let Divergence::Mismatch(representative) = sites[0].representative() else {
+        panic!("expected mismatch");
+    };
+    let MismatchSides::Both { expected, .. } = &representative.sides else {
+        panic!("expected both sides");
+    };
+    assert_eq!(expected, &Box::new(hpack(10, 20)));
 }
 
 #[test]

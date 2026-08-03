@@ -802,8 +802,8 @@ validate_oracle_build_record() {
   while IFS= read -r trace; do
     trace_count=$((trace_count + 1))
     if [[ "$engine" == tex82 && "$trace" == */geometry/* ]]; then
-      [[ "$(sed -n '1p' "$trace")" == '{"schema":2,'* ]] ||
-        die "${engine} geometry profile emitted a trace without a schema-v2 header"
+      [[ "$(sed -n '1p' "$trace")" == '{"schema":3,'* ]] ||
+        die "${engine} geometry profile emitted a trace without a schema-v3 header"
     else
       [[ "$(sed -n '1p' "$trace")" == '{"schema":1,'* ]] ||
         die "${engine} emitted a trace without a schema-v1 header"

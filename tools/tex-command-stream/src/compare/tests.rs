@@ -1,6 +1,8 @@
 use super::*;
 
-use tex_oracle::{CanonicalValue, InputEvent, MutationEvent, ScannerEvent, SourceLocation};
+use tex_oracle::{
+    CanonicalValue, GeometryLocation, InputEvent, MutationEvent, ScannerEvent, SourceLocation,
+};
 
 fn scanner(name: &str, value: &str) -> Event {
     Event::Scanner(ScannerEvent {
@@ -85,6 +87,19 @@ fn hpack(width_sp: i64, height_sp: i64, depth_sp: i64) -> Event {
         width_sp,
         height_sp,
         depth_sp,
+        location: None,
+    })
+}
+
+fn hpack_at(line: u32) -> Event {
+    Event::Geometry(GeometryEvent::Hpack {
+        width_sp: 1,
+        height_sp: 2,
+        depth_sp: 3,
+        location: Some(GeometryLocation {
+            source: "case.tex".into(),
+            line,
+        }),
     })
 }
 
@@ -93,6 +108,7 @@ fn shipout(page_width_sp: i64, page_height_sp: i64) -> Event {
         page_width_sp,
         page_height_sp,
         counts: [0; 10],
+        location: None,
     })
 }
 
@@ -100,6 +116,16 @@ fn shipout(page_width_sp: i64, page_height_sp: i64) -> Event {
 fn identical_streams_report_nothing() {
     let stream = run("k", 20);
     assert!(default_align(&stream, &stream).is_empty());
+}
+
+#[test]
+fn geometry_source_location_participates_in_lcs_alignment() {
+    let expected = [hpack_at(10), shipout(100, 200)];
+    let actual = [hpack_at(40), shipout(100, 200)];
+    assert_ne!(alignment_key(&expected[0]), alignment_key(&actual[0]));
+    let entries = default_align(&expected, &actual);
+    assert!(!entries.is_empty());
+    assert!(entries.iter().all(|entry| entry.repair != Repair::Changed));
 }
 
 #[test]

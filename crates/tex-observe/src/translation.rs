@@ -1,4 +1,5 @@
 use super::*;
+use tex_oracle::GeometryLocation;
 
 pub(crate) fn translate_observation(
     source: &str,
@@ -184,28 +185,43 @@ pub(crate) fn translate_observation(
                     width_sp,
                     height_sp,
                     depth_sp,
+                    line,
                 } => GeometryEvent::Hpack {
                     width_sp,
                     height_sp,
                     depth_sp,
+                    location: Some(GeometryLocation {
+                        source: source.into(),
+                        line,
+                    }),
                 },
                 GeometryRecord::Vpack {
                     width_sp,
                     height_sp,
                     depth_sp,
+                    line,
                 } => GeometryEvent::Vpack {
                     width_sp,
                     height_sp,
                     depth_sp,
+                    location: Some(GeometryLocation {
+                        source: source.into(),
+                        line,
+                    }),
                 },
                 GeometryRecord::Shipout {
                     page_width_sp,
                     page_height_sp,
                     counts,
+                    line,
                 } => GeometryEvent::Shipout {
                     page_width_sp,
                     page_height_sp,
                     counts,
+                    location: Some(GeometryLocation {
+                        source: source.into(),
+                        line,
+                    }),
                 },
             }),
             format!("source={source}"),

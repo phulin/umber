@@ -61,7 +61,7 @@ The default final change emits schema-v1 command-core transitions. Set
 UMBER_TEX82_INSTRUMENTATION_CHANGE to select another final change file.
 
 Outputs and a complete identity record are written under target/tex82-oracle.
-The geometry-profile executable is a separately selected schema-v2 observer;
+The geometry-profile executable is a separately selected schema-v3 observer;
 it never changes the schema-v1 instrumentable executable or its trace.
 After the first acquisition, --offline performs no network I/O.
 EOF
@@ -389,10 +389,10 @@ validate_geometry_fixture() {
   } >"$projected"
   cmp "$geometry_expected" "$projected" >/dev/null || {
     rm -f "$projected"
-    fail "geometry-profile oracle disagrees with the committed schema-v2 fixture"
+    fail "geometry-profile oracle disagrees with the committed schema-v3 fixture"
   }
   cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$projected" ||
-    fail "committed geometry projection is not a valid schema-v2 stream"
+    fail "committed geometry projection is not a valid schema-v3 stream"
   rm -f "$projected"
 }
 

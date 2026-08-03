@@ -86,6 +86,7 @@ fn extraction_preserves_representative_detached_semantic_and_geometry_evidence()
             width_sp: 10,
             height_sp: 20,
             depth_sp: 3,
+            line: 0,
         }),
     ]);
 

@@ -458,6 +458,7 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         width_sp: i64::from(packed.node.width.raw()),
         height_sp: i64::from(packed.node.height.raw()),
         depth_sp: i64::from(packed.node.depth.raw()),
+        line: stores.current_input_line().max(0) as u32,
     });
     let diagnostic_box = diagnostic_nodes.map_or(packed.node, |nodes| {
         let diagnostic_children = stores.freeze_node_list(nodes);

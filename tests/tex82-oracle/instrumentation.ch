@@ -106,6 +106,15 @@ begin write(umber_trace_file,'{"sequence":',umber_trace_sequence:1,
   ',"semantic":'); incr(umber_trace_sequence);
 end;
 
+procedure umber_trace_geometry_location;
+begin
+write(umber_trace_file,',"location":{"source":');
+if name>17 then umber_trace_string(name)
+else if job_name<>0 then umber_trace_string(job_name)
+else write(umber_trace_file,'"terminal"');
+write(umber_trace_file,',"line":',line:1,'}');
+end;
+
 procedure umber_trace_geometry_box(@!transition:integer;@!p:pointer);
 begin
 if not umber_geometry_profile then return;
@@ -113,8 +122,10 @@ umber_trace_begin;
 write(umber_trace_file,'{"event":"geometry","data":{"transition":"');
 if transition=0 then write(umber_trace_file,'hpack')
 else write(umber_trace_file,'vpack');
-write_ln(umber_trace_file,'","width_sp":',width(p):1,
-  ',"height_sp":',height(p):1,',"depth_sp":',depth(p):1,'}}}');
+write(umber_trace_file,'","width_sp":',width(p):1,
+  ',"height_sp":',height(p):1,',"depth_sp":',depth(p):1);
+umber_trace_geometry_location;
+write_ln(umber_trace_file,'}}}');
 end;
 
 procedure umber_trace_geometry_shipout(@!p:pointer);
@@ -125,7 +136,9 @@ write_ln(umber_trace_file,'{"event":"geometry","data":{"transition":"shipout","p
   width(p):1,',"page_height_sp":',height(p)+depth(p):1,
   ',"counts":[',count(0):1,',',count(1):1,',',count(2):1,',',count(3):1,',',
   count(4):1,',',count(5):1,',',count(6):1,',',count(7):1,',',count(8):1,',',
-  count(9):1,']}}}');
+  count(9):1,']');
+umber_trace_geometry_location;
+write_ln(umber_trace_file,'}}}');
 end;
 
 procedure umber_trace_command_name(@!c:integer);
@@ -945,7 +958,7 @@ umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 rewrite(umber_trace_file,'tex82-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then begin
-if umber_geometry_profile then write(umber_trace_file,'{"schema":2,"manifest":')
+if umber_geometry_profile then write(umber_trace_file,'{"schema":3,"manifest":')
 else write(umber_trace_file,'{"schema":1,"manifest":');
 write_ln(umber_trace_file,
  '"0000000000000000000000000000000000000000000000000000000000000000"}');

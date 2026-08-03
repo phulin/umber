@@ -363,11 +363,13 @@ impl MathLayoutSink for LoweredMathSink<'_> {
                     width_sp: i64::from(packed.width.raw()),
                     height_sp: i64::from(packed.height.raw()),
                     depth_sp: i64::from(packed.depth.raw()),
+                    line: self.stores.current_input_line().max(0) as u32,
                 },
                 tex_typeset::math::BoxAxis::Vertical => GeometryObservation::Vpack {
                     width_sp: i64::from(packed.width.raw()),
                     height_sp: i64::from(packed.height.raw()),
                     depth_sp: i64::from(packed.depth.raw()),
+                    line: self.stores.current_input_line().max(0) as u32,
                 },
             });
         }

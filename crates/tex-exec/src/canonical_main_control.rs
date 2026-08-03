@@ -4351,28 +4351,34 @@ impl CanonicalMainControl {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line,
             } => GeometryRecord::Hpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line,
             },
             GeometryObservation::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line,
             } => GeometryRecord::Vpack {
                 width_sp,
                 height_sp,
                 depth_sp,
+                line,
             },
             GeometryObservation::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
+                line,
             } => GeometryRecord::Shipout {
                 page_width_sp,
                 page_height_sp,
                 counts,
+                line,
             },
         };
         CommandObservation::Geometry(record)

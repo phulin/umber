@@ -346,7 +346,41 @@ fn positionless_event(event: &Event) -> Event {
             channel: channel.clone(),
             value: positionless_value(value),
         }),
-        Event::Geometry(event) => Event::Geometry(event.clone()),
+        Event::Geometry(event) => Event::Geometry(match event {
+            tex_oracle::GeometryEvent::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            } => tex_oracle::GeometryEvent::Hpack {
+                width_sp: *width_sp,
+                height_sp: *height_sp,
+                depth_sp: *depth_sp,
+                location: None,
+            },
+            tex_oracle::GeometryEvent::Vpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            } => tex_oracle::GeometryEvent::Vpack {
+                width_sp: *width_sp,
+                height_sp: *height_sp,
+                depth_sp: *depth_sp,
+                location: None,
+            },
+            tex_oracle::GeometryEvent::Shipout {
+                page_width_sp,
+                page_height_sp,
+                counts,
+                ..
+            } => tex_oracle::GeometryEvent::Shipout {
+                page_width_sp: *page_width_sp,
+                page_height_sp: *page_height_sp,
+                counts: *counts,
+                location: None,
+            },
+        }),
     }
 }
 

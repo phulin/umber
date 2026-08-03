@@ -1,4 +1,35 @@
 use super::*;
+use tex_oracle::GeometryLocation;
+
+#[test]
+fn geometry_translation_captures_active_source_and_observation_line() {
+    let observed = translate_observation(
+        "chapters/math.tex",
+        None,
+        None,
+        None,
+        CommandObservation::Geometry(GeometryRecord::Hpack {
+            width_sp: 10,
+            height_sp: 20,
+            depth_sp: 3,
+            line: 47,
+        }),
+        &mut AlignmentNesting::default(),
+        false,
+    );
+    assert_eq!(
+        observed.event,
+        Event::Geometry(GeometryEvent::Hpack {
+            width_sp: 10,
+            height_sp: 20,
+            depth_sp: 3,
+            location: Some(GeometryLocation {
+                source: "chapters/math.tex".into(),
+                line: 47,
+            }),
+        })
+    );
+}
 
 #[test]
 fn detached_evidence_uses_the_pinned_header_and_rejects_schema_confusion() {
@@ -23,6 +54,7 @@ fn detached_evidence_codec_round_trips_and_rejects_sequence_and_stream_confusion
             width_sp: 1,
             height_sp: 2,
             depth_sp: 3,
+            location: None,
         }))],
     };
     let encoded = encode_detached_evidence(&evidence).expect("encode");

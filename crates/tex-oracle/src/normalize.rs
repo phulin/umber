@@ -84,7 +84,16 @@ fn normalize_event(event: &mut Event) {
         }
         Event::Diagnostic(event) => normalize_diagnostic(event),
         Event::Effect(event) => normalize_effect(event),
-        Event::Geometry(_) => {}
+        Event::Geometry(event) => {
+            let location = match event {
+                crate::GeometryEvent::Hpack { location, .. }
+                | crate::GeometryEvent::Vpack { location, .. }
+                | crate::GeometryEvent::Shipout { location, .. } => location,
+            };
+            if let Some(location) = location {
+                normalize_string(&mut location.source);
+            }
+        }
     }
 }
 

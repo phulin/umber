@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 /// Immutable semantic-event schema versions understood by this crate.
 ///
 /// Schema v1 remains the contract for the committed command fixtures. Schema
-/// v2 adds detached box/package and shipout geometry observations; it never
-/// changes a v1 event, manifest, or identity preimage.
+/// v2 adds detached box/package and shipout geometry observations. Schema v3
+/// adds the active source and line captured at each geometry transition. No
+/// later schema changes a v1 or v2 event, manifest, or identity preimage.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(try_from = "u32", into = "u32")]
 pub enum SchemaVersion {
     V1 = 1,
     V2 = 2,
+    V3 = 3,
 }
 
 impl SchemaVersion {
@@ -27,6 +29,7 @@ impl TryFrom<u32> for SchemaVersion {
         match value {
             1 => Ok(Self::V1),
             2 => Ok(Self::V2),
+            3 => Ok(Self::V3),
             _ => Err(format!("unsupported oracle schema {value}")),
         }
     }
@@ -40,7 +43,7 @@ impl From<SchemaVersion> for u32 {
 /// Schema of the established, committed semantic fixtures.
 pub const SCHEMA_VERSION: u32 = SchemaVersion::V1.number();
 /// Most recent schema available for newly authored fixtures and observers.
-pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V2.number();
+pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V3.number();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -118,6 +121,14 @@ pub struct SourceLocation {
     pub source: String,
     pub line: u32,
     pub byte: u32,
+}
+
+/// Stable source position captured when a geometry transition commits.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeometryLocation {
+    pub source: String,
+    pub line: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -397,12 +408,16 @@ pub enum GeometryEvent {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<GeometryLocation>,
     },
     /// Dimensions of a box after `vpack` commits.
     Vpack {
         width_sp: i64,
         height_sp: i64,
         depth_sp: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<GeometryLocation>,
     },
     /// Final page totals selected by `ship_out`: width and height plus depth.
     Shipout {
@@ -410,6 +425,8 @@ pub enum GeometryEvent {
         page_height_sp: i64,
         /// TeX82 §617's `count0..count9` values written by `bop`.
         counts: [i32; 10],
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<GeometryLocation>,
     },
 }
 
