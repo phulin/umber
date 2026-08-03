@@ -1771,7 +1771,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
 }
 
 #[test]
-fn display_limits_rewraps_shifted_compound_operator() {
+fn display_limits_does_not_rewrap_clean_compound_operator() {
     let mut universe = setup_universe();
     let nucleus = universe.freeze_node_list(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
@@ -1793,11 +1793,17 @@ fn display_limits_rewraps_shifted_compound_operator() {
     let [MathNode::HList(operator)] = list_nodes(&layout, limits.list).as_slice() else {
         panic!("expected one clean compound operator box");
     };
-    let [MathNode::HList(shifted)] = list_nodes(&layout, operator.list).as_slice() else {
-        panic!("expected axis-shifted compound nucleus");
-    };
-    assert_ne!(shifted.shift, sc(0));
-    assert!(!list_nodes(&layout, shifted.list).is_empty());
+    let operator_nodes = list_nodes(&layout, operator.list);
+    assert!(
+        operator_nodes
+            .iter()
+            .any(|node| matches!(node, MathNode::Char { .. }))
+    );
+    assert!(
+        operator_nodes
+            .iter()
+            .all(|node| !matches!(node, MathNode::HList(_) | MathNode::VList(_)))
+    );
 }
 
 #[test]
