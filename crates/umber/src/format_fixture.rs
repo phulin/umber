@@ -28,9 +28,14 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-// Version 3 includes TeX82 §962's zero/nonletter edge-of-word pattern
-// semantics in generated hyphenation tries.
-const PRODUCER_CONTRACT_VERSION: u32 = 3;
+// Version 4 includes TeX82 §478's direct `the_toks` command-delivery semantics
+// in detached construction evidence; version 3 added §962's zero/nonletter
+// edge-of-word pattern semantics in generated hyphenation tries.
+// Bump whenever the construction engine or its detached evidence semantics
+// change. Persistent entries contain both the format image and the evidence
+// produced by that exact construction episode; accepting an entry from an
+// older producer would bypass the current engine entirely.
+const PRODUCER_CONTRACT_VERSION: u32 = 4;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
@@ -224,13 +229,11 @@ impl FormatRecipe {
             &self.guards.wall_time.as_nanos().to_le_bytes(),
             &self.guards.resident_bytes.to_le_bytes(),
         ]);
-        let producer = framed_hash(&[
-            &PRODUCER_CONTRACT_VERSION.to_le_bytes(),
-            env!("CARGO_PKG_VERSION").as_bytes(),
-            build_feature_contract(),
-            self.format_name.as_bytes(),
-            self.format_ident_name.as_bytes(),
-        ]);
+        let producer = producer_contract(
+            PRODUCER_CONTRACT_VERSION,
+            &self.format_name,
+            &self.format_ident_name,
+        );
         Ok(FormatCacheIdentity::fixture(FormatFixtureIdentity {
             engine_mode: cache_mode(self.engine),
             distribution_snapshot: FormatFingerprint::sha256(&self.distribution_identity),
@@ -863,6 +866,16 @@ fn framed_hash(fields: &[&[u8]]) -> [u8; 32] {
         hash_field(&mut hasher, field);
     }
     hasher.finalize().into()
+}
+
+fn producer_contract(version: u32, format_name: &str, format_ident_name: &str) -> [u8; 32] {
+    framed_hash(&[
+        &version.to_le_bytes(),
+        env!("CARGO_PKG_VERSION").as_bytes(),
+        build_feature_contract(),
+        format_name.as_bytes(),
+        format_ident_name.as_bytes(),
+    ])
 }
 
 const fn build_feature_contract() -> &'static [u8] {

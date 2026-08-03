@@ -267,7 +267,7 @@ violation before deserializing the affected payload.
 
 Worker protocol 2 authenticates the complete success or error envelope,
 recipe identity, image digest, and evidence digest under the per-child key.
-The evidence-aware format identity is producer contract 2 and includes the
+The evidence-aware format identity is producer contract 4 and includes the
 evidence schema and limits, so image-only entries are disjoint.
 `FormatCacheStore` compound entry schema 2 writes the validated image and
 opaque caller-validated evidence to one entry in one publication. The legacy

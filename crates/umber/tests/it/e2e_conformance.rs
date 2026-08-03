@@ -129,7 +129,7 @@ fn detached_geometry_uses_the_pinned_schema_three_header() {
 }
 
 #[test]
-fn trip_construction_geometry_is_complete_schema_three_evidence() {
+fn trip_construction_evidence_is_fresh_complete_and_canonical() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
     let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
@@ -142,10 +142,56 @@ fn trip_construction_geometry_is_complete_schema_three_evidence() {
         tripos,
         tfm,
     );
-    let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
-        .expect("focused TRIP format provider");
+    // A private empty store makes this a construction-path regression. A
+    // process-global warm entry would authenticate old detached evidence and
+    // never execute the current command engine at all.
+    let cache = tempfile::tempdir().expect("isolated TRIP format cache");
+    let provider = PreparedFormatProvider::with_store(
+        FormatCacheStore::new(cache.path()),
+        super::umber_format_worker_launcher(),
+    );
     let prepared = provider.prepare(&recipe).expect("focused TRIP format");
     let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let semantic = tex_observe::canonical_evidence_json_lines(
+        &prepared.construction_evidence().semantic,
+        oracle,
+    )
+    .expect("actual construction semantics validate as schema v3");
+    let semantic_stream =
+        ObservationStream::from_canonical_json_lines(&semantic).expect("semantic stream");
+    assert_eq!(semantic_stream.events.len(), 8717);
+    let semantic_payload = semantic
+        .splitn(2, |byte| *byte == b'\n')
+        .nth(1)
+        .expect("semantic stream has a header and events");
+    assert_eq!(
+        format!("{:x}", Sha256::digest(semantic_payload)),
+        "80d9fb481c05cea94ce679a7c26de3cbca7d2d14ac5beaf1087f9d1d15c5c8cb"
+    );
+    let event = |sequence: usize| &semantic_stream.events[sequence].semantic;
+    assert!(matches!(
+        event(3451),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Raw
+                && command.command.command == "the"
+    ));
+    assert!(matches!(
+        event(3452),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Raw
+                && command.command.command == "assign_toks"
+                && command.command.operand == tex_oracle::CanonicalValue::Integer(25058)
+                && command.command.control_sequence.as_deref() == Some("output")
+                && command.command.location.as_ref().is_some_and(|location|
+                    location.source == "trip.tex" && location.line == 60 && location.byte == 21)
+    ));
+    assert!(matches!(
+        event(3453),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Expanded
+                && command.command.command == "assign_toks"
+                && command.command.control_sequence.as_deref() == Some("output")
+    ));
     let actual = tex_observe::canonical_evidence_json_lines(
         &prepared.construction_evidence().geometry,
         oracle,
