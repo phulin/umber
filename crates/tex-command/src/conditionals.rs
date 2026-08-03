@@ -1296,7 +1296,7 @@ impl CommandProcessor<'_> {
     /// e-TeX's additions to TeX82 §299 when §367 traces an expandable
     /// conditional or delimiter before its expansion routine runs.
     pub(crate) fn command_trace_conditional_suffix(&self, meaning: Meaning) -> String {
-        if self.state.int_param(IntParam::TRACING_IFS) <= 0 {
+        if self.state.untracked_int_param(IntParam::TRACING_IFS) <= 0 {
             return String::new();
         }
         if let Meaning::ExpandablePrimitive(primitive) = meaning

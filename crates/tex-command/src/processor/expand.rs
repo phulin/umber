@@ -1765,7 +1765,7 @@ pub(crate) fn string_text(state: &tex_state::CommandContext<'_>, token: Token) -
     match token {
         Token::Cs(symbol) => {
             let mut text = String::new();
-            let escape = state.int_param(IntParam::ESCAPE_CHAR);
+            let escape = state.untracked_int_param(IntParam::ESCAPE_CHAR);
             if let Some(ch) = char::from_u32(u32::try_from(escape).unwrap_or(u32::MAX)) {
                 text.push(ch);
             }
@@ -2023,7 +2023,7 @@ pub fn character_command_text(ch: char, cat: Catcode) -> String {
 #[must_use]
 pub fn print_esc_text(state: &tex_state::CommandContext<'_>, name: &str) -> String {
     let mut text = String::with_capacity(name.len() + 1);
-    if let Ok(escape) = u8::try_from(state.int_param(IntParam::ESCAPE_CHAR)) {
+    if let Ok(escape) = u8::try_from(state.untracked_int_param(IntParam::ESCAPE_CHAR)) {
         text.push(char::from(escape));
     }
     text.push_str(name);
@@ -2161,7 +2161,7 @@ pub(crate) fn token_list_token_text(state: &tex_state::CommandContext<'_>, token
     };
     let mut chars = name.chars();
     match (chars.next(), chars.next()) {
-        (Some(character), None) if state.catcode(character) != Catcode::Letter => {}
+        (Some(character), None) if state.untracked_catcode(character) != Catcode::Letter => {}
         _ => text.push(' '),
     }
     text

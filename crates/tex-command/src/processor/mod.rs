@@ -283,7 +283,7 @@ impl<'a> CommandProcessor<'a> {
     /// assignment policy for a completed command operation.
     #[must_use]
     pub fn int_param(&self, parameter: tex_state::env::banks::IntParam) -> i32 {
-        self.state.int_param(parameter)
+        self.state.untracked_int_param(parameter)
     }
 
     /// Installs a non-fallible semantic observer for this bounded processor

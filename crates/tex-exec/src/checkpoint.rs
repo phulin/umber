@@ -265,15 +265,24 @@ impl EngineCheckpoint {
         let summary = self.command_summary().ok_or(EditorRestoreError::Canonical(
             CanonicalCheckpointRestoreError::MissingCommandSummary,
         ))?;
-        let (mut universe, owned) = substrate
+        let (mut universe, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
-                tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
                     summary,
                     paragraphs
                         .iter()
                         .map(crate::CanonicalParagraphRegion::input),
                     source,
-                )
+                );
+                let mut meanings = std::collections::HashMap::new();
+                for paragraph in paragraphs {
+                    for raw in paragraph.meaning_dependency_raws() {
+                        if let Some(identity) = source.detach_paragraph_meaning_dependency(raw) {
+                            meanings.entry(raw).or_insert(identity);
+                        }
+                    }
+                }
+                (owned, meanings)
             })
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
@@ -290,8 +299,25 @@ impl EngineCheckpoint {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
         let mut paragraphs = paragraphs.to_vec();
+        let materialized_meanings = detached_meanings
+            .into_iter()
+            .map(|(raw, (kind, spelling))| {
+                let symbol = match kind {
+                    tex_state::interner::ControlSequenceKind::ActiveCharacter => universe
+                        .intern_active_character(spelling.chars().next().expect("active spelling"))
+                        .symbol(),
+                    tex_state::interner::ControlSequenceKind::Null
+                    | tex_state::interner::ControlSequenceKind::SingleCharacter
+                    | tex_state::interner::ControlSequenceKind::Named => {
+                        universe.intern(&spelling).symbol()
+                    }
+                };
+                (raw, symbol)
+            })
+            .collect();
         for (paragraph, input) in paragraphs.iter_mut().zip(materialized_paragraphs) {
             paragraph.replace_input(input);
+            paragraph.remap_meaning_dependencies(&materialized_meanings);
         }
         // A retained graph is an optional replay candidate, not part of the
         // checkpoint continuation. Validate every graph before mounting any

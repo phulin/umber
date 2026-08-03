@@ -469,6 +469,23 @@ impl<'a> ExpansionContext<'a> {
     pub fn semantic_dependency_value(&self, key: DependencyKey) -> Option<DependencyValue> {
         self.universe.semantic_dependency_value(key)
     }
+
+    /// Detaches one meaning dependency's control-sequence namespace and spelling.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detach_meaning_dependency(
+        &self,
+        raw: u32,
+    ) -> Option<(crate::interner::ControlSequenceKind, String)> {
+        let symbol = self
+            .universe
+            .stores
+            .try_resolve_stored_symbol(Symbol::new(raw))?;
+        Some((
+            self.universe.control_sequence_kind(symbol),
+            self.universe.resolve(symbol).to_owned(),
+        ))
+    }
 }
 
 /// Production input-open capability over a [`Universe`].
@@ -1864,6 +1881,11 @@ impl Universe {
         self.dependencies.begin_region();
     }
 
+    #[must_use]
+    pub fn dependency_region_is_active(&self) -> bool {
+        self.dependencies.is_recording()
+    }
+
     /// Records a detached semantic read when a region is active.
     #[inline(always)]
     pub fn record_dependency(&mut self, key: DependencyKey, value: DependencyValue) {
@@ -2195,6 +2217,20 @@ impl Universe {
             | DependencyKey::World { .. }
             | DependencyKey::Query { .. } => None,
         }
+    }
+
+    /// Detaches one meaning dependency's control-sequence namespace and spelling.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn detach_paragraph_meaning_dependency(
+        &self,
+        raw: u32,
+    ) -> Option<(crate::interner::ControlSequenceKind, String)> {
+        let symbol = self.stores.try_resolve_stored_symbol(Symbol::new(raw))?;
+        Some((
+            self.control_sequence_kind(symbol),
+            self.resolve(symbol).to_owned(),
+        ))
     }
 
     /// Projects a selected font through the same semantic dependency domain

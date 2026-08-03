@@ -21,6 +21,18 @@ pub(crate) fn validate_dependencies(
     })
 }
 
+pub(crate) fn dependency_failure(
+    stores: &Universe,
+    observations: &[tex_state::ObservedDependency],
+) -> Option<tex_state::DependencyKey> {
+    observations.iter().find_map(|observation| {
+        let current = stores.semantic_dependency_value(observation.key);
+        let failed = stores.dependency_changed_at(observation.key) != observation.changed_at
+            && current.as_ref() != Some(&observation.value);
+        failed.then_some(observation.key)
+    })
+}
+
 pub(crate) fn validate_mutations(
     stores: &Universe,
     mutations: &[tex_state::PureParagraphMutation],

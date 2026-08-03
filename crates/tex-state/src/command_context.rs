@@ -5,7 +5,8 @@
 //! they represent typed reads or mutations of [`Universe`] state.
 
 use crate::{
-    ChangedAt, DependencyKey, DependencyValue, ExpansionState, TracedTokenList, Universe,
+    ChangedAt, DependencyBank, DependencyCodeTable, DependencyKey, DependencyValue, ExpansionState,
+    TracedTokenList, Universe,
     env::banks::{GlueParam, IntParam, TokParam},
     glue::GlueSpec,
     ids::{FontId, GlueId},
@@ -31,6 +32,25 @@ pub struct CommandContext<'a> {
 }
 
 impl CommandContext<'_> {
+    fn observe_dependency(&mut self, key: DependencyKey) {
+        self.universe.track_dependency(key);
+        if let Some(value) = self.universe.semantic_dependency_value(key) {
+            self.universe.record_dependency(key, value);
+        }
+    }
+
+    /// Reads an integer parameter for diagnostic rendering outside semantic
+    /// command evaluation.
+    #[must_use]
+    pub fn untracked_int_param(&self, param: IntParam) -> i32 {
+        self.universe.int_param(param)
+    }
+
+    /// Reads a category code for diagnostic token rendering.
+    #[must_use]
+    pub fn untracked_catcode(&self, ch: char) -> Catcode {
+        self.universe.catcode(ch)
+    }
     /// Appends string-pool content using TeX82 §§59--60's active-selector
     /// `print` spelling, including `\newlinechar` handling.
     pub fn append_selector_string_text(&self, raw: &str, text: &mut String) {
@@ -189,13 +209,21 @@ impl CommandContext<'_> {
 
     /// Reads one catcode through the aggregate code-table boundary.
     #[must_use]
-    pub fn catcode(&self, ch: char) -> Catcode {
+    pub fn catcode(&mut self, ch: char) -> Catcode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Catcode,
+            scalar: ch.into(),
+        });
         self.universe.catcode(ch)
     }
 
     /// Reads one lowercase code through the aggregate code-table boundary.
     #[must_use]
-    pub fn lccode(&self, ch: char) -> crate::code_tables::LcCode {
+    pub fn lccode(&mut self, ch: char) -> crate::code_tables::LcCode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Lccode,
+            scalar: ch.into(),
+        });
         self.universe.lccode(ch)
     }
 
@@ -210,25 +238,41 @@ impl CommandContext<'_> {
 
     /// Reads one uppercase code through the aggregate code-table boundary.
     #[must_use]
-    pub fn uccode(&self, ch: char) -> crate::code_tables::UcCode {
+    pub fn uccode(&mut self, ch: char) -> crate::code_tables::UcCode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Uccode,
+            scalar: ch.into(),
+        });
         self.universe.uccode(ch)
     }
 
     /// Reads one space factor code through the aggregate code-table boundary.
     #[must_use]
-    pub fn sfcode(&self, ch: char) -> crate::code_tables::SfCode {
+    pub fn sfcode(&mut self, ch: char) -> crate::code_tables::SfCode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Sfcode,
+            scalar: ch.into(),
+        });
         self.universe.sfcode(ch)
     }
 
     /// Reads one math code through the aggregate code-table boundary.
     #[must_use]
-    pub fn mathcode(&self, ch: char) -> crate::code_tables::MathCode {
+    pub fn mathcode(&mut self, ch: char) -> crate::code_tables::MathCode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Mathcode,
+            scalar: ch.into(),
+        });
         self.universe.mathcode(ch)
     }
 
     /// Reads one delimiter code through the aggregate code-table boundary.
     #[must_use]
-    pub fn delcode(&self, ch: char) -> crate::code_tables::DelCode {
+    pub fn delcode(&mut self, ch: char) -> crate::code_tables::DelCode {
+        self.observe_dependency(DependencyKey::Code {
+            table: DependencyCodeTable::Delcode,
+            scalar: ch.into(),
+        });
         self.universe.delcode(ch)
     }
 
@@ -343,7 +387,11 @@ impl CommandContext<'_> {
 
     /// Reads one integer parameter for canonical expandable conversion.
     #[must_use]
-    pub fn int_param(&self, param: IntParam) -> i32 {
+    pub fn int_param(&mut self, param: IntParam) -> i32 {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::IntParam,
+            index: u32::from(param.raw()),
+        });
         self.universe.int_param(param)
     }
 
@@ -385,25 +433,41 @@ impl CommandContext<'_> {
 
     /// Reads one token parameter for direct `\\the` insertion.
     #[must_use]
-    pub fn tok_param(&self, param: TokParam) -> TokenListId {
+    pub fn tok_param(&mut self, param: TokParam) -> TokenListId {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::TokParam,
+            index: u32::from(param.raw()),
+        });
         self.universe.tok_param(param)
     }
 
     /// Reads a token parameter without conflating null with an assigned empty list.
     #[must_use]
-    pub fn tok_param_option(&self, param: TokParam) -> Option<TokenListId> {
+    pub fn tok_param_option(&mut self, param: TokParam) -> Option<TokenListId> {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::TokParam,
+            index: u32::from(param.raw()),
+        });
         self.universe.tok_param_option(param)
     }
 
     /// Reads one count register for canonical expandable conversion.
     #[must_use]
-    pub fn count(&self, index: u16) -> i32 {
+    pub fn count(&mut self, index: u16) -> i32 {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Count,
+            index: u32::from(index),
+        });
         self.universe.count(index)
     }
 
     /// Reads one dimension register through the aggregate state boundary.
     #[must_use]
-    pub fn dimen(&self, index: u16) -> crate::scaled::Scaled {
+    pub fn dimen(&mut self, index: u16) -> crate::scaled::Scaled {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Dimen,
+            index: u32::from(index),
+        });
         self.universe.dimen(index)
     }
 
@@ -434,13 +498,21 @@ impl CommandContext<'_> {
 
     /// Reads one skip register through the aggregate boundary.
     #[must_use]
-    pub fn skip(&self, index: u16) -> GlueId {
+    pub fn skip(&mut self, index: u16) -> GlueId {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Skip,
+            index: u32::from(index),
+        });
         self.universe.skip(index)
     }
 
     /// Reads one mu-skip register through the aggregate boundary.
     #[must_use]
-    pub fn muskip(&self, index: u16) -> GlueId {
+    pub fn muskip(&mut self, index: u16) -> GlueId {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Muskip,
+            index: u32::from(index),
+        });
         self.universe.muskip(index)
     }
 
@@ -678,16 +750,24 @@ impl CommandContext<'_> {
     /// that case to zero at the command semantic layer.
     #[must_use]
     pub fn box_dimension(
-        &self,
+        &mut self,
         index: u16,
         dimension: crate::BoxDimension,
     ) -> Option<crate::scaled::Scaled> {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Box,
+            index: u32::from(index),
+        });
         self.universe.box_dimension(index, dimension)
     }
 
     /// Reads one token register for direct `\\the` insertion.
     #[must_use]
-    pub fn toks(&self, index: u16) -> TokenListId {
+    pub fn toks(&mut self, index: u16) -> TokenListId {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Toks,
+            index: u32::from(index),
+        });
         self.universe.toks(index)
     }
 
@@ -769,7 +849,11 @@ impl CommandContext<'_> {
 
     /// Reads the currently selected font through the command boundary.
     #[must_use]
-    pub fn current_font(&self) -> FontId {
+    pub fn current_font(&mut self) -> FontId {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::CurrentFont,
+            index: 0,
+        });
         self.universe.current_font()
     }
 
@@ -820,7 +904,16 @@ impl CommandContext<'_> {
 
     /// Reads one font-family selector through the command boundary.
     #[must_use]
-    pub fn math_family_font(&self, size: MathFontSize, family: u8) -> FontId {
+    pub fn math_family_font(&mut self, size: MathFontSize, family: u8) -> FontId {
+        let size_index = match size {
+            MathFontSize::Text => 0,
+            MathFontSize::Script => 1,
+            MathFontSize::ScriptScript => 2,
+        };
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::MathFamilyFont,
+            index: size_index * 16 + u32::from(family),
+        });
         self.universe.math_family_font(size, family)
     }
 
@@ -851,8 +944,13 @@ impl CommandContext<'_> {
     /// read for the active dependency region.
     #[must_use]
     pub fn meaning(&mut self, symbol: Symbol) -> Meaning {
-        self.universe
-            .track_dependency(DependencyKey::Meaning(symbol.raw()));
+        let key = DependencyKey::Meaning(symbol.raw());
+        self.universe.track_dependency(key);
+        if self.universe.dependency_region_is_active()
+            && let Some(value) = self.universe.semantic_dependency_value(key)
+        {
+            self.universe.record_dependency(key, value);
+        }
         self.universe.meaning(symbol)
     }
 

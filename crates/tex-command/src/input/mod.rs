@@ -151,7 +151,7 @@ impl InputState {
         tex_state::print::render_error_context(
             &self.error_context_levels_for(levels, stores, parameters),
             stores.error_context_widths(),
-            stores.int_param(tex_state::env::banks::IntParam::new(54)),
+            stores.untracked_int_param(tex_state::env::banks::IntParam::new(54)),
         )
     }
 
@@ -168,10 +168,12 @@ impl InputState {
         parameters: &crate::macro_call::ParameterState,
     ) -> Vec<tex_state::print::ErrorContextLevel> {
         let mut levels = Vec::new();
-        let newlinechar =
-            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32);
-        let live_endlinechar =
-            char::from_u32(stores.int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32);
+        let newlinechar = char::from_u32(
+            stores.untracked_int_param(tex_state::env::banks::IntParam::NEWLINE_CHAR) as u32,
+        );
+        let live_endlinechar = char::from_u32(
+            stores.untracked_int_param(tex_state::env::banks::IntParam::END_LINE_CHAR) as u32,
+        );
         for (index, level) in input_levels.iter().enumerate().rev() {
             let current = levels.is_empty() && index + 1 == input_levels.len();
             match level {

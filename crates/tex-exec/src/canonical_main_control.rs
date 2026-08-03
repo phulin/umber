@@ -608,6 +608,29 @@ impl CanonicalParagraphRegion {
         self.input = input;
     }
 
+    pub(crate) fn remap_meaning_dependencies(
+        &mut self,
+        meanings: &std::collections::HashMap<u32, tex_state::interner::Symbol>,
+    ) {
+        let dependencies = Arc::make_mut(&mut self.dependencies);
+        for dependency in dependencies {
+            if let tex_state::DependencyKey::Meaning(raw) = dependency.key
+                && let Some(symbol) = meanings.get(&raw)
+            {
+                dependency.key = tex_state::DependencyKey::Meaning(symbol.raw());
+            }
+        }
+    }
+
+    pub(crate) fn meaning_dependency_raws(&self) -> impl Iterator<Item = u32> + '_ {
+        self.dependencies
+            .iter()
+            .filter_map(|dependency| match dependency.key {
+                tex_state::DependencyKey::Meaning(raw) => Some(raw),
+                _ => None,
+            })
+    }
+
     pub(crate) fn can_mount_finished_lines(&self, universe: &Universe) -> bool {
         self.finished_lines
             .as_ref()
@@ -1979,18 +2002,41 @@ impl CanonicalMainControl {
         if std::mem::replace(&mut self.paragraph_recorder.lookup_attempted, true) {
             return false;
         }
-        let Some(index) = self.paragraph_recorder.replay.iter().position(|region| {
-            region.barriers.is_empty()
-                && crate::canonical_paragraph_memo::same_mutation_entry_class(
+        let mut selected = None;
+        for (index, region) in self.paragraph_recorder.replay.iter().enumerate() {
+            let mut input_probe = self.command.clone();
+            if input_probe
+                .replay_paragraph_input_transaction(&region.input)
+                .is_err()
+            {
+                continue;
+            }
+            if !region.barriers.is_empty()
+                || !crate::canonical_paragraph_memo::same_mutation_entry_class(
                     region.mutation_entry_in_group,
                     tex_state::ExpansionState::execution_group_depth(stores),
                 )
-                && crate::canonical_paragraph_memo::validate_dependencies(
-                    stores,
-                    &region.dependencies,
-                )
-                && crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations)
-        }) else {
+            {
+                continue;
+            }
+            if let Some(key) =
+                crate::canonical_paragraph_memo::dependency_failure(stores, &region.dependencies)
+            {
+                stores.record_pure_paragraph_validation_failure(
+                    tex_state::ParagraphValidationFailure::from_dependency(key),
+                );
+                break;
+            }
+            if !crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations) {
+                stores.record_pure_paragraph_validation_failure(
+                    tex_state::ParagraphValidationFailure::Mutation,
+                );
+                break;
+            }
+            selected = Some(index);
+            break;
+        }
+        let Some(index) = selected else {
             stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         };

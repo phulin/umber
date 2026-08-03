@@ -259,6 +259,7 @@ pub(crate) struct DependencyTrackerSnapshot {
 pub struct DependencyRuntime {
     tracker: DependencyTracker,
     active: Option<DependencyRegion>,
+    staged: DependencyRegion,
     paragraph_front: Option<Vec<ObservedDependency>>,
     tracking_enabled: bool,
 }
@@ -269,7 +270,7 @@ impl DependencyRuntime {
     pub fn begin_region(&mut self) {
         assert!(self.active.is_none(), "dependency region already active");
         self.tracking_enabled = true;
-        self.active = Some(DependencyRegion::default());
+        self.active = Some(std::mem::take(&mut self.staged));
     }
 
     #[must_use]
@@ -282,6 +283,8 @@ impl DependencyRuntime {
     pub fn record(&mut self, key: DependencyKey, value: DependencyValue) {
         if let Some(region) = &mut self.active {
             region.record(self.tracker.observe(key, value));
+        } else if self.tracking_enabled {
+            self.staged.record(self.tracker.observe(key, value));
         }
     }
 

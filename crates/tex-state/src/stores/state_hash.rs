@@ -14,7 +14,7 @@ use crate::node::{GlueKind, KernKind, Node, Sign};
 #[cfg(test)]
 use crate::node_arena::NodeRef;
 use crate::state_hash::{StateHashComponent, StateHashFragment, StateHasher};
-use crate::token::Catcode;
+use crate::token::{Catcode, Token};
 use ahash::AHashMap;
 use std::collections::VecDeque;
 
@@ -841,8 +841,43 @@ impl Stores {
         self.assert_live_macro_definition(id);
         let definition = self.macros.get(id);
         hasher.u8(definition.flags().bits());
-        self.hash_token_list_semantic(definition.parameter_text(), hasher);
-        self.hash_token_list_semantic(definition.replacement_text(), hasher);
+        self.hash_portable_token_list(definition.parameter_text(), hasher);
+        self.hash_portable_token_list(definition.replacement_text(), hasher);
+    }
+
+    fn hash_portable_token_list(&self, id: TokenListId, hasher: &mut StateHasher) {
+        let id = self.resolve_stored_token_list(id);
+        let tokens = self.tokens.get(id);
+        hasher.tag(0x50);
+        hasher.usize(tokens.len());
+        for token in tokens {
+            match *token {
+                Token::Char { ch, cat } => {
+                    hasher.tag(0);
+                    hasher.u32(ch as u32);
+                    hasher.u8(cat as u8);
+                }
+                Token::Cs(symbol) => {
+                    let symbol = self.resolve_stored_symbol(symbol);
+                    hasher.tag(1);
+                    hasher.u8(match self.control_sequence_kind(symbol) {
+                        ControlSequenceKind::ActiveCharacter => 1,
+                        ControlSequenceKind::Null
+                        | ControlSequenceKind::SingleCharacter
+                        | ControlSequenceKind::Named => 0,
+                    });
+                    hasher.str(self.resolve(symbol));
+                }
+                Token::Param(slot) => {
+                    hasher.tag(2);
+                    hasher.u8(slot);
+                }
+                Token::Frozen(frozen) => {
+                    hasher.tag(3);
+                    hasher.u16(frozen.raw());
+                }
+            }
+        }
     }
 
     fn hash_glue(&self, id: GlueId, hasher: &mut StateHasher) {
