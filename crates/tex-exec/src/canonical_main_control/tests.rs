@@ -1113,7 +1113,7 @@ fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
     // sparse `botmarks` pointer. Only the later `topmarks0` enquiry therefore
     // installs and retires a `mark_text` input level.
     let mut stores = Universe::new_with_plain_catcodes();
-    // Stage the exact post-fire-up state proved by output.rs's white-box
+    // Stage the exact post-fire-up state proved by canonical_page_output.rs's white-box
     // regression, then cross the command processor's enquiry boundary.
     stores.set_page_mark_class(PageMark::Top, 0, tex_state::ids::TokenListId::EMPTY);
     let mut control = canonical_etex_initex(&mut stores);

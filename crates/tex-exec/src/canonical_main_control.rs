@@ -2185,7 +2185,7 @@ impl CanonicalMainControl {
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
-        let job_is_all_over = crate::output::job_is_all_over(stores);
+        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -2798,7 +2798,7 @@ impl CanonicalMainControl {
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::output::job_is_all_over(stores);
+        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -3149,8 +3149,12 @@ impl CanonicalMainControl {
             // Universe summary is published only at step boundaries, so the
             // report must receive context from the live command stack.
             let error_context = self.command.output_open_context(&stores.command_context());
-            match crate::output::select_pending_page_output(stores, fire_up, error_context)? {
-                crate::output::SelectedPageOutput::Default(page) => {
+            match crate::canonical_page_output::select_pending_page_output(
+                stores,
+                fire_up,
+                error_context,
+            )? {
+                crate::canonical_page_output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         runtime: &mut self.runtime,
@@ -3175,7 +3179,7 @@ impl CanonicalMainControl {
                     // starts the next invocation.
                     break;
                 }
-                crate::output::SelectedPageOutput::UserRoutine => {
+                crate::canonical_page_output::SelectedPageOutput::UserRoutine => {
                     // This episode belongs to the step that contributed the
                     // page, but an observed step publishes it only after its
                     // own mutation and effect records.  Redirect the commit
@@ -4416,7 +4420,7 @@ impl CanonicalMainControl {
         let mode = self.modes.current_mode();
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::output::job_is_all_over(stores);
+        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -13162,7 +13166,7 @@ fn apply_scanned_step(
             // discard lists, so the host-side format encoder still rejects
             // genuine page material instead of mistaking `last_penalty` or
             // `last_node_type` for it.
-            if dump && command.initex && crate::output::job_is_all_over(stores) {
+            if dump && command.initex && crate::canonical_page_output::job_is_all_over(stores) {
                 stores.start_new_page();
             }
             // TeX82 §1378 closes every still-open numbered output file after
@@ -15497,7 +15501,7 @@ fn apply_scanned_step(
                 })?;
             stores.set_output_routine_active(false);
             boxes.output_routine_active = false;
-            crate::output::resume_page_builder_after_output(
+            crate::canonical_page_output::resume_page_builder_after_output(
                 stores,
                 output_level.list().nodes().to_vec(),
                 context,
@@ -15521,7 +15525,7 @@ fn apply_scanned_step(
             // the filler glue can become the chosen breakpoint and leave the
             // forced penalty queued.
             if !*end_job_ejection_pending {
-                crate::output::append_end_job_contributions(stores);
+                crate::canonical_page_output::append_end_job_contributions(stores);
                 *end_job_ejection_pending = true;
             }
             crate::page_builder::build_page(stores)?;

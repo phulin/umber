@@ -81,6 +81,50 @@ fn production_replay_kinds_stay_on_the_state_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_page_output_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let source = fs::read_to_string(source_root.join("canonical_page_output.rs"))
+        .expect("read canonical page-output module");
+    for forbidden in [
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_output",
+        "run_main_control_until",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "canonical_page_output.rs must not reference legacy boundary `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn legacy_output_has_no_shipped_command_control_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("legacy_output") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some("lib.rs" | "executor.rs" | "align/execution.rs" | "legacy_output.rs")
+                ),
+                "{} must not call the retired output front",
+                relative.display()
+            );
+        }
+    }
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("legacy_output"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

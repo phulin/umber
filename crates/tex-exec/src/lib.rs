@@ -9,6 +9,7 @@
 mod align;
 mod assignments;
 mod canonical_main_control;
+mod canonical_page_output;
 mod checkpoint;
 mod diagnostics;
 mod dispatch;
@@ -21,10 +22,10 @@ mod job;
 mod job_output;
 #[cfg(test)]
 mod legacy_editor_restart;
+mod legacy_output;
 mod math;
 mod mode;
 mod node_dump;
-mod output;
 mod pack_report;
 mod packing_params;
 mod page_builder;

@@ -46,6 +46,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/assignments/tracing.rs`: e-TeX 2.6's `\tracingassigns` rendered assignment trace, rendering the `changing`/`globally changing`/`into`/`reassigning` labels tex.web's `restore_trace` shares with `\tracingrestores`. Its production call sites are `canonical_main_control.rs`'s `apply_scanned_step` (the `ScannedStep::Count`/`Dimen`/`Skip`/`Muskip`/`IntParam`/`DimenParam`/`GlueParam`/`TokParam`/`Toks`/`CodeTable`/`Let`/`MacroDefinition` arms); `variables.rs`'s `execute_assignment_to_target` and `execute_code_table_assignment` call it too, but that path is reachable only from the retired `Executor`, never from the canonical command core.
+- `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
 - `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
 - `src/assignments/variables/variable_access.rs`: typed read/write accessors for registers, parameters, and font variables.
@@ -73,6 +74,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/job_output.rs`: TeX82 §§532--536's engine-owned lazy DVI/transcript
   names, `texput` fallback, transcript-open state, and interactive open retry;
   direct lifecycle tests live in `src/job_output/tests.rs`.
+- `src/legacy_output.rs`: retired `Executor` input-stack fronts for page fire-up and `\output` token-list replay; it delegates all input-free page state to `canonical_page_output.rs` and has no canonical command-control caller.
 - `src/legacy_editor_restart.rs`: isolated retired `InputStack` reconstruction
   used only by the synchronous incremental compatibility path; canonical editor
   sessions restore through command-owned checkpoints.
@@ -86,7 +88,6 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/pack_report.rs`: TeX82 selector-aware overfull and underfull box diagnostics.
 - `src/pack_report/tests.rs`: interaction-mode channel and ordering coverage for packed-box diagnostics.
-- `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
 - `src/paragraph_memo.rs`: centralized fail-before-mutation accepted-history paragraph validation, generation-interned exact-stamp observations and typed semantic dependency tiers, accepted-history-owned hlist/finished-line mounts, ordered count/integer-parameter redo, full source-transition checks, lazy accepted-generation diagnostic provenance, barrier classification, and telemetry.
 - `src/raw_delivery.rs`: single retired lexer bridge for compatibility scanners
   that still require one unexpanded semantic token; canonical execution

@@ -917,12 +917,12 @@ pub(super) fn dispatch_and_drain(
     };
     match action {
         DispatchAction::Continue => {
-            crate::output::drain_pending_output(nest, input, stores, execution, stats)?;
+            crate::legacy_output::drain_pending_output(nest, input, stores, execution, stats)?;
             Ok(())
         }
         DispatchAction::Shipout(page) => {
             stats.prepared_dvi_pages.push(page);
-            crate::output::drain_pending_output(nest, input, stores, execution, stats)?;
+            crate::legacy_output::drain_pending_output(nest, input, stores, execution, stats)?;
             Ok(())
         }
         DispatchAction::End => Ok(()),

@@ -16,7 +16,7 @@ use tex_state::{
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
 use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_typesetting};
 use crate::error_report::{back_error, report_input_error};
-use crate::output;
+use crate::legacy_output as output;
 use crate::timing::TelemetryTimer;
 use crate::{
     Cancellation, DispatchAction, ExecError, ExecutionBudgetCounters, ExecutionBudgets,

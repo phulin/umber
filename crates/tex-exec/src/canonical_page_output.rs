@@ -1,8 +1,8 @@
-//! TeX.web output routine fire-up and end-of-job cleanup.
+//! Input-free TeX.web page-output selection, packaging, and end-job state.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tex_lex::InputStack;
+use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
@@ -10,16 +10,11 @@ use tex_state::page::{
     AWFUL_BAD, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::{GroupKind, TokenListReplayKind, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
-use crate::assignments::shipout_node;
-use crate::executor::{MainControlExit, run_main_control_until};
-use crate::mode::ignored_depth;
+use crate::ExecError;
 use crate::packing_params::vpack;
-use crate::page_builder::build_page;
 use crate::splitting::{natural_vlist_size, prune_page_top, vpack_natural};
-use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
 
 /// TeX.web's `-1073741824` end-job penalty from `its_all_over`.
 const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
@@ -77,80 +72,7 @@ pub(crate) fn resume_page_builder_after_output(
     crate::page_builder::build_page_with_error_context(stores, Some(&error_context))
 }
 
-pub(crate) fn drain_pending_output(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
-) -> Result<(), ExecError> {
-    while let Some(fire_up) = stores.page_fire_up() {
-        fire_up_page(nest, input, stores, execution, stats, fire_up)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn finish_end(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
-) -> Result<(), ExecError> {
-    while !job_is_quiescent(stores) {
-        append_end_job_contributions(stores);
-        build_page(stores)?;
-        drain_pending_output(nest, input, stores, execution, stats)?;
-    }
-    Ok(())
-}
-
-fn fire_up_page(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
-    fire_up: PageFireUp,
-) -> Result<(), ExecError> {
-    prepare_box255(stores, fire_up, None)?;
-    let output = stores.tok_param(TokParam::OUTPUT);
-    if stores.tokens(output).is_empty() {
-        prepend_output_heldover(stores, Vec::new(), true);
-        let node = take_box255_node(stores)?;
-        let artifact = shipout_node(node, input, stores, execution)?;
-        let _ = artifact;
-        stores.clear_page_discards();
-        build_page(stores)?;
-        return Ok(());
-    }
-
-    let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
-    let max_dead_cycles = stores.int_param(IntParam::MAX_DEAD_CYCLES);
-    if dead_cycles >= max_dead_cycles {
-        let context = crate::diagnostics::show_context(stores, stores.input_summary());
-        report_output_loop(stores, dead_cycles, context)?;
-        prepend_output_heldover(stores, Vec::new(), true);
-        let node = take_box255_node(stores)?;
-        let _artifact = shipout_node(node, input, stores, execution)?;
-        stores.clear_page_discards();
-        build_page(stores)?;
-        return Ok(());
-    }
-    stores.record_output_routine_execution();
-    stores.set_page_integer(
-        PageInteger::DeadCycles,
-        dead_cycles
-            .checked_add(1)
-            .expect("dead-cycle count is bounded by max_dead_cycles"),
-    );
-    run_output_routine(nest, input, stores, execution, stats, output)?;
-    stores.clear_page_discards();
-    build_page(stores)?;
-    Ok(())
-}
-
-fn prepare_box255(
+pub(crate) fn prepare_box255(
     stores: &mut Universe,
     fire_up: PageFireUp,
     error_context: Option<&str>,
@@ -442,7 +364,7 @@ fn package_insertion_box(stores: &mut Universe, class: u16, nodes: Vec<Node>) {
     stores.set_box_reg_global(class, boxed);
 }
 
-fn prepend_output_heldover(
+pub(crate) fn prepend_output_heldover(
     stores: &mut Universe,
     output_nodes: Vec<Node>,
     discard_rewritten_break: bool,
@@ -492,97 +414,12 @@ fn output_penalty_and_rewrite_break(
     INF_PENALTY
 }
 
-fn run_output_routine(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
-    output: tex_state::ids::TokenListId,
-) -> Result<(), ExecError> {
-    execution.mark_paragraph_barrier(tex_state::ParagraphBarrierReason::NestedOutputRoutine);
-    let mut transaction = crate::transaction::ExecutionTransaction::begin(nest, stores);
-    let mut replay = None;
-    let result = {
-        let (nest, stores) = transaction.parts();
-        run_output_routine_inner(nest, input, stores, execution, stats, output, &mut replay)
-    };
-    if result.is_ok() {
-        transaction.commit();
-    } else if let Some(replay) = replay {
-        let _ = input.abort_token_list_replay(replay);
-    }
-    result
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_output_routine_inner(
-    nest: &mut ModeNest,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    stats: &mut ExecutionStats,
-    output: tex_state::ids::TokenListId,
-    replay: &mut Option<tex_state::TokenListReplayMarker>,
-) -> Result<(), ExecError> {
-    stores.set_output_routine_active(true);
-    stores.enter_group_with_kind(GroupKind::Output);
-    nest.push(Mode::InternalVertical)?;
-    nest.current_list_mutation()
-        .set_prev_depth(ignored_depth(stores));
-    // TeX82 §1026: the output group owns the local default paragraph
-    // assignments and their §283 restoration records.
-    crate::assignments::normal_paragraph(nest, stores);
-    let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
-    *replay = Some(output_replay);
-
-    match run_main_control_until(nest, input, stores, execution, stats, |input, stores| {
-        pop_finished_output_frame(input, stores, output_replay)
-    })? {
-        MainControlExit::Stopped => {}
-        MainControlExit::EndOfInput => {
-            if !input.finish_exhausted_token_list_replay(output_replay, stores) {
-                return Err(ExecError::MissingToken {
-                    context: "output routine",
-                });
-            }
-        }
-        MainControlExit::End { token } => {
-            // TeX's off_save recovery closes the output group before a stop
-            // command can be reconsidered by outer vertical main control.
-            // Preserve the command for that reconsideration while completing
-            // the ordinary output-routine teardown below.
-            push_traced_tokens(input, stores, [token]);
-        }
-        MainControlExit::NotConsumed { token } => {
-            return Err(ExecError::UnimplementedTypesetting {
-                mode: nest.current_mode(),
-                token: token.semantic_token(),
-                origin: token.origin(),
-                operation: "output routine",
-            });
-        }
-    }
-
-    let output_level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
-    leave_group(input, stores, GroupKind::Output)?;
-    stores.set_output_routine_active(false);
-    if let Some(box255) = stores.box_reg(255) {
-        stores.clear_box_reg_same_level(255);
-        let context = crate::diagnostics::show_context(stores, stores.input_summary());
-        report_box255_not_emptied(stores, box255, context)?;
-    }
-    prepend_output_heldover(stores, output_level.list().nodes().to_vec(), false);
-    Ok(())
-}
-
 /// TeX.web §1024's `<Explain that too many dead cycles have occurred...>`.
 ///
 /// Page output is driven by the page builder, not by a scanner, so its caller
 /// supplies §82's context. Canonical main control renders its live command
 /// stack; the retained executor renders the last input summary it published.
-fn report_output_loop(
+pub(crate) fn report_output_loop(
     stores: &mut Universe,
     dead_cycles: i32,
     context: String,
@@ -626,7 +463,7 @@ fn report_box255_not_void(
 }
 
 /// TeX.web §1028's `<Ensure that box 255 is empty after output>`.
-fn report_box255_not_emptied(
+pub(crate) fn report_box255_not_emptied(
     stores: &mut Universe,
     deleted: tex_state::ids::NodeListId,
     context: String,
@@ -661,15 +498,7 @@ fn report_deleted_box(stores: &mut Universe, deleted: tex_state::ids::NodeListId
     diagnostic.end(true);
 }
 
-fn pop_finished_output_frame(
-    input: &mut InputStack,
-    stores: &Universe,
-    output_replay: tex_state::TokenListReplayMarker,
-) -> bool {
-    input.finish_exhausted_token_list_replay(output_replay, stores)
-}
-
-fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
+pub(crate) fn take_box255_node(stores: &mut Universe) -> Result<Node, ExecError> {
     let id = stores
         .take_box_reg_same_level(255)
         .ok_or(ExecError::MissingToken { context: "box" })?;
@@ -726,7 +555,7 @@ pub(crate) fn job_is_all_over(stores: &Universe) -> bool {
         && stores.page_integer(PageInteger::DeadCycles) == 0
 }
 
-fn job_is_quiescent(stores: &Universe) -> bool {
+pub(crate) fn job_is_quiescent(stores: &Universe) -> bool {
     stores.current_page_len() == 0
         && stores.page_contributions().is_empty()
         && stores.page_fire_up().is_none()
