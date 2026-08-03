@@ -4264,7 +4264,6 @@ fn invalid_mixed_batch_publishes_nothing() {
 }
 
 #[test]
-#[ignore = "umber2-xyqf: canonical rendered glyphs lose authored root provenance"]
 fn requested_html_and_dvi_share_one_committed_compile() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
@@ -4424,7 +4423,6 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
 }
 
 #[test]
-#[ignore = "umber2-xyqf: canonical paragraph breaking loses authored root provenance"]
 fn rendered_source_location_survives_paragraph_line_breaking() {
     let source = b"\\font\\tenrm=cmr10\\relax \\hsize=12pt \\parindent=0pt \\tenrm A B\\par\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {

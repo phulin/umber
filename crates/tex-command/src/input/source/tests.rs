@@ -137,6 +137,35 @@ fn generated_descriptor_is_retained_without_changing_source_semantics() {
 }
 
 #[test]
+fn named_generated_descriptor_survives_editor_rebinding() {
+    let bytes = Arc::<[u8]>::from(&b"first"[..]);
+    let registered = RegisteredSource::register(
+        SourceId::new(12),
+        CommandProfile::TEX82,
+        SourceRegistration::new(RegisteredSourceKind::Generated, bytes).with_name("/job/main.tex"),
+    )
+    .expect("named generated source registers");
+    assert_eq!(
+        registered.source_descriptor(),
+        tex_state::source_map::SourceDescriptor::named_generated(
+            "/job/main.tex",
+            Arc::from(&b"first"[..]),
+        )
+    );
+
+    let rebound = registered
+        .rebind_generated(SourceId::new(12), Arc::from(&b"second"[..]))
+        .expect("named generated source rebinds");
+    assert_eq!(
+        rebound.source_descriptor(),
+        tex_state::source_map::SourceDescriptor::named_generated(
+            "/job/main.tex",
+            Arc::from(&b"second"[..]),
+        )
+    );
+}
+
+#[test]
 fn world_registration_retains_the_selected_input_record_for_provenance() {
     let mut world = World::memory();
     world

@@ -325,7 +325,10 @@ impl RegisteredSource {
         bytes: Arc<[u8]>,
     ) -> Result<Self, SourceRegistrationError> {
         u64::try_from(bytes.len()).map_err(|_| SourceRegistrationError::BackingTooLarge)?;
-        let descriptor = Arc::new(SourceDescriptor::generated(Arc::clone(&bytes)));
+        let descriptor = Arc::new(self.name.as_ref().map_or_else(
+            || SourceDescriptor::generated(Arc::clone(&bytes)),
+            |name| SourceDescriptor::named_generated(name.to_string(), Arc::clone(&bytes)),
+        ));
         Ok(Self {
             id,
             kind: RegisteredSourceKind::Generated,
@@ -377,7 +380,17 @@ impl RegisteredSource {
             ));
         }
         let descriptor = registration.world_record.map_or_else(
-            || SourceDescriptor::generated(Arc::clone(&registration.bytes)),
+            || {
+                registration.name.as_ref().map_or_else(
+                    || SourceDescriptor::generated(Arc::clone(&registration.bytes)),
+                    |name| {
+                        SourceDescriptor::named_generated(
+                            name.to_string(),
+                            Arc::clone(&registration.bytes),
+                        )
+                    },
+                )
+            },
             |record| {
                 SourceDescriptor::world(
                     record,
