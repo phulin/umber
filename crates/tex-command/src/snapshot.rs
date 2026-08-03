@@ -146,6 +146,8 @@ pub enum CommandSummaryError {
     ScannerWarningContext,
     /// A command diagnostic has not yet crossed the executor boundary.
     PendingSemanticDiagnostic,
+    /// A paragraph input transaction has not reached `end_graf`.
+    ActiveParagraphInputTransaction,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -164,6 +166,9 @@ impl fmt::Display for CommandSummaryError {
             Self::ScannerWarningContext => "scanner warning context remains installed",
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
+            }
+            Self::ActiveParagraphInputTransaction => {
+                "a paragraph input transaction is active"
             }
         })
     }
@@ -238,6 +243,9 @@ impl CommandState {
         if !self.transient.rollback_roots.is_empty() {
             return Err(CommandSummaryError::LiveRollbackRoot);
         }
+        if self.paragraph_input_transaction.is_some() {
+            return Err(CommandSummaryError::ActiveParagraphInputTransaction);
+        }
 
         Ok(CommandSummary {
             input: self.input.clone(),
@@ -277,6 +285,7 @@ impl CommandState {
             name_in_progress: false,
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
+            paragraph_input_transaction: None,
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,
                 ..TransientState::default()

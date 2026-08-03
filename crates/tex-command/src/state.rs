@@ -96,6 +96,9 @@ pub struct CommandState {
     /// [`Self::take_file_framing_events`]. No per-field bookkeeping is
     /// needed because the whole-struct snapshot already covers it.
     pub(crate) file_framing_events: Vec<FileFramingEvent>,
+    /// Rollback-coupled input coverage for the active outer paragraph.
+    pub(crate) paragraph_input_transaction:
+        Option<crate::paragraph::ActiveParagraphInputTransaction>,
 }
 
 /// A recoverable command-owned semantic diagnostic awaiting executor output.

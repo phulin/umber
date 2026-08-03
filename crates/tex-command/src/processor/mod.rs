@@ -305,7 +305,7 @@ impl<'a> CommandProcessor<'a> {
     /// differ by it.
     #[must_use]
     pub(crate) fn is_observed(&self) -> bool {
-        self.observer.is_some()
+        self.observer.is_some() || self.command.paragraph_input_is_recording()
     }
 
     /// Records a completed typed mutation selected by the replay consumer.
@@ -326,6 +326,7 @@ impl<'a> CommandProcessor<'a> {
     }
 
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
+        self.command.record_paragraph_observation(&observation);
         if let Some(observer) = self.observer.as_deref_mut() {
             observer.committed(observation);
         }

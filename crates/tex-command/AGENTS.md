@@ -184,6 +184,8 @@ print channel of its own outside the borrowed
   braces; its whole recovery is `align_state:=1000000; limit:=0` plus the
   error, so the stored list keeps exactly the tokens the file supplied.
 - `src/provenance.rs`: private command provenance construction.
+- `src/paragraph.rs`: typed command-owned paragraph input recording, exact
+  replay transactions, source coverage, and rollback-coupled transition state.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the
   record union and the exhaustive `Meaning`-level command classification;
   `primitive_identity.rs` and `variable_identity.rs` own the exhaustive

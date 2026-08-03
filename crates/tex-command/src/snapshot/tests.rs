@@ -308,6 +308,61 @@ fn snapshot_and_summary_are_owned_static_values() {
 }
 
 #[test]
+fn paragraph_input_recording_rolls_back_with_command_snapshot() {
+    let mut state = populated_quiescent_state();
+    state.begin_paragraph_input_transaction();
+    let snapshot = state.snapshot();
+    state.record_paragraph_observation(&crate::CommandObservation::Input(crate::InputRecord {
+        transition: crate::InputTransition::Backup,
+        reason: crate::InputReason::Backup,
+        source_name: None,
+        level: 7,
+        position: 11,
+    }));
+    state.next_source_character().expect("recorded source advances");
+
+    state
+        .rollback(snapshot)
+        .expect("paragraph recording is ordinary command state");
+    let transaction = state
+        .finish_paragraph_input_transaction()
+        .expect("the restored recording remains active");
+    assert_eq!(transaction.coverage().transitions().len(), 0);
+    assert_eq!(
+        transaction.coverage().root_start(),
+        transaction.coverage().root_end()
+    );
+}
+
+#[test]
+fn paragraph_input_transaction_replays_only_from_exact_start() {
+    let mut start = populated_quiescent_state();
+    let mut recorded = start.clone();
+    recorded.begin_paragraph_input_transaction();
+    recorded.next_source_character().expect("source advances");
+    let transaction = recorded
+        .finish_paragraph_input_transaction()
+        .expect("recording finishes");
+
+    start
+        .replay_paragraph_input_transaction(&transaction)
+        .expect("exact starting input replays");
+    assert_eq!(start.input, recorded.input);
+    assert_eq!(
+        start.replay_paragraph_input_transaction(&transaction),
+        Err(crate::ParagraphInputReplayError::StartingInputMismatch)
+    );
+}
+
+#[test]
+fn summary_rejects_active_paragraph_input_recording() {
+    assert_rejected(
+        CommandState::begin_paragraph_input_transaction,
+        CommandSummaryError::ActiveParagraphInputTransaction,
+    );
+}
+
+#[test]
 fn snapshot_and_summary_reject_profile_mismatch_without_mutation() {
     let foreign = populated_quiescent_state();
     let snapshot = foreign.snapshot();

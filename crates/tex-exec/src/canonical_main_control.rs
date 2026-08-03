@@ -202,6 +202,8 @@ pub struct CanonicalMainControl {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
+    /// Canonical paragraph input regions completed since the host last drained them.
+    paragraph_recorder: CanonicalParagraphRecorder,
     /// A committed artifact prefix waiting for the outer main-control owner.
     ///
     /// TeX82 §§1025--1026 may execute several `ship_out` calls while an
@@ -473,6 +475,7 @@ struct CanonicalStepSnapshot {
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
+    paragraph_recorder: CanonicalParagraphRecorder,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
@@ -502,6 +505,7 @@ impl CanonicalStepSnapshot {
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
+            paragraph_recorder: control.paragraph_recorder.clone(),
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
             job: control.job.clone(),
@@ -540,6 +544,7 @@ impl CanonicalStepSnapshot {
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
+        control.paragraph_recorder = self.paragraph_recorder;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
         control.job = self.job;
@@ -563,6 +568,56 @@ impl CanonicalStepSnapshot {
 /// of [`command_processor`] so that no episode can be constructed without
 /// stating which commit buffer it belongs to.
 type ObservationSlot = Option<ObservationBuffer>;
+
+/// Identity and exact command-owned input transaction for one finished paragraph.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalParagraphRegion {
+    identity: u64,
+    input: tex_command::ParagraphInputTransaction,
+}
+
+impl CanonicalParagraphRegion {
+    #[must_use]
+    pub const fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    #[must_use]
+    pub const fn input(&self) -> &tex_command::ParagraphInputTransaction {
+        &self.input
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct CanonicalParagraphRecorder {
+    pending: bool,
+    next_identity: u64,
+    finished: Vec<CanonicalParagraphRegion>,
+}
+
+impl CanonicalParagraphRecorder {
+    fn begin(&mut self, command: &mut CommandState) {
+        if self.pending {
+            return;
+        }
+        command.begin_paragraph_input_transaction();
+        self.pending = true;
+    }
+
+    fn finish(&mut self, command: &mut CommandState) {
+        if !std::mem::take(&mut self.pending) {
+            return;
+        }
+        let Some(input) = command.finish_paragraph_input_transaction() else {
+            return;
+        };
+        self.next_identity = self.next_identity.wrapping_add(1);
+        self.finished.push(CanonicalParagraphRegion {
+            identity: self.next_identity,
+            input,
+        });
+    }
+}
 
 #[derive(Debug, Default)]
 struct ObservationBuffer(Vec<CommandObservation>);
@@ -915,6 +970,7 @@ impl CanonicalMainControl {
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
+        self.paragraph_recorder = CanonicalParagraphRecorder::default();
         Ok(())
     }
 
@@ -1577,6 +1633,12 @@ impl CanonicalMainControl {
     #[must_use]
     pub fn take_completed_boundaries(&mut self) -> Vec<crate::EngineBoundary> {
         std::mem::take(&mut self.completed_boundaries)
+    }
+
+    /// Drains completed canonical paragraph input regions in publication order.
+    #[must_use]
+    pub fn take_finished_paragraph_regions(&mut self) -> Vec<CanonicalParagraphRegion> {
+        std::mem::take(&mut self.paragraph_recorder.finished)
     }
 
     /// Records newly committed artifacts and releases their one outermost
@@ -2585,10 +2647,16 @@ impl CanonicalMainControl {
         self.fire_pending_page_output(stores)?;
         self.page_output_observations.clear();
         self.finish_shipout_publication(artifact_count, stores);
+        let outer_paragraph_is_active =
+            self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
+        if !outer_paragraph_was_active && outer_paragraph_is_active {
+            self.paragraph_recorder.begin(&mut self.command);
+        }
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
         {
+            self.paragraph_recorder.finish(&mut self.command);
             self.completed_boundaries
                 .push(crate::EngineBoundary::OuterParagraphEnd);
         }

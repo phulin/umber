@@ -39,6 +39,7 @@ mod host;
 mod input;
 mod macro_call;
 mod observation;
+mod paragraph;
 mod primitives;
 pub use primitives::{
     exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
@@ -124,6 +125,9 @@ pub use scanners::{
     ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
+pub use paragraph::{
+    ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction,
+};
 pub use state::{
     CommandReplayDelivery, CommandReplayEpisode, CommandRuntime, CommandSemanticDiagnostic,
     CommandState, RunawayPrelude, UnknownRegisteredSource,

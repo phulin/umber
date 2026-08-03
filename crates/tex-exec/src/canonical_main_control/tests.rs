@@ -2852,6 +2852,33 @@ fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
 }
 
 #[test]
+fn canonical_paragraph_publishes_command_owned_input_region() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"alpha beta\\par\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    let regions = control.take_finished_paragraph_regions();
+    assert_eq!(regions.len(), 1);
+    assert_eq!(regions[0].identity(), 1);
+    let coverage = regions[0].input().coverage();
+    assert!(coverage.delivered_commands() >= 2, "{coverage:?}");
+    assert!(coverage.root_end() >= coverage.root_start());
+}
+
+#[test]
+fn vertical_only_canonical_run_publishes_no_paragraph_region() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"\\count0=7\\end");
+
+    run_to_end(&mut control, &mut stores);
+
+    assert!(control.take_finished_paragraph_regions().is_empty());
+}
+
+#[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

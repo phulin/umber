@@ -411,7 +411,7 @@ pub(crate) fn canonical_current_command_identity_for_profile(
 }
 
 /// Logical input changes observable at the canonical raw-input seam.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InputTransition {
     Push,
     Retire,
@@ -434,7 +434,7 @@ pub enum InputTransition {
 /// every stored level was reported as `\output`'s (`umber2-johp.191`). Each
 /// variant below is therefore exactly one `token_type`, and its code is
 /// stated; there is no variant that stands for more than one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum InputReason {
     /// §303 `state<>token_list`: a file or the terminal.
     Source,
@@ -483,14 +483,14 @@ pub enum InputReason {
 }
 
 /// One replay level Umber owns that tex.web has no `token_type` for.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum UmberReplayKind {
     /// A `\discretionary` part (tex.web §1117 reads each part live).
     Discretionary,
 }
 
 /// One input transition with its deterministic aggregate provenance.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InputRecord {
     pub transition: InputTransition,
     pub reason: InputReason,
