@@ -70,6 +70,7 @@ pub use canonical_main_control::{
     CanonicalParagraphRegion, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
 };
 pub use canonical_paragraph_end::cached_pretolerance_plan;
+pub use canonical_shipout::retry_unavailable_stream_open;
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
     EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
@@ -90,7 +91,7 @@ pub use job::{
     PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
 };
 #[cfg(test)]
-pub use legacy_assignments::{retry_unavailable_stream_open, try_execute_assignment};
+pub use legacy_assignments::try_execute_assignment;
 #[cfg(test)]
 pub use legacy_dispatch::dispatch_delivered_token;
 #[cfg(test)]

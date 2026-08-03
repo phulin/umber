@@ -7,4 +7,4 @@
 //! assignment front.
 
 pub(crate) use crate::assignments::*;
-pub use crate::assignments::{retry_unavailable_stream_open, try_execute_assignment};
+pub use crate::assignments::try_execute_assignment;

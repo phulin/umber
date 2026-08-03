@@ -10,6 +10,8 @@ use crate::dispatch::PreparedDviPage;
 pub(crate) mod direct;
 mod transaction;
 
+pub use transaction::retry_unavailable_stream_open;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplayTextKind {
     Special,

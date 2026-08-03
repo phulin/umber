@@ -22,8 +22,9 @@ const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
 const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
 const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
 
-#[cfg(any())]
-pub(super) fn retry_unavailable_stream_open(
+/// Resumes TeX82 §§530 and 1373--1375 after an authoritative output-open
+/// failure retained the failed effect and its following suffix.
+pub fn retry_unavailable_stream_open(
     stores: &mut Universe,
     failed: &tex_state::StreamOpenFailure,
 ) -> Result<std::path::PathBuf, ExecError> {
