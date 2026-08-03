@@ -112,6 +112,13 @@ impl crate::CommandState {
         })
     }
 
+    /// Abandons an in-progress recording after an accepted region validates.
+    /// The input itself is left untouched for the replay transaction to
+    /// validate and advance atomically.
+    pub fn abandon_paragraph_input_transaction(&mut self) {
+        self.paragraph_input_transaction = None;
+    }
+
     /// Replays a paragraph transition only from its exact recorded input root.
     pub fn replay_paragraph_input_transaction(
         &mut self,

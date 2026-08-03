@@ -2865,6 +2865,34 @@ fn canonical_paragraph_publishes_command_owned_input_region() {
     let coverage = regions[0].input().coverage();
     assert!(coverage.delivered_commands() >= 2, "{coverage:?}");
     assert!(coverage.root_end() >= coverage.root_start());
+    assert!(regions[0].finished_lines().is_some());
+    assert_ne!(
+        regions[0].starting_state_hash(),
+        regions[0].ending_state_hash()
+    );
+    let _ = regions[0].provenance_bounds();
+}
+
+#[test]
+fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
+    let source = b"alpha beta\\par\\end";
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, source);
+    run_to_end(&mut cold, &mut cold_stores);
+    let regions = cold.take_finished_paragraph_regions();
+    assert_eq!(regions.len(), 1);
+
+    let mut replay_stores = Universe::new_with_plain_catcodes();
+    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    register_source(&mut replay, source);
+    replay.install_paragraph_replay_regions(regions);
+    run_to_end(&mut replay, &mut replay_stores);
+
+    let replayed = replay.take_finished_paragraph_regions();
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].identity(), 1);
+    assert!(replayed[0].finished_lines().is_some());
 }
 
 #[test]

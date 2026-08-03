@@ -43,6 +43,7 @@ use tex_state::math::{
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::page::{PageDimension, PageInteger};
+use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
@@ -570,10 +571,17 @@ impl CanonicalStepSnapshot {
 type ObservationSlot = Option<ObservationBuffer>;
 
 /// Identity and exact command-owned input transaction for one finished paragraph.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CanonicalParagraphRegion {
     identity: u64,
     input: tex_command::ParagraphInputTransaction,
+    starting_universe: tex_state::Snapshot,
+    ending_universe: tex_state::Snapshot,
+    ending_modes: crate::ModeNestSummary,
+    finished_lines: Option<tex_state::survivor::RetainedNodeList>,
+    effects: std::sync::Arc<[tex_state::EffectRecord]>,
+    starting_provenance: ProvenanceStats,
+    ending_provenance: ProvenanceStats,
 }
 
 impl CanonicalParagraphRegion {
@@ -586,35 +594,118 @@ impl CanonicalParagraphRegion {
     pub const fn input(&self) -> &tex_command::ParagraphInputTransaction {
         &self.input
     }
+
+    /// Retained vertical material produced by TeX82 §§816--895.
+    #[must_use]
+    pub const fn finished_lines(&self) -> Option<&tex_state::survivor::RetainedNodeList> {
+        self.finished_lines.as_ref()
+    }
+
+    /// Universe-owned effects committed while the paragraph was active.
+    #[must_use]
+    pub fn effects(&self) -> impl ExactSizeIterator<Item = &tex_state::EffectRecord> {
+        self.effects.iter()
+    }
+
+    /// Exact aggregate dependency/mutation witness at paragraph entry.
+    #[must_use]
+    pub const fn starting_state_hash(&self) -> u64 {
+        self.starting_universe.state_hash()
+    }
+
+    /// Exact aggregate dependency/mutation witness after line publication.
+    #[must_use]
+    pub const fn ending_state_hash(&self) -> u64 {
+        self.ending_universe.state_hash()
+    }
+
+    /// Rollback-coupled provenance arena bounds for this region.
+    #[must_use]
+    pub const fn provenance_bounds(&self) -> (&ProvenanceStats, &ProvenanceStats) {
+        (&self.starting_provenance, &self.ending_provenance)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 struct CanonicalParagraphRecorder {
     pending: bool,
     next_identity: u64,
+    starting_universe: Option<tex_state::Snapshot>,
+    starting_vertical_len: usize,
+    starting_page_len: usize,
+    starting_contribution_len: usize,
+    effect_start: usize,
+    starting_provenance: Option<ProvenanceStats>,
     finished: Vec<CanonicalParagraphRegion>,
+    replay: Vec<CanonicalParagraphRegion>,
 }
 
 impl CanonicalParagraphRecorder {
-    fn begin(&mut self, command: &mut CommandState) {
+    fn begin(&mut self, command: &mut CommandState, modes: &ModeNest, stores: &mut Universe) {
         if self.pending {
             return;
         }
         command.begin_paragraph_input_transaction();
+        self.starting_universe = Some(stores.snapshot_with_exact_identity());
+        self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
+        self.starting_page_len = stores.current_page_nodes().len();
+        self.starting_contribution_len = stores.page_contributions().len();
+        self.effect_start = stores.world().effect_records().len();
+        self.starting_provenance = Some(stores.provenance_stats());
         self.pending = true;
     }
 
-    fn finish(&mut self, command: &mut CommandState) {
+    fn finish(&mut self, command: &mut CommandState, modes: &ModeNest, stores: &mut Universe) {
         if !std::mem::take(&mut self.pending) {
             return;
         }
         let Some(input) = command.finish_paragraph_input_transaction() else {
             return;
         };
+        let vertical = modes
+            .list(0)
+            .and_then(|list| list.nodes().get(self.starting_vertical_len..))
+            .unwrap_or_default();
+        let page = stores.current_page_nodes();
+        let page = page.get(self.starting_page_len..).unwrap_or_default();
+        let contributions = stores
+            .page_contributions()
+            .iter()
+            .skip(self.starting_contribution_len);
+        let finished = vertical
+            .iter()
+            .chain(page)
+            .chain(contributions)
+            .cloned()
+            .collect::<Vec<_>>();
+        let finished_lines = (!finished.is_empty()).then(|| {
+            let list = stores.freeze_node_list(&finished);
+            stores.retain_paragraph_result(list)
+        });
+        let effects = stores
+            .world()
+            .effect_records()
+            .get(self.effect_start..)
+            .unwrap_or_default()
+            .to_vec()
+            .into();
         self.next_identity = self.next_identity.wrapping_add(1);
         self.finished.push(CanonicalParagraphRegion {
             identity: self.next_identity,
             input,
+            starting_universe: self
+                .starting_universe
+                .take()
+                .expect("pending paragraph owns its starting Universe"),
+            ending_universe: stores.snapshot_with_exact_identity(),
+            ending_modes: modes.summary(),
+            finished_lines,
+            effects,
+            starting_provenance: self
+                .starting_provenance
+                .take()
+                .expect("pending paragraph owns its provenance bound"),
+            ending_provenance: stores.provenance_stats(),
         });
     }
 }
@@ -1641,6 +1732,59 @@ impl CanonicalMainControl {
         std::mem::take(&mut self.paragraph_recorder.finished)
     }
 
+    /// Installs accepted regions for exact pre-delivery paragraph replay.
+    ///
+    /// Replay is a safe miss unless both the command-owned input root and the
+    /// exact Universe entry identity agree. Resource suspension therefore
+    /// remains owned by ordinary delivery when an edited paragraph cannot be
+    /// reused.
+    pub fn install_paragraph_replay_regions(
+        &mut self,
+        regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
+    ) {
+        self.paragraph_recorder.replay.extend(regions);
+    }
+
+    fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
+        if self.modes.current_mode() != Mode::Horizontal
+            || self.modes.depth() != 2
+            || !self.paragraph_recorder.pending
+        {
+            return false;
+        }
+        let current = stores.snapshot_with_exact_identity();
+        let Some(index) = self
+            .paragraph_recorder
+            .replay
+            .iter()
+            .position(|region| current.exact_future_state_matches(&region.starting_universe))
+        else {
+            return false;
+        };
+        let input = self.paragraph_recorder.replay[index].input.clone();
+        if self
+            .command
+            .replay_paragraph_input_transaction(&input)
+            .is_err()
+        {
+            return false;
+        }
+        let region = self.paragraph_recorder.replay.remove(index);
+        self.command.abandon_paragraph_input_transaction();
+        self.paragraph_recorder.pending = false;
+        self.paragraph_recorder.starting_universe = None;
+        self.paragraph_recorder.starting_provenance = None;
+        stores.rollback(&region.ending_universe);
+        self.modes = ModeNest::from_summary(region.ending_modes.clone())
+            .expect("accepted canonical paragraph mode summary remains valid");
+        self.paragraph_recorder.next_identity =
+            self.paragraph_recorder.next_identity.max(region.identity);
+        self.paragraph_recorder.finished.push(region);
+        self.completed_boundaries
+            .push(crate::EngineBoundary::OuterParagraphEnd);
+        true
+    }
+
     /// Records newly committed artifacts and releases their one outermost
     /// checkpoint boundary only after all continuation-owning work unwinds.
     fn finish_shipout_publication(&mut self, artifact_count: usize, stores: &Universe) {
@@ -2326,6 +2470,9 @@ impl CanonicalMainControl {
         if self.fatal.is_some() {
             return Ok(CanonicalStepResult::Progress(MainControlStep::End));
         }
+        if self.try_replay_paragraph_before_delivery(stores) {
+            return Ok(CanonicalStepResult::Progress(MainControlStep::Continue));
+        }
         self.advance_telemetry.attempts += 1;
         self.advance_telemetry.live_savepoints += 1;
         self.advance_telemetry.maximum_live_savepoints = self
@@ -2650,13 +2797,15 @@ impl CanonicalMainControl {
         let outer_paragraph_is_active =
             self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
         if !outer_paragraph_was_active && outer_paragraph_is_active {
-            self.paragraph_recorder.begin(&mut self.command);
+            self.paragraph_recorder
+                .begin(&mut self.command, &self.modes, stores);
         }
         if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
         {
-            self.paragraph_recorder.finish(&mut self.command);
+            self.paragraph_recorder
+                .finish(&mut self.command, &self.modes, stores);
             self.completed_boundaries
                 .push(crate::EngineBoundary::OuterParagraphEnd);
         }
