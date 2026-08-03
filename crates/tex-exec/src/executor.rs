@@ -204,7 +204,7 @@ fn report_runaway(stores: &mut Universe, kind: &str, partial: &[tex_state::token
         if display.chars().count() >= DISPLAY_LIMIT {
             break;
         }
-        tex_expand::append_token_show_text(stores, *token, &mut display);
+        tex_state::token_show::append_token_show_text(stores, *token, &mut display);
         rest = tail;
     }
     if !rest.is_empty() {

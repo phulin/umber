@@ -901,7 +901,7 @@ impl ExecError {
                 ..
             } => format!(
                 "typesetting path is not implemented yet: {operation} in {mode:?} for token {}",
-                tex_expand::token_text(stores, *token)
+                tex_state::token_show::token_text(stores, *token)
             ),
             _ => self.to_string(),
         }

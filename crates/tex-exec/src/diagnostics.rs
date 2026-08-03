@@ -1064,7 +1064,7 @@ fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
         if let Token::Char { ch, .. } = token {
             text.push(ch);
         } else {
-            tex_expand::append_token_string_text(stores, token, &mut text);
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }
     }
     text
@@ -1073,7 +1073,7 @@ fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
 pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
-    tex_expand::append_token_show_text(stores, token, text);
+    tex_state::token_show::append_token_show_text(stores, token, text);
 }
 
 /// tex.web §310's `show_context` display for the gullet's replay stack.

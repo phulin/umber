@@ -1,12 +1,12 @@
 //! pdfTeX font-map and per-font output actions.
 
-use tex_expand::append_token_string_text;
 use tex_expand::scan::scan_general_text_expanded_with_driver;
 use tex_lex::InputStack;
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::token::TracedTokenWord;
+use tex_state::token_show::append_token_string_text;
 
 use crate::ExecError;
 

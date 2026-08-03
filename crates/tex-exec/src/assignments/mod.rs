@@ -1001,7 +1001,7 @@ fn execute_pdf_destination(
         PdfActionIdentifier::Name(tokens) => {
             let mut text = String::new();
             for &token in stores.tokens(tokens) {
-                tex_expand::append_token_string_text(stores, token, &mut text);
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             tex_state::PdfDestinationIdentity::Name(text.into_bytes())
         }
@@ -1290,7 +1290,7 @@ fn pdf_destination_identity(
         tex_state::PdfActionIdentifier::Name(tokens) => {
             let mut text = String::new();
             for &token in stores.tokens(tokens) {
-                tex_expand::append_token_string_text(stores, token, &mut text);
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             tex_state::PdfDestinationIdentity::Name(text.into_bytes())
         }
@@ -1562,7 +1562,8 @@ pub(crate) fn off_save_alignment(
     // bottom level. Backing it up with an inserted right brace cannot expose
     // an enclosing group there; it only recreates the same off_save call.
     if stores.innermost_group_kind().is_none() {
-        let command = tex_expand::token_text(stores, tex_expand::semantic_token(command));
+        let command =
+            tex_state::token_show::token_text(stores, tex_expand::semantic_token(command));
         // §1065's `<Drop current token and complain that it was unmatched>`.
         crate::error_report::report_input_error(
             input,

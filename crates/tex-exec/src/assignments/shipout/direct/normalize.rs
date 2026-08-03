@@ -539,7 +539,7 @@ fn append_whatsit_effect(
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
                     for &token in stores.tokens(tokens) {
-                        tex_expand::append_token_string_text(stores, token, &mut text);
+                        tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
@@ -634,7 +634,7 @@ fn append_whatsit_effect(
                 tex_state::PdfActionIdentifier::Name(tokens) => {
                     let mut text = String::new();
                     for &token in stores.tokens(tokens) {
-                        tex_expand::append_token_string_text(stores, token, &mut text);
+                        tex_state::token_show::append_token_string_text(stores, token, &mut text);
                     }
                     tex_state::PdfDestinationIdentity::Name(text.into_bytes())
                 }
@@ -658,7 +658,11 @@ fn append_whatsit_effect(
             };
             let mut attribute_bytes = String::new();
             for &token in stores.tokens(attributes) {
-                tex_expand::append_token_string_text(stores, token, &mut attribute_bytes);
+                tex_state::token_show::append_token_string_text(
+                    stores,
+                    token,
+                    &mut attribute_bytes,
+                );
             }
             let marker = tex_out::PdfThreadEffect {
                 thread_object: thread.object(),
@@ -946,7 +950,7 @@ fn expand_write_tokens(
         )?
         .map(tex_expand::semantic_token)
         {
-            tex_expand::append_token_string_text(stores, token, &mut text);
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }
         Ok(())
     })?;
@@ -971,7 +975,7 @@ fn expand_special_tokens(
         )?
         .map(tex_expand::semantic_token)
         {
-            tex_expand::append_token_string_text(stores, token, &mut text);
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }
         Ok(())
     })?;

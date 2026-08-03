@@ -2,6 +2,47 @@ use std::fs;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 
+fn production_rust_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut sources = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).expect("read production source directory") {
+            let path = entry.expect("read production source entry").path();
+            if path.is_dir() {
+                if path.file_name().is_none_or(|name| name != "tests") {
+                    pending.push(path);
+                }
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_none_or(|name| name != "tests.rs")
+            {
+                sources.push(path);
+            }
+        }
+    }
+    sources
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_token_rendering_stays_on_the_state_owner() {
+    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
+    for path in production_rust_sources(&manifest_dir.join("src")) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        for forbidden in [
+            "tex_expand::append_token_show_text",
+            "tex_expand::append_token_string_text",
+            "tex_expand::append_token_selector_text",
+            "tex_expand::token_text",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must use tex_state::token_show instead of `{forbidden}`",
+                path.display()
+            );
+        }
+    }
+}
+
 #[test]
 fn command_fuel_can_only_be_owned_by_a_session_ledger() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");

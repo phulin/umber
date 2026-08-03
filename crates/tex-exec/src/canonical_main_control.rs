@@ -2092,8 +2092,8 @@ impl CanonicalMainControl {
         });
         let prefix_end = first_forbidden.unwrap_or(level.list().nodes().len());
         let nodes = stores.freeze_node_list(&level.list().nodes()[..prefix_end]);
-        let deleted = first_forbidden
-            .map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
+        let deleted =
+            first_forbidden.map(|index| stores.freeze_node_list(&level.list().nodes()[index..]));
         let aftergroup =
             stores
                 .leave_group_with_kind(GroupKind::Disc)
@@ -2277,8 +2277,8 @@ impl CanonicalMainControl {
                     self.advance_telemetry.commits += 1;
                     return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
                 }
-                let rolled_back = !matches!(error, ExecError::PdfXFormVoidBox)
-                    && snapshot.can_rollback(stores);
+                let rolled_back =
+                    !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
                 let result = self.finish_failed_step(snapshot, stores, error);
                 self.advance_telemetry.live_savepoints -= 1;
                 if rolled_back {
@@ -9655,7 +9655,7 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
 fn canonical_write_text(tokens: &[Token], stores: &Universe) -> String {
     let mut text = String::new();
     for &token in tokens {
-        tex_expand::append_token_string_text(stores, token, &mut text);
+        tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
@@ -9680,7 +9680,7 @@ fn tex_byte_text(text: &str) -> Vec<u8> {
 fn pdf_graphics_text(tokens: TracedTokenList, stores: &Universe) -> Vec<u8> {
     let mut text = String::new();
     for &token in stores.tokens(tokens.token_list()) {
-        tex_expand::append_token_string_text(stores, token, &mut text);
+        tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     tex_byte_text(&text)
 }
@@ -11496,7 +11496,7 @@ fn shipout_replay_box(
             }
             let mut text = String::new();
             for &token in stores.tokens(expanded.tokens.token_list()) {
-                tex_expand::append_token_string_text(stores, token, &mut text);
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
             text.push('\n');
@@ -14013,7 +14013,7 @@ fn apply_scanned_step(
         } => {
             let mut text = String::new();
             for &token in stores.tokens(tokens.token_list()) {
-                tex_expand::append_token_string_text(stores, token, &mut text);
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
             crate::assignments::append_whatsit(
                 modes,
@@ -17283,7 +17283,7 @@ fn report_font_size_recovery(
 fn message_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> String {
     let mut text = String::new();
     for &token in stores.tokens(tokens) {
-        tex_expand::append_token_string_text(stores, token, &mut text);
+        tex_state::token_show::append_token_string_text(stores, token, &mut text);
     }
     text
 }
@@ -17296,7 +17296,7 @@ fn show_tokens_text(stores: &Universe, tokens: tex_state::ids::TokenListId) -> S
         .and_then(char::from_u32);
     let mut text = String::new();
     for &token in stores.tokens(tokens) {
-        tex_expand::append_token_selector_text(stores, token, newlinechar, &mut text);
+        tex_state::token_show::append_token_selector_text(stores, token, newlinechar, &mut text);
     }
     text
 }

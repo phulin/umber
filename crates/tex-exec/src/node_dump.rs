@@ -3,7 +3,6 @@
 use std::fmt::Write as _;
 
 use tex_command::CommandProfile;
-use tex_expand::{append_token_show_text, token_text};
 use tex_state::Universe;
 use tex_state::env::banks::IntParam;
 use tex_state::glue::{GlueSpec, Order};
@@ -18,6 +17,7 @@ use tex_state::node::{
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::Token;
 use tex_state::token_show::append_tex_print_char;
+use tex_state::token_show::{append_token_show_text, token_text};
 
 pub(crate) struct DumpConfig {
     pub(crate) breadth: i32,
@@ -806,7 +806,7 @@ fn dump_font(stores: &Universe, font: tex_state::ids::FontId) -> String {
     };
     let identifier = stores.font_identifier_symbol(identifier_font).map_or_else(
         || format!("\\{}", stores.font_name(font)),
-        |symbol| tex_expand::token_text(stores, Token::Cs(symbol.symbol())),
+        |symbol| tex_state::token_show::token_text(stores, Token::Cs(symbol.symbol())),
     );
     if !stores.pdf_font_configuration().traces_fonts() {
         return expansion_ratio.map_or(identifier.clone(), |ratio| {

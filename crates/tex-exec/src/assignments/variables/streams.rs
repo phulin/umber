@@ -1,7 +1,6 @@
 use super::*;
 use std::path::PathBuf;
 
-use tex_expand::token_text;
 use tex_lex::TokenListReplayKind;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::TokenListId;
@@ -9,6 +8,7 @@ use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::node::PdfLiteralMode;
 use tex_state::node::{Node, Whatsit};
+use tex_state::token_show::token_text;
 use tex_state::{InputOpenState, PrintSink, StreamSlot};
 
 use crate::diagnostics::print_text_with_newlinechar;
@@ -370,7 +370,7 @@ fn expand_write_tokens(
     let mut text = String::new();
     expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
         while let Some(token) = next_write_expansion_token(&mut input, stores, expansion)? {
-            tex_expand::append_token_string_text(stores, token, &mut text);
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }
         Ok(())
     })?;
@@ -516,7 +516,7 @@ fn read_terminal_read_line(
 fn read_prompt(stores: &Universe, target: Symbol) -> String {
     format!(
         "\n{}=",
-        tex_expand::token_text(stores, Token::Cs(target.symbol()))
+        tex_state::token_show::token_text(stores, Token::Cs(target.symbol()))
     )
 }
 
