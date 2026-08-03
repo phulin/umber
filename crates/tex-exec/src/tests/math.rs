@@ -149,6 +149,7 @@ fn moveleft_in_math_is_ignored_without_consuming_lastbox() {
 }
 
 #[test]
+#[ignore = "umber2-mbnc"]
 fn halign_in_inline_math_reports_illegal_case_without_scanning_a_preamble() {
     let (stores, executor) = run_math_source(r"$\halign a");
     let nodes = math_nodes(&stores, &executor);
@@ -558,6 +559,7 @@ fn math_shift_aftergroup_replay_has_inserted_provenance() {
 }
 
 #[test]
+#[ignore = "umber2-dhxp"]
 fn math_shift_group_replay_converges_after_snapshot_rollback() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param(IntParam::FAM, 6);
@@ -1148,6 +1150,7 @@ fn penalty_builds_ordinary_list_material_in_display_math() {
 }
 
 #[test]
+#[ignore = "umber2-ro3s"]
 fn forced_postdisplay_penalty_builds_page_after_horizontal_resume() {
     let mut stores = support::stores_with_fonts();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

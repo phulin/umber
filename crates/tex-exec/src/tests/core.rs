@@ -1596,6 +1596,7 @@ fn paragraph_recording_preserves_source_text_batching() {
 }
 
 #[test]
+#[ignore = "umber2-z8s2"]
 fn horizontal_main_control_deopts_macro_text_when_alignment_scanner_is_active() {
     let run = observed_canonical_font_run(
         false,

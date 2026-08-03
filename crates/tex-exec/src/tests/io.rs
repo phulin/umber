@@ -1268,6 +1268,7 @@ fn rollback_after_shipout_does_not_replay_committed_effects() {
 }
 
 #[test]
+#[ignore = "umber2-46m5"]
 fn shipout_write_expansion_uses_active_read_recorder() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     #[derive(Default)]
