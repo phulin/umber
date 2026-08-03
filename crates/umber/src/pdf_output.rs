@@ -2,7 +2,6 @@
 
 use md5::{Digest, Md5};
 use tex_arith::Scaled;
-use tex_expand::append_token_string_text;
 use tex_out::PageNode;
 use tex_out::pdf::{
     PdfAnnotationAction, PdfAnnotationObject, PdfAnnotationType, PdfBeadObject,
@@ -21,6 +20,7 @@ use tex_out::positioned::{
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::ids::FontId;
 use tex_state::ids::TokenListId;
+use tex_state::token_show::append_token_string_text;
 use tex_state::{
     CommittedArtifact, ContentHash, PdfActionIdentifier, PdfActionSpec, PdfActionTarget,
     PdfActionWindow, PdfAnnotationDimensions, PdfDocumentFragmentKind, PdfExternalImageMetadata,

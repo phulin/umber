@@ -49,6 +49,20 @@ struct PdfParityCaseSummary {
 }
 
 #[test]
+fn pdf_output_stays_on_the_canonical_token_rendering_boundary() {
+    let source = include_str!("../../src/pdf_output.rs");
+    let production = source
+        .split("#[cfg(test)]")
+        .next()
+        .expect("PDF output production source exists");
+    assert!(production.contains("tex_state::token_show::append_token_string_text"));
+    assert!(
+        !production.contains("tex_expand"),
+        "PDF output must not regain retired expansion-layer token rendering"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // Hermetic CLI fixture boundary.
 fn committed_pdftex_fixtures_match_structure_and_bytes() {
     let summary = run_committed_pdf_parity();
