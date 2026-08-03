@@ -3677,6 +3677,16 @@ impl World {
             && (self.artifact_base..=self.artifact_pos()).contains(&snapshot.artifact_commit_len)
     }
 
+    /// Returns whether a strongly owned snapshot is structurally valid as a
+    /// persistent generation-fork root. Unlike rollback validation, this does
+    /// not require its effect position to remain ahead of the live
+    /// materialization barrier: a fork detaches that already-accepted prefix
+    /// instead of attempting to unpublish it on the source timeline.
+    #[must_use]
+    pub(crate) fn snapshot_is_forkable(&self, snapshot: &WorldSnapshot) -> bool {
+        snapshot.effect_pos == EffectPos(snapshot.effect_base.raw() + snapshot.effects.len() as u64)
+    }
+
     fn snapshot_effects_are_retained(&self, snapshot: &WorldSnapshot) -> bool {
         snapshot.effect_pos >= self.effect_base
             && snapshot.effect_pos
@@ -3717,7 +3727,10 @@ impl World {
     /// absolute effect position so semantic cursors remain comparable, but
     /// owns only effects produced after the restart anchor.
     pub(crate) fn rollback_generation_fork(&mut self, snapshot: &WorldSnapshot) {
-        self.assert_snapshot_retained(snapshot);
+        assert!(
+            self.snapshot_is_forkable(snapshot),
+            "World snapshot effect root is not a valid generation fork"
+        );
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");

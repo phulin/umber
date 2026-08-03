@@ -922,7 +922,7 @@ impl GenerationSubstrate {
         &self,
         checkpoint: &Snapshot,
     ) -> Result<(), GenerationForkError> {
-        self.universe.validate_retained_snapshot(checkpoint)
+        self.universe.validate_fork_snapshot(checkpoint)
     }
 
     #[must_use]
@@ -933,7 +933,7 @@ impl GenerationSubstrate {
     /// Clones this frozen generation once and atomically rolls the clone back
     /// to an exact owner-validated checkpoint.
     pub fn fork_at(&self, checkpoint: &Snapshot) -> Result<Universe, GenerationForkError> {
-        self.universe.validate_retained_snapshot(checkpoint)?;
+        self.universe.validate_fork_snapshot(checkpoint)?;
         let mut fork = self.universe.clone();
         let checkpoint = fork.retarget_inherited_snapshot(checkpoint);
         fork.rollback_generation_fork(&checkpoint);
@@ -951,7 +951,7 @@ impl GenerationSubstrate {
         source: &GenerationSubstrate,
         checkpoint: &Snapshot,
     ) -> Result<Snapshot, GenerationForkError> {
-        source.universe.validate_retained_snapshot(checkpoint)?;
+        source.universe.validate_fork_snapshot(checkpoint)?;
         let origin = self
             .universe
             .fork_origin
@@ -2729,12 +2729,12 @@ impl Universe {
         GenerationSubstrate::new(self)
     }
 
-    fn validate_retained_snapshot(&self, snapshot: &Snapshot) -> Result<(), GenerationForkError> {
+    fn validate_fork_snapshot(&self, snapshot: &Snapshot) -> Result<(), GenerationForkError> {
         if snapshot.owner != self.owner.snapshot_owner() {
             return Err(GenerationForkError::ForeignSnapshot);
         }
         if !self.stores.can_restore_snapshot(&snapshot.store)
-            || !self.world.snapshot_is_retained(&snapshot.world)
+            || !self.world.snapshot_is_forkable(&snapshot.world)
         {
             return Err(GenerationForkError::InvalidatedSnapshot);
         }
@@ -2917,7 +2917,10 @@ impl Universe {
 
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
-        self.world.assert_snapshot_retained(&snapshot.world);
+        assert!(
+            self.world.snapshot_is_forkable(&snapshot.world),
+            "World snapshot effect root is not a valid generation fork"
+        );
         self.stores.rollback(&snapshot.store);
         self.world.rollback_generation_fork(&snapshot.world);
         self.input_summary = snapshot.input_summary.clone();

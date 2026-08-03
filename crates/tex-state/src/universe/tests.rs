@@ -3157,6 +3157,31 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
 }
 
 #[test]
+fn generation_fork_accepts_persistent_snapshot_behind_effect_barrier() {
+    let mut universe = Universe::new();
+    universe.set_count(0, 11);
+    let checkpoint = universe.snapshot();
+
+    universe.set_count(0, 22);
+    universe
+        .world_mut()
+        .write_text(PrintSink::TerminalAndLog, "committed\n");
+    let effect_pos = universe.world().effect_pos();
+    universe
+        .commit_effects(effect_pos)
+        .expect("memory world commit succeeds");
+    assert!(!universe.can_rollback_to(&checkpoint));
+
+    let substrate = universe.freeze_generation();
+    let fork = substrate
+        .fork_at(&checkpoint)
+        .expect("persistent checkpoint remains forkable");
+
+    assert_eq!(fork.count(0), 11);
+    assert_eq!(fork.world().effect_pos().raw(), 0);
+}
+
+#[test]
 fn local_retry_reuses_only_an_identical_provenance_allocation_sequence() {
     let mut universe = Universe::new();
     let provenance_before = universe.provenance_stats();
