@@ -1,6 +1,4 @@
 use tex_command::DimensionDiagnostic;
-use tex_expand::get_x_or_protected_with_context;
-use tex_lex::InputStack;
 use tex_out::dvi::{DviPagePlan, DviPagePlanBuilder};
 use tex_out::{
     BoxNode as PageBoxNode, ContentHash as PageContentHash, DEFAULT_BANNER,
@@ -10,7 +8,6 @@ use tex_out::{
     MarginKernSide as PageMarginKernSide, PageEffect, PageNode, PageToken, TokenCatcode,
     V10ArtifactBuilder, V10NodeListWriter,
 };
-use tex_state::TokenListReplayKind;
 use tex_state::env::banks::{DimenParam, IntParam};
 use tex_state::glue::Order;
 use tex_state::ids::{FontId, NodeListId, TokenListId};
@@ -28,30 +25,37 @@ use crate::diagnostics;
 
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
-pub(super) type WriteExpander<'a> =
-    dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<Option<String>, ExecError> + 'a;
+pub(crate) type WriteExpander<'a> = dyn FnMut(
+        &mut Universe,
+        PrintSink,
+        TokenListId,
+    ) -> Result<crate::canonical_shipout::ExpandedWrite, ExecError>
+    + 'a;
 
 pub(crate) use crate::canonical_shipout::ReplayTextKind;
 
-pub(super) type ReplayTextExpander<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<Option<Vec<u8>>, ExecError>
+pub(crate) type ReplayTextExpander<'a> = dyn FnMut(
+        &mut Universe,
+        ReplayTextKind,
+        TokenListId,
+    ) -> Result<crate::canonical_shipout::ExpandedReplayText, ExecError>
     + 'a;
 
-pub(super) struct StagedShipout {
-    pub(super) artifact: VerifiedArtifact,
-    pub(super) dvi_plan: Option<DviPagePlan>,
-    pub(super) effect_pos: tex_state::EffectPos,
-    pub(super) retained_diagnostics: Vec<(PrintSink, String)>,
+pub(crate) struct StagedShipout {
+    pub(crate) artifact: VerifiedArtifact,
+    pub(crate) dvi_plan: Option<DviPagePlan>,
+    pub(crate) effect_pos: tex_state::EffectPos,
+    pub(crate) retained_diagnostics: Vec<(PrintSink, String)>,
 }
 
-pub(super) fn stage_form(
+pub(crate) fn stage_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     write_expander: &mut WriteExpander<'_>,
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let color_rollback = stores.pdf_form_color_rollback();
-    let result = stage_form_inner(form, stores, expansion, write_expander, replay_expander);
+    let result = stage_form_inner(form, stores, write_expander, replay_expander);
     if result.is_err() {
         stores.rollback_pdf_form_colors(color_rollback);
     }
@@ -61,7 +65,6 @@ pub(super) fn stage_form(
 fn stage_form_inner(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     write_expander: &mut WriteExpander<'_>,
     replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
@@ -87,7 +90,6 @@ fn stage_form_inner(
             true,
         ),
         stores,
-        expansion,
         write_expander,
         replay_expander,
         tex_state::PdfColorStackTarget::Form,
@@ -157,12 +159,11 @@ fn stage_form_inner(
 }
 
 #[allow(clippy::too_many_arguments)] // Transitional legacy/canonical replay capabilities are explicit.
-pub(super) fn stage_shipout(
+pub(crate) fn stage_shipout(
     node: Node,
     input_summary: tex_state::InputSummary,
     origin: super::ShipoutOrigin,
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     emit_dvi: bool,
     write_expander: &mut WriteExpander<'_>,
     replay_expander: &mut ReplayTextExpander<'_>,
@@ -230,31 +231,15 @@ pub(super) fn stage_shipout(
     // math substitutions, and records the rare direction permutations.
     let output_open_context = output_open_context
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
-    let overlay = if let Some(expansion) = expansion {
-        expansion.with_nested(|expansion| {
-            normalize_page(
-                children,
-                (vertical, root_box_lr),
-                (pending_effects, output_open_context, announce_openout),
-                stores,
-                Some(expansion),
-                write_expander,
-                replay_expander,
-                tex_state::PdfColorStackTarget::Page,
-            )
-        })?
-    } else {
-        normalize_page(
-            children,
-            (vertical, root_box_lr),
-            (pending_effects, output_open_context, announce_openout),
-            stores,
-            None,
-            write_expander,
-            replay_expander,
-            tex_state::PdfColorStackTarget::Page,
-        )?
-    };
+    let overlay = normalize_page(
+        children,
+        (vertical, root_box_lr),
+        (pending_effects, output_open_context, announce_openout),
+        stores,
+        write_expander,
+        replay_expander,
+        tex_state::PdfColorStackTarget::Page,
+    )?;
     if emit_dvi {
         reject_pdf_nodes_in_dvi(&overlay.effects)?;
     }
@@ -467,7 +452,7 @@ fn invalid_artifact(error: impl ToString) -> ExecError {
 }
 
 mod lower;
-pub(super) use lower::page_counts;
+pub(crate) use lower::page_counts;
 mod materialize;
 mod normalize;
 #[cfg(test)]
@@ -477,7 +462,7 @@ use lower::*;
 use materialize::{emitted_list_is_empty, materialize_node_list};
 use normalize::{PageOverlay, normalize_page};
 
-pub(super) fn terminal_output_name(line: &str) -> String {
+pub(crate) fn terminal_output_name(line: &str) -> String {
     normalize::scan_terminal_output_name(line)
 }
 

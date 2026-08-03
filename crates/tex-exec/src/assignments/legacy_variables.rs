@@ -4,7 +4,7 @@ mod streams;
 use crate::canonical_assignments::*;
 pub(super) use streams::{
     execute_immediate_stream_command, execute_immediate_write, execute_pdf_graphics, execute_read,
-    execute_special, execute_stream_command, execute_write, openout_target,
+    execute_special, execute_stream_command, execute_write,
 };
 
 pub(super) fn execute_variable_assignment(

@@ -1,6 +1,5 @@
 use super::*;
 use smallvec::SmallVec;
-use tex_lex::MemoryInput;
 
 pub(super) struct PageOverlay {
     pub(super) pending_effect_count: usize,
@@ -27,8 +26,7 @@ pub(super) struct DirectionPermutation {
     pub(super) order: Vec<usize>,
 }
 
-struct NormalizeExpansion<'a, 'b> {
-    expansion: Option<&'a mut tex_expand::ExpansionContext<'b>>,
+struct NormalizeExpansion<'a> {
     write_expander: &'a mut super::WriteExpander<'a>,
     replay_expander: &'a mut super::ReplayTextExpander<'a>,
 }
@@ -39,7 +37,6 @@ pub(super) fn normalize_page(
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     write_expander: &mut super::WriteExpander<'_>,
     replay_expander: &mut super::ReplayTextExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
@@ -94,7 +91,6 @@ pub(super) fn normalize_page(
         announce_openout,
     };
     let mut expansion = NormalizeExpansion {
-        expansion,
         write_expander,
         replay_expander,
     };
@@ -138,7 +134,7 @@ struct NormalizeListContext {
 
 fn normalize_list(
     stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_, '_>,
+    expansion: &mut NormalizeExpansion<'_>,
     list: NodeListId,
     context: NormalizeListContext,
     overlay: &mut PageOverlay,
@@ -193,7 +189,7 @@ fn normalize_list(
 
 fn normalize_index(
     stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_, '_>,
+    expansion: &mut NormalizeExpansion<'_>,
     list: NodeListId,
     index: usize,
     suppress_deferred_streams: bool,
@@ -340,7 +336,7 @@ fn normalize_index(
 
 fn append_whatsit_effect(
     stores: &mut Universe,
-    expansion: &mut NormalizeExpansion<'_, '_>,
+    expansion: &mut NormalizeExpansion<'_>,
     overlay: &mut PageOverlay,
     whatsit: Whatsit,
     suppress_deferred_streams: bool,
@@ -383,17 +379,8 @@ fn append_whatsit_effect(
             }
         }
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
-            let text = match (expansion.write_expander)(stores, sink, tokens)? {
-                Some(text) => text,
-                None => expand_write_tokens(
-                    stores,
-                    expansion
-                        .expansion
-                        .as_deref_mut()
-                        .expect("legacy replay context"),
-                    tokens,
-                )?,
-            };
+            let crate::canonical_shipout::ExpandedWrite(text) =
+                (expansion.write_expander)(stores, sink, tokens)?;
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
                 // `print_nl(""); token_show(def_ref); print_ln` when the
@@ -413,21 +400,8 @@ fn append_whatsit_effect(
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::DeferredSpecial { class, tokens } => {
-            let payload = match (expansion.replay_expander)(
-                stores,
-                super::ReplayTextKind::Special,
-                tokens,
-            )? {
-                Some(payload) => payload,
-                None => expand_special_tokens(
-                    stores,
-                    expansion
-                        .expansion
-                        .as_deref_mut()
-                        .expect("legacy replay context"),
-                    tokens,
-                )?,
-            };
+            let crate::canonical_shipout::ExpandedReplayText(payload) =
+                (expansion.replay_expander)(stores, super::ReplayTextKind::Special, tokens)?;
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::PdfReferenceObject { object } => {
@@ -473,21 +447,8 @@ fn append_whatsit_effect(
             payload,
         }),
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
-            let payload = match (expansion.replay_expander)(
-                stores,
-                super::ReplayTextKind::PdfLiteral,
-                tokens,
-            )? {
-                Some(payload) => payload,
-                None => expand_pdf_literal_tokens(
-                    stores,
-                    expansion
-                        .expansion
-                        .as_deref_mut()
-                        .expect("legacy replay context"),
-                    tokens,
-                )?,
-            };
+            let crate::canonical_shipout::ExpandedReplayText(payload) =
+                (expansion.replay_expander)(stores, super::ReplayTextKind::PdfLiteral, tokens)?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
                 payload,
@@ -540,7 +501,6 @@ fn append_whatsit_effect(
                 let artifact = super::stage_form(
                     form,
                     stores,
-                    expansion.expansion.as_deref_mut(),
                     expansion.write_expander,
                     expansion.replay_expander,
                 )?;
@@ -602,7 +562,7 @@ fn append_whatsit_effect(
                 if stores.int_param(IntParam::PDF_SUPPRESS_WARNING_DUP_DEST) <= 0 {
                     diagnostics.push((
                         PrintSink::TerminalAndLog,
-                        super::super::super::pdf_destination_duplicate_warning(&identity),
+                        pdf_destination_duplicate_warning(&identity),
                     ));
                 }
                 return Ok(());
@@ -788,7 +748,7 @@ fn retry_openout_target(
     name: String,
     context: &str,
 ) -> Result<String, ExecError> {
-    let mut path = super::super::super::legacy_variables::openout_target(name);
+    let mut path = openout_target(name);
     while stores.world().retained_output_open_outcome(&path)
         == tex_state::RetainedOutputOpenOutcome::Unavailable
     {
@@ -839,7 +799,27 @@ pub(super) fn scan_terminal_output_name(line: &str) -> String {
     if name.is_empty() {
         return ".tex".to_owned();
     }
-    super::super::super::legacy_variables::openout_target(name)
+    openout_target(name)
+}
+
+fn openout_target(name: String) -> String {
+    let mut path = std::path::PathBuf::from(name);
+    if path.extension().is_none() {
+        path.set_extension("tex");
+    }
+    path.to_string_lossy().into_owned()
+}
+
+fn pdf_destination_duplicate_warning(identity: &tex_state::PdfDestinationIdentity) -> String {
+    let identity = match identity {
+        tex_state::PdfDestinationIdentity::Name(name) => {
+            format!("name{{{}}}", String::from_utf8_lossy(name))
+        }
+        tex_state::PdfDestinationIdentity::Number(number) => format!("num{number}"),
+    };
+    format!(
+        "\npdfTeX warning (ext4): destination with the same identifier ({identity}) has been already used, duplicate ignored\n"
+    )
 }
 
 fn validate_pdf_matrix(payload: &[u8]) -> Result<(), ExecError> {
@@ -876,26 +856,6 @@ fn lower_color_stack_mode(mode: tex_state::PdfColorStackMode) -> tex_out::PdfLit
         tex_state::PdfColorStackMode::Page => tex_out::PdfLiteralMode::Page,
         tex_state::PdfColorStackMode::Direct => tex_out::PdfLiteralMode::Direct,
     }
-}
-
-fn expand_pdf_literal_tokens(
-    stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
-    tokens: TokenListId,
-) -> Result<Vec<u8>, ExecError> {
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut text = String::new();
-    while let Some(token) = get_x_or_protected_with_context(
-        &mut input,
-        &mut tex_state::ExpansionContext::new(stores),
-        expansion,
-    )?
-    .map(|token| token.semantic_token())
-    {
-        diagnostics::append_token_show_text(stores, token, &mut text);
-    }
-    Ok(text.into_bytes())
 }
 
 pub(super) fn direction_permutation_for_box(
@@ -977,63 +937,6 @@ fn direction_permutation(nodes: NodeList<'_>) -> Option<Vec<usize>> {
         finish(&mut reordered, &mut stack);
     }
     Some(reordered)
-}
-
-fn expand_write_tokens(
-    stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
-    tokens: TokenListId,
-) -> Result<String, ExecError> {
-    let mut input = InputStack::empty();
-    input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut text = String::new();
-    expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
-        while let Some(token) = get_x_or_protected_with_context(
-            &mut input,
-            &mut tex_state::ExpansionContext::new(stores),
-            expansion,
-        )?
-        .map(|token| token.semantic_token())
-        {
-            tex_state::token_show::append_token_string_text(stores, token, &mut text);
-        }
-        Ok(())
-    })?;
-    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
-    text.push('\n');
-    Ok(text)
-}
-
-fn expand_special_tokens(
-    stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
-    tokens: TokenListId,
-) -> Result<Vec<u8>, ExecError> {
-    let mut input = InputStack::empty();
-    input.push_token_list(tokens, TokenListReplayKind::Inserted);
-    let mut text = String::new();
-    expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
-        while let Some(token) = get_x_or_protected_with_context(
-            &mut input,
-            &mut tex_state::ExpansionContext::new(stores),
-            expansion,
-        )?
-        .map(|token| token.semantic_token())
-        {
-            tex_state::token_show::append_token_string_text(stores, token, &mut text);
-        }
-        Ok(())
-    })?;
-    let mut bytes = Vec::with_capacity(text.len());
-    for ch in text.chars() {
-        if let Ok(byte) = u8::try_from(ch as u32) {
-            bytes.push(byte);
-        } else {
-            let mut encoded = [0; 4];
-            bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
-        }
-    }
-    Ok(bytes)
 }
 
 /// TeX82 §62's `print_nl` test, applied to a `\write`'s own sink.

@@ -27,8 +27,8 @@ use crate::processor::status::{
 use crate::scan_toks::{ScanToksMode, ScannedToks};
 use crate::scanners::RestrictedIntegerClass;
 use crate::{
-    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor, CurrentCommand,
-    InternalValue,
+    AlignmentCellTemplates, AlignmentPreamble, CommandError, CommandProcessor,
+    CommandReplayDelivery, CurrentCommand, InternalValue,
     processor::{meaning_text, print_cs_text, render_the_value, string_text},
 };
 
@@ -1021,18 +1021,17 @@ impl CommandProcessor<'_> {
         &mut self,
         tokens: TracedTokenList,
     ) -> Result<TracedTokenList, CommandError> {
-        self.command.push_token_level(
-            TokenPayload::Stored {
-                tokens: tokens.token_list(),
-                origins: tokens.origin_list(),
-            },
-            TokenBehavior::Ordinary,
-            RetirementBehavior::Pop,
-            ReplayTrace::Stored(StoredReplayReason::Write),
-        );
+        let episode = self.command.push_output_replay_episode(tokens);
         let mut expanded = Vec::new();
-        while let Some(command) = self.get_x_or_protected_token()? {
-            expanded.push(command.spelling());
+        loop {
+            match self.get_x_or_protected_with_replay_completion()? {
+                Some(CommandReplayDelivery::Command(command)) => {
+                    expanded.push(command.spelling());
+                }
+                Some(CommandReplayDelivery::Completed(completed)) if completed == episode => break,
+                Some(CommandReplayDelivery::Completed(_)) => continue,
+                None => return Err(CommandError::input_invariant()),
+            }
         }
         Ok(self.state.finish_traced_token_list(&expanded))
     }

@@ -7,6 +7,8 @@ use tex_state::{InputSummary, PdfFormArtifact, PdfFormRecord, PrintSink, Univers
 use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
+pub(crate) mod direct;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplayTextKind {
     Special,
@@ -20,9 +22,13 @@ pub(crate) struct ShipoutOrigin {
     pub(crate) announce_openout: bool,
 }
 
+pub(crate) struct ExpandedWrite(pub(crate) String);
+
+pub(crate) struct ExpandedReplayText(pub(crate) Vec<u8>);
+
 pub(crate) type WriteReplayHost<'a> =
-    dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<Option<String>, ExecError> + 'a;
-pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<Option<Vec<u8>>, ExecError>
+    dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<ExpandedWrite, ExecError> + 'a;
+pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
 /// Canonical staging capabilities borrowed for one atomic page/form traversal.

@@ -5432,7 +5432,7 @@ fn canonical_output_replay_owns_every_deferred_expansion_family() {
     assert!(control.contains("processor.expand_write_text(traced)"));
     assert!(control.contains("canonical_replay_text("));
 
-    let normalize = include_str!("../assignments/shipout/direct/normalize.rs");
+    let normalize = include_str!("../canonical_shipout/direct/normalize.rs");
     for family in [
         "DeferredWrite",
         "DeferredSpecial",
@@ -5443,6 +5443,20 @@ fn canonical_output_replay_owns_every_deferred_expansion_family() {
     }
     assert!(normalize.contains("expansion.replay_expander"));
     assert!(normalize.contains("expansion.write_expander"));
+
+    let canonical_shipout = concat!(
+        include_str!("../canonical_shipout/direct.rs"),
+        include_str!("../canonical_shipout/direct/normalize.rs"),
+        include_str!("../canonical_shipout/direct/materialize.rs"),
+        include_str!("../canonical_shipout/direct/lower.rs"),
+    );
+    for forbidden in ["tex_expand", "tex_lex", "InputStack", "ExecutionContext"] {
+        assert!(
+            !canonical_shipout.contains(forbidden),
+            "canonical shipout regained source capability {forbidden}"
+        );
+    }
+    assert!(!canonical_shipout.contains("assignments::shipout"));
 }
 
 #[test]

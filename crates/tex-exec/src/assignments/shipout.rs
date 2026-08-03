@@ -12,8 +12,7 @@ use super::scan_box_value_node;
 use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
-mod direct;
-pub(crate) use crate::canonical_shipout::ReplayTextKind;
+use crate::canonical_shipout::direct;
 use crate::canonical_shipout::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
 
 #[cfg(test)]
@@ -85,29 +84,38 @@ pub(crate) fn shipout_node(
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     let input_summary = input.publication_summary(stores);
     let emit_dvi = execution.emits_dvi();
-    let mut legacy_write_expander =
-        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
-    let mut legacy_replay_expander =
-        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| Ok(None);
     // The legacy path prints no progress marker of its own, so every live
     // effect is genuine carried-forward whatsit output.
     let pending_end = stores.world().effect_records().len();
     let announce_openout = stores.pdf_output_enabled();
-    shipout_node_with_input_summary(
-        node,
-        input_summary,
-        ShipoutOrigin {
-            output_open_context: None,
-            pending_end,
-            // TeX82 §1374 is silent; pdfTeX retains Web2C's notice.
-            announce_openout,
-        },
-        stores,
-        Some(execution),
-        emit_dvi,
-        &mut legacy_write_expander,
-        &mut legacy_replay_expander,
-    )
+    execution.with_nested(|expansion| {
+        let expansion = std::cell::RefCell::new(expansion);
+        let mut legacy_write_expander = |stores: &mut Universe, _: tex_state::PrintSink, tokens| {
+            crate::legacy_output::expand_shipout_write(stores, &mut expansion.borrow_mut(), tokens)
+        };
+        let mut legacy_replay_expander = |stores: &mut Universe, kind, tokens| {
+            crate::legacy_output::expand_shipout_text(
+                stores,
+                &mut expansion.borrow_mut(),
+                kind,
+                tokens,
+            )
+        };
+        shipout_node_with_input_summary(
+            node,
+            input_summary,
+            ShipoutOrigin {
+                output_open_context: None,
+                pending_end,
+                // TeX82 §1374 is silent; pdfTeX retains Web2C's notice.
+                announce_openout,
+            },
+            stores,
+            emit_dvi,
+            &mut legacy_write_expander,
+            &mut legacy_replay_expander,
+        )
+    })
 }
 
 /// What the surrounding job already was when a `\shipout` began.
@@ -128,7 +136,6 @@ pub(crate) fn shipout_node_with_input_summary(
     input_summary: tex_state::InputSummary,
     origin: ShipoutOrigin,
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
     replay_expander: &mut direct::ReplayTextExpander<'_>,
@@ -230,7 +237,6 @@ pub(crate) fn shipout_node_with_input_summary(
         input_summary,
         origin,
         &mut transaction,
-        expansion,
         emit_dvi,
         write_expander,
         replay_expander,
@@ -298,7 +304,6 @@ pub(crate) fn stage_canonical_page(
         input_summary,
         origin,
         stores,
-        None,
         emit_dvi,
         write_expander,
         replay_expander,
@@ -308,11 +313,10 @@ pub(crate) fn stage_canonical_page(
 pub(crate) fn stage_pdf_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     write_expander: &mut direct::WriteExpander<'_>,
     replay_expander: &mut direct::ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    direct::stage_form(form, stores, expansion, write_expander, replay_expander)
+    direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
 pub(crate) fn stage_canonical_form(
@@ -321,7 +325,7 @@ pub(crate) fn stage_canonical_form(
     write_expander: &mut WriteReplayHost<'_>,
     replay_expander: &mut TextReplayHost<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    direct::stage_form(form, stores, None, write_expander, replay_expander)
+    direct::stage_form(form, stores, write_expander, replay_expander)
 }
 
 #[cfg(test)]
@@ -329,12 +333,16 @@ pub(crate) fn test_stage_shipout_artifact(
     node: Node,
     stores: &mut Universe,
 ) -> Result<tex_out::PageArtifact, ExecError> {
-    let mut execution = crate::ExecutionContext::new("texput");
+    let execution = crate::ExecutionContext::new("texput");
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
-        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
+        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| {
+            Ok(crate::canonical_shipout::ExpandedWrite(String::new()))
+        };
     let mut legacy_replay_expander =
-        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| Ok(None);
+        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| {
+            Ok(crate::canonical_shipout::ExpandedReplayText(Vec::new()))
+        };
     let pending_end = stores.world().effect_records().len();
     let staged = direct::stage_shipout(
         node,
@@ -345,7 +353,6 @@ pub(crate) fn test_stage_shipout_artifact(
             announce_openout: true,
         },
         stores,
-        Some(&mut execution),
         emit_dvi,
         &mut legacy_write_expander,
         &mut legacy_replay_expander,

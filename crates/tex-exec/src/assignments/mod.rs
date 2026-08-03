@@ -489,10 +489,23 @@ fn execute_pdf_form(
         .map_err(|_| ExecError::PdfObjectCapacity)?;
     if immediate {
         let artifact = execution.with_nested(|expansion| {
-            let mut write = |_: &mut Universe, _: tex_state::PrintSink, _: TokenListId| Ok(None);
-            let mut replay =
-                |_: &mut Universe, _: shipout::ReplayTextKind, _: TokenListId| Ok(None);
-            stage_pdf_form(form, stores, Some(expansion), &mut write, &mut replay)
+            let expansion = std::cell::RefCell::new(expansion);
+            let mut write = |stores: &mut Universe, _: tex_state::PrintSink, tokens| {
+                crate::legacy_output::expand_shipout_write(
+                    stores,
+                    &mut expansion.borrow_mut(),
+                    tokens,
+                )
+            };
+            let mut replay = |stores: &mut Universe, kind, tokens| {
+                crate::legacy_output::expand_shipout_text(
+                    stores,
+                    &mut expansion.borrow_mut(),
+                    kind,
+                    tokens,
+                )
+            };
+            stage_pdf_form(form, stores, &mut write, &mut replay)
         })?;
         stores
             .publish_pdf_traversal_positions(artifact.last_position(), stores.pdf_snap_reference());

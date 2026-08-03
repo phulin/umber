@@ -149,31 +149,25 @@ impl CommandProcessor<'_> {
 
     /// Delivers one expanded output-replay token, preserving protected macros
     /// in e-TeX/pdfTeX exactly as `get_x_or_protected` does.
-    pub(crate) fn get_x_or_protected_token(
+    pub(crate) fn get_x_or_protected_with_replay_completion(
         &mut self,
-    ) -> Result<Option<CurrentCommand>, CommandError> {
+    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         self.apply_error_stop_recovery()?;
         self.command.transient.active_expansion_depth += 1;
         let preserve = self.command.profile().capabilities().supports_etex();
-        let result = loop {
-            match self.expanded_delivery(
-                None,
-                ExpandedFetch::GetXToken,
-                false,
-                if preserve {
-                    ProtectedMacroHandling::Preserve
-                } else {
-                    ProtectedMacroHandling::Expand
-                },
-                UndefinedHandling::Diagnose,
-            )? {
-                Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
-                Some(CommandReplayDelivery::Completed(_)) => continue,
-                None => break Ok(None),
-            }
-        };
+        let result = self.expanded_delivery(
+            None,
+            ExpandedFetch::GetXToken,
+            false,
+            if preserve {
+                ProtectedMacroHandling::Preserve
+            } else {
+                ProtectedMacroHandling::Expand
+            },
+            UndefinedHandling::Diagnose,
+        );
         self.command.transient.active_expansion_depth -= 1;
-        if let Ok(Some(command)) = &result
+        if let Ok(Some(CommandReplayDelivery::Command(command))) = &result
             && !preserve
         {
             // TeX82 get_x_token publishes its terminal expanded delivery.

@@ -1,6 +1,7 @@
 //! Retired `Executor` page-output and output-routine input fronts.
 
-use tex_lex::InputStack;
+use tex_expand::get_x_or_protected_with_context;
+use tex_lex::{InputStack, MemoryInput};
 use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::page::{PageFireUp, PageInteger};
 use tex_state::{GroupKind, TokenListReplayKind, Universe};
@@ -14,6 +15,75 @@ use crate::legacy_assignments::shipout_node;
 use crate::mode::ignored_depth;
 use crate::page_builder::build_page;
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
+
+pub(crate) fn expand_shipout_write(
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    tokens: tex_state::ids::TokenListId,
+) -> Result<crate::canonical_shipout::ExpandedWrite, ExecError> {
+    let mut input = InputStack::empty();
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let mut text = String::new();
+    expansion.with_expanded_token_list(|expansion| -> Result<(), ExecError> {
+        while let Some(token) = get_x_or_protected_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(stores),
+            expansion,
+        )?
+        .map(|token| token.semantic_token())
+        {
+            tex_state::token_show::append_token_string_text(stores, token, &mut text);
+        }
+        Ok(())
+    })?;
+    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+    text.push('\n');
+    Ok(crate::canonical_shipout::ExpandedWrite(text))
+}
+
+pub(crate) fn expand_shipout_text(
+    stores: &mut Universe,
+    expansion: &mut tex_expand::ExpansionContext<'_>,
+    kind: crate::canonical_shipout::ReplayTextKind,
+    tokens: tex_state::ids::TokenListId,
+) -> Result<crate::canonical_shipout::ExpandedReplayText, ExecError> {
+    let mut input = match kind {
+        crate::canonical_shipout::ReplayTextKind::Special => InputStack::empty(),
+        crate::canonical_shipout::ReplayTextKind::PdfLiteral => {
+            InputStack::new(MemoryInput::new(""))
+        }
+    };
+    input.push_token_list(tokens, TokenListReplayKind::Inserted);
+    let mut text = String::new();
+    let mut collect = |expansion: &mut tex_expand::ExpansionContext<'_>| -> Result<(), ExecError> {
+        while let Some(token) = get_x_or_protected_with_context(
+            &mut input,
+            &mut tex_state::ExpansionContext::new(stores),
+            expansion,
+        )?
+        .map(|token| token.semantic_token())
+        {
+            match kind {
+                crate::canonical_shipout::ReplayTextKind::Special => {
+                    tex_state::token_show::append_token_string_text(stores, token, &mut text);
+                }
+                crate::canonical_shipout::ReplayTextKind::PdfLiteral => {
+                    crate::diagnostics::append_token_show_text(stores, token, &mut text);
+                }
+            }
+        }
+        Ok(())
+    };
+    match kind {
+        crate::canonical_shipout::ReplayTextKind::Special => {
+            expansion.with_expanded_token_list(&mut collect)?;
+        }
+        crate::canonical_shipout::ReplayTextKind::PdfLiteral => collect(expansion)?,
+    }
+    Ok(crate::canonical_shipout::ExpandedReplayText(
+        text.into_bytes(),
+    ))
+}
 
 pub(crate) fn drain_pending_output(
     nest: &mut ModeNest,

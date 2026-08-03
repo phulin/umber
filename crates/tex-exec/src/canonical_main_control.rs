@@ -10733,11 +10733,26 @@ fn apply_pdf_form_request(
                 // Use the same typed form traversal as lazy references so
                 // graphics, saved positions, colors, and nested forms have
                 // one ledger/artifact owner.
-                let mut write = |_: &mut Universe, _: PrintSink, _: TokenListId| Ok(None);
+                let command = std::cell::RefCell::new(command);
+                let mut write = |stores: &mut Universe, _: PrintSink, tokens: TokenListId| {
+                    canonical_replay_write(
+                        &mut command.borrow_mut(),
+                        stores,
+                        tokens,
+                        &mut Vec::new(),
+                    )
+                };
                 let mut replay = |stores: &mut Universe,
                                   kind: crate::canonical_shipout::ReplayTextKind,
                                   tokens: TokenListId| {
-                    canonical_replay_text(command, stores, kind, tokens, &mut Vec::new()).map(Some)
+                    canonical_replay_text(
+                        &mut command.borrow_mut(),
+                        stores,
+                        kind,
+                        tokens,
+                        &mut Vec::new(),
+                    )
+                    .map(crate::canonical_shipout::ExpandedReplayText)
                 };
                 let artifact = crate::canonical_shipout::CanonicalShipoutTransaction::new(
                     &mut write,
@@ -10762,6 +10777,12 @@ fn canonical_replay_text(
     tokens: TokenListId,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<Vec<u8>, ExecError> {
+    // Output replay is an isolated nested input transaction. Its synthetic
+    // token levels may allocate immutable token lists and publish observer
+    // events, but they must never advance or replace the surrounding source
+    // cursor. This also gives a failing nested form replay an exact command
+    // rollback boundary independent of the artifact/resource transaction.
+    let input_snapshot = command.state.snapshot();
     let traced = stores
         .tokens(tokens)
         .iter()
@@ -10771,17 +10792,22 @@ fn canonical_replay_text(
     let traced = stores.finish_traced_token_list(&traced);
     let expanded = {
         let mut processor = command.processor(stores);
-        let expanded = processor
+        let result = processor
             .expand_output_replay(traced)
-            .map_err(command_error)?;
+            .map_err(command_error);
         diagnostics.extend(
             processor
                 .take_semantic_diagnostics()
                 .into_iter()
                 .map(PendingDiagnostic::Command),
         );
-        expanded
+        result
     };
+    command
+        .state
+        .rollback(input_snapshot)
+        .expect("shipout replay preserves the command profile");
+    let expanded = expanded?;
     let mut text = String::new();
     for &token in stores.tokens(expanded.token_list()) {
         match kind {
@@ -10806,6 +10832,58 @@ fn canonical_replay_text(
         }
     }
     Ok(bytes)
+}
+
+fn canonical_replay_write(
+    command: &mut CommandMachine<'_>,
+    stores: &mut Universe,
+    tokens: TokenListId,
+    diagnostics: &mut Vec<PendingDiagnostic>,
+) -> Result<crate::canonical_shipout::ExpandedWrite, ExecError> {
+    let input_snapshot = command.state.snapshot();
+    let traced = stores
+        .tokens(tokens)
+        .iter()
+        .copied()
+        .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+        .collect::<Vec<_>>();
+    let traced = stores.finish_traced_token_list(&traced);
+    let expanded = {
+        let mut processor = command.processor(stores);
+        let result = processor.expand_write_text(traced).map_err(command_error);
+        diagnostics.extend(
+            processor
+                .take_semantic_diagnostics()
+                .into_iter()
+                .map(PendingDiagnostic::Command),
+        );
+        result
+    };
+    command
+        .state
+        .rollback(input_snapshot)
+        .expect("shipout write replay preserves the command profile");
+    let expanded = expanded?;
+    if expanded.unbalanced {
+        crate::error_report::report_error(
+            stores,
+            "Unbalanced write command",
+            &[
+                "On this page there's a \\write with fewer real {'s than }'s.",
+                "I can't handle that very well; good luck.",
+            ],
+            expanded
+                .error_context
+                .expect("unbalanced write retains its live input context"),
+        )?;
+    }
+    let mut text = String::new();
+    for &token in stores.tokens(expanded.tokens.token_list()) {
+        tex_state::token_show::append_token_string_text(stores, token, &mut text);
+    }
+    let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+    text.push('\n');
+    Ok(crate::canonical_shipout::ExpandedWrite(text))
 }
 
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
@@ -12023,6 +12101,7 @@ fn shipout_replay_box(
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
             let mut command = command_cell.borrow_mut();
+            let input_snapshot = command.state.snapshot();
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
             // before moving to the next whatsit. A following write expands only
             // after those effects have happened, so publish the committed prefix
@@ -12051,7 +12130,7 @@ fn shipout_replay_box(
                 let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
                 let mut processor = command.processor(stores);
                 processor.set_command_trace_mode_prefix(mode_prefix);
-                let expanded = processor.expand_write_text(traced).map_err(command_error)?;
+                let result = processor.expand_write_text(traced).map_err(command_error);
                 let command_trace_printed = processor.command_trace_printed();
                 write_diagnostics.borrow_mut().extend(
                     processor
@@ -12063,8 +12142,13 @@ fn shipout_replay_box(
                 if command_trace_printed {
                     *command.shown_mode = None;
                 }
-                expanded
+                result
             };
+            command
+                .state
+                .rollback(input_snapshot)
+                .expect("shipout write replay preserves the command profile");
+            let expanded = expanded?;
             if let Some(observations) = command.observations.as_mut() {
                 observations
                     .0
@@ -12102,7 +12186,7 @@ fn shipout_replay_box(
             }
             let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
             text.push('\n');
-            Ok(Some(text))
+            Ok(crate::canonical_shipout::ExpandedWrite(text))
         };
     let mut expand_replay = |stores: &mut Universe,
                              kind: crate::canonical_shipout::ReplayTextKind,
@@ -12115,7 +12199,7 @@ fn shipout_replay_box(
             tokens,
             &mut write_diagnostics.borrow_mut(),
         )
-        .map(Some)
+        .map(crate::canonical_shipout::ExpandedReplayText)
     };
     let mut receipt = crate::canonical_shipout::CanonicalShipoutTransaction::new(
         &mut expand_write,

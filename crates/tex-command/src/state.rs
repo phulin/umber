@@ -268,6 +268,15 @@ impl CommandState {
         self.push_stored_episode(tokens, crate::input::StoredReplayReason::Discretionary)
     }
 
+    /// Schedules one source-isolated output-text expansion episode.
+    ///
+    /// Completion is delivered before the surrounding source resumes, so a
+    /// shipout host cannot accidentally consume the command following the
+    /// page or PDF form it is staging.
+    pub fn push_output_replay_episode(&mut self, tokens: TracedTokenList) -> CommandReplayEpisode {
+        self.push_stored_episode(tokens, crate::input::StoredReplayReason::Write)
+    }
+
     fn push_stored_episode(
         &mut self,
         tokens: TracedTokenList,
