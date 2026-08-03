@@ -316,13 +316,6 @@ const PDFTEX_TOK_PARAMETERS: &[(&str, TokParam)] = &[
 ];
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
-    for &name in PDFTEX_PRIMITIVE_NAMES {
-        let symbol = stores.intern(name);
-        stores.set_meaning(
-            symbol,
-            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfTeXUnimplemented),
-        );
-    }
     for &(name, parameter) in PDFTEX_INT_PARAMETER_MEANINGS {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
@@ -1776,11 +1769,6 @@ mod tests {
         for &name in PDFTEX_PRIMITIVE_NAMES {
             let symbol = stores.intern(name);
             assert_ne!(stores.meaning(symbol), Meaning::Undefined, "{name}");
-            assert_ne!(
-                stores.meaning(symbol),
-                Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfTeXUnimplemented),
-                "pdfTeX inventory placeholder remains reachable: {name}",
-            );
         }
         let revision = stores.intern("pdftexrevision");
         assert_eq!(

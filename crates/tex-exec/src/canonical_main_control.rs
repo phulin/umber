@@ -9946,7 +9946,6 @@ fn scan_unclassified_primitive(
         | P::PdfShbsCode
         | P::PdfStbsCode
         | P::PdfTagCode
-        | P::PdfTeXUnimplemented
         | P::SpaceFactor
         | P::VFil
         | P::VFilNeg

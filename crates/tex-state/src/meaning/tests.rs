@@ -110,6 +110,10 @@ fn meaning_variants_round_trip() {
 
 #[test]
 fn pdf_accessibility_operands_are_unique_and_follow_parallel_reservations() {
+    // Operand 209 was the former registry placeholder. It never represented
+    // a pdfTeX command and must not become a meaning through format decoding.
+    assert_eq!(UnexpandablePrimitive::from_operand(209), None);
+
     let expected = [
         (247, UnexpandablePrimitive::PdfInterwordSpaceOn),
         (248, UnexpandablePrimitive::PdfInterwordSpaceOff),

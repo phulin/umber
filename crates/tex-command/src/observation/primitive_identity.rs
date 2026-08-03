@@ -466,7 +466,6 @@ pub(crate) fn unexpandable_primitive_identity(
         P::PdfRefXForm => ("extension".into(), Some(25)),
         // Umber's own sentinel for a registered pdfTeX name not yet routed
         // to real behavior; deliberately distinct from every real identity.
-        P::PdfTeXUnimplemented => ("pdftex_unimplemented".into(), None),
         P::PdfResetTimer => ("extension".into(), Some(26)),
         P::PdfSetRandomSeed => ("extension".into(), Some(27)),
         P::PdfObject => ("extension".into(), Some(28)),
