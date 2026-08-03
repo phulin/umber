@@ -142,6 +142,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/tests/math.rs`: tests for math-mode parsing, noad construction, scripts, fractions, choices, families, and mu material.
 - `src/tests/support.rs`: shared test helpers for seeded fonts, terminal output, and meaning lookup.
 - `tests/it.rs`: external-boundary compile-fail coverage for the public checkpoint API.
+- `tests/paragraph_replay.rs`: focused canonical editor-checkpoint paragraph replay regressions.
 - `tests/ui/engine_checkpoint_forgery_forbidden.rs`: compile-fail fixture proving callers cannot forge named engine checkpoints.
 - `tests/ui/execution_transaction_private.rs`: compile-fail fixture proving live-stack transactions cannot escape as public capabilities.
 - `src/vertical.rs`: already-flushed current-list routing, vertical-list

@@ -214,12 +214,35 @@ fn rebind_root_input_with_delta(
     Some(())
 }
 
-fn adopt_live_front_origins(recorded: &mut InputState, live: &InputState) -> Option<()> {
+fn input_level_identity(level: &crate::input::InputLevel) -> crate::input::InputLevelId {
+    match level {
+        crate::input::InputLevel::Source(source) => source.identity,
+        crate::input::InputLevel::Tokens(tokens) => tokens.identity,
+    }
+}
+
+fn set_input_level_identity(
+    level: &mut crate::input::InputLevel,
+    identity: crate::input::InputLevelId,
+) {
+    match level {
+        crate::input::InputLevel::Source(source) => source.identity = identity,
+        crate::input::InputLevel::Tokens(tokens) => tokens.identity = identity,
+    }
+}
+
+fn adopt_live_front_origins(
+    recorded: &mut InputState,
+    live: &InputState,
+) -> Option<Vec<(crate::input::InputLevelId, crate::input::InputLevelId)>> {
     if recorded.levels.len() != live.levels.len() {
         return None;
     }
+    let mut identities = Vec::with_capacity(recorded.levels.len());
     for (recorded, live) in recorded.levels.iter_mut().zip(&live.levels) {
-        match (recorded, live) {
+        let recorded_identity = input_level_identity(recorded);
+        let live_identity = input_level_identity(live);
+        match (&mut *recorded, live) {
             (
                 crate::input::InputLevel::Tokens(recorded),
                 crate::input::InputLevel::Tokens(live),
@@ -234,7 +257,38 @@ fn adopt_live_front_origins(recorded: &mut InputState, live: &InputState) -> Opt
             (recorded, live) if recorded == live => {}
             _ => return None,
         }
+        identities.push((recorded_identity, live_identity));
+        set_input_level_identity(recorded, live_identity);
     }
+    recorded.next_level_identity = live.next_level_identity;
+    Some(identities)
+}
+
+fn rebase_ending_input_identities(
+    ending: &mut InputState,
+    recorded_next: u64,
+    live_next: u64,
+    front: &[(crate::input::InputLevelId, crate::input::InputLevelId)],
+) -> Option<()> {
+    for level in &mut ending.levels {
+        let old = input_level_identity(level);
+        let rebound = front
+            .iter()
+            .find_map(|(recorded, live)| (*recorded == old).then_some(*live))
+            .or_else(|| {
+                (old.0 >= recorded_next).then(|| {
+                    old.0
+                        .checked_sub(recorded_next)?
+                        .checked_add(live_next)
+                        .map(crate::input::InputLevelId)
+                })?
+            })?;
+        set_input_level_identity(level, rebound);
+    }
+    ending.next_level_identity = ending
+        .next_level_identity
+        .checked_sub(recorded_next)?
+        .checked_add(live_next)?;
     Some(())
 }
 
@@ -292,12 +346,24 @@ impl crate::CommandState {
         transaction: &ParagraphInputTransaction,
     ) -> Result<(), ParagraphInputReplayError> {
         let mut starting_input = transaction.starting_input.clone();
-        if adopt_live_front_origins(&mut starting_input, &self.input).is_none()
-            || self.input != starting_input
-        {
+        let recorded_next = starting_input.next_level_identity;
+        let live_next = self.input.next_level_identity;
+        let Some(front_identities) = adopt_live_front_origins(&mut starting_input, &self.input)
+        else {
+            return Err(ParagraphInputReplayError::StartingInputMismatch);
+        };
+        if self.input != starting_input {
             return Err(ParagraphInputReplayError::StartingInputMismatch);
         }
-        self.input = transaction.ending_input.clone();
+        let mut ending_input = transaction.ending_input.clone();
+        rebase_ending_input_identities(
+            &mut ending_input,
+            recorded_next,
+            live_next,
+            &front_identities,
+        )
+        .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
+        self.input = ending_input;
         Ok(())
     }
 

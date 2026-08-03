@@ -3430,7 +3430,6 @@ fn fork_after_first_paragraph(
 }
 
 #[test]
-#[ignore = "umber2-0jwt"]
 fn canonical_checkpoint_fork_keeps_rehomed_suffix_replay_key() {
     let old = br"first\par
 beta\par
@@ -3455,7 +3454,6 @@ stable suffix\par
 }
 
 #[test]
-#[ignore = "umber2-0jwt"]
 fn canonical_job_start_fork_replays_after_unrelated_prefix_assignment() {
     let old = br"stateful \count5=41 paragraph text\par
 stateful \count5=42 paragraph text\par
