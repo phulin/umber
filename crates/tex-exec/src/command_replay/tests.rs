@@ -6065,7 +6065,6 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
 }
 
 #[test]
-#[ignore = "umber2-v181"]
 fn final_stop_retires_its_backup_before_starting_output_input() {
     // TeX82 §46 (`its_all_over`) starts \output only after the §1095
     // redelivery's exhausted \end backup has retired and a new final-stop

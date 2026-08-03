@@ -15708,6 +15708,15 @@ fn apply_scanned_step(
                 output_level.list().nodes().to_vec(),
                 context,
             )?;
+            // TeX82 §§1026/1054 resume the same `build_page` invocation that
+            // the backed-up final stop started. Once that continuation has
+            // consumed the contribution suffix, the next stop retry must be
+            // allowed to append a fresh end-job trio. Keeping Umber's
+            // deferred-invocation marker set here makes that retry call an
+            // empty `build_page`, skipping §1025's next output-text push.
+            if stores.page_contributions().is_empty() {
+                *end_job_ejection_pending = false;
+            }
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EjectResidualPage => {
