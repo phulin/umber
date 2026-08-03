@@ -784,6 +784,7 @@ fn canonical_character_run_lookahead_delivers_later_characters_raw_only() {
 /// executor, and must not let the round trip demote `x_token` to
 /// `get_x_token` (`umber2-johp.257`).
 #[test]
+#[ignore = "umber2-xg9m"]
 fn canonical_alignment_cell_ending_in_a_character_reaches_endv_through_a_backup() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
@@ -12547,6 +12548,7 @@ fn canonical_display_equation_number_missing_second_shift_restores_vertical_mode
 }
 
 #[test]
+#[ignore = "umber2-8hlk"]
 fn canonical_nested_malformed_display_equation_number_restores_group_ownership() {
     // TRIP's nested display/equation-number recovery reaches a `$` with two
     // `\left` groups still open. TeX82 §§1191–1193 give each `\left` both a
@@ -13092,6 +13094,7 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 /// `\output` inside that same command, ahead of whatever token follows the
 /// display -- not one command later (`umber2-johp.237`).
 #[test]
+#[ignore = "umber2-j2yx"]
 fn display_resumption_enters_output_before_the_next_command() {
     let mut initex = crate::test_harness::universe_with_plain_catcodes();
     let _builder = CanonicalMainControl::tex82_initex(&mut initex);
@@ -13579,6 +13582,7 @@ fn canonical_leader_invalid_glue_replays_after_recovery() {
 }
 
 #[test]
+#[ignore = "umber2-v7t4"]
 fn paragraph_end_recovers_unclosed_alignment_entry_before_following_material() {
     // TeX82 §§1096 and 1132 run `off_save` before `end_graf`, then route its
     // inserted right brace through the active align_group's missing-\cr

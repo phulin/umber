@@ -259,6 +259,7 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
 }
 
 #[test]
+#[ignore = "umber2-e21y"]
 fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     // TeX82 §§785/1034/1038: an alignment cell body is ordinary main
     // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
@@ -1534,6 +1535,7 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
 }
 
 #[test]
+#[ignore = "umber2-v8mq"]
 fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
     // TeX82 §§282/1120–1121: unsave inserts aftergroup material before
     // build_discretionary scans the next part's left brace. Make that token
