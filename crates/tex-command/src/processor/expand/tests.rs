@@ -739,6 +739,58 @@ fn scantokens_everyeof_context_traverses_to_ordinary_file() {
 }
 
 #[test]
+fn trace_after_expansion_errors_stays_behind_their_reports() {
+    // TeX82 §§345/367/370/380: undefined expansion reports synchronously,
+    // invalid-character restart reports next, and only then may the following
+    // begin-group command be traced.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\undefined\x7f{".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_catcode('\u{7f}', Catcode::Invalid);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    let mut capabilities = CommandHostCapabilities::default();
+
+    let next = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let next = processor
+            .get_x_token()
+            .expect("recovery remains finite")
+            .expect("following command remains");
+        processor.print_command_trace(crate::PrintCommand::from_current(&next));
+        next
+    };
+    assert!(matches!(
+        next.meaning(),
+        Meaning::CharToken {
+            ch: '{',
+            cat: Catcode::BeginGroup
+        }
+    ));
+    let diagnostics = command.take_semantic_diagnostics();
+    assert!(
+        matches!(
+            diagnostics.as_slice(),
+            [
+                crate::CommandSemanticDiagnostic::UndefinedControlSequence { .. },
+                crate::CommandSemanticDiagnostic::Recoverable { message, .. },
+                crate::CommandSemanticDiagnostic::Trace { text, .. }
+            ] if message == "Text line contains an invalid character"
+                && text == "{begin-group character {}"
+        ),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn etex_scantokens_null_everyeof_has_no_token_list_retirement() {
     // e-TeX 2.6 etex.ch §24.362 tests `every_eof<>null` before
     // `begin_token_list`. The default null parameter must therefore return

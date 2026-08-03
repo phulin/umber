@@ -2314,6 +2314,28 @@ fn trip_loaded_missing_definition_target_recovers_once() {
 }
 
 #[test]
+fn trip_loaded_invalid_character_error_precedes_following_trace() {
+    // TeX82 §§345/367/370/380 complete both expansion-time errors before the
+    // next begin-group command reaches tracing.
+    let log = run_focused_loaded_trip_through(352);
+    let undefined = log
+        .rfind("{undefined}")
+        .expect("line-351 undefined command trace");
+    let report = &log[undefined..];
+    let undefined_error = report
+        .find("! Undefined control sequence.")
+        .expect("undefined-control report");
+    let invalid_error = report
+        .find("! Text line contains an invalid character.")
+        .expect("invalid-character report");
+    let following = report
+        .find("{begin-group character {}")
+        .unwrap_or_else(|| panic!("following begin-group trace:\n{report}"));
+    assert!(undefined_error < invalid_error, "{report}");
+    assert!(invalid_error < following, "{report}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

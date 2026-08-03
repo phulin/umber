@@ -196,7 +196,12 @@ impl<'a> CommandProcessor<'a> {
         text.push_str(&conditional_suffix);
         text.push('}');
         self.command_trace_printed = true;
-        if self.command.expanding_deferred_write() {
+        // A recoverable error raised inside §366's expansion is synchronous:
+        // §82 finishes before §380 fetches and traces the next command. When
+        // its World-facing report is queued, queue this later trace behind it
+        // as well so the executor preserves that call-stack order.
+        if self.command.expanding_deferred_write() || !self.command.semantic_diagnostics.is_empty()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Trace {
