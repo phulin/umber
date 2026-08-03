@@ -699,23 +699,9 @@ fn run_cell_body_until_terminator(
                     context: "alignment cell",
                 });
             }
-            Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
+            Err(error) if error.is_undefined_control_sequence() => {
                 // §370 names the offending control sequence only through
                 // §82's context display, never in the message text.
-                report_input_error(
-                    input,
-                    stores,
-                    "Undefined control sequence",
-                    UNDEFINED_CONTROL_SEQUENCE_HELP,
-                )?;
-                continue;
-            }
-            Err(tex_expand::ExpandError::Captured { error, .. })
-                if matches!(
-                    error.as_ref(),
-                    tex_expand::ExpandError::UndefinedControlSequence { .. }
-                ) =>
-            {
                 report_input_error(
                     input,
                     stores,
@@ -916,23 +902,9 @@ pub(super) fn dispatch_and_drain(
     let action = match dispatch_delivered_token_with_context(nest, token, input, stores, execution)
     {
         Ok(action) => action,
-        Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence { .. })) => {
+        Err(error) if error.is_undefined_control_sequence() => {
             // §370 names the offending control sequence only through §82's
             // context display, never in the message text.
-            report_input_error(
-                input,
-                stores,
-                "Undefined control sequence",
-                UNDEFINED_CONTROL_SEQUENCE_HELP,
-            )?;
-            return Ok(());
-        }
-        Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
-            if matches!(
-                error.as_ref(),
-                tex_expand::ExpandError::UndefinedControlSequence { .. }
-            ) =>
-        {
             report_input_error(
                 input,
                 stores,

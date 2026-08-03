@@ -522,15 +522,18 @@ pub(crate) fn scan_box_group(
                     execution,
                 ) {
                     Ok(token) => token,
-                    Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
-                        report_undefined_control_sequence(input, stores)?;
-                        continue;
-                    }
-                    Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
-                        crate::diagnostics::report_extra_conditional(stores, name)?;
-                        continue;
-                    }
-                    Err(err) => return Err(err.into()),
+                    Err(error) => match error.into_conditional_recovery() {
+                        Ok(tex_state::ExpansionRecovery::UndefinedControlSequence) => {
+                            report_undefined_control_sequence(input, stores)?;
+                            continue;
+                        }
+                        Ok(tex_state::ExpansionRecovery::ExtraConditionalControl { name }) => {
+                            crate::diagnostics::report_extra_conditional(stores, name)?;
+                            continue;
+                        }
+                        Ok(_) => unreachable!("conditional recovery has a closed vocabulary"),
+                        Err(error) => return Err(error.into()),
+                    },
                 }
             }
             .ok_or(ExecError::MissingToken {
@@ -558,18 +561,7 @@ pub(crate) fn scan_box_group(
             let action =
                 match crate::dispatch_delivered_token(nest, token, input, stores, execution) {
                     Ok(action) => action,
-                    Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                        ..
-                    })) => {
-                        report_undefined_control_sequence(input, stores)?;
-                        continue;
-                    }
-                    Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
-                        if matches!(
-                            error.as_ref(),
-                            tex_expand::ExpandError::UndefinedControlSequence { .. }
-                        ) =>
-                    {
+                    Err(error) if error.is_undefined_control_sequence() => {
                         report_undefined_control_sequence(input, stores)?;
                         continue;
                     }

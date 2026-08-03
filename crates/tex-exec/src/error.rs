@@ -282,6 +282,11 @@ pub enum ExecError {
 }
 
 impl ExecError {
+    #[must_use]
+    pub(crate) fn is_undefined_control_sequence(&self) -> bool {
+        matches!(self, Self::Expand(error) if error.is_undefined_control_sequence())
+    }
+
     /// The fatal payload this error is carrying, if any.
     ///
     /// `Captured` wraps an inner error with a diagnostic site, so the search

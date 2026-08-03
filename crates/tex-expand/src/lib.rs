@@ -499,6 +499,83 @@ impl std::error::Error for ExpandError {
 }
 
 impl ExpandError {
+    /// Lowers the recoverable main-control subset without exposing this
+    /// crate's recursive error representation to execution.
+    pub fn into_main_control_recovery(self) -> Result<tex_state::ExpansionRecovery, Self> {
+        use tex_state::ExpansionRecovery;
+
+        if let Self::Captured { error, site } = self {
+            return error
+                .into_main_control_recovery()
+                .map_err(|error| Self::Captured {
+                    error: Box::new(error),
+                    site,
+                });
+        }
+        match self {
+            Self::UndefinedControlSequence { .. } => {
+                Ok(ExpansionRecovery::UndefinedControlSequence)
+            }
+            Self::ExtraConditionalControl { name, .. } => {
+                Ok(ExpansionRecovery::ExtraConditionalControl { name })
+            }
+            Self::Lex(LexError::InvalidCharacter { .. }) => Ok(ExpansionRecovery::InvalidCharacter),
+            Self::MacroCall(args::MacroCallError::DoesNotMatchDefinition {
+                macro_name, ..
+            }) => Ok(ExpansionRecovery::MacroDoesNotMatch { macro_name }),
+            Self::MacroCall(args::MacroCallError::ParagraphEndedBeforeComplete {
+                macro_name,
+                context,
+                partial,
+            }) => Ok(ExpansionRecovery::ParagraphEndedBeforeComplete {
+                macro_name,
+                context,
+                partial,
+            }),
+            Self::MacroCall(args::MacroCallError::ForbiddenOuterToken {
+                macro_name,
+                context,
+                partial,
+            }) => Ok(ExpansionRecovery::ForbiddenOuterToken {
+                macro_name,
+                context,
+                partial,
+            }),
+            error => Err(error),
+        }
+    }
+
+    pub fn into_conditional_recovery(self) -> Result<tex_state::ExpansionRecovery, Self> {
+        use tex_state::ExpansionRecovery;
+
+        if let Self::Captured { error, site } = self {
+            return error
+                .into_conditional_recovery()
+                .map_err(|error| Self::Captured {
+                    error: Box::new(error),
+                    site,
+                });
+        }
+        match self {
+            Self::UndefinedControlSequence { .. } => {
+                Ok(ExpansionRecovery::UndefinedControlSequence)
+            }
+            Self::ExtraConditionalControl { name, .. } => {
+                Ok(ExpansionRecovery::ExtraConditionalControl { name })
+            }
+            error => Err(error),
+        }
+    }
+
+    #[must_use]
+    pub fn is_undefined_control_sequence(&self) -> bool {
+        match self {
+            Self::UndefinedControlSequence { .. } => true,
+            Self::Captured { error, .. } => error.is_undefined_control_sequence(),
+            _ => false,
+        }
+    }
+
     /// Returns the typed resource request carried through any scanner wrapper.
     ///
     /// Scanner errors are recursive because expandable primitives may scan

@@ -31,6 +31,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
   values shared by the legacy gullet and execution-side presentation.
+- `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
+  keeps execution independent of the retired expansion error tree.
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.

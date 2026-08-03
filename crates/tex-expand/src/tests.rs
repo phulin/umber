@@ -3,6 +3,31 @@ use crate::{
     ReadDependency, ReadRecorder, RestrictedExpansionMode, dispatch, dispatch_expandable_opcode,
     dispatch_with_context, install_expandable_primitives, semantic_token,
 };
+
+#[test]
+fn main_control_recovery_lowers_only_recoverable_error_kinds() {
+    let context = tex_state::token::TracedTokenWord::pack(
+        tex_state::token::Token::Char {
+            ch: '?',
+            cat: tex_state::token::Catcode::Other,
+        },
+        tex_state::token::OriginId::UNKNOWN,
+    );
+    let undefined = crate::ExpandError::UndefinedControlSequence {
+        name: "missing".to_owned(),
+        context,
+    };
+    assert!(matches!(
+        undefined.into_main_control_recovery(),
+        Ok(tex_state::ExpansionRecovery::UndefinedControlSequence)
+    ));
+
+    let unsupported = crate::ExpandError::UnsupportedTheTarget { context };
+    assert!(matches!(
+        unsupported.into_main_control_recovery(),
+        Err(crate::ExpandError::UnsupportedTheTarget { .. })
+    ));
+}
 use ahash::AHashMap;
 use tex_lex::MacroArguments;
 use tex_lex::{ConditionFrameSummary, InputStack, MemoryInput, TokenListReplayKind};

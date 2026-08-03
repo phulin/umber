@@ -56,6 +56,7 @@ pub mod env;
 pub mod epoch;
 pub mod etex_tracing;
 mod expansion_diagnostic;
+mod expansion_recovery;
 pub mod file_framing;
 pub mod font;
 mod format_container;
@@ -115,6 +116,7 @@ pub use stores::EngineUsageStatistics;
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
+pub use expansion_recovery::ExpansionRecovery;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 

@@ -2321,26 +2321,20 @@ where
             let mut expansion = tex_state::ExpansionContext::new(stores);
             match get_x_token_with_context(input, &mut expansion, execution) {
                 Ok(token) => token,
-                Err(tex_expand::ExpandError::Captured { error, site }) => match *error {
-                    tex_expand::ExpandError::UndefinedControlSequence { .. } => {
+                Err(error) => match error.into_main_control_recovery() {
+                    Ok(tex_state::ExpansionRecovery::UndefinedControlSequence) => {
                         report_undefined_control_sequence(input, stores)?;
                         continue;
                     }
-                    tex_expand::ExpandError::MacroCall(
-                        tex_expand::args::MacroCallError::DoesNotMatchDefinition {
-                            macro_name, ..
-                        },
-                    ) => {
+                    Ok(tex_state::ExpansionRecovery::MacroDoesNotMatch { macro_name }) => {
                         report_macro_does_not_match(input, stores, &macro_name)?;
                         continue;
                     }
-                    tex_expand::ExpandError::MacroCall(
-                        tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
-                            macro_name,
-                            context,
-                            partial,
-                        },
-                    ) => {
+                    Ok(tex_state::ExpansionRecovery::ParagraphEndedBeforeComplete {
+                        macro_name,
+                        context,
+                        partial,
+                    }) => {
                         report_paragraph_ended_before_complete(
                             input,
                             stores,
@@ -2350,13 +2344,11 @@ where
                         )?;
                         continue;
                     }
-                    tex_expand::ExpandError::MacroCall(
-                        tex_expand::args::MacroCallError::ForbiddenOuterToken {
-                            macro_name,
-                            context,
-                            partial,
-                        },
-                    ) => {
+                    Ok(tex_state::ExpansionRecovery::ForbiddenOuterToken {
+                        macro_name,
+                        context,
+                        partial,
+                    }) => {
                         report_forbidden_outer_token(
                             input,
                             stores,
@@ -2366,87 +2358,32 @@ where
                         )?;
                         continue;
                     }
-                    tex_expand::ExpandError::ExtraConditionalControl { name, .. } => {
+                    Ok(tex_state::ExpansionRecovery::ExtraConditionalControl { name }) => {
                         crate::diagnostics::report_extra_conditional(stores, name)?;
                         continue;
                     }
-                    error => {
+                    Ok(tex_state::ExpansionRecovery::InvalidCharacter) => {
+                        // TeX.web §345's `Decry the invalid character and goto
+                        // restart`: `get_next` reports it and restarts
+                        // tokenization after consuming it. §73's message does not
+                        // name the character; §82's context display shows it.
+                        report_input_error(
+                            input,
+                            stores,
+                            "Text line contains an invalid character",
+                            &[
+                                "A funny symbol that I can't read has just been input.",
+                                "Continue, and I'll forget that it ever happened.",
+                            ],
+                        )?;
+                        continue;
+                    }
+                    Err(err) => {
                         let summary = input.publication_summary(stores);
                         stores.set_input_summary(summary);
-                        return Err(tex_expand::ExpandError::Captured {
-                            error: Box::new(error),
-                            site,
-                        }
-                        .into());
+                        return Err(err.into());
                     }
                 },
-                Err(tex_expand::ExpandError::UndefinedControlSequence { .. }) => {
-                    // In TeX.web main_control, undefined control sequences
-                    // report an error and otherwise behave like a consumed
-                    // relax token. Scanner-owned expansion errors still
-                    // propagate from their scanner call sites.
-                    report_undefined_control_sequence(input, stores)?;
-                    continue;
-                }
-                Err(tex_expand::ExpandError::ExtraConditionalControl { name, .. }) => {
-                    crate::diagnostics::report_extra_conditional(stores, name)?;
-                    continue;
-                }
-                Err(tex_expand::ExpandError::Lex(tex_lex::LexError::InvalidCharacter {
-                    ..
-                })) => {
-                    // TeX.web §345's `Decry the invalid character and goto
-                    // restart`: `get_next` reports it and restarts
-                    // tokenization after consuming it. §73's message does not
-                    // name the character; §82's context display shows it.
-                    report_input_error(
-                        input,
-                        stores,
-                        "Text line contains an invalid character",
-                        &[
-                            "A funny symbol that I can't read has just been input.",
-                            "Continue, and I'll forget that it ever happened.",
-                        ],
-                    )?;
-                    continue;
-                }
-                Err(tex_expand::ExpandError::MacroCall(
-                    tex_expand::args::MacroCallError::DoesNotMatchDefinition { macro_name, .. },
-                )) => {
-                    report_macro_does_not_match(input, stores, &macro_name)?;
-                    continue;
-                }
-                Err(tex_expand::ExpandError::MacroCall(
-                    tex_expand::args::MacroCallError::ParagraphEndedBeforeComplete {
-                        macro_name,
-                        context,
-                        partial,
-                    },
-                )) => {
-                    report_paragraph_ended_before_complete(
-                        input,
-                        stores,
-                        &macro_name,
-                        context,
-                        &partial,
-                    )?;
-                    continue;
-                }
-                Err(tex_expand::ExpandError::MacroCall(
-                    tex_expand::args::MacroCallError::ForbiddenOuterToken {
-                        macro_name,
-                        context,
-                        partial,
-                    },
-                )) => {
-                    report_forbidden_outer_token(input, stores, &macro_name, context, &partial)?;
-                    continue;
-                }
-                Err(err) => {
-                    let summary = input.publication_summary(stores);
-                    stores.set_input_summary(summary);
-                    return Err(err.into());
-                }
             }
         };
         let Some(token) = token else {
@@ -2468,18 +2405,7 @@ where
         let action =
             match dispatch_delivered_token_with_context(nest, token, input, stores, execution) {
                 Ok(action) => action,
-                Err(ExecError::Expand(tex_expand::ExpandError::UndefinedControlSequence {
-                    ..
-                })) => {
-                    report_undefined_control_sequence(input, stores)?;
-                    continue;
-                }
-                Err(ExecError::Expand(tex_expand::ExpandError::Captured { error, .. }))
-                    if matches!(
-                        error.as_ref(),
-                        tex_expand::ExpandError::UndefinedControlSequence { .. }
-                    ) =>
-                {
+                Err(error) if error.is_undefined_control_sequence() => {
                     report_undefined_control_sequence(input, stores)?;
                     continue;
                 }
