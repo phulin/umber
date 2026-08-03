@@ -42,8 +42,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/tex_fixed_point.rs`: public bibliography-free TeX fixed-point adapter over the shared project candidate machinery.
 - `src/tex_fixed_point/tests.rs`: shared primitive/LaTeX-surface fixture convergence, cold identity, generated-input selection, resource resumption, bounds, oscillation, and rollback coverage.
 - `src/lib.rs`: canonical retained-root run helpers, file resolvers, typed
-  effect-before-driver finalization, one-artifact-at-a-time DVI construction,
-  and the test-only retired `InputStack` session adapter.
+  effect-before-driver finalization, and one-artifact-at-a-time DVI
+  construction. Umber has no legacy lexer/gullet session adapter, including in
+  tests.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.

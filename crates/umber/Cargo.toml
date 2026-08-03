@@ -54,8 +54,6 @@ proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-command-stream = { path = "../../tools/tex-command-stream" }
-tex-expand = { path = "../tex-expand" }
-tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 ttf-parser = "0.25.1"
 

@@ -10,10 +10,7 @@ use test_support::{
     CorpusCase, assert_matches_fixture, corpus_cases, dvi, git_fixture::ClosedCase, normalize,
     read_binary_fixture,
 };
-use tex_lex::{Lexer, WorldInput};
-use tex_state::env::banks::IntParam;
-use tex_state::token::{Catcode, Token};
-use tex_state::{Universe, World};
+use tex_state::Universe;
 
 const PINNED_SOURCE_DATE_EPOCH: &str = "1783604160";
 
@@ -1474,20 +1471,13 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn shipped_umber_has_no_tex_expand_dependency() {
+fn umber_has_no_tex_expand_dependency_including_tests() {
     let manifest =
         std::fs::read_to_string(test_support::repository_root().join("crates/umber/Cargo.toml"))
             .expect("read Umber manifest");
-    let (production, development) = manifest
-        .split_once("[dev-dependencies]")
-        .expect("Umber manifest has dev dependencies");
     assert!(
-        !production.contains("tex-expand"),
-        "shipped Umber must not depend directly on retired tex-expand"
-    );
-    assert!(
-        development.contains("tex-expand ="),
-        "legacy inline tests retain an explicit dev-only dependency"
+        !manifest.contains("tex-expand"),
+        "Umber must not depend directly on retired tex-expand in any build"
     );
 
     for relative in ["src/lib.rs", "src/bin/gentle_profile.rs"] {
@@ -1527,48 +1517,57 @@ fn shipped_umber_has_no_retired_command_core_dependencies() {
     let root = test_support::repository_root();
     let manifest =
         std::fs::read_to_string(root.join("crates/umber/Cargo.toml")).expect("read Umber manifest");
-    let (production, development) = manifest
-        .split_once("[dev-dependencies]")
-        .expect("Umber manifest has dev dependencies");
     for retired in ["tex-expand", "tex-lex"] {
         assert!(
-            !production.contains(retired),
-            "shipped Umber must not depend directly on {retired}"
+            !manifest.contains(retired),
+            "Umber must not depend directly on {retired}, including dev/test"
         );
-        assert!(
-            development.contains(&format!("{retired} =")),
-            "inline compatibility tests retain an explicit {retired} dev dependency"
-        );
+    }
+
+    let mut pending = vec![root.join("crates/umber/src")];
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).expect("read Umber source directory") {
+            let path = entry.expect("read Umber source entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read Umber Rust source");
+            for line in source.lines() {
+                let code = line.split_once("//").map_or(line, |(code, _)| code);
+                let edge = ["use tex_expand", "use tex_lex", "tex_expand::", "tex_lex::"]
+                    .into_iter()
+                    .find(|edge| {
+                        code.find(edge)
+                            .is_some_and(|position| !code[..position].contains(['\"', '\'']))
+                    });
+                assert!(
+                    edge.is_none(),
+                    "{} must not regain retired compile edge {}",
+                    path.display(),
+                    edge.unwrap_or_default()
+                );
+            }
+        }
     }
 
     let source =
         std::fs::read_to_string(root.join("crates/umber/src/lib.rs")).expect("read Umber library");
-    assert!(
-        source.contains("#[cfg(test)]\npub struct EngineSession"),
-        "the retired InputStack session adapter must remain test-only"
-    );
-    assert!(
-        source.contains("#[cfg(test)]\n    pub fn context(&mut self) -> ExecutionContext<'_>"),
-        "the retired ExecutionContext resolver adapter must remain test-only"
-    );
-    let test_import = source
-        .split_once("#[cfg(test)]\nuse tex_exec::{")
-        .and_then(|(_, tail)| tail.split_once("};"))
-        .map(|(import, _)| import)
-        .expect("find test-only tex-exec compatibility import");
-    assert!(test_import.contains("Executor"));
-    assert!(test_import.contains("ExecutionContext"));
-    assert!(test_import.contains("try_execute_assignment"));
-    let shipped_import = source
-        .split("use tex_exec::{")
-        .nth(2)
-        .and_then(|tail| tail.split_once("};"))
-        .map(|(import, _)| import)
-        .expect("find shipped tex-exec import");
-    for retired in ["Executor", "ExecutionContext", "try_execute_assignment"] {
+    for retired in [
+        "pub struct EngineSession",
+        "InputStack",
+        "Executor",
+        "ExecutionContext",
+        "try_execute_assignment",
+        "tex_expand::",
+        "tex_lex::",
+    ] {
         assert!(
-            !shipped_import.contains(retired),
-            "shipped Umber import must not regain {retired}"
+            !source.contains(retired),
+            "Umber library must not regain retired compatibility edge {retired}"
         );
     }
     assert!(
@@ -2509,133 +2508,4 @@ fn run_show_fixtures_harvests_without_committing_immediate_stream_effects() {
         !fixture_dir.join("side-effect.txt").exists(),
         "--show-fixtures must not run the final commit for pending immediate effects"
     );
-}
-
-#[test]
-#[allow(clippy::disallowed_methods)] // host-side corpus files, not engine I/O.
-fn lexer_dynamic_corpus_covers_mutable_input_state() {
-    assert_matches_fixture(
-        "lexer_dynamic",
-        "catcode_mutation",
-        "tokens",
-        &lex_catcode_mutation_fixture(),
-    );
-    assert_matches_fixture(
-        "lexer_dynamic",
-        "endlinechar_mutation",
-        "tokens",
-        &lex_endlinechar_mutation_fixture(),
-    );
-    assert_matches_fixture(
-        "lexer_dynamic",
-        "ignored_character",
-        "tokens",
-        &lex_ignored_character_fixture(),
-    );
-    assert_matches_fixture(
-        "lexer_dynamic",
-        "invalid_character",
-        "tokens",
-        &lex_invalid_character_fixture(),
-    );
-}
-
-fn lex_catcode_mutation_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("catcode_mutation");
-    let mut actual = String::new();
-
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_catcode('@', Catcode::Letter);
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
-
-    actual
-}
-
-fn lex_endlinechar_mutation_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("endlinechar_mutation");
-    stores.set_int_param(IntParam::END_LINE_CHAR, b'!' as i32);
-    let mut actual = String::new();
-
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, b'?' as i32);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    push_next_token(&mut actual, &mut lexer, &mut stores);
-    stores.set_int_param(IntParam::END_LINE_CHAR, -1);
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
-
-    actual
-}
-
-fn lex_ignored_character_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("ignored_character");
-    stores.set_catcode('!', Catcode::Ignored);
-    let mut actual = String::new();
-
-    push_remaining_tokens(&mut actual, &mut lexer, &mut stores);
-
-    actual
-}
-
-fn lex_invalid_character_fixture() -> String {
-    let (mut lexer, mut stores) = lexer_fixture("invalid_character");
-    stores.set_catcode('?', Catcode::Invalid);
-    let mut actual = String::new();
-
-    loop {
-        match lexer.next_token(&mut stores) {
-            Ok(Some(token)) => push_token(&mut actual, token, &stores),
-            Ok(None) => break,
-            Err(err) => {
-                actual.push_str(&format!("error:{err}\n"));
-                break;
-            }
-        }
-    }
-
-    actual
-}
-
-fn lexer_fixture(case: &str) -> (Lexer, Universe) {
-    let path = test_support::repository_root()
-        .join("tests/corpus/lexer_dynamic")
-        .join(case)
-        .join("source.tex");
-    let mut stores = Universe::with_world(World::real());
-    let content = stores
-        .world_mut()
-        .read_file(&path)
-        .expect("open dynamic lexer fixture");
-    stores.set_int_param(IntParam::END_LINE_CHAR, 13);
-    (Lexer::new(WorldInput::from_content(content)), stores)
-}
-
-fn push_remaining_tokens(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
-    while let Some(token) = lexer
-        .next_token(stores)
-        .expect("dynamic lexer fixture should succeed")
-    {
-        push_token(actual, token, stores);
-    }
-}
-
-fn push_next_token(actual: &mut String, lexer: &mut Lexer, stores: &mut Universe) {
-    let token = lexer
-        .next_token(stores)
-        .expect("dynamic lexer fixture should succeed")
-        .expect("dynamic lexer fixture ended early");
-    push_token(actual, token, stores);
-}
-
-fn push_token(actual: &mut String, token: Token, stores: &Universe) {
-    let line = match token {
-        Token::Char { ch, cat } => format!("char:{}:{}", ch as u32, cat as u8),
-        Token::Cs(symbol) => format!("cs:{}", stores.resolve(symbol)),
-        Token::Param(slot) => format!("param:{slot}"),
-        token if token.is_frozen_end_template() => "frozen:endtemplate".to_owned(),
-        token if token.is_frozen_endv() => "frozen:endv".to_owned(),
-        Token::Frozen(_) => unreachable!("invalid frozen token payload"),
-    };
-    actual.push_str(&line);
-    actual.push('\n');
 }
