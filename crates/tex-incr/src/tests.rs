@@ -5337,14 +5337,10 @@ fn root_framing_name_is_distinct_from_editor_provenance_path() {
         .effect_records()
         .iter()
         .filter_map(|effect| match effect {
-            EffectRecord::StreamWrite { sink, text }
-                if matches!(
-                    sink,
-                    tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog
-                ) =>
-            {
-                Some(text.as_str())
-            }
+            EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Terminal | tex_state::PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
             _ => None,
         })
         .collect::<String>();
