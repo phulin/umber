@@ -104,7 +104,7 @@ pub(crate) fn report_undefined_control_sequence(
     input: &InputStack,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
-    crate::diagnostics::report_undefined_control_sequence_in_input(input, stores)?;
+    crate::legacy_diagnostics::report_undefined_control_sequence_in_input(input, stores)?;
     Ok(())
 }
 

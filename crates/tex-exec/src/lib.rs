@@ -8,10 +8,10 @@
 
 mod align;
 mod assignments;
+mod canonical_diagnostics;
 mod canonical_main_control;
 mod canonical_page_output;
 mod checkpoint;
-mod diagnostics;
 mod dispatch;
 mod effective_tail;
 mod error;
@@ -20,6 +20,7 @@ mod executor;
 mod host_api;
 mod job;
 mod job_output;
+mod legacy_diagnostics;
 #[cfg(test)]
 mod legacy_editor_restart;
 mod legacy_output;
@@ -37,6 +38,8 @@ mod splitting;
 mod timing;
 mod transaction;
 mod vertical;
+
+use canonical_diagnostics as diagnostics;
 
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};

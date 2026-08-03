@@ -125,6 +125,58 @@ fn legacy_output_has_no_shipped_command_control_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_diagnostics_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let source = fs::read_to_string(source_root.join("canonical_diagnostics.rs"))
+        .expect("read canonical diagnostics module");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_diagnostics",
+        "raw_delivery",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "canonical_diagnostics.rs must not reference legacy boundary `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn legacy_diagnostics_has_no_canonical_command_control_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("legacy_diagnostics") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "executor.rs"
+                            | "assignments/mod.rs"
+                            | "assignments/scanning.rs"
+                            | "assignments/boxes/packaging.rs"
+                            | "legacy_diagnostics.rs"
+                    )
+                ),
+                "{} must not call the retired diagnostic scanner front",
+                relative.display()
+            );
+        }
+    }
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("legacy_diagnostics"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

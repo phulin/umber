@@ -133,7 +133,7 @@ pub(super) fn scan_register_index_with_context(
     )
     .map_err(ExpandError::from)?;
     if let Some(diagnostic) = scanned.diagnostic() {
-        diagnostics::report_integer_diagnostic(stores, diagnostic);
+        crate::legacy_diagnostics::report_integer_diagnostic(stores, diagnostic);
     }
     let value = scanned.value();
     let maximum: u16 = if stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0 {
@@ -163,7 +163,7 @@ pub(crate) fn scan_i32(
     )
     .map_err(ExpandError::from)?;
     if let Some(diagnostic) = scanned.diagnostic() {
-        diagnostics::report_integer_diagnostic(stores, diagnostic);
+        crate::legacy_diagnostics::report_integer_diagnostic(stores, diagnostic);
     }
     Ok(scanned.value())
 }

@@ -1,17 +1,12 @@
-//! Diagnostic and log-writing primitives.
+//! Source-free canonical diagnostic reporting and rendering.
 
 use std::fmt::Write as _;
 
 use tex_command::DimensionDiagnostic;
-use tex_expand::{
-    get_x_token_with_context, scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
-};
-use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension, PageInsertionStatus};
 use tex_state::print::Selector;
-use tex_state::token::{Catcode, Token, TracedTokenWord};
-use tex_state::token_show::meaning_text;
+use tex_state::token::{Catcode, Token};
 use tex_state::{PrintSink, Universe};
 
 use crate::mode::ignored_depth;
@@ -140,7 +135,7 @@ const fn mode_name(mode: Mode) -> &'static str {
         Mode::DisplayMath => "display math mode",
     }
 }
-use crate::{ExecError, push_tokens, push_traced_tokens};
+use crate::ExecError;
 use crate::{Mode, ModeNest};
 
 /// TeX82 §370's `Complain about an undefined macro` report.
@@ -167,17 +162,6 @@ pub(crate) fn report_undefined_control_sequence(
         report.context(context);
     }
     report.error().jump_out()?;
-    Ok(())
-}
-
-/// [`report_undefined_control_sequence`] for a caller holding a live gullet
-/// input stack rather than the canonical command core's cursor.
-pub(crate) fn report_undefined_control_sequence_in_input(
-    input: &InputStack,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    let context = show_context(stores, &input.summary());
-    report_undefined_control_sequence(stores, Some(context))?;
     Ok(())
 }
 
@@ -244,108 +228,6 @@ pub(crate) fn report_misplaced_alignment_command(
         report.context(context);
     }
     report.error().jump_out()?;
-    Ok(())
-}
-
-pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
-    let token = crate::raw_delivery::next_semantic_raw_token(input, stores)?
-        .ok_or(ExecError::MissingToken { context: "\\show" })?;
-    let token = token.semantic_token();
-    let text = match token {
-        Token::Cs(_)
-        | Token::Char {
-            cat: Catcode::Active,
-            ..
-        } => {
-            format!(
-                "\n> {}={}.\n",
-                token_text(stores, token),
-                show_meaning_text(stores, token)
-            )
-        }
-        Token::Char { .. } | Token::Param(_) | Token::Frozen(_) => {
-            format!("\n> {}.\n", meaning_text(stores, token))
-        }
-    };
-    write_diagnostic(stores, &text);
-    Ok(())
-}
-
-pub(crate) fn execute_showthe(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
-    let text = match scan_the_text_with_context(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        execution,
-        context,
-    ) {
-        Ok(text) => text,
-        Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
-            let token = context.semantic_token();
-            let rendered = match token {
-                Token::Char { ch, cat } => format!("{} character {ch}", catcode_name(cat)),
-                _ => meaning_text(stores, token),
-            };
-            // TeX82 §428's `<Complain that \the can't do this; give zero
-            // result>`. The zero below is §428's `cur_val:=0`, not a guess.
-            crate::error_report::report_input_error(
-                input,
-                stores,
-                &format!("You can't use `{rendered}' after \\the"),
-                &["I'm forgetting what you said and using zero instead."],
-            )?;
-            "0".to_owned()
-        }
-        Err(error) => return Err(error.into()),
-    };
-    write_diagnostic(stores, &format!("\n> {text}.\n"));
-    Ok(())
-}
-
-fn catcode_name(cat: Catcode) -> &'static str {
-    match cat {
-        Catcode::MathShift => "math shift",
-        Catcode::BeginGroup => "begin-group",
-        Catcode::EndGroup => "end-group",
-        Catcode::AlignmentTab => "alignment tab",
-        Catcode::Parameter => "macro parameter",
-        Catcode::Superscript => "superscript",
-        Catcode::Subscript => "subscript",
-        Catcode::Space => "blank space",
-        Catcode::Letter => "the letter",
-        Catcode::Other => "the character",
-        Catcode::Active => "active character",
-        Catcode::Escape => "escape",
-        Catcode::EndLine => "end of line",
-        Catcode::Ignored => "ignored",
-        Catcode::Comment => "comment",
-        Catcode::Invalid => "invalid character",
-    }
-}
-
-pub(crate) fn execute_showtokens(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
-    let tokens = tex_expand::scan::scan_general_text_with_expanded_open_with_driver(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        execution,
-        context,
-    )?;
-    write_diagnostic(
-        stores,
-        &format!(
-            "\n> {}.\n",
-            tokens_text(stores, stores.tokens(tokens.token_list()))
-        ),
-    );
     Ok(())
 }
 
@@ -437,52 +319,8 @@ pub(crate) fn execute_canonical_showgroups(
     Ok(())
 }
 
-pub(crate) fn execute_showifs(input: &InputStack, stores: &mut Universe) {
-    let conditions = input.conditions().collect::<Vec<_>>();
-    let mut text = String::new();
-    text.push('\n');
-    for (index, condition) in conditions.iter().enumerate().rev() {
-        text.push_str("### level ");
-        text.push_str(&(index + 1).to_string());
-        text.push_str(": ");
-        if condition.inverted() {
-            text.push_str("\\unless");
-        }
-        text.push_str(if_type_text(condition.if_type()));
-        text.push('\n');
-    }
-    text.push_str("\n! OK.\n");
-    write_diagnostic(stores, &text);
-}
-
 pub(crate) fn group_kind_text(kind: tex_state::GroupKind) -> &'static str {
     kind.group_text()
-}
-
-fn if_type_text(if_type: u8) -> &'static str {
-    match if_type {
-        1 => "\\if",
-        2 => "\\ifcat",
-        3 => "\\ifnum",
-        4 => "\\ifdim",
-        5 => "\\ifodd",
-        6 => "\\ifvmode",
-        7 => "\\ifhmode",
-        8 => "\\ifmmode",
-        9 => "\\ifinner",
-        10 => "\\ifvoid",
-        11 => "\\ifhbox",
-        12 => "\\ifvbox",
-        13 => "\\ifx",
-        14 => "\\ifeof",
-        15 => "\\iftrue",
-        16 => "\\iffalse",
-        17 => "\\ifcase",
-        18 => "\\ifdefined",
-        19 => "\\ifcsname",
-        20 => "\\iffontchar",
-        _ => "\\if",
-    }
 }
 
 pub(crate) fn execute_showbox(
@@ -573,37 +411,6 @@ pub(crate) fn complete_show(
         ]);
     }
     report.error().jump_out()?;
-    Ok(())
-}
-
-pub(crate) fn execute_message(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    error: bool,
-) -> Result<(), ExecError> {
-    let tokens = scan_balanced_expanded_text(context, input, stores, execution)?;
-    let text = print_text_with_newlinechar(stores, &message_tokens_text(stores, &tokens));
-    if error {
-        write_diagnostic(stores, &format!("\n! {text}.\n"));
-    } else {
-        // TeX82 §1279: break before the message when it cannot fit on the
-        // rest of the line, otherwise separate it with a space. The message
-        // itself goes out through §59's `slow_print`, whose per-character
-        // §58 wrapping `World::write_text` now performs for every printable
-        // sink, so this decides only the leading break or space.
-        let column = diagnostic_print_column(stores);
-        let max_print_line = stores.printer().max_print_line();
-        let mut output = String::new();
-        if column + text.chars().count() > max_print_line - 2 {
-            output.push('\n');
-        } else if column > 0 {
-            output.push(' ');
-        }
-        output.push_str(&text);
-        write_diagnostic(stores, &output);
-    }
     Ok(())
 }
 
@@ -841,10 +648,6 @@ pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: Dim
     }
 }
 
-pub(crate) fn report_integer_diagnostic(stores: &mut Universe, diagnostic: IntegerDiagnostic) {
-    write_diagnostic(stores, &format!("\n! {diagnostic}.\n"));
-}
-
 pub(crate) fn report_dimension_diagnostics(
     stores: &mut Universe,
     diagnostics: impl IntoIterator<Item = DimensionDiagnostic>,
@@ -943,158 +746,6 @@ pub(crate) fn report_insertion_skip_infinite_shrinkage(
     Ok(())
 }
 
-pub(crate) fn execute_change_case(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    uppercase: bool,
-) -> Result<(), ExecError> {
-    let mut tokens = scan_balanced_raw_text(
-        input,
-        stores,
-        execution,
-        if uppercase {
-            "\\uppercase"
-        } else {
-            "\\lowercase"
-        },
-    )?;
-    for token in &mut tokens {
-        let Token::Char { ch, .. } = token else {
-            continue;
-        };
-        let mapped = if uppercase {
-            stores.uccode(*ch)
-        } else {
-            stores.lccode(*ch)
-        };
-        if let Some(mapped) = char::from_u32(mapped).filter(|&mapped| mapped != '\0') {
-            *ch = mapped;
-        }
-    }
-    push_tokens(input, stores, tokens);
-    Ok(())
-}
-
-pub(crate) fn execute_ignorespaces(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<(), ExecError> {
-    loop {
-        // TeX82's `any_mode(ignore_spaces)` branch calls `get_x_token`, so a
-        // macro that initially expands to spaces is consumed through its first
-        // non-space token. Reading raw input here changes tabular widths and
-        // other layout whenever the whitespace comes from a macro argument.
-        let Some(token) = get_x_token_with_context(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-            execution,
-        )?
-        else {
-            return Ok(());
-        };
-        if !is_space(token.semantic_token()) {
-            push_traced_tokens(input, stores, [token]);
-            return Ok(());
-        }
-    }
-}
-
-fn show_meaning_text(stores: &Universe, token: Token) -> String {
-    let text = meaning_text(stores, token);
-    if let Some((prefix, rest)) = text.split_once("macro:") {
-        format!("{prefix}macro:\n{rest}")
-    } else {
-        text
-    }
-}
-
-fn scan_balanced_raw_text(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-    context: &'static str,
-) -> Result<Vec<Token>, ExecError> {
-    let open =
-        next_non_space_x(input, stores, execution)?.ok_or(ExecError::MissingToken { context })?;
-    if !is_begin_group(open) {
-        return Err(ExecError::MissingToken { context });
-    }
-    let mut depth = 1usize;
-    let mut tokens = Vec::new();
-    while let Some(traced) = crate::raw_delivery::next_semantic_raw_token(input, stores)? {
-        let token = traced.semantic_token();
-        if is_begin_group(token) {
-            depth += 1;
-            tokens.push(token);
-        } else if is_end_group(token) {
-            depth -= 1;
-            if depth == 0 {
-                return Ok(tokens);
-            }
-            tokens.push(token);
-        } else {
-            tokens.push(token);
-        }
-    }
-    Err(ExecError::MissingToken { context })
-}
-
-fn scan_balanced_expanded_text(
-    context: TracedTokenWord,
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Vec<Token>, ExecError> {
-    let token_list = tex_expand::scan::scan_general_text_expanded_with_driver(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        execution,
-        context,
-    )?;
-    Ok(stores.tokens(token_list).to_vec())
-}
-
-fn next_non_space_x(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    execution: &mut crate::ExecutionContext<'_>,
-) -> Result<Option<Token>, ExecError> {
-    while let Some(token) = get_x_token_with_context(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        execution,
-    )?
-    .map(|token| token.semantic_token())
-    {
-        if !is_space(token) {
-            return Ok(Some(token));
-        }
-    }
-    Ok(None)
-}
-
-fn tokens_text(stores: &Universe, tokens: &[Token]) -> String {
-    let mut text = String::new();
-    for &token in tokens {
-        append_token_show_text(stores, token, &mut text);
-    }
-    text
-}
-
-fn message_tokens_text(stores: &Universe, tokens: &[Token]) -> String {
-    let mut text = String::new();
-    for &token in tokens {
-        if let Token::Char { ch, .. } = token {
-            text.push(ch);
-        } else {
-            tex_state::token_show::append_token_string_text(stores, token, &mut text);
-        }
-    }
-    text
-}
-
 /// Appends TeX82's printable token form, including the separator that
 /// `print_cs` emits after a control word.
 pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut String) {
@@ -1108,15 +759,6 @@ pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut
 /// stack is [`tex_state::print::render_error_context`].
 pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -> String {
     input.show_context(stores)
-}
-
-fn diagnostic_print_column(stores: &Universe) -> usize {
-    stores
-        .world()
-        .stream_bufs()
-        .terminal_partial_line()
-        .chars()
-        .count()
 }
 
 pub(crate) fn print_text_with_newlinechar(stores: &Universe, text: &str) -> String {
@@ -1137,36 +779,6 @@ fn write_diagnostic(stores: &mut Universe, text: &str) {
     stores
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, text);
-}
-
-fn is_begin_group(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::BeginGroup,
-            ..
-        }
-    )
-}
-
-fn is_end_group(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::EndGroup,
-            ..
-        }
-    )
-}
-
-fn is_space(token: Token) -> bool {
-    matches!(
-        token,
-        Token::Char {
-            cat: Catcode::Space,
-            ..
-        }
-    )
 }
 
 /// web2c's `[53.1374]` change to tex.web: a successful `\openout` announces

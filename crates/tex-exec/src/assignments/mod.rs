@@ -2431,7 +2431,7 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::Show => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_show(input, stores)?;
+                crate::legacy_diagnostics::execute_show(input, stores)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowBox => {
@@ -2448,12 +2448,22 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::ShowThe => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showthe(command.traced, input, stores, execution)?;
+                crate::legacy_diagnostics::execute_showthe(
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowTokens => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showtokens(command.traced, input, stores, execution)?;
+                crate::legacy_diagnostics::execute_showtokens(
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowGroups => {
@@ -2463,17 +2473,29 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::ShowIfs => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_showifs(input, stores);
+                crate::legacy_diagnostics::execute_showifs(input, stores);
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Message => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(command.traced, input, stores, execution, false)?;
+                crate::legacy_diagnostics::execute_message(
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                    false,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ErrMessage => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_message(command.traced, input, stores, execution, true)?;
+                crate::legacy_diagnostics::execute_message(
+                    command.traced,
+                    input,
+                    stores,
+                    execution,
+                    true,
+                )?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::ShowLists => {
@@ -2489,17 +2511,17 @@ fn execute_prefixed_command(
             }
             UnexpandablePrimitive::Uppercase => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_change_case(input, stores, execution, true)?;
+                crate::legacy_diagnostics::execute_change_case(input, stores, execution, true)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::Lowercase => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_change_case(input, stores, execution, false)?;
+                crate::legacy_diagnostics::execute_change_case(input, stores, execution, false)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::IgnoreSpaces => {
                 reject_all_prefixes(prefixes)?;
-                diagnostics::execute_ignorespaces(input, stores, execution)?;
+                crate::legacy_diagnostics::execute_ignorespaces(input, stores, execution)?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::InteractionMode => {
