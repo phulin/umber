@@ -513,7 +513,7 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
         (GlueKind::ThinMuSkip, None, "\\glue(\\thinmuskip) 1.0\n"),
         (GlueKind::MedMuSkip, None, "\\glue(\\medmuskip) 1.0\n"),
         (GlueKind::ThickMuSkip, None, "\\glue(\\thickmuskip) 1.0\n"),
-        (GlueKind::NonScript, None, "\\glue(\\nonscript) 1.0\n"),
+        (GlueKind::NonScript, None, "\\glue(\\nonscript)\n"),
     ];
 
     for (kind, payload, expected) in cases {
@@ -538,6 +538,67 @@ fn glue_subtype_dump_matrix_preserves_canonical_subtype_units() {
         assert_eq!(stores.glue(spec).width, Scaled::from_raw(Scaled::UNITY));
         assert!(stores.nodes(empty).is_empty());
     }
+}
+
+#[test]
+fn zero_glue_dump_distinguishes_nonscript_sentinel_from_printed_specs() {
+    let mut stores = Universe::new();
+    let zero = stores.intern_glue(GlueSpec::ZERO);
+    let empty = stores.freeze_node_list(&[]);
+    let leader = LeaderPayload::HList(zero_sized_hbox(empty));
+    let cases = [
+        (GlueKind::NonScript, None, "\\glue(\\nonscript)\n"),
+        (GlueKind::Normal, None, "\\glue 0.0\n"),
+        (GlueKind::MuSkip, None, "\\glue(\\mskip) 0.0mu\n"),
+        (
+            GlueKind::Leaders,
+            Some(leader),
+            "\\leaders 0.0\n.\\hbox(0.0+0.0)x0.0\n",
+        ),
+    ];
+
+    for (kind, payload, expected) in cases {
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &[Node::Glue {
+                    spec: zero,
+                    kind,
+                    leader: payload,
+                }],
+                DumpConfig {
+                    breadth: 10,
+                    depth: 10,
+                    profile: tex_command::CommandProfile::TEX82,
+                },
+            ),
+            expected,
+            "wrong zero-glue dump for {kind:?}",
+        );
+    }
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[
+                Node::Glue {
+                    spec: zero,
+                    kind: GlueKind::NonScript,
+                    leader: None,
+                },
+                Node::Kern {
+                    amount: Scaled::from_raw(Scaled::UNITY),
+                    kind: KernKind::Explicit,
+                },
+            ],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        ),
+        "\\glue(\\nonscript)\n\\kern 1.0\n",
+    );
 }
 
 #[test]

@@ -234,12 +234,11 @@ fn dump_node(
                 );
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
-                let _ = writeln!(
-                    out,
-                    "{}{}",
-                    kind.glue_dump_prefix(),
-                    format_glue(stores.glue(*spec), kind.glue_unit())
-                );
+                out.push_str(kind.glue_dump_prefix());
+                if kind.prints_glue_spec() {
+                    out.push_str(&format_glue(stores.glue(*spec), kind.glue_unit()));
+                }
+                out.push('\n');
             }
         }
         Node::HList(box_node) => {
@@ -1145,6 +1144,7 @@ trait GlueKindDump {
     fn glue_dump_prefix(self) -> &'static str;
     fn leader_dump_prefix(self) -> &'static str;
     fn glue_unit(self) -> &'static str;
+    fn prints_glue_spec(self) -> bool;
 }
 
 impl GlueKindDump for GlueKind {
@@ -1173,7 +1173,7 @@ impl GlueKindDump for GlueKind {
             Self::ThinMuSkip => "\\glue(\\thinmuskip) ",
             Self::MedMuSkip => "\\glue(\\medmuskip) ",
             Self::ThickMuSkip => "\\glue(\\thickmuskip) ",
-            Self::NonScript => "\\glue(\\nonscript) ",
+            Self::NonScript => "\\glue(\\nonscript)",
         }
     }
 
@@ -1195,5 +1195,13 @@ impl GlueKindDump for GlueKind {
             Self::MuSkip => "mu",
             _ => "",
         }
+    }
+
+    fn prints_glue_spec(self) -> bool {
+        // TeX82 §189's `cond_math_glue` branch prints the `\nonscript`
+        // subtype label but deliberately skips both the separating space and
+        // `print_spec`. The zero glue specification is only a sentinel here;
+        // ordinary zero glue still prints as `0.0`.
+        self != Self::NonScript
     }
 }
