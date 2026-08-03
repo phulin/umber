@@ -671,6 +671,14 @@ fn dump_fraction_part(
 ) {
     let old_len = out.len();
     dump_list(stores, list, config, depth, ListContext::Neutral, out);
+    if old_len == out.len() {
+        // TeX82 §697 passes the numerator and denominator records to §692's
+        // subsidiary-data printer as `sub_mlist` fields. A null list is
+        // therefore a present empty mlist (`{}`), not an absent math field.
+        write_prefix(depth - 1, out);
+        let _ = writeln!(out, "{marker}{{}}");
+        return;
+    }
     let mut line_start = old_len;
     while line_start < out.len() {
         let marker_index = line_start + depth.max(0) as usize;

@@ -1518,6 +1518,63 @@ fn math_dump_distinguishes_empty_submlist() {
     );
 }
 
+/// TeX82 §§692/697 preserve the math-field tag independently of its
+/// payload pointer: `empty` is silent, math characters print directly, a null
+/// `sub_box` recursively prints nothing, and a null `sub_mlist` prints `{}`.
+/// Fraction numerator and denominator fields are always the latter kind.
+#[test]
+fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let child = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(math_char(2, 'x')),
+    ))]);
+    let config = DumpConfig {
+        breadth: 100,
+        depth: 100,
+        profile: tex_command::CommandProfile::TEX82,
+    };
+
+    for (field, expected) in [
+        (MathField::Empty, ""),
+        (MathField::MathChar(math_char(2, 'x')), "...\\fam2 x\n"),
+        (MathField::MathTextChar(math_char(2, 'x')), "...\\fam2 x\n"),
+        (MathField::SubBox(empty), ""),
+        (MathField::SubBox(child), "...\\mathord\n....\\fam2 x\n"),
+        (MathField::SubMlist(empty), "...{}\n"),
+        (MathField::SubMlist(child), "...\\mathord\n....\\fam2 x\n"),
+    ] {
+        let mut out = String::new();
+        dump_math_field(&stores, &field, &config, 2, '.', &mut out);
+        assert_eq!(out, expected, "field={field:?}");
+    }
+
+    for (numerator, denominator, expected) in [
+        (
+            empty,
+            child,
+            "\\fraction, thickness = default\n\\{}\n/\\mathord\n/.\\fam2 x\n",
+        ),
+        (
+            child,
+            empty,
+            "\\fraction, thickness = default\n\\\\mathord\n\\.\\fam2 x\n/{}\n",
+        ),
+    ] {
+        let fraction = MathFraction {
+            numerator,
+            denominator,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        };
+        let mut out = String::new();
+        dump_fraction(&stores, &fraction, &config, -1, &mut out);
+        assert_eq!(out, expected);
+    }
+}
+
 /// TeX82 §§689--690 (`tex.web:13581-13622`) visit all four choice arms;
 /// §692 applies the same depth cutoff independently within each arm.
 #[test]
