@@ -1096,6 +1096,49 @@ fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
 }
 
 #[test]
+fn rebox_restores_clean_character_italic_kern_before_infinite_glue() {
+    // TeX82 §715 restores the difference between a clean character's
+    // natural width and the width retained after §720 removed its italic
+    // kern. The equal-width control does not enter `rebox`'s centering path.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let font = universe.math_family_font(MathFontSize::Text, 0);
+    let metrics = universe
+        .font_char_metrics(font, b'a')
+        .expect("test font has a");
+    let character = MathNode::Char {
+        font,
+        ch: 'a',
+        glyph_id: None,
+        metrics,
+        origin: Default::default(),
+    };
+    let retained = add(metrics.width, metrics.italic_correction);
+    let target = add(retained, sc(7));
+    let (layout, boxed) =
+        rebox::test_rebox_clean_character(&universe, &params, character.clone(), retained, target);
+    assert!(matches!(
+        list_nodes(&layout, boxed.list).as_slice(),
+        [
+            MathNode::Glue { .. },
+            MathNode::Char { ch: 'a', .. },
+            MathNode::Kern {
+                amount,
+                kind: KernKind::Font,
+            },
+            MathNode::Glue { .. },
+        ] if *amount == metrics.italic_correction
+    ));
+
+    let (control_layout, control) =
+        rebox::test_rebox_clean_character(&universe, &params, character, retained, retained);
+    assert!(matches!(
+        list_nodes(&control_layout, control.list).as_slice(),
+        [MathNode::Char { ch: 'a', .. }]
+    ));
+}
+
+#[test]
 fn scripts_observe_noncharacter_nucleus_measurement_hpack() {
     // TeX82 §754 measures a non-character nucleus through hpack(p, natural)
     // before it constructs either script box. The call is still made for an

@@ -1,5 +1,5 @@
 use tex_state::glue::{GlueSpec, Order};
-use tex_state::node::Sign;
+use tex_state::node::{KernKind, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 use super::{BoxAxis, Context, MathBox, MathNode, MathTypesetState, sub};
@@ -12,7 +12,7 @@ pub(super) fn rebox(
     let slack = sub(width, boxed.width);
     // TeX82 §715 changes the width field directly for an empty box.
     if slack.raw() != 0 && !boxed.list.is_empty() {
-        let payload = if matches!(boxed.axis, BoxAxis::Vertical) {
+        let mut payload = if matches!(boxed.axis, BoxAxis::Vertical) {
             // A vertical source first crosses the natural hpack boundary.
             let list = ctx.layout.hlist([MathNode::VList(boxed.clone())]);
             let natural = ctx.layout.hpack(list);
@@ -22,6 +22,25 @@ pub(super) fn rebox(
         } else {
             boxed.list
         };
+        // TeX82 §715: `clean_box` (§720) can leave a one-character
+        // payload whose packed width still includes the physically removed
+        // italic correction. `rebox` restores that difference as a normal
+        // kern before adding the two `ss_glue` nodes. The packed width, not
+        // the surviving list width, owns the correction at this boundary.
+        if let Some(character @ MathNode::Char { metrics, .. }) =
+            ctx.layout.single_node(payload).cloned()
+        {
+            let correction = sub(boxed.width, metrics.width);
+            if correction.raw() != 0 {
+                payload = ctx.layout.hlist([
+                    character,
+                    MathNode::Kern {
+                        amount: correction,
+                        kind: KernKind::Font,
+                    },
+                ]);
+            }
+        }
         let ss_glue = MathNode::Glue {
             spec: GlueSpec {
                 width: Scaled::from_raw(0),
@@ -87,6 +106,33 @@ pub(crate) fn test_rebox(
         boxed.axis = BoxAxis::Vertical;
     }
     assert_eq!(boxed.width, source_width);
+    rebox(&mut ctx, &mut boxed, target_width);
+    let layout = ctx.layout.finish(boxed.list);
+    (layout, boxed)
+}
+
+#[cfg(test)]
+pub(crate) fn test_rebox_clean_character(
+    state: &impl MathTypesetState,
+    params: &super::MathParams,
+    character: MathNode,
+    retained_width: Scaled,
+    target_width: Scaled,
+) -> (super::MathLayout, MathBox) {
+    let mut ctx = Context {
+        state,
+        params,
+        style: super::Style::TEXT,
+        mu: Scaled::from_raw(0),
+        layout: super::MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
+    };
+    let list = ctx.layout.hlist([character]);
+    let mut boxed = ctx.layout.hpack(list);
+    boxed.width = retained_width;
     rebox(&mut ctx, &mut boxed, target_width);
     let layout = ctx.layout.finish(boxed.list);
     (layout, boxed)
