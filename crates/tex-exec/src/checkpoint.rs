@@ -89,6 +89,7 @@ impl EngineCheckpoint {
         nest: &ModeNest,
         universe: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
+        exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
         let command = command.publish_summary()?;
         let root_anchor = command.root_source_anchor().unwrap_or(0);
@@ -98,7 +99,11 @@ impl EngineCheckpoint {
         let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
             .expect("effect log position must fit in memory address space");
         let artifact_prefix = universe.world().artifact_pos();
-        let universe = universe.snapshot();
+        let universe = if exact_state_identity {
+            universe.snapshot_with_exact_identity()
+        } else {
+            universe.snapshot()
+        };
         let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
         Ok(Self {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
@@ -762,6 +767,7 @@ mod tests {
             executor.nest(),
             &mut universe,
             ExecutionBudgetCounters::default(),
+            false,
         )
         .expect("quiescent command publishes");
         let expected_command = checkpoint.command_summary().cloned().expect("summary");
@@ -799,6 +805,7 @@ mod tests {
             Executor::new().nest(),
             &mut source_universe,
             ExecutionBudgetCounters::default(),
+            false,
         )
         .expect("quiescent command publishes");
         let mut universe = Universe::new();

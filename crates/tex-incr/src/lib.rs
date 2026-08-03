@@ -655,7 +655,7 @@ impl RevisionCandidate {
                 CandidateSink::Advance(sink) => sink,
             };
             if sink.wants_checkpoint(EngineBoundary::JobStart) {
-                let checkpoint = self.control.capture_checkpoint(
+                let checkpoint = self.control.capture_checkpoint_with_exact_identity(
                     EngineBoundary::JobStart,
                     &mut self.universe,
                     ExecutionBudgetCounters::default(),
@@ -689,7 +689,7 @@ impl RevisionCandidate {
                             CandidateSink::Advance(sink) => sink,
                         };
                         if sink.wants_checkpoint(boundary) {
-                            let checkpoint = self.control.capture_checkpoint(
+                            let checkpoint = self.control.capture_checkpoint_with_exact_identity(
                                 boundary,
                                 &mut self.universe,
                                 ExecutionBudgetCounters::default(),

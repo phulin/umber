@@ -881,6 +881,25 @@ impl CanonicalMainControl {
             &self.modes,
             stores,
             budget_counters,
+            false,
+        )
+    }
+
+    /// Captures a quiescent named checkpoint with the strong optional state
+    /// identity required by incremental suffix-adoption comparisons.
+    pub fn capture_checkpoint_with_exact_identity(
+        &self,
+        boundary: crate::EngineBoundary,
+        stores: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
+        crate::EngineCheckpoint::capture_canonical(
+            boundary,
+            &self.command,
+            &self.modes,
+            stores,
+            budget_counters,
+            true,
         )
     }
 

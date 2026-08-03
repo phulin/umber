@@ -500,6 +500,13 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     let initial = session
         .accept_cold_candidate(initial_candidate)
         .expect("accept initial external-input run");
+    assert!(
+        initial
+            .history
+            .iter()
+            .all(|record| record.checkpoint().has_exact_state_identity()),
+        "canonical candidate history publishes exact identities while its roots are live",
+    );
     let initial_artifacts = initial
         .artifacts
         .iter()
@@ -4585,6 +4592,65 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                     })
                 }),
             CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+        }
+    }
+}
+
+#[test]
+fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
+    let mut session = Session::start(
+        template(),
+        "staged-canonical-input",
+        RevisionId::new(1),
+        "\\input child \\end",
+        usize::MAX,
+    )
+    .expect("session starts");
+    let mut inputs = StagedInputResolver::default();
+    let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    let awaiting = candidate
+        .drive_with_resource_resolvers(
+            &mut DecliningStagedCanonicalHost::new(&mut inputs),
+            &Cancellation::new(),
+        )
+        .expect("missing input suspends");
+    assert!(matches!(
+        awaiting,
+        RevisionCandidateResult::AwaitingResources(CanonicalResourceNeed::Input { ref name, .. })
+            if name == "child.tex"
+    ));
+    inputs.files.insert("child".to_owned(), "\\relax".to_owned());
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut DecliningStagedCanonicalHost::new(&mut inputs),
+                &Cancellation::new(),
+            )
+            .expect("provisioned retry completes"),
+        RevisionCandidateResult::Complete
+    ));
+    session
+        .accept_cold_candidate(candidate)
+        .expect("completed retry accepts");
+}
+
+struct DecliningStagedCanonicalHost<'a>(StagedCanonicalHost<'a>);
+
+impl<'a> DecliningStagedCanonicalHost<'a> {
+    fn new(inputs: &'a mut StagedInputResolver) -> Self {
+        Self(StagedCanonicalHost::new(inputs))
+    }
+}
+
+impl CanonicalResourceHost for DecliningStagedCanonicalHost<'_> {
+    fn fulfill(
+        &mut self,
+        world: &mut CanonicalResourceWorld<'_>,
+        need: &CanonicalResourceNeed,
+    ) -> CanonicalResourceOutcome {
+        match self.0.fulfill(world, need) {
+            CanonicalResourceOutcome::Unavailable => CanonicalResourceOutcome::Declined,
+            outcome => outcome,
         }
     }
 }
