@@ -698,7 +698,7 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
     let MathNode::HList(sup) = sup_node else {
         panic!("expected superscript")
     };
-    let MathNode::Kern { amount, .. } = kern_node else {
+    let MathNode::Kern { amount, kind } = kern_node else {
         panic!("expected script kern")
     };
     let MathNode::HList(sub) = sub_node else {
@@ -708,6 +708,7 @@ fn script_pair_uses_italic_delta_scriptspace_and_cramped_substyle() {
     assert_eq!(sup.width, sc(10));
     assert_eq!(sub.width, sc(10));
     assert_eq!(*amount, sc(21));
+    assert_eq!(*kind, KernKind::Font);
 }
 
 #[test]

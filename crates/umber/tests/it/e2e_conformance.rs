@@ -2236,6 +2236,17 @@ fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
     );
 }
 
+#[test]
+fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
+    // Exact TRIP source through lines 438--440 reaches the malformed formula's
+    // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated
+    // separator a normal kern, printed without the explicit-subtype space.
+    let log = run_focused_loaded_trip_through(440);
+    let expected = ".....\\ip /\n.....\\kern12.3\n.....\\hbox(0.0+0.0)x-0.01";
+    assert!(log.contains(expected), "script-pair node dump:\n{log}");
+    assert!(!log.contains(".....\\kern 12.3"), "{log}");
+}
+
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());

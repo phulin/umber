@@ -6,8 +6,8 @@ use tex_state::env::banks::IntParam;
 use tex_state::glue::Order;
 use tex_state::math::{LimitType, MathChar, MathChoice, MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::node::{
-    AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, Node, Sign, UnsetKind,
-    UnsetNode, UnsetNodeFields, Whatsit,
+    AdjustNode, BoxNodeFields, DiscKind, GlueKind, KernKind, LeaderPayload, MarginKernSide, Node,
+    Sign, UnsetKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token};
@@ -450,6 +450,80 @@ fn node_dump_covers_leader_kern_math_penalty_and_adjustment_rows() {
         stores.nodes(adjustment).to_vec().as_slice(),
         [Node::Kern { .. }, Node::Penalty(10000)]
     ));
+}
+
+#[test]
+fn kern_subtype_dump_matrix_preserves_canonical_spacing_and_annotations() {
+    // TeX82 §184 inserts a space after `\kern` for every non-normal
+    // subtype. pdfTeX's added automatic and margin forms retain their own
+    // annotations; a normal font/italic kern remains the sole bare form.
+    let stores = Universe::new();
+    let font = stores.current_font();
+    let nodes = [
+        Node::Kern {
+            amount: Scaled::from_raw(Scaled::UNITY),
+            kind: KernKind::Font,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(2 * Scaled::UNITY),
+            kind: KernKind::Explicit,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(3 * Scaled::UNITY),
+            kind: KernKind::Accent,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(4 * Scaled::UNITY),
+            kind: KernKind::Mu,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(5 * Scaled::UNITY),
+            kind: KernKind::Auto,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(6 * Scaled::UNITY),
+            kind: KernKind::LeftMargin,
+        },
+        Node::Kern {
+            amount: Scaled::from_raw(7 * Scaled::UNITY),
+            kind: KernKind::RightMargin,
+        },
+        Node::MarginKern {
+            amount: Scaled::from_raw(8 * Scaled::UNITY),
+            side: MarginKernSide::Left,
+            font,
+            ch: b'A',
+        },
+        Node::MarginKern {
+            amount: Scaled::from_raw(9 * Scaled::UNITY),
+            side: MarginKernSide::Right,
+            font,
+            ch: b'A',
+        },
+    ];
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &nodes,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+                profile: tex_command::CommandProfile::PDFTEX14027,
+            },
+        ),
+        concat!(
+            "\\kern1.0\n",
+            "\\kern 2.0\n",
+            "\\kern 3.0 (for accent)\n",
+            "\\mkern4.0mu\n",
+            "\\kern 5.0 (for \\pdfprependkern/\\pdfappendkern)\n",
+            "\\kern6.0 (left margin)\n",
+            "\\kern7.0 (right margin)\n",
+            "\\kern8.0 (left margin)\n",
+            "\\kern9.0 (right margin)\n",
+        ),
+    );
 }
 
 #[test]

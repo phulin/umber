@@ -233,7 +233,10 @@ fn script_pair(
         MathNode::HList(sup),
         MathNode::Kern {
             amount: kern,
-            kind: KernKind::Explicit,
+            // TeX82 §158 constructs the sup/sub separator with `new_kern`,
+            // whose §135 default subtype is normal. This is generated math
+            // layout, not a user `\kern`.
+            kind: KernKind::Font,
         },
         MathNode::HList(sub_box),
     ]);
