@@ -118,13 +118,7 @@ impl EngineCheckpoint {
         ))?;
         let (_, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
-                let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-                    summary,
-                    paragraphs
-                        .iter()
-                        .map(|paragraph| (paragraph.input(), paragraph.accepted_origin_resolver())),
-                    source,
-                );
+                let owned = tex_command::OwnedCommandContinuation::detach(summary, source);
                 let mut meanings = std::collections::HashMap::new();
                 for paragraph in paragraphs {
                     for raw in paragraph.meaning_dependency_raws() {
@@ -136,7 +130,7 @@ impl EngineCheckpoint {
                 (owned, meanings)
             })
             .map_err(EditorRestoreError::Fork)?;
-        let (_, materialized_inputs) = owned.materialize_with_paragraphs(destination);
+        let _ = owned.materialize(destination);
         let materialized_meanings = detached_meanings
             .into_iter()
             .map(|(raw, (kind, spelling))| {
@@ -154,8 +148,8 @@ impl EngineCheckpoint {
             })
             .collect();
         let mut materialized = paragraphs.to_vec();
-        for (paragraph, input) in materialized.iter_mut().zip(materialized_inputs) {
-            paragraph.replace_input(input);
+        for paragraph in &mut materialized {
+            paragraph.materialize_owned_input_into(destination);
             paragraph.remap_meaning_dependencies(&materialized_meanings);
         }
         materialized.retain(|paragraph| paragraph.can_mount_finished_lines(destination));
@@ -426,7 +420,7 @@ impl EngineCheckpoint {
             })
             .collect();
         for (paragraph, input) in paragraphs.iter_mut().zip(materialized_paragraphs) {
-            paragraph.replace_input(input);
+            paragraph.replace_input(input, &mut universe);
             paragraph.remap_meaning_dependencies(&materialized_meanings);
         }
         // A retained graph is an optional replay candidate, not part of the

@@ -612,6 +612,7 @@ type ObservationSlot = Option<ObservationBuffer>;
 pub struct CanonicalParagraphRegion {
     identity: u64,
     input: tex_command::ParagraphInputTransaction,
+    owned_input: Arc<tex_command::OwnedCommandContinuation>,
     // Paragraph boundaries are immutable after capture and are copied into
     // every scalar command savepoint while a paragraph is active. Sharing
     // them keeps that rollback bookkeeping constant-time without changing
@@ -637,6 +638,19 @@ pub struct CanonicalParagraphRegion {
 }
 
 impl CanonicalParagraphRegion {
+    pub(crate) fn materialize_owned_input_into(&mut self, destination: &mut Universe) {
+        let (summary, mut inputs) = self.owned_input.materialize_with_paragraphs(destination);
+        self.input = inputs
+            .pop()
+            .expect("paragraph-owned continuation contains its input transaction");
+        assert!(inputs.is_empty());
+        self.owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+            &summary,
+            [(&self.input, None)],
+            destination,
+        ));
+    }
+
     /// Whether a cold replacement may enter this region without first
     /// restoring an accepted execution checkpoint. Typed barriers summarize
     /// effects, unsupported mutations, and ownership transitions whose cold
@@ -646,8 +660,18 @@ impl CanonicalParagraphRegion {
         self.barriers.is_empty()
     }
 
-    pub(crate) fn replace_input(&mut self, input: tex_command::ParagraphInputTransaction) {
+    pub(crate) fn replace_input(
+        &mut self,
+        input: tex_command::ParagraphInputTransaction,
+        destination: &mut Universe,
+    ) {
         self.input = input;
+        let summary = self.owned_input.materialize(destination);
+        self.owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+            &summary,
+            [(&self.input, None)],
+            destination,
+        ));
     }
 
     pub(crate) fn remap_meaning_dependencies(
@@ -835,7 +859,12 @@ impl CanonicalParagraphRegion {
         let mut rebound = self.clone();
         rebound.input = self
             .input
-            .rebind_unchanged_root_prefix(old, new, unchanged_end)?;
+            .rebind_unchanged_root_prefix(old, Arc::clone(&new), unchanged_end)?;
+        if !Arc::make_mut(&mut rebound.owned_input)
+            .rebind_paragraph_unchanged_root_prefix(old, new, unchanged_end)
+        {
+            return None;
+        }
         Some(rebound)
     }
 
@@ -850,7 +879,14 @@ impl CanonicalParagraphRegion {
         edited: std::ops::Range<usize>,
     ) -> Option<Self> {
         let mut rebound = self.clone();
-        rebound.input = self.input.rebind_edited_root(old, new, edited)?;
+        rebound.input = self
+            .input
+            .rebind_edited_root(old, Arc::clone(&new), edited.clone())?;
+        if !Arc::make_mut(&mut rebound.owned_input)
+            .rebind_paragraph_edited_root(old, new, edited)
+        {
+            return None;
+        }
         Some(rebound)
     }
 }
@@ -934,6 +970,13 @@ impl CanonicalParagraphRecorder {
         let Some(input) = command.finish_paragraph_input_transaction() else {
             return;
         };
+        let owned_input = Arc::new(tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+            &command
+                .publish_summary()
+                .expect("finished paragraph leaves a publishable command boundary"),
+            [(&input, None)],
+            stores,
+        ));
         let finished = modes.take_completed_paragraph_nodes().unwrap_or_default();
         let finished_lines = (!finished.is_empty()).then(|| {
             let list = stores.freeze_node_list(&finished);
@@ -989,6 +1032,7 @@ impl CanonicalParagraphRecorder {
         let region = CanonicalParagraphRegion {
             identity: self.next_identity,
             input,
+            owned_input,
             starting_universe: self
                 .starting_universe
                 .take()

@@ -60,6 +60,45 @@ pub struct OwnedCommandContinuation {
 }
 
 impl OwnedCommandContinuation {
+    /// Rebinds the sole retained paragraph transaction across an unchanged
+    /// root prefix while preserving its detached arena closure.
+    #[must_use]
+    pub fn rebind_paragraph_unchanged_root_prefix(
+        &mut self,
+        old: &[u8],
+        new: std::sync::Arc<[u8]>,
+        unchanged_end: usize,
+    ) -> bool {
+        let [transaction] = self.transactions.as_slice() else {
+            return false;
+        };
+        let Some(rebound) = transaction.rebind_unchanged_root_prefix(old, new, unchanged_end)
+        else {
+            return false;
+        };
+        self.transactions[0] = rebound;
+        true
+    }
+
+    /// Rebinds the sole retained paragraph transaction around one root edit
+    /// while preserving its detached arena closure.
+    #[must_use]
+    pub fn rebind_paragraph_edited_root(
+        &mut self,
+        old: &[u8],
+        new: std::sync::Arc<[u8]>,
+        edited: std::ops::Range<usize>,
+    ) -> bool {
+        let [transaction] = self.transactions.as_slice() else {
+            return false;
+        };
+        let Some(rebound) = transaction.rebind_edited_root(old, new, edited) else {
+            return false;
+        };
+        self.transactions[0] = rebound;
+        true
+    }
+
     #[must_use]
     pub fn detach(summary: &CommandSummary, universe: &Universe) -> Self {
         let mut owned = Self {
