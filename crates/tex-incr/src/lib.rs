@@ -472,12 +472,12 @@ impl RevisionCandidate {
                     .coverage()
                     .root_start()
                     .is_some_and(|start| start >= position);
-                if starts_in_suffix
-                    && !accepted
-                        .iter()
-                        .any(|accepted| accepted.identity() == region.identity())
+                if let Some(materialized) = accepted
+                    .iter_mut()
+                    .find(|accepted| accepted.identity() == region.identity())
                 {
-                    region.publish_carried_history(&mut self.universe);
+                    *materialized = region.clone();
+                } else if starts_in_suffix {
                     accepted.push(region.clone());
                 }
             }
@@ -1597,7 +1597,12 @@ impl Session {
         control
             .capabilities_mut()
             .set_startup_job_name(&self.job_name);
-        let (mut universe, restart_fork_latency, replay_suffix, validation_failures) =
+        // Convergence keeps the accepted substrate, so the paragraph suffix
+        // published with that generation must keep its substrate-owned input
+        // handles. The fork returns separately materialized transactions for
+        // speculative execution; those handles die with the scratch universe.
+        let retained_replay_suffix = replay_suffix.clone();
+        let (mut universe, restart_fork_latency, materialized_replay_suffix, validation_failures) =
             anchor.checkpoint().fork_canonical_editor_with_paragraphs(
                 &mut control,
                 substrate,
@@ -1609,7 +1614,7 @@ impl Session {
                     paragraphs: &replay_suffix,
                 },
             )?;
-        control.install_paragraph_replay_regions(replay_suffix.iter().cloned());
+        control.install_paragraph_replay_regions(materialized_replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
             universe.world_mut().set_memory_file(path, bytes.clone())?;
         }
@@ -1641,7 +1646,7 @@ impl Session {
                 restart_fork_latency,
             },
             carried_paragraphs,
-            replay_suffix,
+            replay_suffix: retained_replay_suffix,
         })
     }
 

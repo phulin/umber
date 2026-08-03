@@ -739,7 +739,12 @@ impl CanonicalParagraphRegion {
         &mut self,
         resolver: std::sync::Arc<tex_state::ParagraphOriginResolver>,
     ) {
-        if self.finished_lines.is_some() {
+        if self.finished_lines.is_some()
+            && matches!(
+                self.line_provenance,
+                tex_state::ParagraphLineProvenance::Pending
+            )
+        {
             self.line_provenance = tex_state::ParagraphLineProvenance::Accepted(resolver);
         }
     }

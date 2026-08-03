@@ -49,6 +49,7 @@ pub struct OwnedCommandContinuation {
     origins: HashMap<OriginId, OriginRecord>,
     symbols: HashMap<Symbol, OwnedSymbol>,
     transactions: Vec<ParagraphInputTransaction>,
+    allow_missing_origins: bool,
 }
 
 impl OwnedCommandContinuation {
@@ -62,6 +63,7 @@ impl OwnedCommandContinuation {
             origins: HashMap::new(),
             symbols: HashMap::new(),
             transactions: Vec::new(),
+            allow_missing_origins: false,
         };
         owned.collect_summary(universe);
         owned
@@ -76,6 +78,7 @@ impl OwnedCommandContinuation {
         universe: &Universe,
     ) -> Self {
         let mut owned = Self::detach(summary, universe);
+        owned.allow_missing_origins = true;
         for paragraph in paragraphs {
             owned.collect_input(&paragraph.starting_input, universe);
             owned.collect_input(&paragraph.ending_input, universe);
@@ -83,6 +86,7 @@ impl OwnedCommandContinuation {
             owned.collect_parameters(&paragraph.ending_parameters, universe);
             owned.transactions.push(paragraph.clone());
         }
+        owned.allow_missing_origins = false;
         owned
     }
 
@@ -261,7 +265,17 @@ impl OwnedCommandContinuation {
         if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
             return;
         }
-        let record = universe.origin(id);
+        // Paragraph endpoints can postdate the checkpoint snapshot that owns
+        // the semantic continuation. Such an origin is diagnostic-only: the
+        // accepted paragraph keeps its stable line-provenance resolver, while
+        // a restored cold path must not retain a generation-local arena id.
+        let record = universe.origin_if_live(id).unwrap_or_else(|| {
+            assert!(
+                self.allow_missing_origins,
+                "command continuation origin is not live"
+            );
+            OriginRecord::UnknownBootstrap
+        });
         self.origins.insert(id, record);
         match record {
             OriginRecord::MacroInvocation(origin) => {
