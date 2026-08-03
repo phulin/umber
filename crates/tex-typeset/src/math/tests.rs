@@ -2051,7 +2051,10 @@ fn nested_under_overline_retains_inner_vertical_box() {
     let underline_nodes = list_nodes(&layout, underline.list);
     let [
         MathNode::VList(overline),
-        MathNode::Kern { .. },
+        MathNode::Kern {
+            kind: underline_kern_kind,
+            ..
+        },
         MathNode::Rule { .. },
     ] = underline_nodes.as_slice()
     else {
@@ -2059,6 +2062,7 @@ fn nested_under_overline_retains_inner_vertical_box() {
             "expected nested overline vbox followed by underline material: {underline_nodes:#?}"
         );
     };
+    assert_eq!(*underline_kern_kind, KernKind::Font);
     assert!(matches!(
         list_nodes(&layout, overline.list).as_slice(),
         [
@@ -2210,10 +2214,11 @@ fn assert_radical_clearance(layout: &MathLayout, expected: Scaled) {
     let [_, _, kern, _] = overbar_nodes.as_slice() else {
         panic!("expected overbar list");
     };
-    let MathNode::Kern { amount, .. } = kern else {
+    let MathNode::Kern { amount, kind } = kern else {
         panic!("expected clearance kern")
     };
     assert_eq!(*amount, expected);
+    assert_eq!(*kind, KernKind::Font);
 }
 
 pub(super) fn root_nodes(layout: &MathLayout) -> Vec<&MathNode> {

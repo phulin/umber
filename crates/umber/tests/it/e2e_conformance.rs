@@ -2248,21 +2248,37 @@ fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
 }
 
 #[test]
-fn trip_loaded_final_math_italic_correction_uses_a_normal_kern() {
-    // The final math construction through TRIP line 440 ends in an ordinary
-    // math character with a 1pt italic correction. TeX82 §§719/720 create
-    // that correction with `new_kern`, whose §135 subtype is normal; §184
-    // consequently prints no explicit-subtype space after `\kern`.
-    let log = run_focused_loaded_trip_through(440);
-    let expected = "..\\ip A\n..\\kern1.0\n..\\mathoff, surrounded 1.1";
-    assert!(log.contains(expected), "final math italic correction:\n{log}");
-    assert!(
-        !log.contains("..\\ip A\n..\\kern 1.0\n..\\mathoff"),
-        "{log}"
-    );
+fn trip_loaded_radical_overbar_uses_normal_kerns() {
+    // The full loaded stream is necessary: skipping its pre-format prefix
+    // does not reproduce the showbox9 list reached through TRIP lines 438--440.
+    // TeX82 §§714/135 create both overbar spacers as normal `new_kern` nodes;
+    // §184 consequently prints no explicit-subtype space after `\kern`.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let source: Arc<[u8]> =
+        Arc::from(fs::read(root.join("third_party/trip/trip.tex")).expect("TRIP source"));
+    let log = run_loaded_trip_source(source);
+    let overbar = log.lines().collect::<Vec<_>>().windows(4).any(|lines| {
+        lines[0].starts_with("..\\vbox(")
+            && lines[1].starts_with("...\\kern")
+            && !lines[1].starts_with("...\\kern ")
+            && lines[2].starts_with("...\\rule(")
+            && lines[3].starts_with("...\\kern")
+            && !lines[3].starts_with("...\\kern ")
+    });
+    assert!(overbar, "normal-kern radical overbar:\n{log}");
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..last_source_line].join("\n")).into_bytes());
+    run_loaded_trip_source(source)
+}
+
+fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
     let tripos: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/tripos.tex")).unwrap());
@@ -2278,10 +2294,6 @@ fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let provider = PreparedFormatProvider::from_environment(super::umber_format_worker_launcher())
         .expect("focused TRIP format provider");
     let prepared = provider.prepare(&recipe).expect("focused TRIP format");
-    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
-    let lines = text.lines().collect::<Vec<_>>();
-    let source: Arc<[u8]> =
-        Arc::from(format!("{}\n\\end\n", lines[92..last_source_line].join("\n")).into_bytes());
     let mut observer = TripObservers::default();
     let loaded = provider
         .run(

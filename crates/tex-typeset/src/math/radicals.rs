@@ -48,7 +48,9 @@ pub(super) fn make_under(
         boxed_node(base),
         MathNode::Kern {
             amount: Scaled::from_raw(3 * thickness.raw()),
-            kind: KernKind::Explicit,
+            // TeX82 §716 uses `new_kern`; its §135 normal subtype is not
+            // overridden by the underline constructor.
+            kind: KernKind::Font,
         },
         MathNode::Rule {
             width: Some(base_width),
@@ -281,7 +283,9 @@ fn overbar(
     let list = ctx.layout.hlist([
         MathNode::Kern {
             amount: thickness,
-            kind: KernKind::Explicit,
+            // TeX82 §714's `overbar` constructs both spacers with
+            // `new_kern`, retaining §135's normal subtype.
+            kind: KernKind::Font,
         },
         MathNode::Rule {
             width: Some(width),
@@ -290,7 +294,7 @@ fn overbar(
         },
         MathNode::Kern {
             amount: clearance,
-            kind: KernKind::Explicit,
+            kind: KernKind::Font,
         },
         boxed_node(base),
     ]);
