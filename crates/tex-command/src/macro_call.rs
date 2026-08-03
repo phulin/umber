@@ -286,8 +286,16 @@ impl CommandProcessor<'_> {
                 // TeX82 §391 reports the mismatch through `error` and returns
                 // from `macro_call`; the mismatching token stays consumed and
                 // no replacement text is installed.
+                // TeX82 §391 calls `error` before returning from `macro_call`.
+                // Capture §82's context while the mismatching input level is
+                // still live; in particular, §336's frozen `\par` retains its
+                // `<inserted text>` ownership until this report is complete.
+                let context = self.command.output_open_context(&self.state);
                 self.command.semantic_diagnostics.push(
-                    crate::CommandSemanticDiagnostic::MacroPrefixMismatch(macro_name),
+                    crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
+                        macro_name,
+                        context,
+                    },
                 );
                 self.observe_command_diagnostic("macro_prefix_mismatch", &call);
                 if let Some((prior, status)) = prior {

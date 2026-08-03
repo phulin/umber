@@ -18392,7 +18392,10 @@ fn report_pending_diagnostics(
                 tex_command::CommandSemanticDiagnostic::UndefinedControlSequence { context },
             ) => crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?,
             PendingDiagnostic::Command(
-                tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch(symbol),
+                tex_command::CommandSemanticDiagnostic::MacroPrefixMismatch {
+                    macro_name: symbol,
+                    context,
+                },
             ) => {
                 let name = stores.resolve(symbol).to_owned();
                 let kind = stores.control_sequence_kind(symbol);
@@ -18400,12 +18403,14 @@ fn report_pending_diagnostics(
                 report
                     .sprint_cs(kind, &name)
                     .print(" doesn't match its definition");
-                report.help(&[
-                    "If you say, e.g., `\\def\\a1{...}', then you must always",
-                    "put `1' after `\\a', since control sequence names are",
-                    "made up of letters only. The macro here has not been",
-                    "followed by the required stuff, so I'm ignoring it.",
-                ]);
+                report
+                    .help(&[
+                        "If you say, e.g., `\\def\\a1{...}', then you must always",
+                        "put `1' after `\\a', since control sequence names are",
+                        "made up of letters only. The macro here has not been",
+                        "followed by the required stuff, so I'm ignoring it.",
+                    ])
+                    .context(context);
                 report.error().jump_out()?;
             }
             PendingDiagnostic::Command(tex_command::CommandSemanticDiagnostic::Recoverable {

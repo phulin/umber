@@ -2455,10 +2455,19 @@ fn trip_loaded_macro_mismatch_precedes_following_malformed_invocation_trace() {
         .rfind("Use of \\T doesn't match its definition")
         .expect("line-366 compulsory-prefix mismatch");
     let report = &log[mismatch..];
+    let inserted_context = report
+        .find("<inserted text> ")
+        .expect("§336 inserted paragraph context");
+    let help = report
+        .find("If you say, e.g., `\\def\\a1{...}'")
+        .expect("§391 mismatch help");
     let following_trace = report
         .find("\\a^^@^^@a #1\\par #2->")
         .expect("following malformed macro trace");
-    assert!(following_trace > 0, "{report}");
+    assert!(
+        inserted_context < help && help < following_trace,
+        "{report}"
+    );
 }
 
 #[test]

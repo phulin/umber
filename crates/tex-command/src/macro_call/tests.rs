@@ -442,7 +442,7 @@ fn scalar_matcher_reports_compulsory_prefix_mismatch_without_activating_body() {
     assert!(command.parameters.activations.is_empty());
     assert!(matches!(
         command.take_semantic_diagnostics().as_slice(),
-        [crate::CommandSemanticDiagnostic::MacroPrefixMismatch(_)]
+        [crate::CommandSemanticDiagnostic::MacroPrefixMismatch { .. }]
     ));
 }
 
@@ -465,8 +465,8 @@ fn outer_recovery_in_compulsory_prefix_still_reports_definition_mismatch() {
         command.semantic_diagnostics.as_slice(),
         [
             crate::CommandSemanticDiagnostic::Recoverable { .. },
-            crate::CommandSemanticDiagnostic::MacroPrefixMismatch(_),
-        ]
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch { context, .. },
+        ] if context.contains("<inserted text>") && context.contains("\\par")
     ));
 }
 
@@ -481,9 +481,10 @@ fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
     let empty = universe.intern_token_list(&[]);
     command
         .semantic_diagnostics
-        .push(crate::CommandSemanticDiagnostic::MacroPrefixMismatch(
-            mismatched,
-        ));
+        .push(crate::CommandSemanticDiagnostic::MacroPrefixMismatch {
+            macro_name: mismatched,
+            context: String::new(),
+        });
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
@@ -497,7 +498,7 @@ fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
     assert!(matches!(
         processor.command.semantic_diagnostics.as_slice(),
         [
-            crate::CommandSemanticDiagnostic::MacroPrefixMismatch(name),
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch { macro_name: name, .. },
             crate::CommandSemanticDiagnostic::Trace {
                 text,
                 force_newline: true,

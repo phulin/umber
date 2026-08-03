@@ -160,7 +160,10 @@ pub enum CommandSemanticDiagnostic {
         context: String,
     },
     /// TeX82 §391's compulsory macro-parameter-text mismatch.
-    MacroPrefixMismatch(tex_state::interner::Symbol),
+    MacroPrefixMismatch {
+        macro_name: tex_state::interner::Symbol,
+        context: String,
+    },
     /// TeX82 §415's missing-number recovery, deferred only when an earlier
     /// command-owned diagnostic is already waiting for executor output.
     ///
