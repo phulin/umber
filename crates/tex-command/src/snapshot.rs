@@ -200,6 +200,24 @@ impl CommandState {
         Ok(())
     }
 
+    /// Restores an isolated nested-input transaction while retaining the
+    /// conditional stack produced by expansion inside that transaction.
+    ///
+    /// TeX82 §1370's deferred `write_out` input is artificial, but expansion
+    /// still uses the live global `cond_ptr`. Its `\if` pushes and `\fi` pops
+    /// therefore survive after the synthetic input levels are removed. This
+    /// boundary restores the surrounding cursor/scanner state without
+    /// resurrecting conditional frames that the nested expansion changed.
+    pub fn rollback_nested_input_preserving_conditions(
+        &mut self,
+        snapshot: CommandStateSnapshot,
+    ) -> Result<(), CommandProfileMismatch> {
+        let conditions = self.conditions.clone();
+        self.rollback(snapshot)?;
+        self.conditions = conditions;
+        Ok(())
+    }
+
     /// Validates and publishes restartable state for a named boundary.
     pub fn publish_summary(&self) -> Result<CommandSummary, CommandSummaryError> {
         match self.scanner.status() {

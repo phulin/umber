@@ -2212,6 +2212,30 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
     );
 }
 
+#[test]
+fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
+    // Exact TRIP source through lines 419 and 441--442. TeX82 §§1370/1335:
+    // the deferred write's ordinary `\if` remains above the older selected
+    // `\ifcase` and is reported first during final cleanup.
+    let log = run_focused_loaded_trip_through(442);
+    let condition_reports = || {
+        log.lines()
+            .filter(|line| line.contains("end occurred when"))
+            .collect::<Vec<_>>()
+    };
+    let write_if = log
+        .find("(end occurred when if on line 350 was incomplete)")
+        .unwrap_or_else(|| panic!("deferred-write condition: {:?}", condition_reports()));
+    let old_ifcase = log
+        .find("(end occurred when ifcase on line 327 was incomplete)")
+        .unwrap_or_else(|| panic!("older condition: {:?}", condition_reports()));
+    assert!(
+        write_if < old_ifcase,
+        "innermost condition reports first: {:?}",
+        condition_reports()
+    );
+}
+
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());

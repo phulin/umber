@@ -494,3 +494,21 @@ fn format_and_checkpoint_profile_components_reject_mismatch() {
         }
     }
 }
+
+#[test]
+fn nested_input_rollback_retains_the_resulting_typed_condition_stack() {
+    let mut state = CommandState::default();
+    state.conditions.push(ConditionalKind::IfCase, 419);
+    let snapshot = state.snapshot();
+    state.conditions.push(ConditionalKind::If, 442);
+
+    state
+        .rollback_nested_input_preserving_conditions(snapshot)
+        .expect("nested input rollback preserves profile");
+
+    assert_eq!(state.conditions.frames.len(), 2);
+    assert_eq!(state.conditions.frames[0].kind, ConditionalKind::IfCase);
+    assert_eq!(state.conditions.frames[0].source_line, 419);
+    assert_eq!(state.conditions.frames[1].kind, ConditionalKind::If);
+    assert_eq!(state.conditions.frames[1].source_line, 442);
+}

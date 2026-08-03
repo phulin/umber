@@ -10777,7 +10777,7 @@ fn canonical_replay_text(
     };
     command
         .state
-        .rollback(input_snapshot)
+        .rollback_nested_input_preserving_conditions(input_snapshot)
         .expect("shipout replay preserves the command profile");
     let expanded = expanded?;
     let mut text = String::new();
@@ -10833,7 +10833,7 @@ fn canonical_replay_write(
     };
     command
         .state
-        .rollback(input_snapshot)
+        .rollback_nested_input_preserving_conditions(input_snapshot)
         .expect("shipout write replay preserves the command profile");
     let expanded = expanded?;
     if expanded.unbalanced {
@@ -12118,7 +12118,7 @@ fn shipout_replay_box(
             };
             command
                 .state
-                .rollback(input_snapshot)
+                .rollback_nested_input_preserving_conditions(input_snapshot)
                 .expect("shipout write replay preserves the command profile");
             let expanded = expanded?;
             if let Some(observations) = command.observations.as_mut() {
