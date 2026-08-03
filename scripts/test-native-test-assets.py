@@ -41,7 +41,9 @@ def make_repository(directory: Path, entries: dict[str, bytes]) -> tuple[Path, P
     run("git", "config", "user.email", "test@example.invalid", cwd=primary)
     run("git", "config", "user.name", "Test", cwd=primary)
     write_lock(primary, entries)
-    (primary / ".gitignore").write_text("/third_party\n/tests/corpus/e2e/*.dvi\n")
+    (primary / ".gitignore").write_text(
+        "/target\n/third_party\n/tests/corpus/e2e/*.dvi\n"
+    )
     run("git", "add", ".gitignore", "tests/native-test-assets.lock", cwd=primary)
     run("git", "commit", "-q", "-m", "fixture", cwd=primary)
     for relative, content in entries.items():
@@ -75,6 +77,8 @@ def main() -> None:
     entries = {
         "third_party/corpus/story.tex": b"story\n",
         "tests/corpus/e2e/story.expected.dvi": b"dvi bytes\n",
+        "target/trip-oracles/trip/initex-command.jsonl": b"initex commands\n",
+        "target/trip-oracles/trip/format-loaded-command.jsonl": b"loaded commands\n",
     }
     with tempfile.TemporaryDirectory() as raw_directory:
         primary, worktree = make_repository(Path(raw_directory), entries)
@@ -103,6 +107,25 @@ def main() -> None:
         changed.chmod(0o644)
         changed.write_bytes(b"changed\n")
         expect_error(lambda: assets.provision(worktree), "existing asset")
+
+    with tempfile.TemporaryDirectory() as raw_directory:
+        primary, worktree = make_repository(Path(raw_directory), entries)
+        namespaced_target = worktree / "target/audit-issue-target"
+        copied = assets.provision(worktree, namespaced_target)
+        assert copied == len(entries)
+        for relative, content in entries.items():
+            path = Path(relative)
+            destination = (
+                namespaced_target.joinpath(*path.parts[1:])
+                if path.parts[0] == "target"
+                else worktree / path
+            )
+            assert destination.read_bytes() == content
+        assert not (worktree / "target/trip-oracles").exists()
+        expect_error(
+            lambda: assets.provision(worktree, worktree.parent / "outside"),
+            "outside the destination worktree",
+        )
 
     with tempfile.TemporaryDirectory() as raw_directory:
         primary, worktree = make_repository(Path(raw_directory), entries)

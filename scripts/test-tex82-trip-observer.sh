@@ -200,6 +200,7 @@ mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
   "$work_root/geometry-a" "$work_root/geometry-b" \
   "$work_root/full-initex-a" "$work_root/full-initex-b"
 if [[ "$geometry_only" -eq 1 ]]; then
+  python3 scripts/native-test-assets.py . --target-dir "$target_dir"
   run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
     "$work_root/geometry-a" geometry
   run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \

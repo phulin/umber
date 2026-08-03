@@ -131,12 +131,26 @@ def copy_verified(source: Path, destination: Path, expected: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def provision(repo_root: Path) -> int:
+def asset_destination(
+    repo_root: Path, relative: Path, target_dir: Path | None
+) -> Path:
+    if target_dir is not None and relative.parts[0] == "target":
+        return target_dir.joinpath(*relative.parts[1:])
+    return repo_root / relative
+
+
+def provision(repo_root: Path, target_dir: Path | None = None) -> int:
     repo_root = repository_root(repo_root)
+    if target_dir is not None:
+        target_dir = target_dir.resolve()
+        if not target_dir.is_relative_to(repo_root):
+            raise ProvisionError(
+                f"target directory is outside the destination worktree: {target_dir}"
+            )
     assets = read_lock(repo_root)
     missing: list[tuple[Path, str]] = []
     for relative, expected in assets.items():
-        destination = repo_root / relative
+        destination = asset_destination(repo_root, relative, target_dir)
         if destination.exists() or destination.is_symlink():
             verify(destination, expected, "existing asset")
         else:
@@ -165,7 +179,11 @@ def provision(repo_root: Path) -> int:
     for relative, expected in missing:
         source = owner / relative
         verify(source, expected, "primary asset")
-        copy_verified(source, repo_root / relative, expected)
+        copy_verified(
+            source,
+            asset_destination(repo_root, relative, target_dir),
+            expected,
+        )
     return len(missing)
 
 
@@ -176,6 +194,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="path within the linked worktree to provision",
     )
+    parser.add_argument(
+        "--target-dir",
+        type=Path,
+        help="checkout-local destination replacing target/ for locked target assets",
+    )
     return parser.parse_args()
 
 
@@ -183,7 +206,7 @@ def main() -> int:
     args = parse_args()
     try:
         repo_root = repository_root(args.worktree)
-        copied = provision(repo_root)
+        copied = provision(repo_root, args.target_dir)
     except (OSError, ProvisionError) as error:
         print(f"native-test-assets: FAIL: {error}", file=sys.stderr)
         return 1
