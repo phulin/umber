@@ -277,7 +277,7 @@ pub(crate) fn shipout_node_with_input_summary(
         })
     {
         let render_provenance =
-            crate::paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
+            crate::canonical_paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
         stores.insert_pure_shipout(
             key,
             PureShipoutEntry {

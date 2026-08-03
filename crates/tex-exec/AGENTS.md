@@ -47,6 +47,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/assignments/tracing.rs`: e-TeX 2.6's `\tracingassigns` rendered assignment trace, rendering the `changing`/`globally changing`/`into`/`reassigning` labels tex.web's `restore_trace` shares with `\tracingrestores`. Its production call sites are `canonical_main_control.rs`'s `apply_scanned_step` (the `ScannedStep::Count`/`Dimen`/`Skip`/`Muskip`/`IntParam`/`DimenParam`/`GlueParam`/`TokParam`/`Toks`/`CodeTable`/`Let`/`MacroDefinition` arms); `variables.rs`'s `execute_assignment_to_target` and `execute_code_table_assignment` call it too, but that path is reachable only from the retired `Executor`, never from the canonical command core.
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
+- `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.
 - `src/canonical_diagnostics.rs`: source-free canonical error reporting, `\show` rendering, activity/page diagnostics, token rendering, and diagnostic sink policy; it has no legacy scanner or executor dependency.
 - `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
@@ -89,7 +90,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/pack_report.rs`: TeX82 selector-aware overfull and underfull box diagnostics.
 - `src/pack_report/tests.rs`: interaction-mode channel and ordering coverage for packed-box diagnostics.
-- `src/paragraph_memo.rs`: centralized fail-before-mutation accepted-history paragraph validation, generation-interned exact-stamp observations and typed semantic dependency tiers, accepted-history-owned hlist/finished-line mounts, ordered count/integer-parameter redo, full source-transition checks, lazy accepted-generation diagnostic provenance, barrier classification, and telemetry.
+- `src/paragraph_memo.rs`: retired `Executor` paragraph recording and reuse front, including InputStack transition validation, ExecutionContext caches, accepted-history hlist/line mounts, break-graph observation, barrier classification, and telemetry; source-free validation, replay, and provenance recipes live in `canonical_paragraph_memo.rs`.
 - `src/raw_delivery.rs`: single retired lexer bridge for compatibility scanners
   that still require one unexpanded semantic token; canonical execution
   receives command delivery from `tex-command`.

@@ -695,7 +695,7 @@ impl CanonicalParagraphRegion {
     /// Validates only the exact state facts read by this paragraph.
     #[must_use]
     pub fn dependencies_match(&self, stores: &Universe) -> bool {
-        crate::paragraph_memo::validate_canonical_dependencies(stores, &self.dependencies)
+        crate::canonical_paragraph_memo::validate_dependencies(stores, &self.dependencies)
     }
 
     /// Rehomes a region proven wholly before an edited root interval.
@@ -1922,15 +1922,15 @@ impl CanonicalMainControl {
         }
         let Some(index) = self.paragraph_recorder.replay.iter().position(|region| {
             region.barriers.is_empty()
-                && crate::paragraph_memo::same_mutation_entry_class(
+                && crate::canonical_paragraph_memo::same_mutation_entry_class(
                     region.mutation_entry_in_group,
                     tex_state::ExpansionState::execution_group_depth(stores),
                 )
-                && crate::paragraph_memo::validate_canonical_dependencies(
+                && crate::canonical_paragraph_memo::validate_dependencies(
                     stores,
                     &region.dependencies,
                 )
-                && crate::paragraph_memo::validate_canonical_mutations(stores, &region.mutations)
+                && crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations)
         }) else {
             stores.record_canonical_paragraph_lookup(false, 0);
             return false;
@@ -1957,7 +1957,7 @@ impl CanonicalMainControl {
         // starts.
         let _ = stores.finish_paragraph_dependency_region();
         let _ = stores.finish_pure_paragraph_recording();
-        crate::paragraph_memo::replay_canonical_mutations(stores, &region.mutations);
+        crate::canonical_paragraph_memo::replay_mutations(stores, &region.mutations);
         stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");

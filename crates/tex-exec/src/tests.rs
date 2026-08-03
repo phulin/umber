@@ -17,11 +17,21 @@ mod hyphenation;
 
 #[test]
 fn paragraph_mutation_entry_class_distinguishes_root_from_live_groups() {
-    assert!(crate::paragraph_memo::same_mutation_entry_class(false, 0));
-    assert!(crate::paragraph_memo::same_mutation_entry_class(true, 1));
-    assert!(crate::paragraph_memo::same_mutation_entry_class(true, 9));
-    assert!(!crate::paragraph_memo::same_mutation_entry_class(false, 1));
-    assert!(!crate::paragraph_memo::same_mutation_entry_class(true, 0));
+    assert!(crate::canonical_paragraph_memo::same_mutation_entry_class(
+        false, 0
+    ));
+    assert!(crate::canonical_paragraph_memo::same_mutation_entry_class(
+        true, 1
+    ));
+    assert!(crate::canonical_paragraph_memo::same_mutation_entry_class(
+        true, 9
+    ));
+    assert!(!crate::canonical_paragraph_memo::same_mutation_entry_class(
+        false, 1
+    ));
+    assert!(!crate::canonical_paragraph_memo::same_mutation_entry_class(
+        true, 0
+    ));
 }
 
 /// pdftex.web's post-line-break dimension overrides first apply the per-line

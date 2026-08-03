@@ -177,6 +177,56 @@ fn legacy_diagnostics_has_no_canonical_command_control_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_paragraph_memo_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let source = fs::read_to_string(source_root.join("canonical_paragraph_memo.rs"))
+        .expect("read canonical paragraph-memo module");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "paragraph_memo::",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "canonical_paragraph_memo.rs must not reference legacy boundary `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    for helper in [
+        "validate_dependencies",
+        "same_mutation_entry_class",
+        "validate_mutations",
+        "replay_mutations",
+    ] {
+        assert!(
+            canonical.contains(&format!("canonical_paragraph_memo::{helper}")),
+            "canonical command control must call canonical paragraph helper `{helper}`"
+        );
+    }
+    for retired in [
+        "crate::paragraph_memo::validate_canonical",
+        "crate::paragraph_memo::same_mutation_entry_class",
+        "crate::paragraph_memo::replay_canonical",
+    ] {
+        assert!(
+            !canonical.contains(retired),
+            "canonical command control must bypass retired paragraph front `{retired}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {

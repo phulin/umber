@@ -3086,7 +3086,7 @@ fn canonical_paragraph_validation_rejects_a_real_dependency_change() {
     let regions = cold.take_finished_paragraph_regions();
 
     cold_stores.set_count(0, 123_456);
-    assert!(!crate::paragraph_memo::validate_canonical_mutations(
+    assert!(!crate::canonical_paragraph_memo::validate_mutations(
         &cold_stores,
         &regions[0].mutations,
     ));
