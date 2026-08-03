@@ -1825,6 +1825,52 @@ mod tests {
     }
 
     #[test]
+    fn halign_packing_scan_observes_new_internal_vertical_mode() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\halign to \\ifvmode11pt\\else\\errmessage{halign mode stale}22pt\\fi{#\\cr x\\cr}\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+
+        assert!(
+            output.contains("{internal vertical mode: \\ifvmode}\n{true}"),
+            "{output}"
+        );
+        assert!(!output.contains("halign mode stale"), "{output}");
+    }
+
+    #[test]
+    fn valign_packing_scan_preserves_same_horizontal_mode_capability() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\hbox{\\valign to \\ifhmode13pt\\else\\errmessage{valign mode stale}26pt\\fi{#\\cr y\\cr}}\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+
+        assert!(
+            output.contains("{restricted horizontal mode: \\valign}\n{\\ifhmode}\n{true}"),
+            "{output}"
+        );
+        assert!(!output.contains("valign mode stale"), "{output}");
+    }
+
+    #[test]
     fn public_file_root_retains_world_identity_across_typed_input_retry() {
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_run_stores(&mut stores);

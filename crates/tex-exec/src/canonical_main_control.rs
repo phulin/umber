@@ -2356,6 +2356,13 @@ impl CanonicalMainControl {
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         self.drain_file_framing_events(stores);
+        // TeX82 §§299, 367, and 774: `init_align` has already pushed the
+        // alignment mode before `scan_spec` expands its optional dimension.
+        // Publish that live nest for this nested alignment operation, just as
+        // an ordinary main-control operation does before borrowing a command
+        // processor. Otherwise tracing sees the new mode while expandable
+        // mode conditionals still read the pre-alignment capability.
+        self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
