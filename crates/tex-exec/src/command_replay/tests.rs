@@ -784,7 +784,6 @@ fn canonical_character_run_lookahead_delivers_later_characters_raw_only() {
 /// executor, and must not let the round trip demote `x_token` to
 /// `get_x_token` (`umber2-johp.257`).
 #[test]
-#[ignore = "umber2-xg9m"]
 fn canonical_alignment_cell_ending_in_a_character_reaches_endv_through_a_backup() {
     let mut universe = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
