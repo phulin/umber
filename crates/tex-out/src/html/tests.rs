@@ -8,8 +8,9 @@ use crate::{
 };
 
 use super::incremental::{
-    PatchApplyError, PatchLimits, PatchOp, RenderKey, RenderLimits, RenderSessionId, apply_patch,
-    build_render_revision, plan_patch,
+    PATCH_SCHEMA_VERSION, PatchApplyError, PatchDelivery, PatchEnvelope, PatchLimits, PatchOp,
+    PatchProtocolError, ProtocolLimits, RenderKey, RenderLimits, RenderSessionId, apply_patch,
+    build_render_revision, plan_patch, validate_delivery,
 };
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
@@ -862,6 +863,65 @@ fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
         Err(PatchApplyError::InvalidOperation)
     );
     assert_eq!(base.revision, 1);
+}
+
+#[test]
+fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([13; 16]);
+    let base = build_render_revision(
+        &[page()],
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("base render revision");
+    let mut changed = page();
+    changed.testing_mut().counts[0] = 8;
+    let target = build_render_revision(
+        &[changed],
+        &resolver,
+        &options,
+        session,
+        2,
+        Some(&base),
+        RenderLimits::default(),
+    )
+    .expect("target render revision");
+    let plan = plan_patch(&base, &target, PatchLimits::default()).expect("patch plan");
+    let envelope = PatchEnvelope::new(plan);
+    assert_eq!(envelope.schema_version, PATCH_SCHEMA_VERSION);
+    assert_eq!(
+        envelope.canonical_fingerprint(),
+        envelope.clone().canonical_fingerprint()
+    );
+    assert_eq!(
+        validate_delivery(&base, &envelope, ProtocolLimits::default()),
+        PatchDelivery::Applied(target.clone())
+    );
+    assert_eq!(
+        validate_delivery(&target, &envelope, ProtocolLimits::default()),
+        PatchDelivery::Duplicate
+    );
+
+    let mut wrong_counts = envelope.clone();
+    wrong_counts.counts.nodes += 1;
+    assert_eq!(
+        validate_delivery(&base, &wrong_counts, ProtocolLimits::default()),
+        PatchDelivery::ResyncRequired(PatchProtocolError::DeclaredCountsMismatch)
+    );
+    let mut wrong_version = envelope;
+    wrong_version.schema_version += 1;
+    assert_eq!(
+        validate_delivery(&base, &wrong_version, ProtocolLimits::default()),
+        PatchDelivery::ResyncRequired(PatchProtocolError::UnsupportedSchema(
+            PATCH_SCHEMA_VERSION + 1
+        ))
+    );
 }
 
 fn page() -> crate::PageArtifact {
