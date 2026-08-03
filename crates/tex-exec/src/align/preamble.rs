@@ -69,10 +69,8 @@ pub(crate) fn scan_preamble(
     let end_template = stores.frozen_end_template_token();
     // TeX82 §338's `sprint_cs(warning_index)`: the `\halign` or `\valign`
     // whose preamble a runaway report names.
-    let warning_index = tex_command::command_token_text(
-        &mut stores.command_context(),
-        tex_expand::semantic_token(context),
-    );
+    let warning_index =
+        tex_command::command_token_text(&mut stores.command_context(), context.semantic_token());
     let mut scanner = PreambleScanner::new(input, stores, execution, warning_index);
     let mut columns = Vec::new();
     let mut tabskips = vec![scanner.current_tabskip()];
@@ -361,7 +359,7 @@ impl<'a, 'ctx> PreambleScanner<'a, 'ctx> {
         &mut self,
         traced: TracedTokenWord,
     ) -> Result<PreambleToken, ExecError> {
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if !is_outer_macro(self.stores, token) {
             return Ok(PreambleToken::Token(token));
         }

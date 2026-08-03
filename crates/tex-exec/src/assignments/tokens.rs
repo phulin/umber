@@ -38,11 +38,11 @@ pub(super) fn skip_optional_equals_x(
                 context: "assignment value",
             });
         };
-        if !is_space(tex_expand::semantic_token(token)) {
+        if !is_space(token.semantic_token()) {
             break token;
         }
     };
-    if !is_other_equals(tex_expand::semantic_token(traced)) {
+    if !is_other_equals(traced.semantic_token()) {
         tex_expand::back_input(
             input,
             &mut tex_state::ExpansionContext::new(stores),
@@ -57,7 +57,7 @@ pub(super) fn skip_optional_equals_x(
         else {
             return Ok(());
         };
-        if !is_space(tex_expand::semantic_token(next)) {
+        if !is_space(next.semantic_token()) {
             tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), [next]);
         }
     }
@@ -107,7 +107,7 @@ pub(super) fn scan_definition_target(
 ) -> Result<Symbol, ExecError> {
     let traced = next_non_space_traced_raw(input, stores)?
         .ok_or(ExecError::MissingControlSequence { context })?;
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     match token {
         Token::Cs(symbol) => Ok(symbol),
         Token::Char {
@@ -177,11 +177,11 @@ pub(super) fn scan_optional_equals_one_space(
             .ok_or(ExecError::MissingToken {
                 context: "\\let right-hand side",
             })?;
-        if !is_space(tex_expand::semantic_token(token)) {
+        if !is_space(token.semantic_token()) {
             break token;
         }
     };
-    if !is_other_equals(tex_expand::semantic_token(first)) {
+    if !is_other_equals(first.semantic_token()) {
         return Ok(first);
     }
     let next = input
@@ -189,7 +189,7 @@ pub(super) fn scan_optional_equals_one_space(
         .ok_or(ExecError::MissingToken {
             context: "\\let right-hand side",
         })?;
-    if is_space(tex_expand::semantic_token(next)) {
+    if is_space(next.semantic_token()) {
         input
             .next_traced_token(stores)?
             .ok_or(ExecError::MissingToken {
@@ -205,7 +205,7 @@ pub(super) fn token_meaning_for_let(
     stores: &Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<Meaning, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     match token {
         Token::Cs(symbol) => {
             let meaning = stores.meaning(symbol);

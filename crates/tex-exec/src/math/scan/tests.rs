@@ -25,7 +25,7 @@ fn invalid_delimiter_pushback_preserves_traced_origin() {
         .next_traced_token(&mut stores)
         .expect("read recovered token")
         .expect("invalid token should be backed up");
-    assert_eq!(tex_expand::semantic_token(replayed), Token::Param(1));
+    assert_eq!(replayed.semantic_token(), Token::Param(1));
     assert_eq!(replayed.origin(), origin);
 }
 

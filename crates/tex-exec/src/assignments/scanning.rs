@@ -52,7 +52,7 @@ pub(super) fn scan_variable_target(
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "arithmetic target",
         })?;
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         // TeX.web §1237/pdfTeX.web §1219 consumes one expanded target
         // candidate and recovers from every non-register meaning alike. In
@@ -233,11 +233,11 @@ pub(super) fn scan_token_list_assignment(
     let traced = loop {
         let traced = next_non_space_traced_x(input, stores, execution)?
             .ok_or(ExecError::MissingTracedToken { context })?;
-        if token_meaning(stores, tex_expand::semantic_token(traced)) != Meaning::Relax {
+        if token_meaning(stores, traced.semantic_token()) != Meaning::Relax {
             break traced;
         }
     };
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     match token_meaning(stores, token) {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Toks) => {
             let index = scan_register_index(input, stores, execution, traced)?;
@@ -291,7 +291,7 @@ fn scan_balanced_text_after_open_group(
     while let Some(traced) =
         tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
     {
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         let meaning = token_meaning(stores, token);
         if matches!(
             meaning,
@@ -359,7 +359,7 @@ pub(crate) fn next_non_space_x(
             &mut tex_state::ExpansionContext::new(stores),
             execution,
         )?
-        .map(tex_expand::semantic_token) else {
+        .map(|token| token.semantic_token()) else {
             return Ok(None);
         };
         if !is_space(token) {
@@ -382,7 +382,7 @@ pub(crate) fn next_non_space_traced_x(
         else {
             return Ok(None);
         };
-        if !is_space(tex_expand::semantic_token(token)) {
+        if !is_space(token.semantic_token()) {
             return Ok(Some(token));
         }
     }

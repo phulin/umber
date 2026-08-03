@@ -657,7 +657,7 @@ fn scan_hyphenation_words(
             execution,
         )?
         .ok_or(ExecError::MissingToken { context })?;
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if is_space(token) {
             continue;
         }
@@ -679,7 +679,7 @@ fn scan_hyphenation_words(
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )? {
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if is_begin_group(token) {
             depth += 1;
             continue;

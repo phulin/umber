@@ -846,7 +846,7 @@ fn expand_pdf_literal_tokens(
         &mut tex_state::ExpansionContext::new(stores),
         expansion,
     )?
-    .map(tex_expand::semantic_token)
+    .map(|token| token.semantic_token())
     {
         diagnostics::append_token_show_text(stores, token, &mut text);
     }
@@ -948,7 +948,7 @@ fn expand_write_tokens(
             &mut tex_state::ExpansionContext::new(stores),
             expansion,
         )?
-        .map(tex_expand::semantic_token)
+        .map(|token| token.semantic_token())
         {
             tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }
@@ -973,7 +973,7 @@ fn expand_special_tokens(
             &mut tex_state::ExpansionContext::new(stores),
             expansion,
         )?
-        .map(tex_expand::semantic_token)
+        .map(|token| token.semantic_token())
         {
             tex_state::token_show::append_token_string_text(stores, token, &mut text);
         }

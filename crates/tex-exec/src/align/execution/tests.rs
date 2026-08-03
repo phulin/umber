@@ -107,7 +107,7 @@ fn align_peek_selects_noalign_finish_crcr_or_row() {
     .expect("ordinary row token follows noalign and crcr");
 
     assert_eq!(
-        tex_expand::semantic_token(first),
+        first.semantic_token(),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,

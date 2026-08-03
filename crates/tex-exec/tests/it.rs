@@ -33,6 +33,7 @@ fn production_token_rendering_stays_on_the_state_owner() {
             "tex_expand::append_token_string_text",
             "tex_expand::append_token_selector_text",
             "tex_expand::token_text",
+            "tex_expand::semantic_token",
         ] {
             assert!(
                 !source.contains(forbidden),

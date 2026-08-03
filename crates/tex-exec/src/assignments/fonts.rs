@@ -385,7 +385,7 @@ pub(super) fn scan_font_selector(
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "font selector",
         })?;
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         report_missing_font_identifier(input, stores, traced)?;
         return Ok(tex_state::font::NULL_FONT);
@@ -623,7 +623,7 @@ fn scan_font_file_name(
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )? {
-        match tex_expand::semantic_token(traced) {
+        match traced.semantic_token() {
             Token::Char {
                 cat: Catcode::Space,
                 ..

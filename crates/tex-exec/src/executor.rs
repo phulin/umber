@@ -58,7 +58,7 @@ fn report_recoverable_expansion_diagnostics(
             }
             tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
                 // §428's `Complain that \the can't do this; give zero result`.
-                let token = tex_expand::meaning_text(stores, tex_expand::semantic_token(context));
+                let token = tex_expand::meaning_text(stores, context.semantic_token());
                 report_input_error(
                     input,
                     stores,
@@ -1627,7 +1627,7 @@ impl ExecutionRun {
             MainControlExit::NotConsumed { token } => {
                 return Err(unimplemented_typesetting(
                     self.nest.current_mode(),
-                    tex_expand::semantic_token(token),
+                    token.semantic_token(),
                     token.origin(),
                     "non-assignment command",
                 )
@@ -2412,7 +2412,7 @@ where
         if stores.world().execution_tracing_enabled() {
             let message = format!(
                 "deliver {:?} in {:?}",
-                tex_expand::semantic_token(token),
+                token.semantic_token(),
                 nest.current_mode()
             );
             stores.world_mut().trace_execution("executor", message);
@@ -2482,7 +2482,7 @@ where
                 output::drain_pending_output(nest, input, stores, execution, stats)?;
             }
             DispatchAction::End => {
-                stats.dumped_format = match tex_expand::semantic_token(token) {
+                stats.dumped_format = match token.semantic_token() {
                     tex_state::token::Token::Cs(symbol) => matches!(
                         stores.meaning(symbol),
                         tex_state::meaning::Meaning::UnexpandablePrimitive(

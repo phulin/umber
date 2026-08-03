@@ -59,7 +59,7 @@ fn scan_noalign_group(
         .ok_or(ExecError::MissingToken {
             context: "\\noalign closing brace",
         })?;
-        let semantic = tex_expand::semantic_token(token);
+        let semantic = token.semantic_token();
         if super::support::is_begin_group(stores, semantic) {
             brace_depth += 1;
         }

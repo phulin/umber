@@ -185,12 +185,11 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         fallback
     );
     assert_eq!(
-        tex_expand::semantic_token(
-            input
-                .next_traced_token(&mut stores)
-                .expect("following token reads")
-                .expect("following token remains")
-        ),
+        (input
+            .next_traced_token(&mut stores)
+            .expect("following token reads")
+            .expect("following token remains"))
+        .semantic_token(),
         Token::Char {
             ch: 'x',
             cat: Catcode::Letter,
@@ -205,12 +204,11 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
     );
     assert!(terminal_text(&stores).contains("Missing $$ inserted"));
     assert_eq!(
-        tex_expand::semantic_token(
-            missing
-                .next_traced_token(&mut stores)
-                .expect("backed-up token reads")
-                .expect("non-math command is backed up")
-        ),
+        (missing
+            .next_traced_token(&mut stores)
+            .expect("backed-up token reads")
+            .expect("non-math command is backed up"))
+        .semantic_token(),
         Token::Char {
             ch: 'q',
             cat: Catcode::Letter,
@@ -291,12 +289,11 @@ fn display_alignment_finish_assignments_delimiters_and_spacing() {
         .expect("post-display scanning resumes");
     assert_eq!(nest.current_mode(), Mode::Horizontal);
     assert_eq!(
-        tex_expand::semantic_token(
-            resume_input
-                .next_traced_token(&mut stores)
-                .expect("resumed token reads")
-                .expect("resumed token remains")
-        ),
+        (resume_input
+            .next_traced_token(&mut stores)
+            .expect("resumed token reads")
+            .expect("resumed token remains"))
+        .semantic_token(),
         Token::Char {
             ch: 'z',
             cat: Catcode::Letter,
@@ -320,7 +317,7 @@ fn forbidden_setbox_scans_target_but_leaves_box_command_and_body_owned_by_input(
         .expect("remaining input reads")
         .expect("box command remains input");
     assert_eq!(
-        stores.meaning(match tex_expand::semantic_token(next) {
+        stores.meaning(match next.semantic_token() {
             Token::Cs(symbol) => symbol,
             token => panic!("expected box command, got {token:?}"),
         }),
@@ -338,7 +335,7 @@ fn next_semantic(input: &mut InputStack, stores: &mut Universe) -> Option<Token>
     input
         .next_traced_token(stores)
         .expect("input read succeeds")
-        .map(tex_expand::semantic_token)
+        .map(|token| token.semantic_token())
 }
 
 fn pending_terminal_text(stores: &Universe) -> String {

@@ -240,7 +240,7 @@ fn align_peek(
             leave_group(input, stores, tex_state::GroupKind::Align)?;
             return Ok(None);
         };
-        let semantic = tex_expand::semantic_token(token);
+        let semantic = token.semantic_token();
         if is_noalign(stores, semantic) {
             super::noalign::execute_noalign(align_level, nest, input, stores, execution)?;
             continue;
@@ -393,7 +393,7 @@ fn execute_cell(
     loop {
         let initial = first_token.take();
         let omit = initial
-            .map(tex_expand::semantic_token)
+            .map(|token| token.semantic_token())
             .is_some_and(|token| is_omit(stores, token));
         mutate_align_state(nest, align_level, |state| {
             state.start_cell(column, span_count)
@@ -545,7 +545,7 @@ fn next_non_space_protected(
         match token {
             Some(token)
                 if matches!(
-                    tex_expand::semantic_token(token),
+                    token.semantic_token(),
                     Token::Char {
                         cat: tex_state::token::Catcode::Space,
                         ..
@@ -629,7 +629,7 @@ pub(crate) fn do_endv(
     input: &mut InputStack,
     stores: &mut Universe,
 ) -> Result<DoEndV, ExecError> {
-    if !tex_expand::semantic_token(command).is_frozen_endv()
+    if !command.semantic_token().is_frozen_endv()
         || !(input.has_exhausted_alignment_v_template(stores)
             || input.is_template_driver_endv(command)
             || (command
@@ -662,9 +662,7 @@ fn do_template_driver_endv(
     input: &mut InputStack,
     stores: &mut Universe,
 ) -> Result<DoEndV, ExecError> {
-    if !tex_expand::semantic_token(command).is_frozen_endv()
-        || !input.has_terminating_alignment_cell()
-    {
+    if !command.semantic_token().is_frozen_endv() || !input.has_terminating_alignment_cell() {
         return Ok(DoEndV::NotApplicable);
     }
     let marked = input.mark_template_driver_endv(command);
@@ -727,7 +725,7 @@ fn run_cell_body_until_terminator(
             }
             Err(error) => return Err(error.into()),
         };
-        let semantic = tex_expand::semantic_token(token);
+        let semantic = token.semantic_token();
         if semantic.is_frozen_endv() {
             match do_endv(token, input, stores)? {
                 DoEndV::Recovered => continue,
@@ -855,7 +853,7 @@ fn classify_cell_terminator(
     stores: &mut Universe,
     terminator: TracedTokenWord,
 ) -> Result<CellTerminator, ExecError> {
-    let semantic = tex_expand::semantic_token(terminator);
+    let semantic = terminator.semantic_token();
     if is_alignment_tab(stores, semantic) {
         return Ok(CellTerminator::AlignmentTab);
     }
@@ -898,8 +896,8 @@ pub(super) fn run_one_main_control_token(
     };
     stats.delivered_tokens += 1;
     #[cfg(feature = "profiling")]
-    super::record_template_token(tex_expand::semantic_token(token), stores);
-    if tex_expand::semantic_token(token).is_frozen_endv() {
+    super::record_template_token(token.semantic_token(), stores);
+    if token.semantic_token().is_frozen_endv() {
         return Ok(TemplateStep::EndV(token));
     }
     dispatch_and_drain(nest, token, input, stores, execution, stats)?;
@@ -957,7 +955,7 @@ pub(super) fn dispatch_and_drain(
         DispatchAction::End => Ok(()),
         DispatchAction::NotConsumed => Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: tex_expand::semantic_token(token),
+            token: token.semantic_token(),
             origin: token.origin(),
             operation: "alignment cell",
         }),

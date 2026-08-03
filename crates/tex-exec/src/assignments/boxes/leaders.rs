@@ -23,7 +23,7 @@ pub(super) fn scan_leader_payload(
 ) -> Result<LeaderPayload, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::MissingLeaderPayload { context })?;
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         push_traced_tokens(input, stores, [traced]);
         return Err(ExecError::MissingLeaderPayload { context: traced });
@@ -91,7 +91,7 @@ pub(super) fn scan_leader_glue(
 ) -> Result<GlueId, ExecError> {
     let traced = next_non_space_traced_x(input, stores, execution)?
         .ok_or(ExecError::LeadersNotFollowedByProperGlue { context })?;
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         push_tokens(input, stores, [token]);
         return Err(ExecError::LeadersNotFollowedByProperGlue { context: traced });

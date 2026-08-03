@@ -383,7 +383,7 @@ pub(super) fn resume_after_display_alignment(
         match input.next_traced_token(stores)? {
             Some(traced)
                 if matches!(
-                    tex_expand::semantic_token(traced),
+                    traced.semantic_token(),
                     Token::Char {
                         cat: Catcode::Space,
                         ..
@@ -393,7 +393,7 @@ pub(super) fn resume_after_display_alignment(
         }
     };
     match next {
-        Some(traced) if is_par_or_end_group(stores, tex_expand::semantic_token(traced)) => {
+        Some(traced) if is_par_or_end_group(stores, traced.semantic_token()) => {
             crate::insert_traced_tokens(input, stores, [traced]);
         }
         Some(traced) => {
@@ -474,7 +474,7 @@ pub(super) fn resume_after_display(
     match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(
-                tex_expand::semantic_token(traced),
+                traced.semantic_token(),
                 Token::Char {
                     cat: Catcode::Space,
                     ..

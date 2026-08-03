@@ -78,14 +78,14 @@ pub(super) fn scan_box_value(
     let traced = loop {
         let traced = next_non_space_traced_x(input, stores, execution)?
             .ok_or(ExecError::MissingTracedToken { context })?;
-        let Token::Cs(symbol) = tex_expand::semantic_token(traced) else {
+        let Token::Cs(symbol) = traced.semantic_token() else {
             break traced;
         };
         if stores.meaning(symbol) != Meaning::Relax {
             break traced;
         }
     };
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         return recover_missing_box(input, stores, traced, scan_context);
     };
@@ -303,11 +303,7 @@ pub(super) fn scan_box_node(
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "box group",
         })?;
-    if !has_catcode_meaning(
-        stores,
-        tex_expand::semantic_token(opener),
-        Catcode::BeginGroup,
-    ) {
+    if !has_catcode_meaning(stores, opener.semantic_token(), Catcode::BeginGroup) {
         // TeX.web §403 `scan_left_brace` backs up the first body token and
         // proceeds with an inserted opening brace.
         crate::error_report::back_error(
@@ -539,7 +535,7 @@ pub(crate) fn scan_box_group(
             .ok_or(ExecError::MissingToken {
                 context: "box closing brace",
             })?;
-            let semantic = tex_expand::semantic_token(token);
+            let semantic = token.semantic_token();
             if semantic.is_frozen_endv() {
                 // TeX.web §1131 routes every end-v marker through
                 // `do_endv`. A box group cannot finish an alignment entry, so

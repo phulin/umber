@@ -76,7 +76,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     if token.is_frozen_endv() {
         match crate::align::do_endv(traced, input, stores)? {
             crate::align::DoEndV::Recovered => return Ok(DispatchAction::Continue),
@@ -286,7 +286,7 @@ fn dispatch_character_token(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let origin = traced.origin();
     match token {
         Token::Char {

@@ -62,7 +62,7 @@ pub(super) fn scan_math_field(
             next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
                 context: "math field",
             })?;
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if let Token::Cs(symbol) = token
             && stores.meaning(symbol) == Meaning::Relax
         {
@@ -208,7 +208,7 @@ fn scan_math_group_after_open_inner(
         .ok_or(ExecError::MissingToken {
             context: "math group closing brace",
         })?;
-        let semantic = tex_expand::semantic_token(token);
+        let semantic = token.semantic_token();
         if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
             execution.paragraph_group_exited(stores);
@@ -593,7 +593,7 @@ fn scan_required_math_group(
         Some(opener)
             if assignments::has_catcode_meaning(
                 stores,
-                tex_expand::semantic_token(opener),
+                opener.semantic_token(),
                 Catcode::BeginGroup,
             ) => {}
         Some(opener) => {
@@ -716,7 +716,7 @@ fn scan_delimiter_token(
             )?;
             return Ok(0);
         };
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         match token {
             Token::Char {
                 cat: Catcode::Space,
@@ -796,7 +796,7 @@ fn next_non_space_traced_x(
         else {
             return Ok(None);
         };
-        if !assignments::is_space(tex_expand::semantic_token(traced)) {
+        if !assignments::is_space(traced.semantic_token()) {
             return Ok(Some(traced));
         }
     }

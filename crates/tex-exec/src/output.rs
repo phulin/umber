@@ -557,7 +557,7 @@ fn run_output_routine_inner(
         MainControlExit::NotConsumed { token } => {
             return Err(ExecError::UnimplementedTypesetting {
                 mode: nest.current_mode(),
-                token: tex_expand::semantic_token(token),
+                token: token.semantic_token(),
                 origin: token.origin(),
                 operation: "output routine",
             });

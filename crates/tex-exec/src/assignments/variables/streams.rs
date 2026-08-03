@@ -230,7 +230,7 @@ pub(in crate::assignments) fn execute_pdf_graphics(
     {
         return Err(ExecError::UnimplementedTypesetting {
             mode: nest.current_mode(),
-            token: tex_expand::semantic_token(context),
+            token: context.semantic_token(),
             origin: context.origin(),
             operation: "PDF graphics primitive while PDF output is disabled",
         });
@@ -418,7 +418,7 @@ fn next_write_expansion_token(
         &mut tex_state::ExpansionContext::new(stores),
         context,
     )?
-    .map(tex_expand::semantic_token))
+    .map(|token| token.semantic_token()))
 }
 
 fn scan_read_tokens(
@@ -642,7 +642,7 @@ fn scan_file_name(
             else {
                 return Err(ExecError::MissingToken { context });
             };
-            let token = tex_expand::semantic_token(traced);
+            let token = traced.semantic_token();
             if is_end_group(token) && !quoted {
                 return if name.is_empty() {
                     Err(ExecError::MissingToken { context })
@@ -667,7 +667,7 @@ fn scan_file_name(
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )? {
-        match tex_expand::semantic_token(traced) {
+        match traced.semantic_token() {
             Token::Char { ch: '"', .. } if quoted => break,
             Token::Char {
                 cat: Catcode::Space,
@@ -731,7 +731,7 @@ fn scan_balanced_expanded_text(
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )?
-    .map(tex_expand::semantic_token)
+    .map(|token| token.semantic_token())
     {
         if is_begin_group(token) {
             depth += 1;

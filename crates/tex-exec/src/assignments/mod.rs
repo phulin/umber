@@ -154,7 +154,7 @@ pub fn try_execute_assignment(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<bool, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let Token::Cs(symbol) = token else {
         return Ok(false);
     };
@@ -181,7 +181,7 @@ pub(crate) fn execute_unexpandable_with_context(
 ) -> Result<DispatchAction, ExecError> {
     if primitive == UnexpandablePrimitive::PdfTeXUnimplemented {
         return Err(ExecError::UnsupportedCommand {
-            token: tex_expand::semantic_token(traced),
+            token: traced.semantic_token(),
             opcode: primitive.operand() as u8,
             origin: traced.origin(),
         });
@@ -304,11 +304,11 @@ fn execute_immediate(
         else {
             return Err(ExecError::MissingPrefixedCommand);
         };
-        if !is_space(tex_expand::semantic_token(traced)) {
+        if !is_space(traced.semantic_token()) {
             break traced;
         }
     };
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let origin = traced.origin();
     let Token::Cs(symbol) = token else {
         return Err(ExecError::PrefixWithNonAssignment { token, origin });
@@ -726,7 +726,7 @@ fn scan_pdf_image_name(
         });
     };
     if matches!(
-        tex_expand::semantic_token(first),
+        first.semantic_token(),
         Token::Char {
             cat: Catcode::BeginGroup,
             ..
@@ -745,20 +745,17 @@ fn scan_pdf_image_name(
         }
         return Ok(name);
     }
-    let quoted = matches!(
-        tex_expand::semantic_token(first),
-        Token::Char { ch: '"', .. }
-    );
+    let quoted = matches!(first.semantic_token(), Token::Char { ch: '"', .. });
     let mut name = String::new();
     if !quoted {
-        append_pdf_image_name(&mut name, tex_expand::semantic_token(first))?;
+        append_pdf_image_name(&mut name, first.semantic_token())?;
     }
     while let Some(traced) = get_x_token_with_context(
         input,
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )? {
-        match tex_expand::semantic_token(traced) {
+        match traced.semantic_token() {
             Token::Char { ch: '"', .. } if quoted => break,
             Token::Char {
                 cat: Catcode::Space,
@@ -1562,8 +1559,7 @@ pub(crate) fn off_save_alignment(
     // bottom level. Backing it up with an inserted right brace cannot expose
     // an enclosing group there; it only recreates the same off_save call.
     if stores.innermost_group_kind().is_none() {
-        let command =
-            tex_state::token_show::token_text(stores, tex_expand::semantic_token(command));
+        let command = tex_state::token_show::token_text(stores, command.semantic_token());
         // §1065's `<Drop current token and complain that it was unmatched>`.
         crate::error_report::report_input_error(
             input,
@@ -1646,7 +1642,7 @@ fn report_prefix_with_non_prefixed_command(
     stores: &mut Universe,
     command: TracedTokenWord,
 ) -> Result<(), ExecError> {
-    let token = tex_expand::semantic_token(command);
+    let token = command.semantic_token();
     let name = tex_command::command_token_text(&mut stores.command_context(), token);
     crate::error_report::back_error(
         input,
@@ -1666,7 +1662,7 @@ fn accumulate_prefixes(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<TracedPrefixedCommand, ExecError> {
-    let mut token = tex_expand::semantic_token(traced);
+    let mut token = traced.semantic_token();
     let mut origin = traced.origin();
     loop {
         let PrefixedCommand::Primitive(primitive) = command else {
@@ -1701,7 +1697,7 @@ fn accumulate_prefixes(
                 execution,
             )?
             .ok_or(ExecError::MissingPrefixedCommand)?;
-            let token = tex_expand::semantic_token(traced);
+            let token = traced.semantic_token();
             if is_space(token) {
                 continue;
             }
@@ -1712,7 +1708,7 @@ fn accumulate_prefixes(
             }
             break traced;
         };
-        token = tex_expand::semantic_token(traced);
+        token = traced.semantic_token();
         origin = traced.origin();
         let Token::Cs(symbol) = token else {
             return Err(ExecError::PrefixWithNonAssignment { token, origin });
@@ -1745,7 +1741,7 @@ fn execute_prefixed_command(
     if !accepts_macro_flags && prefixes.flags != MeaningFlags::EMPTY {
         // TeX.web §1213's `<Discard the prefixes \long and \outer if they are
         // irrelevant>`, which reports without backing anything up.
-        let token = tex_expand::semantic_token(command.traced);
+        let token = command.traced.semantic_token();
         let name = tex_command::command_token_text(&mut stores.command_context(), token);
         crate::error_report::report_input_error(
             input,

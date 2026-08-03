@@ -246,7 +246,7 @@ pub(crate) fn report_misplaced_alignment_command(
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
     let token = tex_expand::get_token(input, &mut tex_state::ExpansionContext::new(stores))?
         .ok_or(ExecError::MissingToken { context: "\\show" })?;
-    let token = tex_expand::semantic_token(token);
+    let token = token.semantic_token();
     let text = match token {
         Token::Cs(_)
         | Token::Char {
@@ -281,7 +281,7 @@ pub(crate) fn execute_showthe(
     ) {
         Ok(text) => text,
         Err(tex_expand::ExpandError::UnsupportedTheTarget { context }) => {
-            let token = tex_expand::semantic_token(context);
+            let token = context.semantic_token();
             let rendered = match token {
                 Token::Char { ch, cat } => format!("{} character {ch}", catcode_name(cat)),
                 _ => meaning_text(stores, token),
@@ -967,7 +967,7 @@ pub(crate) fn execute_ignorespaces(
         else {
             return Ok(());
         };
-        if !is_space(tex_expand::semantic_token(token)) {
+        if !is_space(token.semantic_token()) {
             push_traced_tokens(input, stores, [token]);
             return Ok(());
         }
@@ -999,7 +999,7 @@ fn scan_balanced_raw_text(
     while let Some(traced) =
         tex_expand::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
     {
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if is_begin_group(token) {
             depth += 1;
             tokens.push(token);
@@ -1041,7 +1041,7 @@ fn next_non_space_x(
         &mut tex_state::ExpansionContext::new(stores),
         execution,
     )?
-    .map(tex_expand::semantic_token)
+    .map(|token| token.semantic_token())
     {
         if !is_space(token) {
             return Ok(Some(token));

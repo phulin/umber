@@ -27,7 +27,7 @@ pub(crate) fn try_append_character(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<bool, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     match (nest.current_mode(), token) {
         (Mode::RestrictedHorizontal | Mode::Horizontal, Token::Char { ch, cat }) => {
             if cat == Catcode::Space {
@@ -61,7 +61,7 @@ pub(crate) fn try_append_tfm_character_span(
 
     let mut offset = 0;
     while offset < traced.len() {
-        let Token::Char { cat, .. } = tex_expand::semantic_token(traced[offset]) else {
+        let Token::Char { cat, .. } = traced[offset].semantic_token() else {
             unreachable!("preclassified horizontal text spans contain only character tokens")
         };
         if cat == Catcode::Space {
@@ -84,7 +84,7 @@ pub(crate) fn try_append_tfm_character_span(
         let mut pending = list.take_pending_hchars();
         let mut space_factor = list.space_factor();
         while offset < traced.len() {
-            let Token::Char { ch, cat } = tex_expand::semantic_token(traced[offset]) else {
+            let Token::Char { ch, cat } = traced[offset].semantic_token() else {
                 unreachable!("preclassified horizontal text spans contain only character tokens")
             };
             if cat == Catcode::Space {
@@ -526,11 +526,7 @@ fn execute_insert(
         next_non_space_traced_x(input, stores, execution)?.ok_or(ExecError::MissingToken {
             context: "\\insert group",
         })?;
-    if !has_catcode_meaning(
-        stores,
-        tex_expand::semantic_token(opener),
-        Catcode::BeginGroup,
-    ) {
+    if !has_catcode_meaning(stores, opener.semantic_token(), Catcode::BeginGroup) {
         return Err(ExecError::MissingToken {
             context: "\\insert group",
         });
@@ -1843,7 +1839,7 @@ fn scan_accent_base(
         else {
             return Ok(None);
         };
-        let token = tex_expand::semantic_token(traced);
+        let token = traced.semantic_token();
         if is_space(token) {
             continue;
         }

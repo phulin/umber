@@ -98,7 +98,7 @@ pub(crate) fn enter_math(
     let display = match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(
-                tex_expand::semantic_token(traced),
+                traced.semantic_token(),
                 Token::Char {
                     cat: Catcode::MathShift,
                     ..
@@ -223,7 +223,7 @@ pub(crate) fn dispatch_math_token_with_context(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let origin = traced.origin();
     match token {
         Token::Char {
@@ -430,7 +430,7 @@ fn check_second_math_shift(
     )? {
         Some(traced)
             if matches!(
-                tex_expand::semantic_token(traced),
+                traced.semantic_token(),
                 Token::Char {
                     cat: Catcode::MathShift,
                     ..
@@ -605,7 +605,7 @@ fn dispatch_math_control(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let origin = traced.origin();
     let meaning = stores.meaning(symbol);
     execution.record_meaning(symbol, meaning);
@@ -681,7 +681,7 @@ fn dispatch_math_primitive(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<DispatchAction, ExecError> {
-    let token = tex_expand::semantic_token(traced);
+    let token = traced.semantic_token();
     let origin = traced.origin();
     match primitive {
         UnexpandablePrimitive::Par | UnexpandablePrimitive::End | UnexpandablePrimitive::Dump => {
@@ -1059,7 +1059,7 @@ fn finish_display_alignment_assignments(
             return Ok(());
         };
         if matches!(
-            tex_expand::semantic_token(first),
+            first.semantic_token(),
             Token::Char {
                 cat: Catcode::Space,
                 ..
@@ -1069,7 +1069,7 @@ fn finish_display_alignment_assignments(
         }
         let mut command = vec![first];
         let meaning = loop {
-            let token = tex_expand::semantic_token(*command.last().expect("command token"));
+            let token = (*command.last().expect("command token")).semantic_token();
             let Token::Cs(symbol) = token else {
                 push_traced_tokens(input, stores, command);
                 return Ok(());
@@ -1157,7 +1157,7 @@ fn consume_display_alignment_closer(
     let closing_origin = match input.next_traced_token(stores)? {
         Some(traced)
             if matches!(
-                tex_expand::semantic_token(traced),
+                traced.semantic_token(),
                 Token::Char {
                     cat: Catcode::MathShift,
                     ..
