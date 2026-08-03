@@ -272,12 +272,18 @@ impl EngineCheckpoint {
         for (paragraph, input) in paragraphs.iter_mut().zip(materialized_paragraphs) {
             paragraph.replace_input(input);
         }
+        // A retained graph is an optional replay candidate, not part of the
+        // checkpoint continuation. Validate every graph before mounting any
+        // of them, then conservatively discard candidates whose resource
+        // closure is unavailable in the selected fork. This preserves the
+        // fail-before-mutation contract while allowing ordinary cold delivery
+        // to handle unsupported node forms and post-anchor font resources.
+        let retained_before_validation = paragraphs.len();
+        paragraphs.retain(|paragraph| paragraph.can_mount_finished_lines(&universe));
+        let invalid_retained_paragraphs = retained_before_validation - paragraphs.len();
         if !paragraphs
             .iter()
-            .all(|paragraph| paragraph.can_mount_finished_lines(&universe))
-            || !paragraphs
-                .iter()
-                .all(|paragraph| paragraph.mount_finished_lines(&mut universe))
+            .all(|paragraph| paragraph.mount_finished_lines(&mut universe))
         {
             return Err(EditorRestoreError::Canonical(
                 CanonicalCheckpointRestoreError::InvalidRetainedParagraph,
@@ -287,6 +293,11 @@ impl EngineCheckpoint {
         control
             .restore_checkpoint(&rebound, &mut universe)
             .map_err(EditorRestoreError::Canonical)?;
+        for _ in 0..invalid_retained_paragraphs {
+            universe.record_pure_paragraph_validation_failure(
+                tex_state::ParagraphValidationFailure::RetainedResult,
+            );
+        }
         universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
