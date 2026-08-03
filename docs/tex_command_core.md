@@ -3466,6 +3466,13 @@ the alignment cell's `get_x_alignment_delivery`. An alignment cell body is
 ordinary `main_control` material, and neither of that path's recovery
 predicates can fire for the three commands §1038 accepts raw.
 
+The label is not parked across command steps while an alignment scanner is
+active. TeX82 §1038's inner loop calls scalar `get_next`, whose §341 delivery
+performs alignment interception and brace accounting. Umber's horizontal
+macro-text acceleration can bypass that scalar boundary, so command-owned
+alignment activity deoptimizes the parked fast path just as it deoptimizes a
+macro literal span; the executor must not infer this state from its mode nest.
+
 Executor-owned replay episodes (a discretionary part, an `\afterassignment`
 token) clear the label on entry and exit. TeX reaches those
 lists through `scan_left_brace`/`push_nest` and leaves them through

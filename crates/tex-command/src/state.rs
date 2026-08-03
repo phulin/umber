@@ -483,6 +483,16 @@ impl CommandState {
             })
     }
 
+    /// Reports whether TeX82's alignment-aware `get_next` path is active.
+    ///
+    /// Main-control accelerations that bypass scalar raw delivery must use
+    /// this command-owned predicate rather than reconstructing alignment
+    /// activity from the executor's mode nest.
+    #[must_use]
+    pub fn alignment_scanner_is_active(&self) -> bool {
+        self.alignment.active_alignment.is_some()
+    }
+
     /// Returns the committed observation for a command-owned outer alignment
     /// suspension. The executor chooses the structural boundary, while this
     /// state remains the sole owner of the saved delivery snapshot.
