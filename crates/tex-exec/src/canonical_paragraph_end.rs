@@ -70,9 +70,6 @@ impl CanonicalParagraphEnd {
             return Ok(ParagraphBreakResult::empty());
         }
         flush_pending_hchars_with_fuel(nest, stores, fuel)?;
-        if is_display {
-            stores.begin_paragraph_break_dependency_region();
-        }
         if nest.current_list().is_empty() {
             let _ = commit_current_list(nest, stores, fuel)?;
             if !is_display {
@@ -81,6 +78,7 @@ impl CanonicalParagraphEnd {
             }
             return Ok(ParagraphBreakResult::empty());
         }
+        stores.begin_paragraph_break_dependency_region();
         break_current_paragraph(
             nest,
             stores,
@@ -104,9 +102,11 @@ pub(crate) fn end_canonical_paragraph_with_fuel(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
-    CanonicalParagraphEnd::end(Some(context))
-        .finish(nest, stores, fuel)
-        .map(|_| ())
+    let result = CanonicalParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
+    if !result.finished_nodes.is_empty() {
+        nest.publish_completed_paragraph_nodes(result.finished_nodes);
+    }
+    Ok(())
 }
 
 pub(crate) fn end_canonical_paragraph_without_source(
@@ -114,9 +114,11 @@ pub(crate) fn end_canonical_paragraph_without_source(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    CanonicalParagraphEnd::end(None)
-        .finish(nest, stores, fuel)
-        .map(|_| ())
+    let result = CanonicalParagraphEnd::end(None).finish(nest, stores, fuel)?;
+    if !result.finished_nodes.is_empty() {
+        nest.publish_completed_paragraph_nodes(result.finished_nodes);
+    }
+    Ok(())
 }
 
 pub(crate) fn interrupt_canonical_paragraph_for_display(
@@ -124,5 +126,9 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    CanonicalParagraphEnd::display_interruption().finish(nest, stores, fuel)
+    let result = CanonicalParagraphEnd::display_interruption().finish(nest, stores, fuel)?;
+    if !result.finished_nodes.is_empty() {
+        nest.publish_completed_paragraph_nodes(result.finished_nodes.clone());
+    }
+    Ok(result)
 }

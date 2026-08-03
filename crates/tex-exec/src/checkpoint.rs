@@ -104,6 +104,65 @@ impl EngineCheckpoint {
         self.artifact_prefix = self.artifact_prefix.saturating_add(count);
     }
 
+    /// Materializes retained paragraph command graphs into an independently
+    /// prepared cold destination without restoring this checkpoint's runtime
+    /// continuation.
+    pub fn materialize_canonical_paragraphs_into(
+        &self,
+        destination: &mut Universe,
+        substrate: &GenerationSubstrate,
+        paragraphs: &[crate::CanonicalParagraphRegion],
+    ) -> Result<Vec<crate::CanonicalParagraphRegion>, EditorRestoreError> {
+        let summary = self.command_summary().ok_or(EditorRestoreError::Canonical(
+            CanonicalCheckpointRestoreError::MissingCommandSummary,
+        ))?;
+        let (_, (owned, detached_meanings)) = substrate
+            .fork_at_prepared(&self.universe, |source| {
+                let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
+                    summary,
+                    paragraphs
+                        .iter()
+                        .map(|paragraph| (paragraph.input(), paragraph.accepted_origin_resolver())),
+                    source,
+                );
+                let mut meanings = std::collections::HashMap::new();
+                for paragraph in paragraphs {
+                    for raw in paragraph.meaning_dependency_raws() {
+                        if let Some(identity) = source.detach_paragraph_meaning_dependency(raw) {
+                            meanings.entry(raw).or_insert(identity);
+                        }
+                    }
+                }
+                (owned, meanings)
+            })
+            .map_err(EditorRestoreError::Fork)?;
+        let (_, materialized_inputs) = owned.materialize_with_paragraphs(destination);
+        let materialized_meanings = detached_meanings
+            .into_iter()
+            .map(|(raw, (kind, spelling))| {
+                let symbol = match kind {
+                    tex_state::interner::ControlSequenceKind::ActiveCharacter => destination
+                        .intern_active_character(spelling.chars().next().expect("active spelling"))
+                        .symbol(),
+                    tex_state::interner::ControlSequenceKind::Null
+                    | tex_state::interner::ControlSequenceKind::SingleCharacter
+                    | tex_state::interner::ControlSequenceKind::Named => {
+                        destination.intern(&spelling).symbol()
+                    }
+                };
+                (raw, symbol)
+            })
+            .collect();
+        let mut materialized = paragraphs.to_vec();
+        for (paragraph, input) in materialized.iter_mut().zip(materialized_inputs) {
+            paragraph.replace_input(input);
+            paragraph.remap_meaning_dependencies(&materialized_meanings);
+        }
+        materialized.retain(|paragraph| paragraph.can_mount_finished_lines(destination));
+        materialized.retain(|paragraph| paragraph.mount_finished_lines(destination));
+        Ok(materialized)
+    }
+
     /// Captures a canonical named boundary.  Command publication proves that
     /// no scanner, macro matcher, or alignment delivery remains live.
     pub fn capture_canonical(

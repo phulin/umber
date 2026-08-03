@@ -234,6 +234,7 @@ pub struct CanonicalMainControl {
     completed_boundaries: Vec<crate::EngineBoundary>,
     /// Canonical paragraph input regions completed since the host last drained them.
     paragraph_recorder: CanonicalParagraphRecorder,
+    paragraph_replay_replaced_mode_journal: bool,
     /// A committed artifact prefix waiting for the outer main-control owner.
     ///
     /// TeX82 §§1025--1026 may execute several `ship_out` calls while an
@@ -506,6 +507,7 @@ struct CanonicalStepSnapshot {
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
     paragraph_recorder: CanonicalParagraphRecorder,
+    paragraph_replay_replaced_mode_journal: bool,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
@@ -536,6 +538,7 @@ impl CanonicalStepSnapshot {
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
             paragraph_recorder: control.paragraph_recorder.clone(),
+            paragraph_replay_replaced_mode_journal: control.paragraph_replay_replaced_mode_journal,
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
             job: control.job.clone(),
@@ -575,6 +578,8 @@ impl CanonicalStepSnapshot {
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
         control.paragraph_recorder = self.paragraph_recorder;
+        control.paragraph_replay_replaced_mode_journal =
+            self.paragraph_replay_replaced_mode_journal;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
         control.job = self.job;
@@ -585,6 +590,9 @@ impl CanonicalStepSnapshot {
     }
 
     fn commit(self, control: &mut CanonicalMainControl) {
+        if std::mem::take(&mut control.paragraph_replay_replaced_mode_journal) {
+            return;
+        }
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -629,6 +637,15 @@ pub struct CanonicalParagraphRegion {
 }
 
 impl CanonicalParagraphRegion {
+    /// Whether a cold replacement may enter this region without first
+    /// restoring an accepted execution checkpoint. Typed barriers summarize
+    /// effects, unsupported mutations, and ownership transitions whose cold
+    /// prefix must execute before any later region can be considered.
+    #[must_use]
+    pub fn permits_contiguous_cold_replay(&self) -> bool {
+        self.barriers.is_empty()
+    }
+
     pub(crate) fn replace_input(&mut self, input: tex_command::ParagraphInputTransaction) {
         self.input = input;
     }
@@ -846,9 +863,6 @@ struct CanonicalParagraphRecorder {
     starting_universe: Option<Arc<tex_state::Snapshot>>,
     starting_artifact_pos: usize,
     replayed_artifact_prefix: usize,
-    starting_vertical_len: usize,
-    starting_page_len: usize,
-    starting_contribution_len: usize,
     effect_start: usize,
     starting_provenance: Option<ProvenanceStats>,
     starting_prev_graf: i32,
@@ -885,7 +899,7 @@ mod paragraph_recorder_tests {
 }
 
 impl CanonicalParagraphRecorder {
-    fn begin(&mut self, command: &mut CommandState, modes: &ModeNest, stores: &mut Universe) {
+    fn begin(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
         if self.pending {
             return;
         }
@@ -903,46 +917,24 @@ impl CanonicalParagraphRecorder {
         command.begin_paragraph_input_transaction();
         stores.begin_dependency_region();
         stores.begin_pure_paragraph_recording();
-        if command.active_condition_depth() != 0 {
-            stores.mark_pure_paragraph_barrier(
-                tex_state::ParagraphBarrierReason::UnsupportedInputTransition,
-            );
-        }
+        modes.clear_completed_paragraph_nodes();
         self.lookup_attempted = false;
         self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
         self.starting_artifact_pos = stores.world().artifact_pos();
-        self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
-        self.starting_page_len = stores.current_page_nodes().len();
-        self.starting_contribution_len = stores.page_contributions().len();
         self.effect_start = stores.world().effect_records().len();
         self.starting_provenance = Some(stores.provenance_stats());
         self.starting_prev_graf = modes.enclosing_vertical_prev_graf();
         self.pending = true;
     }
 
-    fn finish(&mut self, command: &mut CommandState, modes: &ModeNest, stores: &mut Universe) {
+    fn finish(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
         if !std::mem::take(&mut self.pending) {
             return;
         }
         let Some(input) = command.finish_paragraph_input_transaction() else {
             return;
         };
-        let vertical = modes
-            .list(0)
-            .and_then(|list| list.nodes().get(self.starting_vertical_len..))
-            .unwrap_or_default();
-        let page = stores.current_page_nodes();
-        let page = page.get(self.starting_page_len..).unwrap_or_default();
-        let contributions = stores
-            .page_contributions()
-            .iter()
-            .skip(self.starting_contribution_len);
-        let finished = vertical
-            .iter()
-            .chain(page)
-            .chain(contributions)
-            .cloned()
-            .collect::<Vec<_>>();
+        let finished = modes.take_completed_paragraph_nodes().unwrap_or_default();
         let finished_lines = (!finished.is_empty()).then(|| {
             let list = stores.freeze_node_list(&finished);
             stores.retain_paragraph_result(list)
@@ -1027,7 +1019,7 @@ impl CanonicalParagraphRecorder {
             barriers: barriers.clone().into(),
             line_provenance: tex_state::ParagraphLineProvenance::Pending,
         };
-        if !barriers.contains(&tex_state::ParagraphBarrierReason::UnsupportedGroupTransition) {
+        if barriers.is_empty() {
             stores.record_canonical_paragraph_region(region.history_record());
         }
         if !barriers.is_empty() {
@@ -2121,7 +2113,24 @@ impl CanonicalMainControl {
         &mut self,
         regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
     ) {
+        let regions = regions.into_iter().collect::<Vec<_>>();
+        self.paragraph_recorder.next_identity = self.paragraph_recorder.next_identity.max(
+            regions
+                .iter()
+                .map(|region| region.identity)
+                .max()
+                .unwrap_or(0),
+        );
         Arc::make_mut(&mut self.paragraph_recorder.replay).extend(regions);
+    }
+
+    /// Installs a cold-start suffix whose semantic continuity ends at its
+    /// first failed entry validation.
+    pub fn install_contiguous_cold_paragraph_replay_regions(
+        &mut self,
+        regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
+    ) {
+        self.install_paragraph_replay_regions(regions);
     }
 
     /// Whether a later source-aligned paragraph still has an accepted replay
@@ -2133,18 +2142,18 @@ impl CanonicalMainControl {
     }
 
     fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
-        if self.modes.current_mode() != Mode::Horizontal
-            || self.modes.depth() != 2
-            || !self.paragraph_recorder.pending
+        if !self.paragraph_recorder.pending
             || self.paragraph_recorder.replay.is_empty()
+            || !matches!(self.modes.current_mode(), Mode::Vertical | Mode::Horizontal)
+            || self.modes.depth() > 2
         {
             return false;
         }
-        if std::mem::replace(&mut self.paragraph_recorder.lookup_attempted, true) {
+        if self.paragraph_recorder.lookup_attempted {
             return false;
         }
         let mut selected = None;
-        let mut rejected = None;
+        let mut validation_failure = None;
         for (index, region) in self.paragraph_recorder.replay.iter().enumerate() {
             let mut input_probe = self.command.clone();
             if input_probe
@@ -2157,43 +2166,50 @@ impl CanonicalMainControl {
             {
                 continue;
             }
+            self.paragraph_recorder.lookup_attempted = true;
             if !region.barriers.is_empty() {
-                rejected = Some((index, true));
-                break;
+                Arc::make_mut(&mut self.paragraph_recorder.replay).drain(index..);
+                stores.record_canonical_paragraph_lookup(false, 0, 0);
+                return false;
             }
             if !crate::canonical_paragraph_memo::same_mutation_entry_class(
                 region.mutation_entry_in_group,
                 tex_state::ExpansionState::execution_group_depth(stores),
             ) {
-                rejected = Some((index, false));
-                break;
+                continue;
             }
             if let Some(key) =
                 crate::canonical_paragraph_memo::dependency_failure(stores, &region.dependencies)
             {
-                stores.record_pure_paragraph_validation_failure(
-                    tex_state::ParagraphValidationFailure::from_dependency(key),
-                );
-                rejected = Some((index, false));
-                break;
+                let is_break_dependency =
+                    region
+                        .break_dependency_ordinals
+                        .first()
+                        .is_some_and(|first| {
+                            region.dependencies[*first as usize..]
+                                .iter()
+                                .any(|dependency| dependency.key == key)
+                        });
+                let failure = if is_break_dependency {
+                    tex_state::ParagraphValidationFailure::BreakDependency
+                } else {
+                    tex_state::ParagraphValidationFailure::from_dependency(key)
+                };
+                validation_failure.get_or_insert(failure);
+                continue;
             }
             if !crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations) {
-                stores.record_pure_paragraph_validation_failure(
-                    tex_state::ParagraphValidationFailure::Mutation,
-                );
-                rejected = Some((index, false));
-                break;
+                validation_failure.get_or_insert(tex_state::ParagraphValidationFailure::Mutation);
+                continue;
             }
             selected = Some(index);
             break;
         }
         let Some(index) = selected else {
-            if let Some((index, invalidates_suffix)) = rejected {
-                let replay = Arc::make_mut(&mut self.paragraph_recorder.replay);
-                if invalidates_suffix {
-                    replay.drain(index..);
-                } else {
-                    replay.remove(index);
+            if let Some(failure) = validation_failure {
+                stores.record_pure_paragraph_validation_failure(failure);
+                if failure == tex_state::ParagraphValidationFailure::BreakDependency {
+                    Arc::make_mut(&mut self.paragraph_recorder.replay).clear();
                 }
             }
             stores.record_canonical_paragraph_lookup(false, 0, 0);
@@ -2258,6 +2274,7 @@ impl CanonicalMainControl {
         stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
+        self.paragraph_replay_replaced_mode_journal = true;
         if let Some(nodes) = finished_nodes {
             for node in nodes {
                 crate::vertical::append_vertical_contribution(&mut self.modes, stores, node);
@@ -2762,7 +2779,7 @@ impl CanonicalMainControl {
             self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
         if !outer_paragraph_was_active && outer_paragraph_is_active {
             self.paragraph_recorder
-                .begin(&mut self.command, &self.modes, stores);
+                .begin(&mut self.command, &mut self.modes, stores);
         }
         let outer_paragraph_finished = outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
@@ -2770,9 +2787,14 @@ impl CanonicalMainControl {
             || self.paragraph_recorder.pending && self.modes.current_mode() == Mode::DisplayMath;
         if outer_paragraph_finished {
             self.paragraph_recorder
-                .finish(&mut self.command, &self.modes, stores);
+                .finish(&mut self.command, &mut self.modes, stores);
             self.completed_boundaries
                 .push(crate::EngineBoundary::OuterParagraphEnd);
+        } else if !outer_paragraph_was_active
+            && !outer_paragraph_is_active
+            && self.paragraph_recorder.pending
+        {
+            self.paragraph_recorder.abandon(&mut self.command, stores);
         }
     }
 
@@ -3016,7 +3038,9 @@ impl CanonicalMainControl {
         if self.fatal.is_some() {
             return Ok(CanonicalStepResult::Progress(MainControlStep::End));
         }
-        if self.try_replay_paragraph_before_delivery(stores) {
+        if self.modes.current_mode() == Mode::Horizontal
+            && self.try_replay_paragraph_before_delivery(stores)
+        {
             return Ok(CanonicalStepResult::Progress(MainControlStep::Continue));
         }
         self.advance_telemetry.attempts += 1;
@@ -3277,6 +3301,16 @@ impl CanonicalMainControl {
         let scanned = self.resolve_font_resource(scanned)?;
         let scanned = self.resolve_input_stream_resource(scanned)?;
         let scanned = self.resolve_pdf_image_resource(scanned, stores)?;
+        if mode == Mode::Vertical
+            && self.modes.depth() == 1
+            && !self.paragraph_recorder.replay.is_empty()
+        {
+            self.paragraph_recorder
+                .begin(&mut self.command, &mut self.modes, stores);
+            if self.try_replay_paragraph_before_delivery(stores) {
+                return Ok(ReplayStep::Continue);
+            }
+        }
         let parking = self.suspend_main_control_parking(&scanned);
         let artifact_count = stores.world().artifact_commits().len();
         let effect_count = stores.world().effect_records().len();

@@ -423,7 +423,10 @@ enum PendingSubstrate {
         scratch: Universe,
         adopted_origins: Vec<OriginId>,
     },
-    Replaced(GenerationSubstrate),
+    Replaced {
+        substrate: GenerationSubstrate,
+        current_artifact_origins: Vec<OriginId>,
+    },
 }
 
 impl PendingRevision {
@@ -465,21 +468,22 @@ impl RevisionCandidate {
         let resolver = self.universe.paragraph_origin_resolver();
         let mut accepted = std::mem::take(&mut self.carried_paragraphs);
         accepted.extend(self.control.take_finished_paragraph_regions());
-        if let Some(position) = convergence_position {
-            for region in &self.replay_suffix {
-                let starts_in_suffix = region
+        for region in &self.replay_suffix {
+            let may_carry = convergence_position.is_none_or(|position| {
+                region
                     .input()
                     .coverage()
                     .root_start()
-                    .is_some_and(|start| start >= position);
-                if let Some(materialized) = accepted
-                    .iter_mut()
-                    .find(|accepted| accepted.identity() == region.identity())
-                {
-                    *materialized = region.clone();
-                } else if starts_in_suffix {
-                    accepted.push(region.clone());
-                }
+                    .is_some_and(|start| start >= position)
+            });
+            if let Some(materialized) = accepted
+                .iter_mut()
+                .find(|accepted| accepted.identity() == region.identity())
+            {
+                *materialized = region.clone();
+            } else if may_carry {
+                region.publish_carried_history(&mut self.universe);
+                accepted.push(region.clone());
             }
         }
         for region in &mut accepted {
@@ -1692,7 +1696,7 @@ impl Session {
         universe.begin_retained_session()?;
         universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
-        let control = canonical_candidate_control(
+        let mut control = canonical_candidate_control(
             &mut universe,
             CandidateControlOptions {
                 job_name: &self.job_name,
@@ -1705,6 +1709,37 @@ impl Session {
                 root_framing_name: self.root_framing_name.as_deref(),
             },
         )?;
+        let revised_root: Arc<[u8]> = Arc::from(setup.next.as_bytes());
+        let mut replay_suffix = Vec::new();
+        for region in &self.canonical_paragraphs {
+            let coverage = region.input().coverage();
+            let intersects_edit = coverage.root_start().is_some_and(|start| {
+                coverage
+                    .root_end()
+                    .is_some_and(|end| start < setup.map.old.end && end > setup.map.old.start)
+            });
+            if intersects_edit {
+                continue;
+            }
+            if !region.permits_contiguous_cold_replay() {
+                break;
+            }
+            let Some(region) = region.rehome_edited_root(
+                setup.old_source.as_bytes(),
+                Arc::clone(&revised_root),
+                setup.map.old.clone(),
+            ) else {
+                break;
+            };
+            replay_suffix.push(region);
+        }
+        let replay_suffix = match (setup.old_history.first(), self.substrate.as_ref()) {
+            (Some(anchor), Some(substrate)) => anchor
+                .checkpoint()
+                .materialize_canonical_paragraphs_into(&mut universe, substrate, &replay_suffix)?,
+            _ => Vec::new(),
+        };
+        control.install_contiguous_cold_paragraph_replay_regions(replay_suffix.iter().cloned());
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
         let effect_start = universe.world().effect_records().len();
@@ -1721,7 +1756,7 @@ impl Session {
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },
             carried_paragraphs: Vec::new(),
-            replay_suffix: Vec::new(),
+            replay_suffix,
         })
     }
 
@@ -1808,7 +1843,10 @@ impl Session {
             dvi_pages,
             history,
             canonical_paragraphs,
-            substrate: PendingSubstrate::Replaced(substrate),
+            substrate: PendingSubstrate::Replaced {
+                substrate,
+                current_artifact_origins: Vec::new(),
+            },
             reuse,
             dumped_format,
             format_dump_receipt,
@@ -1846,6 +1884,11 @@ impl Session {
         let before_memo = self.pure_memo.stats();
         let mut memo = candidate.universe.take_pure_memo_runtime();
         let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
+        let break_dependency_index =
+            tex_state::ParagraphValidationFailure::BreakDependency as usize;
+        let broke_retained_paragraph = memo.stats().paragraph_validation_failure_reasons
+            [break_dependency_index]
+            > before_memo.paragraph_validation_failure_reasons[break_dependency_index];
         let CanonicalCandidateCompletion {
             dvi_pages,
             dumped_format,
@@ -2024,6 +2067,30 @@ impl Session {
                     && replayed_artifact_count > 1
                     && retained_pages_are_subsequence(&pages_through_stop, &setup.old_pages)
                     && candidate_effects == setup.old_effects;
+                let current_artifact_origins = if broke_retained_paragraph {
+                    artifacts
+                        .iter()
+                        .flat_map(|artifact| artifact.live_render_origins().iter())
+                        .copied()
+                        .filter(|origin| {
+                            candidate
+                                .universe
+                                .root_span_for_origin(*origin)
+                                .is_some_and(|span| {
+                                    matches!(
+                                        candidate.universe.resolve_root_span(
+                                            span,
+                                            &setup.fragments,
+                                            &setup.next_layout,
+                                        ),
+                                        LayoutResolvedOrigin::Current { .. }
+                                    )
+                                })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let target = candidate.universe.freeze_generation();
                 let mut history = Vec::with_capacity(restart + 1 + sink.records.len());
                 for record in &setup.old_history[..=restart] {
@@ -2053,7 +2120,10 @@ impl Session {
                         pages_through_stop
                     },
                     history,
-                    PendingSubstrate::Replaced(target),
+                    PendingSubstrate::Replaced {
+                        substrate: target,
+                        current_artifact_origins,
+                    },
                     ReuseMetrics {
                         execution_path: setup.execution_path,
                         restart_boundary: Some(anchor.key),
@@ -2085,7 +2155,7 @@ impl Session {
         }
         let retained_substrate = match &pending_substrate {
             PendingSubstrate::Retained { .. } => substrate,
-            PendingSubstrate::Replaced(substrate) => substrate,
+            PendingSubstrate::Replaced { substrate, .. } => substrate,
         };
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
@@ -2498,7 +2568,10 @@ impl Session {
                 artifacts: run.artifacts,
                 dvi_pages: run.dvi_pages,
                 history,
-                substrate: PendingSubstrate::Replaced(run.substrate),
+                substrate: PendingSubstrate::Replaced {
+                    substrate: run.substrate,
+                    current_artifact_origins: Vec::new(),
+                },
                 reuse,
                 dumped_format: run.dumped_format,
                 format_dump_receipt: run.format_dump_receipt,
@@ -2685,7 +2758,10 @@ impl Session {
                     artifacts,
                     advance.pages_through_stop,
                     history,
-                    PendingSubstrate::Replaced(target),
+                    PendingSubstrate::Replaced {
+                        substrate: target,
+                        current_artifact_origins: Vec::new(),
+                    },
                     ReuseMetrics {
                         execution_path: RevisionExecutionPath::SlowEdit,
                         restart_boundary: old_history.get(restart_index).map(BoundaryRecord::key),
@@ -2728,7 +2804,7 @@ impl Session {
                 .substrate
                 .as_ref()
                 .ok_or(SessionError::MissingAcceptedSubstrate)?,
-            PendingSubstrate::Replaced(substrate) => substrate,
+            PendingSubstrate::Replaced { substrate, .. } => substrate,
         };
         let history = retain_restorable_history(history, retained_substrate)?;
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
@@ -2769,7 +2845,7 @@ impl Session {
                 .substrate
                 .as_ref()
                 .ok_or(SessionError::MissingAcceptedSubstrate)?,
-            PendingSubstrate::Replaced(substrate) => substrate,
+            PendingSubstrate::Replaced { substrate, .. } => substrate,
         };
         Ok(substrate
             .materialize_detached_outputs(pending.effects.clone(), pending.artifacts.clone())?)
@@ -2829,7 +2905,17 @@ impl Session {
                     &layout,
                 )?;
             }
-            PendingSubstrate::Replaced(substrate) => self.substrate = Some(substrate),
+            PendingSubstrate::Replaced {
+                mut substrate,
+                current_artifact_origins,
+            } => {
+                substrate.retain_artifact_origin_spans(
+                    &current_artifact_origins,
+                    &fragments,
+                    &layout,
+                );
+                self.substrate = Some(substrate);
+            }
         }
         let substrate_transition_latency = substrate_transition_started.elapsed();
 

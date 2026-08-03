@@ -140,7 +140,12 @@ pub(crate) fn break_current_paragraph(
     let mut migrated = Vec::new();
     let mut pre_migrated = Vec::new();
     let mut retained_migrated = Vec::new();
-    let mut finished_nodes = Vec::new();
+    let outer_vertical = crate::vertical::is_outer_vertical(nest);
+    let contribution_start = if outer_vertical {
+        stores.page_contributions().len()
+    } else {
+        nest.current_list().nodes().len()
+    };
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         materialize_pdf_line(
@@ -191,15 +196,13 @@ pub(crate) fn break_current_paragraph(
             append_migrated_contribution(nest, stores, node);
         }
         let line_node = Node::HList(line);
-        finished_nodes.push(line_node.clone());
         append_node_to_current_list(nest, stores, line_node, fuel)?;
         for node in migrated.drain(..) {
             append_migrated_contribution(nest, stores, node);
         }
-        finished_nodes.append(&mut retained_migrated);
+        retained_migrated.clear();
         if let Some(penalty) = broken.penalty_after {
             let penalty = Node::Penalty(penalty);
-            finished_nodes.push(penalty.clone());
             append_vertical_contribution(nest, stores, penalty);
         }
         line_nodes = broken.nodes;
@@ -214,6 +217,16 @@ pub(crate) fn break_current_paragraph(
     if reset_paragraph {
         reset_after_par(nest, stores);
     }
+    let finished_nodes = if outer_vertical {
+        stores
+            .page_contributions()
+            .iter()
+            .skip(contribution_start)
+            .cloned()
+            .collect()
+    } else {
+        nest.current_list().nodes()[contribution_start..].to_vec()
+    };
     build_page_if_outer_vertical(nest, stores)?;
     Ok(ParagraphBreakResult {
         last_line,
@@ -280,6 +293,14 @@ fn materialize_pdf_line(
     adjusts_spacing: bool,
     protrudes_chars: bool,
 ) -> Result<(), ExecError> {
+    if adjusts_spacing || protrudes_chars {
+        // Expansion and protrusion consult mutable, per-glyph PDF font-code
+        // tables. `DependencyFontField::PdfCode` intentionally has no
+        // detached semantic value yet, so retaining this paragraph would be
+        // a false validation after an ef/lp/rp-code edit. Keep the barrier at
+        // the actual read boundary until those tables gain typed projections.
+        stores.mark_pure_paragraph_barrier(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
+    }
     if adjusts_spacing {
         apply_line_expansion(stores, nodes, target)?;
     }
@@ -888,7 +909,53 @@ fn extract_migrating_material(
     }
 }
 
-fn snapshot_paragraph_params(nest: &ModeNest, stores: &Universe) -> ParagraphParams {
+fn snapshot_paragraph_params(nest: &ModeNest, stores: &mut Universe) -> ParagraphParams {
+    use tex_state::{DependencyBank, DependencyEngineField, DependencyKey};
+    for param in [
+        IntParam::HANG_AFTER,
+        IntParam::LOOSENESS,
+        IntParam::PRETOLERANCE,
+        IntParam::TOLERANCE,
+        IntParam::LINE_PENALTY,
+        IntParam::HYPHEN_PENALTY,
+        IntParam::EX_HYPHEN_PENALTY,
+        IntParam::ADJ_DEMERITS,
+        IntParam::DOUBLE_HYPHEN_DEMERITS,
+        IntParam::FINAL_HYPHEN_DEMERITS,
+        IntParam::LAST_LINE_FIT,
+        IntParam::INTERLINE_PENALTY,
+        IntParam::CLUB_PENALTY,
+        IntParam::WIDOW_PENALTY,
+        IntParam::DISPLAY_WIDOW_PENALTY,
+        IntParam::BROKEN_PENALTY,
+    ] {
+        stores.observe_semantic_dependency(DependencyKey::Cell {
+            bank: DependencyBank::IntParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        DimenParam::HANG_INDENT,
+        DimenParam::EMERGENCY_STRETCH,
+        DimenParam::H_SIZE,
+    ] {
+        stores.observe_semantic_dependency(DependencyKey::Cell {
+            bank: DependencyBank::DimenParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    for param in [
+        GlueParam::LEFT_SKIP,
+        GlueParam::RIGHT_SKIP,
+        GlueParam::PAR_FILL_SKIP,
+    ] {
+        stores.observe_semantic_dependency(DependencyKey::Cell {
+            bank: DependencyBank::GlueParam,
+            index: u32::from(param.raw()),
+        });
+    }
+    stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::ParShape));
+    stores.observe_semantic_dependency(DependencyKey::Engine(DependencyEngineField::PenaltyArrays));
     ParagraphParams {
         left_skip: stores.glue_param(GlueParam::LEFT_SKIP),
         right_skip: stores.glue_param(GlueParam::RIGHT_SKIP),

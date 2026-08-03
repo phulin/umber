@@ -1162,6 +1162,7 @@ fn hash_optional_u32(value: Option<u32>, projection: &mut EngineBoundaryHasher<'
 pub struct ModeNest {
     levels: Arc<Vec<ModeLevelSummary>>,
     journal: journal::ModeJournal,
+    completed_paragraph_nodes: Option<Vec<Node>>,
 }
 
 impl Clone for ModeNest {
@@ -1169,6 +1170,7 @@ impl Clone for ModeNest {
         Self {
             levels: self.levels.clone(),
             journal: journal::ModeJournal::enabled(self.levels.len()),
+            completed_paragraph_nodes: self.completed_paragraph_nodes.clone(),
         }
     }
 }
@@ -1209,7 +1211,20 @@ impl ModeNest {
         Self {
             levels: Arc::new(levels),
             journal: journal::ModeJournal::enabled(1),
+            completed_paragraph_nodes: None,
         }
+    }
+
+    pub(crate) fn publish_completed_paragraph_nodes(&mut self, nodes: Vec<Node>) {
+        self.completed_paragraph_nodes = Some(nodes);
+    }
+
+    pub(crate) fn clear_completed_paragraph_nodes(&mut self) {
+        self.completed_paragraph_nodes = None;
+    }
+
+    pub(crate) fn take_completed_paragraph_nodes(&mut self) -> Option<Vec<Node>> {
+        self.completed_paragraph_nodes.take()
     }
 
     /// Rehydrates a nest from snapshot summary state.
@@ -1226,6 +1241,7 @@ impl ModeNest {
         Ok(Self {
             journal: journal::ModeJournal::enabled(summary.levels.len()),
             levels: summary.levels,
+            completed_paragraph_nodes: None,
         })
     }
 
