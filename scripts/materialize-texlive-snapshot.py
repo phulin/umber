@@ -51,13 +51,14 @@ def document(data, label):
     return value
 
 def keys_from(path):
-    keys = []
+    keys = {}
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         fields = line.split()
         if not fields or fields[0].startswith("#"): continue
         if fields[0] == "distribution" and len(fields) == 2: continue
-        if fields[0] == "source" and len(fields) >= 3: keys.append(f"{fields[1]}:{Path(fields[2]).name}")
-        elif len(fields) == 1 and ":" in fields[0]: keys.append(fields[0])
+        if fields[0] == "source" and len(fields) == 5:
+            keys[f"{fields[1]}:{Path(fields[2]).name}"] = (int(fields[3]), fields[4])
+        elif len(fields) == 1 and ":" in fields[0]: keys[fields[0]] = None
         else: fail(f"invalid key record at {path}:{number}")
     return keys
 
@@ -80,9 +81,10 @@ def main():
     if root.get("schema") != 3: fail("root manifest is not schema 3")
     if not isinstance(bits, int) or not 0 <= bits <= 16 or not isinstance(shards, list) or len(shards) != 1 << bits: fail("invalid shard inventory")
     if not isinstance(formats, dict) or not isinstance(objects_url, str) or not objects_url.startswith("https://"): fail("invalid formats or objectsBaseUrl")
-    requested = set(args.key)
-    for path in args.keys_from: requested.update(keys_from(path))
-    records = {}
+    requested = set(args.key); expected_keys = {}
+    for path in args.keys_from:
+        parsed = keys_from(path); requested.update(parsed); expected_keys.update({key: value for key, value in parsed.items() if value is not None})
+    records = {}; views = {}
     for name in args.format:
         record = formats.get(name); closure = record.get("inputClosure") if isinstance(record, dict) else None
         if not isinstance(closure, dict) or closure.get("schema") != 1 or not isinstance(closure.get("keys"), list): fail(f"unknown or invalid format: {name}")
@@ -97,11 +99,29 @@ def main():
     for key in sorted(requested):
         record = shard_documents[shard_index(key, bits)].get("files", {}).get(key)
         if not isinstance(record, dict): fail(f"requested key is absent from its canonical shard: {key}")
+        if key in expected_keys and expected_keys[key] != (record.get("bytes"), record.get("sha256")):
+            fail(f"requested key differs from pinned lock identity: {key}")
         records[record["object"]] = (record["sha256"], record["bytes"])
+        virtual = record.get("virtualPath")
+        if isinstance(virtual, str) and virtual.startswith("/texlive/"):
+            virtual = virtual.removeprefix("/texlive/")
+        if not isinstance(virtual, str) or not virtual or virtual.startswith("/") or ".." in Path(virtual).parts or "\\" in virtual:
+            fail(f"unsafe virtual path for {key}")
+        views[virtual] = record["object"]
     total = 0
     for name, (expected, size) in sorted(records.items()):
         if name != f"sha256-{expected}" or not isinstance(size, int) or size < 0: fail(f"invalid object record: {name}")
         acquire(urljoin(objects_url, name), output / "objects" / name, expected, size, args.offline); total += size
-    print(f"TeX Live hosted subset: root_sha256={args.root_sha256} shards={len(shard_documents)} keys={len(requested)} payload_objects={len(records)} payload_bytes={total} output={output}")
+    for virtual, name in sorted(views.items()):
+        source = output / "objects" / name; target = output / "texmf-dist" / virtual
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if target.read_bytes() != source.read_bytes(): fail(f"existing TEXMF view differs: {target}")
+        else:
+            try: os.link(source, target)
+            except OSError:
+                temporary = target.with_name(f".{target.name}.tmp")
+                temporary.write_bytes(source.read_bytes()); os.replace(temporary, target)
+    print(f"TeX Live hosted subset: root_sha256={args.root_sha256} shards={len(shard_documents)} keys={len(requested)} payload_objects={len(records)} payload_bytes={total} texmf_files={len(views)} output={output}")
 
 if __name__ == "__main__": main()

@@ -273,16 +273,16 @@ When the pinned source tree is unavailable, materialize an authenticated local
 subset directly from the immutable hosted publication:
 
 ```sh
-scripts/materialize-texlive-snapshot.py --format latex --format pdflatex \
-  --keys-from tests/latex-runtime.lock
-scripts/materialize-texlive-snapshot.py --format latex --format pdflatex \
-  --keys-from tests/latex-runtime.lock --offline
+scripts/materialize-texlive-snapshot.py --format latex --format pdflatex
+scripts/materialize-texlive-snapshot.py --format latex --format pdflatex --offline
 ```
 
 The command preserves the exact `manifest-v3.json` trust root, downloads only
 the canonical shards selected by the requested keys and format closures, and
 stores every shard, format, and file under its verified digest name in
-`target/texlive-snapshot/objects`. The second command performs no network I/O
+`target/texlive-snapshot/objects`. It also constructs a sparse, verified
+`target/texlive-snapshot/texmf-dist` view for tools that require paths.
+The second command performs no network I/O
 and proves that the explicit checkout-local distribution is complete for the
 same selection. Add canonical `kind:name` records with `--key` or a one-key-per-
 line file with `--keys-from`; repository lock records of the form

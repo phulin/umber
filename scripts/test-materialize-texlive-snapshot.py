@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory() as temporary:
     destination=work/"mirror"; command=["python3",str(fixture),"--root-url",base+"manifest-v3.json","--root-sha256",sha(manifest),"--output-dir",str(destination),"--format","latex"]
     subprocess.run(command,check=True,capture_output=True,text=True); subprocess.run(command+["--offline"],check=True,capture_output=True,text=True)
     assert (destination/"manifest-v3.json").read_bytes()==manifest and (destination/"objects"/payload_name).read_bytes()==payload
+    assert (destination/"texmf-dist"/"tex"/"fixture.tex").read_bytes()==payload
     (destination/"objects"/payload_name).write_bytes(b"corrupt"); failed=subprocess.run(command+["--offline"],capture_output=True,text=True)
     assert failed.returncode != 0 and "failed verification" in failed.stderr; server.shutdown()
 print("materialize-texlive-snapshot.py contract: PASS")
