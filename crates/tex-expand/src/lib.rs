@@ -97,45 +97,15 @@ pub fn register_etex_expandable_primitives(stores: &mut Universe) {
 
 /// Installs expandable primitives required by the supported LaTeX engine
 /// contract but not provided by e-TeX V2 itself.
+#[cfg(test)]
 pub fn install_latex_expandable_primitives(stores: &mut Universe) {
-    configure_latex_expandable_primitives(stores, true);
+    tex_command::install_latex_expandable_primitives(stores);
 }
 
 /// Reconstructs the LaTeX compatibility primitive table after format load.
+#[cfg(test)]
 pub fn register_latex_expandable_primitives(stores: &mut Universe) {
-    configure_latex_expandable_primitives(stores, false);
-}
-
-fn configure_latex_expandable_primitives(stores: &mut Universe, install: bool) {
-    for (name, primitive) in [
-        (
-            "expanded",
-            tex_state::meaning::ExpandablePrimitive::Expanded,
-        ),
-        (
-            "filesize",
-            tex_state::meaning::ExpandablePrimitive::FileSize,
-        ),
-        (
-            "strcmp",
-            tex_state::meaning::ExpandablePrimitive::StringCompare,
-        ),
-        (
-            "shellescape",
-            tex_state::meaning::ExpandablePrimitive::ShellEscape,
-        ),
-        (
-            "creationdate",
-            tex_state::meaning::ExpandablePrimitive::CreationDate,
-        ),
-    ] {
-        let meaning = Meaning::ExpandablePrimitive(primitive);
-        stores.register_primitive_meaning(name, meaning);
-        if install {
-            let symbol = stores.intern(name);
-            stores.set_meaning(symbol, meaning);
-        }
-    }
+    tex_command::register_latex_expandable_primitives(stores);
 }
 
 /// Installs the implemented expandable identity surface of pdfTeX 1.40.27.

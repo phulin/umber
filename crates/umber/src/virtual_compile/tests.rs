@@ -4090,7 +4090,7 @@ fn invalid_and_absolute_file_enquiries_are_missing_without_host_access() {
 fn invalid_legacy_platform_filesize_probe_expands_to_nothing() {
     let mut stores = Universe::with_world(World::memory());
     prepare_run_stores(&mut stores);
-    tex_expand::install_latex_expandable_primitives(&mut stores);
+    tex_command::install_latex_expandable_primitives(&mut stores);
     let format = stores.dump_format().expect("dump format");
     let mut session = VirtualCompileSession::new(SessionOptions {
         format: Some(format),

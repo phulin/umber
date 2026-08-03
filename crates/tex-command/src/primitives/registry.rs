@@ -129,6 +129,34 @@ fn configure_etex_expandable_primitives(universe: &mut Universe, install: bool) 
     }
 }
 
+/// Installs expandable primitives required by Umber's supported LaTeX
+/// compatibility profile but not provided by e-TeX 2.6 itself.
+pub fn install_latex_expandable_primitives(universe: &mut Universe) {
+    configure_latex_expandable_primitives(universe, true);
+}
+
+/// Reconstructs the LaTeX compatibility primitive table after format load.
+pub fn register_latex_expandable_primitives(universe: &mut Universe) {
+    configure_latex_expandable_primitives(universe, false);
+}
+
+fn configure_latex_expandable_primitives(universe: &mut Universe, install: bool) {
+    for (name, primitive) in [
+        ("expanded", ExpandablePrimitive::Expanded),
+        ("filesize", ExpandablePrimitive::FileSize),
+        ("strcmp", ExpandablePrimitive::StringCompare),
+        ("shellescape", ExpandablePrimitive::ShellEscape),
+        ("creationdate", ExpandablePrimitive::CreationDate),
+    ] {
+        configure_primitive(
+            universe,
+            install,
+            name,
+            Meaning::ExpandablePrimitive(primitive),
+        );
+    }
+}
+
 /// Installs pdfTeX 1.40.27's implemented expandable identity surface.
 pub fn install_pdftex_expandable_primitives(universe: &mut Universe) {
     configure_pdftex_expandable_primitives(universe, true);
@@ -311,6 +339,14 @@ mod tests {
         ),
     ];
 
+    const LATEX_COMPATIBILITY: &[PrimitiveCase] = expandable_cases![
+        ("expanded", Expanded),
+        ("filesize", FileSize),
+        ("strcmp", StringCompare),
+        ("shellescape", ShellEscape),
+        ("creationdate", CreationDate),
+    ];
+
     const PDFTEX_EXPANDABLE: &[PrimitiveCase] = expandable_cases![
         ("expanded", Expanded),
         ("ifincsname", IfInCsName),
@@ -426,6 +462,25 @@ mod tests {
                 .chain(etex_cases())
                 .chain(pdftex_cases()),
         );
+    }
+
+    #[test]
+    fn latex_compatibility_install_and_format_registration_share_one_table() {
+        let mut fresh = Universe::new_with_plain_catcodes();
+        install_latex_expandable_primitives(&mut fresh);
+        assert_installed(&fresh, LATEX_COMPATIBILITY.iter().copied());
+
+        let mut loaded = Universe::new_with_plain_catcodes();
+        for &(name, _) in LATEX_COMPATIBILITY {
+            let symbol = loaded.intern(name);
+            loaded.set_meaning(symbol, Meaning::Relax);
+        }
+        register_latex_expandable_primitives(&mut loaded);
+        for &(name, meaning) in LATEX_COMPATIBILITY {
+            let symbol = loaded.symbol(name).expect("shadowed control sequence");
+            assert_eq!(loaded.meaning(symbol), Meaning::Relax);
+            assert_eq!(loaded.primitive_meaning(name), Some(meaning));
+        }
     }
 
     #[test]

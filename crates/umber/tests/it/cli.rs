@@ -1405,6 +1405,30 @@ fn expand_dump_source_stays_on_the_canonical_session_boundary() {
 }
 
 #[test]
+fn latex_primitive_registry_stays_on_the_canonical_command_owner() {
+    let source = include_str!("../../src/lib.rs");
+    let production = source
+        .split("fn install_latex_compatibility_layer")
+        .nth(1)
+        .expect("LaTeX production setup exists")
+        .split("#[cfg(test)]")
+        .next()
+        .expect("LaTeX production setup ends before tests");
+    for operation in ["install", "register"] {
+        let canonical = format!("tex_command::{operation}_latex_expandable_primitives");
+        let retired = format!("tex_expand::{operation}_latex_expandable_primitives");
+        assert!(
+            production.contains(&canonical),
+            "LaTeX {operation} policy must use {canonical}"
+        );
+        assert!(
+            !production.contains(&retired),
+            "LaTeX {operation} policy must not regain {retired}"
+        );
+    }
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");

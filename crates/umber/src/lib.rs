@@ -1323,7 +1323,7 @@ fn register_etex_format_primitives(stores: &mut Universe) {
 }
 
 fn install_latex_compatibility_layer(stores: &mut Universe) {
-    tex_expand::install_latex_expandable_primitives(stores);
+    tex_command::install_latex_expandable_primitives(stores);
     for ch in ['{', '}', '$', '&', '#', '^', '_'] {
         stores.set_catcode(ch, tex_state::token::Catcode::Other);
     }
@@ -1332,7 +1332,7 @@ fn install_latex_compatibility_layer(stores: &mut Universe) {
 /// Reconstructs the driver-selected LaTeX primitive registry after loading a format image.
 pub fn install_latex_format_primitives(stores: &mut Universe) {
     register_etex_format_primitives(stores);
-    tex_expand::register_latex_expandable_primitives(stores);
+    tex_command::register_latex_expandable_primitives(stores);
 }
 
 /// Installs the primitive/state setup used by supported LaTeX-DVI runs.
@@ -1353,7 +1353,7 @@ pub fn prepare_pdflatex_run_stores(stores: &mut Universe) {
 /// Reconstructs the composed pdfTeX and LaTeX primitive registry after format load.
 pub fn install_pdflatex_format_primitives(stores: &mut Universe) {
     install_pdftex_format_primitives(stores);
-    tex_expand::register_latex_expandable_primitives(stores);
+    tex_command::register_latex_expandable_primitives(stores);
 }
 
 #[cfg(test)]
