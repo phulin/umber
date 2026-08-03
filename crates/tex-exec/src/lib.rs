@@ -18,6 +18,7 @@ mod error_report;
 mod executor;
 mod job;
 mod job_output;
+#[cfg(test)]
 mod legacy_editor_restart;
 mod math;
 mod mode;

@@ -5444,3 +5444,21 @@ fn canonical_output_replay_owns_every_deferred_expansion_family() {
     assert!(normalize.contains("expansion.replay_expander"));
     assert!(normalize.contains("expansion.write_expander"));
 }
+
+#[test]
+fn retired_editor_input_stack_restart_is_test_only() {
+    let root = include_str!("../lib.rs");
+    assert!(root.contains("#[cfg(test)]\nmod legacy_editor_restart;"));
+
+    let incremental = include_str!("../../../tex-incr/src/lib.rs");
+    for legacy in ["fn execute_revision(", "fn execute_advance("] {
+        let offset = incremental
+            .find(legacy)
+            .expect("retired helper remains covered");
+        let prefix = &incremental[offset.saturating_sub(96)..offset];
+        assert!(
+            prefix.contains("#[cfg(any())]"),
+            "{legacy} regained production reachability"
+        );
+    }
+}

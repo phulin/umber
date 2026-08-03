@@ -4,14 +4,17 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandSummaryError};
+#[cfg(test)]
+use tex_state::SourceId;
+#[cfg(test)]
 use tex_state::source_map::SourceMapError;
 use tex_state::{
     ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputSummary, Snapshot,
-    SourceId, Universe,
+    Universe,
 };
 
-use crate::legacy_editor_restart::InputStack;
 use crate::{ExecError, ModeNest, ModeNestSummary};
+use tex_lex::InputStack;
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
@@ -521,12 +524,16 @@ impl std::error::Error for CanonicalCheckpointRestoreError {}
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
+    #[cfg(test)]
     LayoutCursor(tex_lex::LayoutCursorError),
     RootRevisionMismatch,
     Canonical(CanonicalCheckpointRestoreError),
+    #[cfg(test)]
     CanonicalContinuation,
     ChangedRootPrefix,
+    #[cfg(test)]
     RootRebind(SourceMapError),
+    #[cfg(test)]
     IncludedInputUnavailable(SourceId),
     Mode(ExecError),
 }
@@ -536,6 +543,7 @@ impl fmt::Display for EditorRestoreError {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
             Self::Layout(error) => write!(f, "could not install editor layout: {error}"),
+            #[cfg(test)]
             Self::LayoutCursor(error) => {
                 write!(f, "could not bind editor layout to root input: {error}")
             }
@@ -543,13 +551,16 @@ impl fmt::Display for EditorRestoreError {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
             Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
+            #[cfg(test)]
             Self::CanonicalContinuation => {
                 f.write_str("canonical checkpoint cannot restore the retired input stack")
             }
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }
+            #[cfg(test)]
             Self::RootRebind(error) => write!(f, "could not rebind editor root: {error}"),
+            #[cfg(test)]
             Self::IncludedInputUnavailable(source) => write!(
                 f,
                 "included generated source {} cannot be reopened",
@@ -562,6 +573,7 @@ impl fmt::Display for EditorRestoreError {
 
 impl std::error::Error for EditorRestoreError {}
 
+#[cfg(test)]
 impl crate::Executor {
     /// Restores a canonical checkpoint without consulting a host or legacy
     /// input stack.  All fallible reconstruction happens before any live root
