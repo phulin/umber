@@ -12779,6 +12779,17 @@ fn begin_next_replay_alignment_cell(
     if active.columns.is_empty() {
         return Ok(());
     }
+    // TeX82 §1131 runs `end_graf` before §791's `fin_col`, even when the
+    // saved delimiter is `span_code` and `fin_col` keeps the current span
+    // list open. A valign entry can therefore leave horizontal mode before
+    // the following column starts without packaging the spanning cell yet.
+    if active.kind == AlignmentKind::VAlign {
+        crate::canonical_paragraph_end::end_canonical_paragraph_without_source(
+            modes,
+            stores,
+            command.fuel,
+        )?;
+    }
     if delimiter == AlignmentCellDelimiter::Span {
         active.cell_span = active
             .cell_span
@@ -13020,18 +13031,6 @@ fn capture_replay_alignment_cell(
 ) -> Result<(), ExecError> {
     if !active.cell_open {
         return Ok(());
-    }
-
-    // TeX82 §1131's `do_endv` runs `end_graf` before §791's `fin_col`.
-    // This is a no-op for an \halign cell's restricted horizontal level,
-    // but a \valign cell is internal vertical and may have a paragraph open
-    // above it. Close that paragraph before popping and packaging the cell;
-    // otherwise the paragraph is mistaken for the cell, leaving the actual
-    // cell and row levels on the mode nest after `fin_align`.
-    if active.kind == AlignmentKind::VAlign {
-        crate::canonical_paragraph_end::end_canonical_paragraph_without_source(
-            modes, stores, fuel,
-        )?;
     }
 
     // Canonical alignment packaging still defers that paragraph's lowering,

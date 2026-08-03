@@ -2244,6 +2244,19 @@ fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
 }
 
 #[test]
+fn trip_loaded_character_constant_alignment_template_traces_endv_once() {
+    let log = run_focused_loaded_trip_through(337);
+    assert!(
+        log.contains(
+            "Missing character: There is no } in font trip!\n\
+             {end of alignment template}\n\
+             @firstpass"
+        ),
+        "the character-constant brace must preserve alignment depth without duplicating end-v"
+    );
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated
