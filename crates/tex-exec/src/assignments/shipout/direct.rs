@@ -31,11 +31,7 @@ const MAX_SHIPOUT_DEPTH: usize = 4096;
 pub(super) type WriteExpander<'a> =
     dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<Option<String>, ExecError> + 'a;
 
-#[derive(Clone, Copy)]
-pub(crate) enum ReplayTextKind {
-    Special,
-    PdfLiteral,
-}
+pub(crate) use crate::canonical_shipout::ReplayTextKind;
 
 pub(super) type ReplayTextExpander<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<Option<Vec<u8>>, ExecError>
     + 'a;

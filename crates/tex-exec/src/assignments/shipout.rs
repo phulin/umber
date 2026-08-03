@@ -13,7 +13,8 @@ use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
 mod direct;
-pub(crate) use direct::ReplayTextKind;
+pub(crate) use crate::canonical_shipout::ReplayTextKind;
+use crate::canonical_shipout::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
 
 #[cfg(test)]
 mod tests;
@@ -115,17 +116,6 @@ pub(crate) fn shipout_node(
 /// an `\openout` retry reports against, and the point in the live effect log
 /// past which nothing belongs to the page. They travel together because a
 /// caller that knows one always knows the other.
-pub(crate) struct ShipoutOrigin {
-    /// TeX82 §82's input display, captured before the page is staged.
-    pub(crate) output_open_context: Option<String>,
-    /// Index into `World::effect_records`: effects before it are whatsit
-    /// output carried forward from before this page, effects at or after it
-    /// belong to this `\shipout` -- §638's own `[<counts>` marker above all.
-    pub(crate) pending_end: usize,
-    /// Whether the active engine includes Web2C's `[53.1374]` openout notice.
-    pub(crate) announce_openout: bool,
-}
-
 /// Ships a completed box using an already-owned publication summary.
 ///
 /// Canonical command replay has no legacy `InputStack`: it publishes the
@@ -294,6 +284,27 @@ pub(crate) fn shipout_node_with_input_summary(
     }))
 }
 
+pub(crate) fn stage_canonical_page(
+    node: Node,
+    input_summary: tex_state::InputSummary,
+    origin: ShipoutOrigin,
+    stores: &mut Universe,
+    emit_dvi: bool,
+    write_expander: &mut WriteReplayHost<'_>,
+    replay_expander: &mut TextReplayHost<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
+    shipout_node_with_input_summary(
+        node,
+        input_summary,
+        origin,
+        stores,
+        None,
+        emit_dvi,
+        write_expander,
+        replay_expander,
+    )
+}
+
 pub(crate) fn stage_pdf_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
@@ -302,6 +313,15 @@ pub(crate) fn stage_pdf_form(
     replay_expander: &mut direct::ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     direct::stage_form(form, stores, expansion, write_expander, replay_expander)
+}
+
+pub(crate) fn stage_canonical_form(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    write_expander: &mut WriteReplayHost<'_>,
+    replay_expander: &mut TextReplayHost<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    direct::stage_form(form, stores, None, write_expander, replay_expander)
 }
 
 #[cfg(test)]

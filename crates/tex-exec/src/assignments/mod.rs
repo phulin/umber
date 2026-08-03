@@ -44,7 +44,7 @@ mod legacy_variables;
 mod paragraph;
 mod pdf_actions;
 mod pdf_fonts;
-mod shipout;
+pub(crate) mod shipout;
 #[cfg(test)]
 pub(crate) use hmode::test_fix_hyphen_language;
 #[cfg(test)]
@@ -139,10 +139,8 @@ pub(crate) use paragraph::{
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
 pub(crate) use pdf_fonts::{GlyphToUnicodeParse, parse_glyph_to_unicode};
+pub(crate) use shipout::shipout_node;
 use shipout::*;
-pub(crate) use shipout::{
-    ReplayTextKind, ShipoutOrigin, shipout_node, shipout_node_with_input_summary, stage_pdf_form,
-};
 use tokens::*;
 pub(crate) use tokens::{
     active_character_symbol, has_catcode_meaning, is_begin_group, is_end_group, is_space,

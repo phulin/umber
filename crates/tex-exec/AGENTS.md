@@ -44,7 +44,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
 - `src/assignments/legacy_scan.rs`: retired assignment classification and
   expansion-driven operand scanners for variables and definitions.
-- `src/assignments/shipout.rs`: `\shipout` transaction, commit, publication orchestration, and finalized effect-free artifact reuse; deferred and host-effect paths remain explicit barriers.
+- `src/assignments/shipout.rs`: legacy `\shipout` scanner adapter plus shared transaction, commit, publication orchestration, and finalized effect-free artifact reuse; canonical callers enter through `canonical_shipout.rs`.
 - `src/assignments/shipout/tests.rs`: direct TeX82 huge-page dimension-boundary, deletion-path, and maximum-legal-page tests.
 - `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI
   emission over compact state node lists, borrowing only fuel-free expansion
@@ -56,6 +56,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
 - `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.
+- `src/canonical_shipout.rs`: typed source-free canonical page/PDF-form staging transaction, detached shipout origin, and command-owned write/special/literal replay host contracts.
 - `src/canonical_diagnostics.rs`: source-free canonical error reporting, `\show` rendering, activity/page diagnostics, token rendering, and diagnostic sink policy; it has no legacy scanner or executor dependency.
 - `src/assignments/legacy_variables.rs`: retired register, parameter, font
   variable, and stream assignment scanner routing.

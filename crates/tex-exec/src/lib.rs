@@ -14,6 +14,7 @@ mod canonical_diagnostics;
 mod canonical_main_control;
 mod canonical_page_output;
 mod canonical_paragraph_memo;
+mod canonical_shipout;
 mod checkpoint;
 mod dispatch;
 mod effective_tail;

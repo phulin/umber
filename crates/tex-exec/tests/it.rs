@@ -431,6 +431,42 @@ fn canonical_paragraph_end_closure_has_no_legacy_dependencies() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_shipout_transaction_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_shipout.rs"))
+        .expect("read canonical shipout owner");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical shipout owner must not reference `{forbidden}`"
+        );
+    }
+
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    for retired in [
+        "crate::assignments::stage_pdf_form",
+        "crate::assignments::shipout_node_with_input_summary",
+        "crate::assignments::ShipoutOrigin",
+        "crate::assignments::ReplayTextKind",
+    ] {
+        assert!(
+            !canonical.contains(retired),
+            "canonical command control must bypass mixed shipout boundary `{retired}`"
+        );
+    }
+    assert!(canonical.contains("canonical_shipout::CanonicalShipoutTransaction"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_command_control_has_no_legacy_paragraph_front_callers() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))

@@ -10735,17 +10735,15 @@ fn apply_pdf_form_request(
                 // one ledger/artifact owner.
                 let mut write = |_: &mut Universe, _: PrintSink, _: TokenListId| Ok(None);
                 let mut replay = |stores: &mut Universe,
-                                  kind: crate::assignments::ReplayTextKind,
+                                  kind: crate::canonical_shipout::ReplayTextKind,
                                   tokens: TokenListId| {
                     canonical_replay_text(command, stores, kind, tokens, &mut Vec::new()).map(Some)
                 };
-                let artifact = crate::assignments::stage_pdf_form(
-                    form,
-                    stores,
-                    None,
+                let artifact = crate::canonical_shipout::CanonicalShipoutTransaction::new(
                     &mut write,
                     &mut replay,
-                )?;
+                )
+                .stage_form(form, stores)?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),
@@ -10760,7 +10758,7 @@ fn apply_pdf_form_request(
 fn canonical_replay_text(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
-    kind: crate::assignments::ReplayTextKind,
+    kind: crate::canonical_shipout::ReplayTextKind,
     tokens: TokenListId,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<Vec<u8>, ExecError> {
@@ -10787,15 +10785,15 @@ fn canonical_replay_text(
     let mut text = String::new();
     for &token in stores.tokens(expanded.token_list()) {
         match kind {
-            crate::assignments::ReplayTextKind::Special => {
+            crate::canonical_shipout::ReplayTextKind::Special => {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
-            crate::assignments::ReplayTextKind::PdfLiteral => {
+            crate::canonical_shipout::ReplayTextKind::PdfLiteral => {
                 crate::diagnostics::append_token_show_text(stores, token, &mut text);
             }
         }
     }
-    if matches!(kind, crate::assignments::ReplayTextKind::PdfLiteral) {
+    if matches!(kind, crate::canonical_shipout::ReplayTextKind::PdfLiteral) {
         return Ok(text.into_bytes());
     }
     let mut bytes = Vec::with_capacity(text.len());
@@ -12106,22 +12104,27 @@ fn shipout_replay_box(
             text.push('\n');
             Ok(Some(text))
         };
-    let mut expand_replay =
-        |stores: &mut Universe, kind: crate::assignments::ReplayTextKind, tokens: TokenListId| {
-            let mut command = command_cell.borrow_mut();
-            canonical_replay_text(
-                &mut command,
-                stores,
-                kind,
-                tokens,
-                &mut write_diagnostics.borrow_mut(),
-            )
-            .map(Some)
-        };
-    let mut receipt = crate::assignments::shipout_node_with_input_summary(
+    let mut expand_replay = |stores: &mut Universe,
+                             kind: crate::canonical_shipout::ReplayTextKind,
+                             tokens: TokenListId| {
+        let mut command = command_cell.borrow_mut();
+        canonical_replay_text(
+            &mut command,
+            stores,
+            kind,
+            tokens,
+            &mut write_diagnostics.borrow_mut(),
+        )
+        .map(Some)
+    };
+    let mut receipt = crate::canonical_shipout::CanonicalShipoutTransaction::new(
+        &mut expand_write,
+        &mut expand_replay,
+    )
+    .stage_page(
         node,
         input_summary,
-        crate::assignments::ShipoutOrigin {
+        crate::canonical_shipout::ShipoutOrigin {
             output_open_context: Some(output_open_context),
             pending_end,
             // The TeX82 profile follows tex.web §1374 exactly. The notice is
@@ -12129,10 +12132,7 @@ fn shipout_replay_box(
             announce_openout: supports_pdftex,
         },
         stores,
-        None,
         emit_dvi,
-        &mut expand_write,
-        &mut expand_replay,
     )?;
     let command = command_cell.into_inner();
     if let Some(receipt) = receipt.as_mut() {
