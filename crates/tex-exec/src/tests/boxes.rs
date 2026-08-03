@@ -113,6 +113,28 @@ fn every_box_hooks_survive_format_round_trip() {
 }
 
 #[test]
+fn shifted_empty_math_box_survives_source_and_loaded_format_execution() {
+    let source = r"\tracingonline=1\showboxbreadth=100\showboxdepth=100
+        \setbox0=\hbox{$\raise-7pt\hbox{}\nonscript\mskip0mu\nonscript\mskip0mu$}
+        \showbox0";
+
+    let source_stores = run(source);
+    let source_log = support::terminal_effect_text(&source_stores);
+
+    let initex = run("");
+    let format = initex.dump_format().expect("empty format dumps");
+    let mut loaded =
+        Universe::from_format(tex_state::World::memory(), &format).expect("empty format loads");
+    run_loaded_format(source, &mut loaded);
+    let loaded_log = support::terminal_effect_text(&loaded);
+
+    for log in [&source_log, &loaded_log] {
+        assert!(log.contains("\\hbox(0.0+0.0)x0.0, shifted -7.0"), "{log}");
+        assert_eq!(log.matches("\\glue(\\nonscript)").count(), 2, "{log}");
+    }
+}
+
+#[test]
 fn every_hbox_diagnostic_reports_its_replay_context() {
     let stores = run(r"\nonstopmode\everyhbox{\errmessage{hook failure}}\hbox{}");
     let terminal = support::terminal_effect_text(&stores);

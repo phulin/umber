@@ -130,7 +130,8 @@ fn operator_nucleus(
         field = MathField::MathChar(ch);
     }
 
-    match field {
+    let character_nucleus = matches!(field, MathField::MathChar(_) | MathField::MathTextChar(_));
+    let mut boxed = match field {
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             let Some(fetched) = fetch(ctx, ch, ctx.style) else {
                 return ctx.layout.hpack(ctx.layout.empty());
@@ -180,7 +181,18 @@ fn operator_nucleus(
             ctx.layout.hpack(list)
         }
         _ => clean_box(ctx, &field, ctx.style),
+    };
+    // TeX82 §749 centers a non-character operator nucleus when it enters the
+    // displayed-limits stack. A prepacked empty box can carry the entire
+    // observable displacement; the following hpack must preserve it.
+    if !character_nucleus && matches!(effective_limits, LimitType::Limits) {
+        let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
+        boxed.shift = sub(
+            Scaled::from_raw(tex_arith::half(sub(boxed.height, boxed.depth).raw())),
+            axis,
+        );
     }
+    boxed
 }
 
 fn displayed_limits(

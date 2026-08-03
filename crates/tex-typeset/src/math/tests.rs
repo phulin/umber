@@ -168,7 +168,7 @@ fn pinned_opentype_math_fixture_drives_basic_formula_layout_deterministically() 
     );
     assert_eq!(
         math_layout_digest(&web_layouts),
-        "38b3ce8d9e6c2e818c560064e8bcb460f0010eef6a3ad141d5329671d0c68734"
+        "e74b6b2375a23f554af76280674fe981db7fa4aab3891e77ed2b8e17d4cf0f20"
     );
 }
 
@@ -271,7 +271,15 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     let params = MathParams::read(&universe);
     let formula = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
     assert_eq!(
-        formula.pack_observations()[9],
+        *formula
+            .pack_observations()
+            .iter()
+            .find(|pack| {
+                pack.width == Scaled::from_raw(728_760)
+                    && pack.height == Scaled::from_raw(602_276)
+                    && pack.depth == Scaled::from_raw(266_076)
+            })
+            .expect("selected display operator pack"),
         MathPackObservation {
             axis: BoxAxis::Horizontal,
             width: Scaled::from_raw(728_760),
@@ -1756,7 +1764,7 @@ fn display_operator_uses_larger_variant_and_places_limits() {
 }
 
 #[test]
-fn display_limits_does_not_rewrap_clean_compound_operator() {
+fn display_limits_rewraps_shifted_compound_operator() {
     let mut universe = setup_universe();
     let nucleus = universe.freeze_node_list(&[
         Node::MathNoad(noad(NoadClass::Ord, 'b')),
@@ -1778,17 +1786,11 @@ fn display_limits_does_not_rewrap_clean_compound_operator() {
     let [MathNode::HList(operator)] = list_nodes(&layout, limits.list).as_slice() else {
         panic!("expected one clean compound operator box");
     };
-    let operator_nodes = list_nodes(&layout, operator.list);
-    assert!(
-        operator_nodes
-            .iter()
-            .any(|node| matches!(node, MathNode::Char { .. }))
-    );
-    assert!(
-        operator_nodes
-            .iter()
-            .all(|node| !matches!(node, MathNode::HList(_) | MathNode::VList(_)))
-    );
+    let [MathNode::HList(shifted)] = list_nodes(&layout, operator.list).as_slice() else {
+        panic!("expected axis-shifted compound nucleus");
+    };
+    assert_ne!(shifted.shift, sc(0));
+    assert!(!list_nodes(&layout, shifted.list).is_empty());
 }
 
 #[test]

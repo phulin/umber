@@ -70,8 +70,56 @@ fn displayed_limits_use_shared_rebox_completion() {
 
     let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
     let packs = layout.pack_observations();
-    assert_eq!(packs.len(), 3, "{packs:#?}");
+    assert_eq!(packs.len(), 5, "{packs:#?}");
     assert_eq!(packs.last().expect("exact rebox completion").width, sc(14));
+}
+
+#[test]
+fn boxed_operator_nucleus_keeps_axis_shift_with_and_without_limits() {
+    let mut stores = setup_universe();
+    let children = stores.freeze_node_list(&[]);
+    let source_box = stores.freeze_node_list(&[Node::HList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width: sc(0),
+            height: sc(0),
+            depth: sc(0),
+            shift: sc(0),
+            box_lr: tex_state::node::BoxLr::Normal,
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
+            children,
+        },
+    ))]);
+    let params = MathParams::read(&stores);
+    let expected = -params.for_size(MathFontSize::Text).symbols.axis_height;
+
+    for limit_type in [LimitType::NoLimits, LimitType::Limits] {
+        let input = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Operator(limit_type),
+            MathField::SubBox(source_box),
+        ))]);
+        let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
+        let mut pending = vec![layout.root()];
+        let mut found = false;
+        while let Some(list) = pending.pop() {
+            for node in list_nodes(&layout, list) {
+                if matches!(node, MathNode::HList(boxed) if boxed.width == sc(0) && boxed.shift == expected)
+                {
+                    found = true;
+                }
+                if let MathNode::HList(boxed) | MathNode::VList(boxed) = node {
+                    pending.push(boxed.list);
+                }
+            }
+        }
+        assert_eq!(
+            found,
+            matches!(limit_type, LimitType::Limits),
+            "{limit_type:?}: {:#?}",
+            root_nodes(&layout)
+        );
+    }
 }
 
 #[test]
