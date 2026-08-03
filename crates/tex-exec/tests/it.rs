@@ -45,6 +45,34 @@ fn production_token_rendering_stays_on_the_state_owner() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn executor_resource_results_stay_on_the_execution_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let executor = fs::read_to_string(source_root.join("executor.rs")).expect("read executor");
+    let public_surface =
+        fs::read_to_string(source_root.join("lib.rs")).expect("read public surface");
+
+    assert!(executor.contains("pub enum ResourceLookup<T>"));
+    for (source_name, source) in [("executor", executor), ("public surface", public_surface)] {
+        for forbidden in [
+            "tex_expand::ResourceLookup",
+            "tex_expand::ResourceResult",
+            "pub use tex_expand::{ResourceLookup",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{source_name} must not regain the retired resource-result owner through `{forbidden}`"
+            );
+        }
+    }
+
+    match tex_exec::ResourceLookup::Available(21_u8).map(u16::from) {
+        tex_exec::ResourceLookup::Available(value) => assert_eq!(value, 21),
+        _ => panic!("available executor resource must remain available after mapping"),
+    }
+}
+
+#[test]
 fn command_fuel_can_only_be_owned_by_a_session_ledger() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let tex_command_dir = manifest_dir.join("../tex-command");

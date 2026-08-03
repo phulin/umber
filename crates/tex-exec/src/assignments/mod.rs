@@ -638,14 +638,14 @@ fn execute_pdf_ximage(
             message,
         })?;
     let source = match lookup {
-        tex_expand::ResourceLookup::Available(source) => source,
-        tex_expand::ResourceLookup::Unavailable => {
+        crate::ResourceLookup::Available(source) => source,
+        crate::ResourceLookup::Unavailable => {
             return Err(ExecError::PdfImageOpen {
                 name,
                 message: "image is unavailable".to_owned(),
             });
         }
-        tex_expand::ResourceLookup::NeedResource(need) => {
+        crate::ResourceLookup::NeedResource(need) => {
             return Err(ExecError::NeedResource(need));
         }
     };

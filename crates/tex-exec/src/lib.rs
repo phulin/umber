@@ -55,8 +55,8 @@ pub use executor::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
     ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
-    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, PendingInterrupt, ResourceSite,
-    ResourceSuspension,
+    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, PendingInterrupt, ResourceLookup,
+    ResourceResult, ResourceSite, ResourceSuspension,
 };
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
@@ -70,7 +70,7 @@ pub use retained_resource::{
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
     CanonicalResourceWorld, canonical_font_resource_path,
 };
-pub use tex_expand::{ResourceLookup, ResourceNeed, ResourceResult};
+pub use tex_expand::ResourceNeed;
 
 pub(crate) use dispatch::{
     insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,

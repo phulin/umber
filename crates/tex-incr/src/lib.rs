@@ -3496,13 +3496,13 @@ impl tex_exec::FontResolver for DirectFontResolver {
         input: &mut dyn InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> ResourceResult<tex_exec::FontSource> {
+    ) -> tex_exec::ResourceResult<tex_exec::FontSource> {
         Ok(match input.read_input_file(path) {
-            Ok(metrics) => ResourceLookup::Available(tex_exec::FontSource::Tfm {
+            Ok(metrics) => tex_exec::ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
             }),
-            Err(_) => ResourceLookup::Unavailable,
+            Err(_) => tex_exec::ResourceLookup::Unavailable,
         })
     }
 }

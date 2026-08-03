@@ -31,11 +31,11 @@ pub(super) fn execute_font_definition(
             message,
         })?;
     let source = match lookup {
-        tex_expand::ResourceLookup::Available(content) => content,
-        tex_expand::ResourceLookup::NeedResource(need) => {
+        crate::ResourceLookup::Available(content) => content,
+        crate::ResourceLookup::NeedResource(need) => {
             return Err(ExecError::NeedResource(need));
         }
-        tex_expand::ResourceLookup::Unavailable => {
+        crate::ResourceLookup::Unavailable => {
             // TeX.web §1257 leaves the newly defined selector at `null_font`
             // after a TFM open failure and continues; §561's
             // `start_font_error_message` names the selector, the file, and

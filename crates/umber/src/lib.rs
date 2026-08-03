@@ -966,12 +966,12 @@ impl PdfImageResolver for FileImageResolver {
         input: &mut dyn tex_state::InputReadState,
         request: &LegacyPdfImageRequest,
         _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_state::PdfExternalImageSource> {
+    ) -> tex_exec::ResourceResult<tex_state::PdfExternalImageSource> {
         let content = match self.0.read(input, &request.name) {
             Ok(content) => content,
-            Err(_) => return Ok(tex_expand::ResourceLookup::Unavailable),
+            Err(_) => return Ok(tex_exec::ResourceLookup::Unavailable),
         };
-        virtual_compile::parse_image(&content, request).map(tex_expand::ResourceLookup::Available)
+        virtual_compile::parse_image(&content, request).map(tex_exec::ResourceLookup::Available)
     }
 }
 
@@ -981,13 +981,13 @@ impl FontResolver for FileFontResolver {
         input: &mut dyn tex_state::InputReadState,
         path: &Path,
         _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_exec::FontSource> {
+    ) -> tex_exec::ResourceResult<tex_exec::FontSource> {
         Ok(match self.0.read(input, path) {
-            Ok(metrics) => tex_expand::ResourceLookup::Available(tex_exec::FontSource::Tfm {
+            Ok(metrics) => tex_exec::ResourceLookup::Available(tex_exec::FontSource::Tfm {
                 metrics,
                 opentype: None,
             }),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
+            Err(_) => tex_exec::ResourceLookup::Unavailable,
         })
     }
 }

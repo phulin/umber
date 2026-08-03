@@ -621,8 +621,8 @@ impl PdfImageResolver for UnavailableImageResolver {
         _input: &mut dyn tex_state::InputReadState,
         _request: &PdfImageRequest,
         _request_index: u64,
-    ) -> ResourceResult<tex_state::PdfExternalImageSource> {
-        Ok(ResourceLookup::Unavailable)
+    ) -> tex_exec::ResourceResult<tex_state::PdfExternalImageSource> {
+        Ok(tex_exec::ResourceLookup::Unavailable)
     }
 }
 

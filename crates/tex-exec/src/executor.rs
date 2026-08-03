@@ -5,9 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tex_expand::{
-    InputResolver, ReadRecorder, ResourceLookup, ResourceResult, get_x_token_with_context,
-};
+use tex_expand::{InputResolver, ReadRecorder, get_x_token_with_context};
 use tex_lex::{InputStack, InputStackSnapshot};
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
@@ -23,6 +21,29 @@ use crate::error_report::{back_error, report_input_error};
 use crate::output;
 use crate::timing::TelemetryTimer;
 use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
+
+/// Outcome of an executor-owned font or image host lookup.
+#[derive(Debug)]
+pub enum ResourceLookup<T> {
+    Available(T),
+    Unavailable,
+    NeedResource(tex_expand::ResourceNeed),
+}
+
+impl<T> ResourceLookup<T> {
+    #[must_use]
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> ResourceLookup<U> {
+        match self {
+            Self::Available(value) => ResourceLookup::Available(f(value)),
+            Self::Unavailable => ResourceLookup::Unavailable,
+            Self::NeedResource(need) => ResourceLookup::NeedResource(need),
+        }
+    }
+}
+
+/// Fatal host failures remain errors; absence and suspension are typed
+/// executor outcomes.
+pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
 
 fn report_recoverable_expansion_diagnostics(
     input: &InputStack,
