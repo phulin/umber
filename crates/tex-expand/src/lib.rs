@@ -12,10 +12,7 @@ use std::path::Path;
 #[cfg(feature = "profiling")]
 use tex_state::World;
 
-use tex_lex::{
-    InputSource, InputStack, LexError, MacroReplaySite, TokenListReplayKind, TracedExpansionToken,
-    WorldInput,
-};
+use tex_lex::{InputSource, InputStack, LexError, TokenListReplayKind, WorldInput};
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, MeaningFlags};
@@ -28,8 +25,8 @@ pub use tex_state::{
 };
 use tex_state::{
     EngineMode, EngineStateSnapshot, ExpansionState, FileContent, InputReadState, JobClock,
-    MacroArguments, MeaningCacheGuard, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN, ParagraphBarrierReason,
-    Universe,
+    MacroArguments, MacroReplaySite, MeaningCacheGuard, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
+    ParagraphBarrierReason, TracedExpansionToken, Universe,
 };
 
 const MEANING_SITE_CACHE_LEN: usize = 64;

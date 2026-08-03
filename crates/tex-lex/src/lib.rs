@@ -23,7 +23,7 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
     AlignmentScannerPhase, ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore,
-    InputRecordId, RootSpanId, WorldError,
+    InputRecordId, MacroReplaySite, RootSpanId, TracedExpansionToken, WorldError,
 };
 #[cfg(feature = "profiling")]
 use tex_state::{ProfilingTimer, World};
@@ -1340,10 +1340,6 @@ impl DecodedTracedToken {
         Self { token, origin }
     }
 
-    fn from_word(word: TracedTokenWord) -> Self {
-        Self::new(decode_traced_token(word), word.origin())
-    }
-
     fn packed(self) -> TracedTokenWord {
         TracedTokenWord::pack(self.token, self.origin)
     }
@@ -1510,99 +1506,6 @@ impl ExpansionToken {
     #[must_use]
     pub const fn suppress_expansion(self) -> bool {
         self.suppress_expansion
-    }
-}
-
-/// A traced token read from the input stack with expansion-control metadata.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TracedExpansionToken {
-    token: Token,
-    origin: OriginId,
-    suppress_expansion: bool,
-    expand_in_ordinary_context: bool,
-    macro_replay_site: Option<MacroReplaySite>,
-}
-
-/// Lexical location of a token delivered directly from immutable macro-body
-/// replay. Meaning interpretation and caching belong to `tex-expand`; this
-/// value carries only replay identity and position.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MacroReplaySite {
-    token_list: TokenListId,
-    token_index: usize,
-}
-
-impl MacroReplaySite {
-    #[must_use]
-    pub const fn token_list(self) -> TokenListId {
-        self.token_list
-    }
-
-    #[must_use]
-    pub const fn token_index(self) -> usize {
-        self.token_index
-    }
-}
-
-impl TracedExpansionToken {
-    #[must_use]
-    pub fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
-        Self::from_decoded(
-            DecodedTracedToken::from_word(token),
-            suppress_expansion,
-            false,
-            None,
-        )
-    }
-
-    fn from_decoded(
-        token: DecodedTracedToken,
-        suppress_expansion: bool,
-        expand_in_ordinary_context: bool,
-        macro_replay_site: Option<MacroReplaySite>,
-    ) -> Self {
-        Self {
-            token: token.token,
-            origin: token.origin,
-            suppress_expansion,
-            expand_in_ordinary_context,
-            macro_replay_site,
-        }
-    }
-
-    #[must_use]
-    pub fn traced_token(self) -> TracedTokenWord {
-        TracedTokenWord::pack(self.token, self.origin)
-    }
-
-    #[must_use]
-    pub const fn token(self) -> Token {
-        self.token
-    }
-
-    #[must_use]
-    pub const fn origin(self) -> OriginId {
-        self.origin
-    }
-
-    #[must_use]
-    pub const fn suppress_expansion(self) -> bool {
-        self.suppress_expansion
-    }
-
-    /// Returns whether ordinary expansion should resume this token.
-    ///
-    /// Tokens produced by e-TeX's `\unexpanded` and TeX's token-list form of
-    /// `\the` are copied literally only by expanded-token-list builders. Once
-    /// returned to an ordinary `get_x_token` caller they expand normally.
-    #[must_use]
-    pub const fn expand_in_ordinary_context(self) -> bool {
-        self.expand_in_ordinary_context
-    }
-
-    #[must_use]
-    pub const fn macro_replay_site(self) -> Option<MacroReplaySite> {
-        self.macro_replay_site
     }
 }
 
@@ -4656,9 +4559,8 @@ impl InputStack {
                         ))
                     .then_some(stored_token_list)
                     .flatten()
-                    .map(|stored_token_list| MacroReplaySite {
-                        token_list: stored_token_list,
-                        token_index: token_list.index,
+                    .map(|stored_token_list| {
+                        MacroReplaySite::new(stored_token_list, token_list.index)
                     });
                     #[cfg(feature = "profiling")]
                     if let Some(token) = token_list.semantic_token_at(stores, token_list.index) {
@@ -4686,8 +4588,8 @@ impl InputStack {
                             continue;
                         }
                         Some(TracedTokenReplay::Deliver(token)) => {
-                            let token = TracedExpansionToken::from_decoded(
-                                token,
+                            let token = TracedExpansionToken::from_parts(
+                                token.packed(),
                                 false,
                                 false,
                                 macro_replay_site,
@@ -4696,8 +4598,8 @@ impl InputStack {
                             return Ok(Some(token));
                         }
                         Some(TracedTokenReplay::DeliverNoExpand(token)) => {
-                            let token = TracedExpansionToken::from_decoded(
-                                token,
+                            let token = TracedExpansionToken::from_parts(
+                                token.packed(),
                                 true,
                                 token_list.replay_kind == TokenListReplayKind::Unexpanded,
                                 macro_replay_site,
@@ -4782,8 +4684,11 @@ impl InputStack {
                     else {
                         continue;
                     };
-                    return Ok(Some(TracedExpansionToken::from_decoded(
-                        token, false, false, None,
+                    return Ok(Some(TracedExpansionToken::from_parts(
+                        token.packed(),
+                        false,
+                        false,
+                        None,
                     )));
                 }
                 InputFrame::Condition { .. } => {

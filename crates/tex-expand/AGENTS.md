@@ -61,6 +61,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - Macro argument payloads are immutable `tex-state::MacroArguments`; expansion
   matches them and the lexer replays them without defining compatibility
   copies.
+- Traced expansion deliveries and macro replay locations are immutable
+  `tex-state` payloads; the lexer constructs them and expansion interprets
+  them without lexer-owned public value types.
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.

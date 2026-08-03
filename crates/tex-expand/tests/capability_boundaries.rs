@@ -55,8 +55,12 @@ fn macro_arguments_stay_on_the_state_owner() {
             let source = std::fs::read_to_string(&path).expect("read expansion source file");
             assert!(
                 !source.contains("tex_lex::MacroArguments")
-                    && !source.contains("use tex_lex::{InputStack, MacroArguments}"),
-                "{} must consume macro arguments from tex-state",
+                    && !source.contains("use tex_lex::{InputStack, MacroArguments}")
+                    && !source.contains("tex_lex::MacroReplaySite")
+                    && !source.contains("tex_lex::TracedExpansionToken")
+                    && !source.contains("MacroReplaySite, TokenListReplayKind")
+                    && !source.contains("TokenListReplayKind, TracedExpansionToken"),
+                "{} must consume immutable replay payloads from tex-state",
                 path.display()
             );
         }
@@ -64,4 +68,6 @@ fn macro_arguments_stay_on_the_state_owner() {
     let lexer =
         std::fs::read_to_string(root.join("crates/tex-lex/src/lib.rs")).expect("read lexer source");
     assert!(!lexer.contains("pub struct MacroArguments"));
+    assert!(!lexer.contains("pub struct MacroReplaySite"));
+    assert!(!lexer.contains("pub struct TracedExpansionToken"));
 }

@@ -133,8 +133,8 @@ pub use font::PdfFontCode;
 pub use input::{
     AlignmentScannerPhase, ConditionFrameSummary, ConditionFrameToken, ConditionKind,
     ConditionLimb, InputFrameSummary, InputSummary, LexerState, MACRO_ARGUMENT_SLOTS,
-    MacroArgumentRange, MacroArguments, SourceFrameSummary, SourceId, TokenListReplayKind,
-    TokenListReplayMarker, TracedTokenList,
+    MacroArgumentRange, MacroArguments, MacroReplaySite, SourceFrameSummary, SourceId,
+    TokenListReplayKind, TokenListReplayMarker, TracedExpansionToken, TracedTokenList,
 };
 pub use memo::{
     DetachedArtifact, DetachedDiagnostic, DetachedInputTransition, DetachedMemoValue,

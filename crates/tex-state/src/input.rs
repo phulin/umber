@@ -2,7 +2,7 @@
 
 use crate::ids::{OriginListId, TokenListId};
 use crate::source_map::RegisteredSource;
-use crate::token::{Token, TracedTokenWord};
+use crate::token::{OriginId, Token, TracedTokenWord};
 use crate::world::InputRecordId;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -159,6 +159,96 @@ fn argument_index(slot: u8) -> usize {
         "macro argument slot must be in 1..=9"
     );
     usize::from(slot - 1)
+}
+
+/// Immutable location of a token delivered from macro-body replay.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MacroReplaySite {
+    token_list: TokenListId,
+    token_index: usize,
+}
+
+impl MacroReplaySite {
+    #[must_use]
+    pub const fn new(token_list: TokenListId, token_index: usize) -> Self {
+        Self {
+            token_list,
+            token_index,
+        }
+    }
+
+    #[must_use]
+    pub const fn token_list(self) -> TokenListId {
+        self.token_list
+    }
+
+    #[must_use]
+    pub const fn token_index(self) -> usize {
+        self.token_index
+    }
+}
+
+/// One traced input delivery with expansion-control and replay metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TracedExpansionToken {
+    token: Token,
+    origin: OriginId,
+    suppress_expansion: bool,
+    expand_in_ordinary_context: bool,
+    macro_replay_site: Option<MacroReplaySite>,
+}
+
+impl TracedExpansionToken {
+    #[must_use]
+    pub fn new(token: TracedTokenWord, suppress_expansion: bool) -> Self {
+        Self::from_parts(token, suppress_expansion, false, None)
+    }
+
+    #[must_use]
+    pub fn from_parts(
+        token: TracedTokenWord,
+        suppress_expansion: bool,
+        expand_in_ordinary_context: bool,
+        macro_replay_site: Option<MacroReplaySite>,
+    ) -> Self {
+        Self {
+            token: token.semantic_token(),
+            origin: token.origin(),
+            suppress_expansion,
+            expand_in_ordinary_context,
+            macro_replay_site,
+        }
+    }
+
+    #[must_use]
+    pub fn traced_token(self) -> TracedTokenWord {
+        TracedTokenWord::pack(self.token, self.origin)
+    }
+
+    #[must_use]
+    pub const fn token(self) -> Token {
+        self.token
+    }
+
+    #[must_use]
+    pub const fn origin(self) -> OriginId {
+        self.origin
+    }
+
+    #[must_use]
+    pub const fn suppress_expansion(self) -> bool {
+        self.suppress_expansion
+    }
+
+    #[must_use]
+    pub const fn expand_in_ordinary_context(self) -> bool {
+        self.expand_in_ordinary_context
+    }
+
+    #[must_use]
+    pub const fn macro_replay_site(self) -> Option<MacroReplaySite> {
+        self.macro_replay_site
+    }
 }
 
 /// The semantic lexer state from TeX's `state` variable.
