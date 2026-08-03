@@ -357,14 +357,14 @@ impl CommandProcessor<'_> {
     ) -> Result<MacroArguments, CommandError> {
         for expected in pattern.leading() {
             let actual = self.get_token()?.ok_or(CommandError::MacroPrefixMismatch)?;
-            if (self.outer_recovered_while_matching && is_paragraph_command(&actual))
-                || actual.spelling().semantic_token() != *expected
-            {
-                return Err(if self.outer_recovered_while_matching {
-                    CommandError::OuterInMacroArgument
-                } else {
-                    CommandError::MacroPrefixMismatch
-                });
+            if actual.spelling().semantic_token() != *expected {
+                // TeX82 §391 tests every compulsory parameter-text token
+                // after raw delivery has completed §336 recovery. An outer
+                // control sequence therefore contributes the inserted
+                // frozen `\par` to this same mismatch test; only §394's
+                // argument collector turns that recovery into an aborted
+                // argument scan.
+                return Err(CommandError::MacroPrefixMismatch);
             }
         }
 
@@ -460,10 +460,18 @@ impl CommandProcessor<'_> {
     }
 
     /// Prints a TeX82 §389/§400 macro diagnostic at the point `macro_call`
-    /// reaches it. Only deferred-write expansion postpones printing until its
-    /// owning executor episode can restore the live diagnostic selector.
+    /// reaches it. Deferred-write expansion postpones printing until its
+    /// owning executor episode can restore the live diagnostic selector, and
+    /// a pending synchronous error keeps later traces in that same queue.
     fn print_macro_trace(&mut self, text: String, force_newline: bool) {
-        if self.command.expanding_deferred_write() {
+        // TeX82 §82 completes a recoverable error synchronously before
+        // execution resumes far enough for §389 or §400 to print a later
+        // macro trace. The command boundary queues those reports for its
+        // executor owner, so a trace reached while one is pending must join
+        // the same ordered queue instead of overtaking it through the live
+        // selector.
+        if self.command.expanding_deferred_write() || !self.command.semantic_diagnostics.is_empty()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Trace {

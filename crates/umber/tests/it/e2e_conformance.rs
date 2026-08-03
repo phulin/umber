@@ -2447,6 +2447,21 @@ fn trip_loaded_runaway_definition_pseudoprints_nonstandard_match_marker() {
 }
 
 #[test]
+fn trip_loaded_macro_mismatch_precedes_following_malformed_invocation_trace() {
+    // TeX82 §§82/391 completes \T's compulsory-prefix mismatch before
+    // §389 can trace the later malformed \a invocation.
+    let log = run_focused_loaded_trip_through(366);
+    let mismatch = log
+        .rfind("Use of \\T doesn't match its definition")
+        .expect("line-366 compulsory-prefix mismatch");
+    let report = &log[mismatch..];
+    let following_trace = report
+        .find("\\a^^@^^@a #1\\par #2->")
+        .expect("following malformed macro trace");
+    assert!(following_trace > 0, "{report}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

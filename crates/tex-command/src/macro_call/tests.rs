@@ -447,6 +447,66 @@ fn scalar_matcher_reports_compulsory_prefix_mismatch_without_activating_body() {
 }
 
 #[test]
+fn outer_recovery_in_compulsory_prefix_still_reports_definition_mismatch() {
+    let (command, outcome) = run_macro_call(
+        b"\\m\\outer",
+        MeaningFlags::EMPTY,
+        &[Token::Char {
+            ch: 'x',
+            cat: Catcode::Other,
+        }],
+        true,
+    )
+    .expect("TeX82 §391 recovers the mismatching inserted paragraph");
+
+    assert_eq!(outcome, MacroCallOutcome::PrefixMismatchRecovered);
+    assert!(command.parameters.activations.is_empty());
+    assert!(matches!(
+        command.semantic_diagnostics.as_slice(),
+        [
+            crate::CommandSemanticDiagnostic::Recoverable { .. },
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch(_),
+        ]
+    ));
+}
+
+#[test]
+fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_MACROS, 1);
+    let mismatched = universe.intern("T").symbol();
+    let traced = universe.intern("a").symbol();
+    let empty = universe.intern_token_list(&[]);
+    command
+        .semantic_diagnostics
+        .push(crate::CommandSemanticDiagnostic::MacroPrefixMismatch(
+            mismatched,
+        ));
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    processor.trace_macro_invocation(traced, empty, empty);
+
+    assert!(matches!(
+        processor.command.semantic_diagnostics.as_slice(),
+        [
+            crate::CommandSemanticDiagnostic::MacroPrefixMismatch(name),
+            crate::CommandSemanticDiagnostic::Trace {
+                text,
+                force_newline: true,
+            },
+        ] if *name == mismatched && text == "\\a ->"
+    ));
+}
+
+#[test]
 fn undelimited_group_strips_only_its_outer_braces() {
     let (command, arguments) = run_macro(
         b"\\m {a{b}}",
