@@ -7,6 +7,7 @@ use crate::{
     PageNode, UnvalidatedPageArtifact,
 };
 
+use super::incremental::{RenderLimits, RenderSessionId, build_render_revision};
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
     RenderedOutputId, write_html, write_positioned_html,
@@ -684,6 +685,88 @@ fn unclosed_special_scope_is_rejected() {
         write_html(&[page], &resolver, &HtmlOptions::default()),
         Err(HtmlError::InvalidSpecial { .. })
     ));
+}
+
+#[test]
+fn canonical_render_revision_is_deterministic_and_reuses_unchanged_keys() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([9; 16]);
+    let first = build_render_revision(
+        &[page()],
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("first render revision");
+    let repeated = build_render_revision(
+        &[page()],
+        &resolver,
+        &options,
+        session,
+        2,
+        Some(&first),
+        RenderLimits::default(),
+    )
+    .expect("repeated render revision");
+
+    assert_eq!(first.pages[0].key, repeated.pages[0].key);
+    assert_eq!(first.pages[0].nodes, repeated.pages[0].nodes);
+    assert_eq!(first.digest, repeated.digest);
+}
+
+#[test]
+fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([10; 16]);
+    let first_page = page();
+    let mut second_page = page();
+    second_page.testing_mut().counts[0] = 2;
+    let PageNode::HList(root) = &mut second_page.testing_mut().root else {
+        unreachable!()
+    };
+    let PageNode::Char { ch, .. } = &mut root.children[0] else {
+        unreachable!()
+    };
+    *ch = b'B' as u32;
+    let first = build_render_revision(
+        &[first_page.clone(), second_page.clone()],
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("first render revision");
+    let mut inserted = page();
+    inserted.testing_mut().counts[0] = 99;
+    let PageNode::HList(root) = &mut inserted.testing_mut().root else {
+        unreachable!()
+    };
+    root.width = sp(333);
+    let next = build_render_revision(
+        &[inserted, first_page, second_page],
+        &resolver,
+        &options,
+        session,
+        2,
+        Some(&first),
+        RenderLimits::default(),
+    )
+    .expect("prefixed render revision");
+
+    for (old, new) in first.pages.iter().zip(&next.pages[1..]) {
+        assert_eq!(old.key, new.key);
+        assert_eq!(
+            old.nodes.iter().map(|node| node.key).collect::<Vec<_>>(),
+            new.nodes.iter().map(|node| node.key).collect::<Vec<_>>()
+        );
+    }
 }
 
 fn page() -> crate::PageArtifact {

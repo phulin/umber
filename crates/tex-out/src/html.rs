@@ -3,6 +3,8 @@
 #[cfg(test)]
 mod tests;
 
+pub mod incremental;
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Write as _;
