@@ -269,6 +269,25 @@ format closures in the schema-3 root. Two clean publications must still be
 byte-identical. `scripts/publish-texlive-r2.sh` reserves `manifest-v3.json` for
 this new immutable contract and retains the manifest-last upload order.
 
+When the pinned source tree is unavailable, materialize an authenticated local
+subset directly from the immutable hosted publication:
+
+```sh
+scripts/materialize-texlive-snapshot.py --format latex --format pdflatex \
+  --keys-from tests/latex-runtime.lock
+scripts/materialize-texlive-snapshot.py --format latex --format pdflatex \
+  --keys-from tests/latex-runtime.lock --offline
+```
+
+The command preserves the exact `manifest-v3.json` trust root, downloads only
+the canonical shards selected by the requested keys and format closures, and
+stores every shard, format, and file under its verified digest name in
+`target/texlive-snapshot/objects`. The second command performs no network I/O
+and proves that the explicit checkout-local distribution is complete for the
+same selection. Add canonical `kind:name` records with `--key` or a one-key-per-
+line file with `--keys-from`; repository lock records of the form
+`source KIND PATH BYTES SHA256` are also accepted.
+
 The builder additionally verifies `tests/texlive-snapshot.lock` before it
 publishes anything. That lock fixes the publisher-visible tree digest and the
 exact 2026-03-01 LaTeX kernel, latex-dev `array.sty` v2.7a, and pdfTeX map

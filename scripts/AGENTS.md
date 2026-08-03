@@ -64,6 +64,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
 - `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
+- `materialize-texlive-snapshot.py`: digest-verifying selective local mirror of
+  the pinned hosted schema-3 snapshot, including requested format closures and
+  corpus keys, with strict offline reuse.
 - `build-html-r2.sh`: deterministic two-build staging for the immutable contract-v1 HTML-only R2 profile and curated font catalog.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
