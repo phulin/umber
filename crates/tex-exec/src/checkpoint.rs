@@ -214,7 +214,7 @@ impl EngineCheckpoint {
             layout,
             &[],
         )
-        .map(|(universe, latency, _)| (universe, latency))
+        .map(|(universe, latency, _, _)| (universe, latency))
     }
 
     /// Forks a checkpoint and atomically remaps its command continuation and
@@ -228,8 +228,15 @@ impl EngineCheckpoint {
         fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
         paragraphs: &[crate::CanonicalParagraphRegion],
-    ) -> Result<(Universe, Duration, Vec<crate::CanonicalParagraphRegion>), EditorRestoreError>
-    {
+    ) -> Result<
+        (
+            Universe,
+            Duration,
+            Vec<crate::CanonicalParagraphRegion>,
+            Vec<tex_state::ParagraphValidationFailure>,
+        ),
+        EditorRestoreError,
+    > {
         if self.root_content_hash != Some(ContentHash::from_bytes(old_source)) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -293,16 +300,19 @@ impl EngineCheckpoint {
         control
             .restore_checkpoint(&rebound, &mut universe)
             .map_err(EditorRestoreError::Canonical)?;
-        for _ in 0..invalid_retained_paragraphs {
-            universe.record_pure_paragraph_validation_failure(
-                tex_state::ParagraphValidationFailure::RetainedResult,
-            );
-        }
         universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
         universe.set_root_editor_content_hash(new_content_hash);
-        Ok((universe, fork_latency, paragraphs))
+        Ok((
+            universe,
+            fork_latency,
+            paragraphs,
+            vec![
+                tex_state::ParagraphValidationFailure::RetainedResult;
+                invalid_retained_paragraphs
+            ],
+        ))
     }
 
     /// Checks the immutable prerequisites for an edited-root canonical fork.

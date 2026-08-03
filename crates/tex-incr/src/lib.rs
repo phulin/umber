@@ -1586,7 +1586,7 @@ impl Session {
         control
             .capabilities_mut()
             .set_startup_job_name(&self.job_name);
-        let (mut universe, restart_fork_latency, replay_suffix) =
+        let (mut universe, restart_fork_latency, replay_suffix, validation_failures) =
             anchor.checkpoint().fork_canonical_editor_with_paragraphs(
                 &mut control,
                 substrate,
@@ -1602,6 +1602,9 @@ impl Session {
         }
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(true);
+        for failure in validation_failures {
+            memo.record_paragraph_validation_failure(failure);
+        }
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
         for region in &carried_paragraphs {
             region.publish_carried_history(&mut universe);
