@@ -1,4 +1,5 @@
 use super::*;
+use crate::math::MathLayoutReader;
 use crate::math::tests::{math_char, noad, root_nodes, setup_universe};
 use tex_state::Universe;
 use tex_state::glue::GlueSpec;
@@ -16,6 +17,40 @@ fn context<'a>(state: &'a Universe, params: &'a MathParams, style: Style) -> Con
         conversion_events: Default::default(),
         recovered: Default::default(),
     }
+}
+
+#[test]
+fn first_pass_observes_check_dimensions_pack_for_every_noad() {
+    // TeX82 §724 reaches `check_dimensions` for every noad and executes
+    // `hpack(new_hlist(q), natural)`. Empty, unscripted noads therefore each
+    // publish a distinct zero-size completion without relying on §754.
+    let mut stores = setup_universe();
+    let input = stores.freeze_node_list(
+        &(0..9)
+            .map(|_| {
+                Node::MathNoad(MathNoad::new(
+                    NoadKind::Normal(NoadClass::Ord),
+                    MathField::Empty,
+                ))
+            })
+            .collect::<Vec<_>>(),
+    );
+    let params = MathParams::read(&stores);
+
+    let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
+
+    assert_eq!(
+        layout.pack_observations(),
+        vec![
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+            };
+            9
+        ]
+    );
 }
 
 /// TeX82 §§728--733 and §§761--767: both mlist passes must retain the full

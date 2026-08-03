@@ -37,7 +37,7 @@ pub use model::{
     BoxAxis, FrozenHList, MathBox, MathConversionEvent, MathGlueKind, MathLayout, MathLayoutReader,
     MathNode, MathPackObservation,
 };
-pub(crate) use model::{MathLayoutBuilder, boxed_node, hlist_extents, node_is_char};
+pub(crate) use model::{MathLayoutBuilder, boxed_node, node_is_char};
 pub use params::{ExtensionParams, MathParamState, MathParams, SizeParams, SymbolParams};
 pub use spacing::{SpacingKind, inter_noad_spacing, math_glue, math_kern};
 pub use style::{Style, StyleFamily};

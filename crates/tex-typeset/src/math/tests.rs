@@ -1194,7 +1194,7 @@ fn fraction_reuses_single_explicit_numerator_box() {
 }
 
 #[test]
-fn direct_sub_box_nucleus_records_one_hpack_observation() {
+fn direct_sub_box_nucleus_records_source_and_check_dimensions_packs() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);
     let explicit = universe.freeze_node_list(&[Node::HList(BoxNode::new(BoxNodeFields {
@@ -1218,12 +1218,20 @@ fn direct_sub_box_nucleus_records_one_hpack_observation() {
 
     assert_eq!(
         layout.pack_observations(),
-        &[MathPackObservation {
-            axis: BoxAxis::Horizontal,
-            width: sc(120),
-            height: sc(7),
-            depth: sc(1),
-        }]
+        &[
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: sc(120),
+                height: sc(7),
+                depth: sc(1),
+            },
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: sc(120),
+                height: sc(7),
+                depth: sc(1),
+            },
+        ]
     );
 
     let empty = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
@@ -1231,7 +1239,15 @@ fn direct_sub_box_nucleus_records_one_hpack_observation() {
         MathField::Empty,
     ))]);
     let layout = mlist_to_hlist(&universe, empty, Style::TEXT, false, &params);
-    assert!(layout.pack_observations().is_empty());
+    assert_eq!(
+        layout.pack_observations(),
+        &[MathPackObservation {
+            axis: BoxAxis::Horizontal,
+            width: sc(0),
+            height: sc(0),
+            depth: sc(0),
+        }]
+    );
 }
 
 #[test]
@@ -1248,13 +1264,21 @@ fn nested_sub_mlist_records_its_structural_hpack() {
 
     assert_eq!(
         layout.pack_observations(),
-        &[MathPackObservation {
-            axis: BoxAxis::Horizontal,
-            width: Scaled::from_raw(0),
-            height: Scaled::from_raw(0),
-            depth: Scaled::from_raw(0),
-        }],
-        "TeX82 §651 observes Appendix G's structural sub-mlist hpack"
+        &[
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+            },
+            MathPackObservation {
+                axis: BoxAxis::Horizontal,
+                width: Scaled::from_raw(0),
+                height: Scaled::from_raw(0),
+                depth: Scaled::from_raw(0),
+            },
+        ],
+        "TeX82 §651's structural sub-mlist hpack precedes §724's dimensions pack"
     );
 }
 
@@ -1282,8 +1306,8 @@ fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
 
     assert_eq!(
         layout.pack_observations().len(),
-        4,
-        "TeX82 Appendix G and §651 perform both nested hpacks for each shared-list occurrence"
+        8,
+        "TeX82 §651 and §724 each perform both nested hpacks for every shared-list occurrence"
     );
 }
 

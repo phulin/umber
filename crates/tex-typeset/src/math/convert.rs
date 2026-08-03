@@ -315,7 +315,11 @@ fn first_pass<S: MathTypesetState>(
                 }
                 // AppG rule 7: Open and Inner atoms fall through unchanged to Rule 17.
                 let work = translate_noad(ctx, noad, class);
-                let (height, depth) = super::hlist_extents(work.hlist);
+                // TeX82 §724's `check_dimensions` measures every completed
+                // noad through `hpack(new_hlist(q), natural)`. This is an
+                // observable pack even when the translated hlist is empty.
+                let packed = ctx.layout.hpack(work.hlist);
+                let (height, depth) = (packed.height, packed.depth);
                 *max_height = (*max_height).max(height);
                 *max_depth = (*max_depth).max(depth);
                 r_type = Some(work.class);
@@ -324,7 +328,10 @@ fn first_pass<S: MathTypesetState>(
             Node::FractionNoad(fraction) => {
                 // AppG rule 15
                 let hlist = fractions::make_fraction(ctx, fraction);
-                let (height, depth) = super::hlist_extents(hlist);
+                // Fractions rejoin the same §724 `check_dimensions` label as
+                // ordinary noads and therefore complete the same natural pack.
+                let packed = ctx.layout.hpack(hlist);
+                let (height, depth) = (packed.height, packed.depth);
                 *max_height = (*max_height).max(height);
                 *max_depth = (*max_depth).max(depth);
                 r_type = Some(NoadClass::Ord);

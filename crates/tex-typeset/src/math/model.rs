@@ -555,10 +555,6 @@ pub(crate) fn boxed_node(boxed: MathBox) -> MathNode {
     }
 }
 
-pub(crate) fn hlist_extents(list: FrozenHList) -> (Scaled, Scaled) {
-    (list.height, list.depth)
-}
-
 pub(crate) fn node_is_char(node: &MathNode) -> bool {
     matches!(node, MathNode::Char { .. })
 }
