@@ -9,7 +9,7 @@ use tex_state::token::{Catcode, OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
-use crate::assignments::hpack_with_overfull_rule;
+use crate::assignments::{hpack_with_overfull_rule, split_hpack_migrations};
 use crate::mode::{DisplayEqNo, EqNoSide};
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
@@ -121,6 +121,12 @@ pub(crate) fn finish_display_math(
         &params,
         error_context,
     );
+    // TeX82 §1196 sets `adjust_tail:=adjust_head` before the display's
+    // `hpack`. Consequently §§651/655 remove insertions, marks, and
+    // adjustments before §663's `short_display` examines an overfull
+    // formula. Keep the migrated material beside the display instead of
+    // leaving zero-dimensional wrappers inside its packed hlist.
+    let (display_nodes, pre_migrated, migrated) = split_hpack_migrations(stores, display_nodes);
     let shrink = hlist_shrink(stores, &display_nodes);
     let display_list = stores.freeze_node_list(&display_nodes);
     let mut display_box = hpack_nodes(
@@ -237,7 +243,13 @@ pub(crate) fn finish_display_math(
         display_line =
             package_directed_display_line(stores, display_line, d, s, z, pre_display_direction);
     }
+    for node in pre_migrated {
+        append_vertical_contribution(nest, stores, node);
+    }
     append_node_to_vertical_list(nest, stores, Node::HList(display_line))?;
+    for node in migrated {
+        append_vertical_contribution(nest, stores, node);
+    }
 
     if let Some(mut boxed) = eq_box
         && e.raw() == 0

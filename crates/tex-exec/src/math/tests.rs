@@ -662,3 +662,80 @@ fn finish_display_math_packages_width_equation_number_and_migration_matrix() {
         [Node::MathOn(_), Node::MathOff(_)]
     ));
 }
+
+#[test]
+fn display_hpack_migrates_insertions_and_adjustments_before_short_display() {
+    // TeX82 §§174/651/655/1196: `after_math` gives the display hpack a
+    // live `adjust_tail`. The insertion and adjustment therefore migrate out
+    // before §663 abbreviates the overfull formula; only the three authored
+    // boxes and final rule appear on that diagnostic line.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, sp(0));
+    stores.set_int_param(IntParam::SHOW_BOX_DEPTH, 0);
+    let empty = stores.freeze_node_list(&[]);
+    let one_pt_box = || {
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width: sp(1),
+            height: sp(0),
+            depth: sp(0),
+            shift: sp(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        }))
+    };
+    let zero_glue = stores.intern_glue(GlueSpec::ZERO);
+    let adjust_content = stores.freeze_node_list(&[Node::Penalty(7)]);
+    let insertion_content = stores.freeze_node_list(&[Node::Penalty(9)]);
+    let content = stores.freeze_node_list(&[
+        one_pt_box(),
+        one_pt_box(),
+        one_pt_box(),
+        Node::Adjust(tex_state::node::AdjustNode::ordinary(adjust_content)),
+        Node::Ins {
+            class: 0,
+            size: sp(0),
+            split_top_skip: zero_glue,
+            split_max_depth: sp(0),
+            floating_penalty: 0,
+            content: insertion_content,
+        },
+        Node::Rule {
+            width: Some(sp(1)),
+            height: Some(sp(0)),
+            depth: Some(sp(0)),
+        },
+    ]);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Vertical).expect("vertical mode");
+    finish_display_math(&mut nest, &mut stores, content, None, None)
+        .expect("display packaging succeeds");
+    let log = terminal_text(&stores);
+    assert!(
+        log.contains("Overfull \\hbox (4.0pt too wide) detected at line 0\n[][][]|\n"),
+        "{log}"
+    );
+
+    let page = nest.current_list().nodes().to_vec();
+    let display = page
+        .iter()
+        .find_map(|node| match node {
+            Node::HList(boxed) if boxed.box_lr == BoxLr::DList => Some(boxed),
+            _ => None,
+        })
+        .expect("display box reaches the vertical list");
+    assert!(
+        stores.nodes(display.children).iter().all(|node| !matches!(
+            node.to_owned(),
+            Node::Ins { .. } | Node::Adjust(_) | Node::Mark { .. }
+        )),
+        "the packed display owns no migrating wrappers"
+    );
+    assert!(
+        page.iter()
+            .any(|node| matches!(node, Node::Ins { class: 0, .. }))
+    );
+    assert!(page.iter().any(|node| matches!(node, Node::Penalty(7))));
+}
