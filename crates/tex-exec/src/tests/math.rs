@@ -1311,6 +1311,30 @@ fn showlists_reports_adjustments_embedded_in_a_display_math_list() {
     );
 }
 
+#[test]
+fn showlists_roots_an_unfinished_display_while_scanning_its_equation_number() {
+    // TeX82 §§1194/218: `fin_mlist(null)` saves the display while the
+    // equation number is scanned, but `show_activities` still visits that
+    // display through its live display-mode list root. The nested braced
+    // fields ensure the equation-number math level is not current when the
+    // diagnostic walks back to the display level.
+    let stores = super::core::run_canonical_tex82(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=100$$\vadjust{\penalty7}\mkern-9mu\eqno\mathpunct{AA}^{\hbox{A}}{\above9pt{v\over p\showlists q}}$$\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains(concat!(
+            "### display math mode entered at line 1\n",
+            "\\vadjust\n",
+            ".\\penalty 7\n",
+            "\\mkern-9.0mu\n",
+            "### vertical mode entered at line 0\n",
+        )),
+        "{log}"
+    );
+}
+
 /// TeX82 §1151 allocates each ordinary noad before `scan_math` enters a
 /// braced subsidiary field. Section 218 therefore displays that parent noad,
 /// without a nucleus child, after the nested math level and before the outer

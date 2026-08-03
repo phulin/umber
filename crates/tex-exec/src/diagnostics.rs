@@ -669,13 +669,13 @@ pub(crate) fn execute_showlists(
                     DumpConfig::read(stores).for_profile(profile),
                 ));
             }
-        } else if !level.list().physical_nodes().is_empty() {
+        } else if let Some(nodes) = showlists_level_nodes(stores, summary.levels(), index) {
             if index == 0 {
                 text.push_str("### recent contributions:\n");
             }
             text.push_str(&dump_node_slice(
                 stores,
-                level.list().physical_nodes(),
+                &nodes,
                 DumpConfig::read(stores).for_profile(profile),
             ));
         }
@@ -729,6 +729,29 @@ pub(crate) fn execute_showlists(
     diagnostic.end(true);
     complete_show(stores, true, Some(context))?;
     Ok(())
+}
+
+/// Returns TeX82 §218's list root for one saved semantic nest level.
+///
+/// While §1194 scans an equation number, `fin_mlist(null)` has moved the
+/// display mlist into the immediately inner math level's save record. TeX's
+/// linked display-level head still roots that mlist for `show_activities`;
+/// project Umber's typed `DisplayEqNo` owner back onto that level instead of
+/// displaying the now-empty construction list.
+fn showlists_level_nodes(
+    stores: &Universe,
+    levels: &[crate::mode::ModeLevelSummary],
+    index: usize,
+) -> Option<Vec<tex_state::node::Node>> {
+    let level = &levels[index];
+    if level.mode() == Mode::DisplayMath
+        && let Some(eq_no) = levels
+            .get(index + 1)
+            .and_then(|inner| inner.list().display_eq_no())
+    {
+        return Some(stores.nodes(eq_no.display).to_vec());
+    }
+    (!level.list().physical_nodes().is_empty()).then(|| level.list().physical_nodes().to_vec())
 }
 
 /// TeX82 §218's insertion-record tail of `show_activities`.
