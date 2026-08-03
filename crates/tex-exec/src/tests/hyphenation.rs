@@ -711,6 +711,62 @@ fn automatic_discretionaries_retain_exact_physical_replacement_counts() {
 }
 
 #[test]
+fn source_driven_underfull_ligature_discretionary_short_display() {
+    let stores = super::core::run_canonical_tex82_with_fonts(
+        r"\font\tenrm=cmr10 \tenrm
+          \hsize=100pt\pretolerance=10000\hbadness=0
+          \noindent of\discretionary{-}{f-}{f}fice\par\end",
+    );
+    let log = super::support::terminal_effect_text(&stores);
+    assert!(
+        log.contains(concat!(
+            "Underfull \\hbox (badness 10000) in paragraph at lines 3--3\n",
+            "\\tenrm of-f-fice\n",
+        )),
+        "{log}"
+    );
+}
+
+#[test]
+fn equal_replacement_counts_do_not_bypass_distinct_disc_branches() {
+    // This is the exact gate that bypassed v3: both representations have one
+    // replacement node, but their pre-break branches differ. Count-only
+    // admission returned false and prevented the physical diagnostic/projection
+    // path from ever reaching `hpack_owned_with_overfull_rule`.
+    let mut stores = Universe::new();
+    let font = tex_state::font::NULL_FONT;
+    let empty = stores.freeze_node_list(&[]);
+    let replacement = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: 'B',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let physical_pre = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: 'B',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let semantic_pre = stores.freeze_node_list(&[Node::Char {
+        font,
+        ch: '-',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    }]);
+    let disc = |pre| Node::Disc {
+        kind: tex_state::node::DiscKind::AutomaticHyphen,
+        pre,
+        post: empty,
+        replace: replacement,
+        physical_replace_count: 1,
+    };
+
+    assert!(crate::assignments::test_discretionary_diagnostics_differ(
+        &stores,
+        &[disc(physical_pre)],
+        &[disc(semantic_pre)],
+    ));
+}
+
+#[test]
 fn boundary_discretionary_physical_pre_branch_reconstitutes_preceding_span() {
     let mut stores =
         super::core::run_canonical_tex82_with_fonts("\\font\\tenrm=cmr10 \\relax \\tenrm \\end");

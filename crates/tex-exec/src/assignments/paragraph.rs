@@ -650,16 +650,8 @@ fn break_current_paragraph(
             .into_iter()
             .filter(|node| !matches!(node, Node::Mark { .. } | Node::Ins { .. } | Node::Adjust(_)))
             .collect::<Vec<_>>();
-        let needs_physical_diagnostic = diagnostic_nodes.iter().any(|node| {
-            matches!(
-                node,
-                Node::Disc {
-                    replace,
-                    physical_replace_count,
-                    ..
-                } if usize::from(*physical_replace_count) != stores.nodes(*replace).len()
-            )
-        });
+        let needs_physical_diagnostic =
+            discretionary_diagnostics_differ(stores, &diagnostic_nodes, &broken.nodes);
         for node in &mut broken.nodes {
             if let Node::Disc { replace, .. } = node {
                 *replace = empty_list;
@@ -715,6 +707,56 @@ fn break_current_paragraph(
         finished_nodes,
         line_count,
     })
+}
+
+/// Whether §663 needs the paragraph's TeX-physical discretionary projection.
+///
+/// Equal replacement counts do not imply equal diagnostics: ligature
+/// reconstitution can change pre/post branches while leaving the count
+/// unchanged. Compare the ordered discretionary records explicitly, while
+/// retaining the count-vs-side-list guard for flattened physical topology.
+fn discretionary_diagnostics_differ(
+    stores: &Universe,
+    physical: &[Node],
+    semantic: &[Node],
+) -> bool {
+    let mut semantic = semantic.iter().filter_map(|node| match node {
+        Node::Disc {
+            kind,
+            pre,
+            post,
+            replace,
+            physical_replace_count,
+        } => Some((*kind, *pre, *post, *replace, *physical_replace_count)),
+        _ => None,
+    });
+    for node in physical {
+        let Node::Disc {
+            kind,
+            pre,
+            post,
+            replace,
+            physical_replace_count,
+        } = node
+        else {
+            continue;
+        };
+        if usize::from(*physical_replace_count) != stores.nodes(*replace).len()
+            || semantic.next() != Some((*kind, *pre, *post, *replace, *physical_replace_count))
+        {
+            return true;
+        }
+    }
+    semantic.next().is_some()
+}
+
+#[cfg(test)]
+pub(crate) fn test_discretionary_diagnostics_differ(
+    stores: &Universe,
+    physical: &[Node],
+    semantic: &[Node],
+) -> bool {
+    discretionary_diagnostics_differ(stores, physical, semantic)
 }
 
 fn materialize_pdf_line(
