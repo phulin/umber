@@ -2202,6 +2202,63 @@ fn ifnum_ifdim_relation_and_missing_equals_matrix() {
 }
 
 #[test]
+fn malformed_ifdim_keeps_nested_conditional_traces_after_its_diagnostic() {
+    // TeX82 §§502--503 calls `back_error` for the missing relation before
+    // continuing the outer comparison. e-TeX [28.494/28.498] may trace the
+    // nested condition and its delimiters during that same expansion call;
+    // those later traces must remain behind the synchronous §82 report.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_IFS, 1);
+    let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
+    let iftrue = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
+    let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
+    let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
+    push(
+        &mut command,
+        [
+            vec![ifdim],
+            chars("0pt"),
+            vec![iftrue],
+            chars("1pt"),
+            vec![fi],
+            chars("x"),
+            vec![otherwise],
+            chars("f"),
+            vec![fi],
+        ]
+        .concat(),
+    );
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'f');
+    assert!(processor.get_x_token().expect("input exhausts").is_none());
+    let diagnostics = processor.take_semantic_diagnostics();
+    assert!(matches!(
+        diagnostics.first(),
+        Some(crate::CommandSemanticDiagnostic::Recoverable {
+            identity: MISSING_RELATION_DIAGNOSTIC,
+            ..
+        })
+    ));
+    assert!(diagnostics[1..].iter().any(|diagnostic| matches!(
+        diagnostic,
+        crate::CommandSemanticDiagnostic::Trace { text, .. } if text == "{false}"
+    )));
+    assert!(diagnostics[1..].iter().any(|diagnostic| matches!(
+        diagnostic,
+        crate::CommandSemanticDiagnostic::Trace { text, .. } if text.starts_with("{\\fi:")
+    )));
+    assert!(processor.command.conditions.current().is_none());
+    drop(processor);
+    let immediate = diagnostic_text(&universe);
+    assert!(!immediate.contains("{false}"), "{immediate:?}");
+}
+
+#[test]
 fn ifodd_signed_parity_and_scanner_recovery_matrix() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

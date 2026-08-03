@@ -581,7 +581,12 @@ impl CommandProcessor<'_> {
             return;
         }
         let text = format!("{{{result}}}");
-        if self.command.expanding_deferred_write() {
+        // A queued recoverable diagnostic represents a synchronous §82
+        // report. Any trace discovered later in this same expansion episode
+        // must cross the executor boundary behind it, just as command traces
+        // do in `print_command_trace_text`.
+        if self.command.expanding_deferred_write() || !self.command.semantic_diagnostics.is_empty()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Trace {
@@ -626,7 +631,8 @@ impl CommandProcessor<'_> {
             return;
         }
         let text = format!("{{case {selected}}}");
-        if self.command.expanding_deferred_write() {
+        if self.command.expanding_deferred_write() || !self.command.semantic_diagnostics.is_empty()
+        {
             self.command
                 .semantic_diagnostics
                 .push(crate::CommandSemanticDiagnostic::Trace {
@@ -1273,6 +1279,26 @@ impl CommandProcessor<'_> {
         let level = self.command.conditions.frames.len();
         let name = self.conditional_kind_text(frame);
         let mode_prefix = self.claim_command_trace_mode_prefix();
+        if !self.command.semantic_diagnostics.is_empty() {
+            let mut text = String::from("{");
+            if let Some(mode_prefix) = mode_prefix {
+                text.push_str(&mode_prefix);
+                text.push_str(": ");
+            }
+            text.push_str(&name);
+            text.push_str(": (level ");
+            text.push_str(&level.to_string());
+            text.push(')');
+            append_if_line(&mut text, frame.source_line);
+            text.push('}');
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+            return;
+        }
         let mut diagnostic = self.state.begin_diagnostic();
         diagnostic.print_char('{');
         if let Some(mode_prefix) = mode_prefix {
@@ -1310,6 +1336,18 @@ impl CommandProcessor<'_> {
         let delimiter_name =
             crate::processor::expand::print_esc_text(&self.state, delimiter.canonical_branch());
         let condition_name = self.conditional_kind_text(frame);
+        if !self.command.semantic_diagnostics.is_empty() {
+            let mut text = format!("{{{delimiter_name}: {condition_name} (level {level})");
+            append_if_line(&mut text, frame.source_line);
+            text.push('}');
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Trace {
+                    text,
+                    force_newline: false,
+                });
+            return;
+        }
         let mut diagnostic = self.state.begin_diagnostic();
         diagnostic
             .print_char('{')
@@ -1456,6 +1494,13 @@ fn print_if_line(diagnostic: &mut tex_state::diagnostic::Diagnostic<'_>, source_
         diagnostic
             .print(" entered on line ")
             .print_int(i32::try_from(source_line).unwrap_or(i32::MAX));
+    }
+}
+
+fn append_if_line(text: &mut String, source_line: u32) {
+    if source_line != 0 {
+        text.push_str(" entered on line ");
+        text.push_str(&source_line.to_string());
     }
 }
 
