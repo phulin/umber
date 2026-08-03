@@ -314,7 +314,7 @@ impl EngineCheckpoint {
                     summary,
                     paragraphs
                         .iter()
-                        .map(crate::CanonicalParagraphRegion::input),
+                        .map(|paragraph| (paragraph.input(), paragraph.accepted_origin_resolver())),
                     source,
                 );
                 let mut meanings = std::collections::HashMap::new();
@@ -335,6 +335,11 @@ impl EngineCheckpoint {
                 CanonicalCheckpointRestoreError::MissingCommandSummary,
             ));
         };
+        // Stable accepted-generation origins are materialized against the new
+        // editor layout together with the continuation graph.
+        universe
+            .install_editor_fragments(fragments, layout)
+            .map_err(EditorRestoreError::Layout)?;
         let (materialized, materialized_paragraphs) =
             owned.materialize_with_paragraphs(&mut universe);
         **command = materialized;
@@ -386,9 +391,6 @@ impl EngineCheckpoint {
         control
             .restore_checkpoint(&rebound, &mut universe)
             .map_err(EditorRestoreError::Canonical)?;
-        universe
-            .install_editor_fragments(fragments, layout)
-            .map_err(EditorRestoreError::Layout)?;
         universe.set_root_editor_content_hash(new_content_hash);
         Ok((
             universe,

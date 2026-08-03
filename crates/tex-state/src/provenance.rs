@@ -193,6 +193,22 @@ impl ParagraphOriginResolver {
         }
         None
     }
+
+    /// Reads one origin record retained by this accepted generation.
+    ///
+    /// This is used only while detaching a continuation whose raw arena key
+    /// is no longer live in the fork source. Callers must recursively detach
+    /// every referenced identity before carrying the record forward.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn origin_record(&self, origin: OriginId) -> Option<OriginRecord> {
+        match origin.decode() {
+            crate::token::OriginEncoding::Arena(_) => self.provenance.get(origin),
+            crate::token::OriginEncoding::Unknown => Some(OriginRecord::UnknownBootstrap),
+            crate::token::OriginEncoding::NoExpandFallback
+            | crate::token::OriginEncoding::DirectSource(_) => None,
+        }
+    }
 }
 
 /// A rollback watermark for the provenance store.

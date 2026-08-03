@@ -35,6 +35,12 @@ struct OwnedMacro {
     provenance: MacroDefinitionProvenance,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum OwnedOrigin {
+    Record(OriginRecord),
+    StableSource(tex_state::RootSpanId),
+}
+
 /// A command summary plus the complete arena-backed closure it reaches.
 ///
 /// The copied summary is only a structural template. Every token-list,
@@ -46,10 +52,11 @@ pub struct OwnedCommandContinuation {
     token_lists: HashMap<TokenListId, Vec<OwnedToken>>,
     origin_lists: HashMap<OriginListId, Vec<OriginId>>,
     macros: HashMap<MacroDefinitionId, OwnedMacro>,
-    origins: HashMap<OriginId, OriginRecord>,
+    origins: HashMap<OriginId, OwnedOrigin>,
     symbols: HashMap<Symbol, OwnedSymbol>,
     transactions: Vec<ParagraphInputTransaction>,
     allow_missing_origins: bool,
+    accepted_resolvers: Vec<std::sync::Arc<tex_state::ParagraphOriginResolver>>,
 }
 
 impl OwnedCommandContinuation {
@@ -64,6 +71,7 @@ impl OwnedCommandContinuation {
             symbols: HashMap::new(),
             transactions: Vec::new(),
             allow_missing_origins: false,
+            accepted_resolvers: Vec::new(),
         };
         owned.collect_summary(universe);
         owned
@@ -74,12 +82,31 @@ impl OwnedCommandContinuation {
     #[must_use]
     pub fn detach_with_paragraphs<'a>(
         summary: &CommandSummary,
-        paragraphs: impl IntoIterator<Item = &'a ParagraphInputTransaction>,
+        paragraphs: impl IntoIterator<
+            Item = (
+                &'a ParagraphInputTransaction,
+                Option<std::sync::Arc<tex_state::ParagraphOriginResolver>>,
+            ),
+        >,
         universe: &Universe,
     ) -> Self {
-        let mut owned = Self::detach(summary, universe);
-        owned.allow_missing_origins = true;
-        for paragraph in paragraphs {
+        let paragraphs = paragraphs.into_iter().collect::<Vec<_>>();
+        let mut owned = Self {
+            summary: summary.clone(),
+            token_lists: HashMap::new(),
+            origin_lists: HashMap::new(),
+            macros: HashMap::new(),
+            origins: HashMap::new(),
+            symbols: HashMap::new(),
+            transactions: Vec::new(),
+            allow_missing_origins: true,
+            accepted_resolvers: paragraphs
+                .iter()
+                .filter_map(|(_, resolver)| resolver.clone())
+                .collect(),
+        };
+        owned.collect_summary(universe);
+        for (paragraph, _) in paragraphs {
             owned.collect_input(&paragraph.starting_input, universe);
             owned.collect_input(&paragraph.ending_input, universe);
             owned.collect_parameters(&paragraph.starting_parameters, universe);
@@ -265,18 +292,43 @@ impl OwnedCommandContinuation {
         if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
             return;
         }
-        // Paragraph endpoints can postdate the checkpoint snapshot that owns
-        // the semantic continuation. Such an origin is diagnostic-only: the
-        // accepted paragraph keeps its stable line-provenance resolver, while
-        // a restored cold path must not retain a generation-local arena id.
-        let record = universe.origin_if_live(id).unwrap_or_else(|| {
-            assert!(
-                self.allow_missing_origins,
-                "command continuation origin is not live"
-            );
-            OriginRecord::UnknownBootstrap
+        let live_record = universe.origin_if_live(id);
+        let record = live_record.or_else(|| {
+            self.accepted_resolvers
+                .iter()
+                .find_map(|resolver| resolver.origin_record(id))
         });
-        self.origins.insert(id, record);
+        let Some(record) = record else {
+            if let Some(span) = self
+                .accepted_resolvers
+                .iter()
+                .find_map(|resolver| resolver.stable_span(id))
+            {
+                self.origins.insert(id, OwnedOrigin::StableSource(span));
+            } else {
+                assert!(
+                    self.allow_missing_origins,
+                    "command continuation origin is not live"
+                );
+                self.origins
+                    .insert(id, OwnedOrigin::Record(OriginRecord::UnknownBootstrap));
+            }
+            return;
+        };
+        if live_record.is_none()
+            && matches!(
+                record,
+                OriginRecord::Source(_) | OriginRecord::SourceSpan(_)
+            )
+            && let Some(span) = self
+                .accepted_resolvers
+                .iter()
+                .find_map(|resolver| resolver.stable_span(id))
+        {
+            self.origins.insert(id, OwnedOrigin::StableSource(span));
+            return;
+        }
+        self.origins.insert(id, OwnedOrigin::Record(record));
         match record {
             OriginRecord::MacroInvocation(origin) => {
                 self.collect_macro(origin.definition(), universe);
@@ -408,37 +460,43 @@ impl<'a> Materializer<'a> {
         }
         let record = self.owned.origins[&old];
         let id = match record {
-            OriginRecord::UnknownBootstrap => self.universe.bootstrap_origin(),
-            OriginRecord::Source(source) => self.universe.source_origin_with_input_record(
-                source.source(),
-                source.input_record(),
-                source.byte_offset(),
-                source.line(),
-                source.column(),
-            ),
-            OriginRecord::SourceSpan(span) => self.universe.source_span_origin(span),
-            OriginRecord::Synthetic(origin) => self.universe.synthetic_origin(origin.kind()),
-            OriginRecord::Synthesized(origin) => {
-                let parent = self.origin(origin.parent());
-                self.universe.synthesized_origin(origin.kind(), parent)
-            }
-            OriginRecord::Inserted(origin) => {
-                let token = self.token(&self.owned_token(origin.token()));
-                let parent = self.origin(origin.parent());
-                self.universe.inserted_origin(origin.kind(), token, parent)
-            }
-            OriginRecord::MacroInvocation(origin) => {
-                let definition = self.macro_id(origin.definition());
-                let invocation = self.origin(origin.invocation());
-                let definition_origin = self.origin(origin.definition_origin());
-                let parent = self.origin(origin.parent_invocation());
-                self.universe.macro_invocation_origin(
-                    definition,
-                    invocation,
-                    definition_origin,
-                    parent,
-                )
-            }
+            OwnedOrigin::StableSource(span) => self
+                .universe
+                .origin_for_root_span(span)
+                .expect("detached stable continuation source exists in the rebound layout"),
+            OwnedOrigin::Record(record) => match record {
+                OriginRecord::UnknownBootstrap => self.universe.bootstrap_origin(),
+                OriginRecord::Source(source) => self.universe.source_origin_with_input_record(
+                    source.source(),
+                    source.input_record(),
+                    source.byte_offset(),
+                    source.line(),
+                    source.column(),
+                ),
+                OriginRecord::SourceSpan(span) => self.universe.source_span_origin(span),
+                OriginRecord::Synthetic(origin) => self.universe.synthetic_origin(origin.kind()),
+                OriginRecord::Synthesized(origin) => {
+                    let parent = self.origin(origin.parent());
+                    self.universe.synthesized_origin(origin.kind(), parent)
+                }
+                OriginRecord::Inserted(origin) => {
+                    let token = self.token(&self.owned_token(origin.token()));
+                    let parent = self.origin(origin.parent());
+                    self.universe.inserted_origin(origin.kind(), token, parent)
+                }
+                OriginRecord::MacroInvocation(origin) => {
+                    let definition = self.macro_id(origin.definition());
+                    let invocation = self.origin(origin.invocation());
+                    let definition_origin = self.origin(origin.definition_origin());
+                    let parent = self.origin(origin.parent_invocation());
+                    self.universe.macro_invocation_origin(
+                        definition,
+                        invocation,
+                        definition_origin,
+                        parent,
+                    )
+                }
+            },
         };
         self.origins.insert(old, id);
         id

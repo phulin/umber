@@ -736,6 +736,17 @@ impl CanonicalParagraphRegion {
         &self.line_provenance
     }
 
+    pub(crate) fn accepted_origin_resolver(
+        &self,
+    ) -> Option<std::sync::Arc<tex_state::ParagraphOriginResolver>> {
+        match &self.line_provenance {
+            tex_state::ParagraphLineProvenance::Accepted(resolver) => {
+                Some(std::sync::Arc::clone(resolver))
+            }
+            tex_state::ParagraphLineProvenance::Pending => None,
+        }
+    }
+
     pub fn accept_line_provenance(
         &mut self,
         resolver: std::sync::Arc<tex_state::ParagraphOriginResolver>,
