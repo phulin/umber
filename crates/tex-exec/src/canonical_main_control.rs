@@ -584,8 +584,12 @@ type ObservationSlot = Option<ObservationBuffer>;
 pub struct CanonicalParagraphRegion {
     identity: u64,
     input: tex_command::ParagraphInputTransaction,
-    starting_universe: tex_state::Snapshot,
-    ending_universe: tex_state::Snapshot,
+    // Paragraph boundaries are immutable after capture and are copied into
+    // every scalar command savepoint while a paragraph is active. Sharing
+    // them keeps that rollback bookkeeping constant-time without changing
+    // the Universe timeline they identify.
+    starting_universe: Arc<tex_state::Snapshot>,
+    ending_universe: Arc<tex_state::Snapshot>,
     ending_modes: crate::ModeNestSummary,
     finished_lines: Option<tex_state::survivor::RetainedNodeList>,
     effects: std::sync::Arc<[tex_state::EffectRecord]>,
@@ -742,13 +746,13 @@ impl CanonicalParagraphRegion {
 
     /// Exact aggregate dependency/mutation witness at paragraph entry.
     #[must_use]
-    pub const fn starting_state_hash(&self) -> u64 {
+    pub fn starting_state_hash(&self) -> u64 {
         self.starting_universe.state_hash()
     }
 
     /// Exact aggregate dependency/mutation witness after line publication.
     #[must_use]
-    pub const fn ending_state_hash(&self) -> u64 {
+    pub fn ending_state_hash(&self) -> u64 {
         self.ending_universe.state_hash()
     }
 
@@ -802,7 +806,7 @@ struct CanonicalParagraphRecorder {
     pending: bool,
     lookup_attempted: bool,
     next_identity: u64,
-    starting_universe: Option<tex_state::Snapshot>,
+    starting_universe: Option<Arc<tex_state::Snapshot>>,
     starting_vertical_len: usize,
     starting_page_len: usize,
     starting_contribution_len: usize,
@@ -817,6 +821,30 @@ struct CanonicalParagraphRecorder {
     replay: Arc<Vec<CanonicalParagraphRegion>>,
 }
 
+#[cfg(test)]
+mod paragraph_recorder_tests {
+    use super::*;
+
+    #[test]
+    fn scalar_savepoint_shares_active_paragraph_boundary_snapshot() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let boundary = Arc::new(stores.snapshot_with_exact_identity());
+        let recorder = CanonicalParagraphRecorder {
+            pending: true,
+            starting_universe: Some(Arc::clone(&boundary)),
+            ..CanonicalParagraphRecorder::default()
+        };
+
+        let savepoint = recorder.clone();
+        let saved = savepoint
+            .starting_universe
+            .as_ref()
+            .expect("active savepoint retains the paragraph boundary");
+        assert!(Arc::ptr_eq(&boundary, saved));
+        assert_eq!(boundary.state_hash(), saved.state_hash());
+    }
+}
+
 impl CanonicalParagraphRecorder {
     fn begin(&mut self, command: &mut CommandState, modes: &ModeNest, stores: &mut Universe) {
         if self.pending {
@@ -826,7 +854,7 @@ impl CanonicalParagraphRecorder {
         stores.begin_dependency_region();
         stores.begin_pure_paragraph_recording();
         self.lookup_attempted = false;
-        self.starting_universe = Some(stores.snapshot_with_exact_identity());
+        self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
         self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
         self.starting_page_len = stores.current_page_nodes().len();
         self.starting_contribution_len = stores.page_contributions().len();
@@ -917,7 +945,7 @@ impl CanonicalParagraphRecorder {
                 .starting_universe
                 .take()
                 .expect("pending paragraph owns its starting Universe"),
-            ending_universe: stores.snapshot_with_exact_identity(),
+            ending_universe: Arc::new(stores.snapshot_with_exact_identity()),
             ending_modes: modes.summary(),
             finished_lines,
             effects,
