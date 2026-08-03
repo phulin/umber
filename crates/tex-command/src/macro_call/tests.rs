@@ -668,6 +668,23 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
 }
 
 #[test]
+fn grouped_runaway_argument_retains_its_unmatched_opening_brace() {
+    let (command, outcome, _) = run_observed_macro_call(b"\\m{\\par", MeaningFlags::EMPTY);
+    assert_eq!(outcome, Err(CommandError::ParagraphInMacroArgument));
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+            runaway: Some(runaway),
+            ..
+        },
+    ] = command.semantic_diagnostics.as_slice()
+    else {
+        panic!("expected one runaway-argument diagnostic")
+    };
+    assert_eq!(runaway.partial, "{");
+}
+
+#[test]
 fn non_long_paragraph_backs_up_before_restoring_matching_status() {
     let mut command = CommandState::default();
     let source = command

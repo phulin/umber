@@ -628,8 +628,12 @@ impl CommandProcessor<'_> {
             return Ok(vec![first.spelling()]);
         }
 
+        // TeX82 §394 links the opening left brace into the temporary
+        // argument list and removes the matching outer pair only after the
+        // argument completes.  Keep that ownership here too: §396's
+        // runaway pseudoprint must still see an unmatched opening brace.
         let mut depth = 1_u32;
-        let mut tokens = Vec::new();
+        let mut tokens = vec![first.spelling()];
         loop {
             let command = self
                 .get_token()?
@@ -653,7 +657,8 @@ impl CommandProcessor<'_> {
                 } => {
                     depth -= 1;
                     if depth == 0 {
-                        return Ok(tokens);
+                        tokens.push(command.spelling());
+                        return Ok(strip_one_outer_group(tokens));
                     }
                     tokens.push(command.spelling());
                 }
