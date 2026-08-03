@@ -12548,7 +12548,6 @@ fn canonical_display_equation_number_missing_second_shift_restores_vertical_mode
 }
 
 #[test]
-#[ignore = "umber2-8hlk"]
 fn canonical_nested_malformed_display_equation_number_restores_group_ownership() {
     // TRIP's nested display/equation-number recovery reaches a `$` with two
     // `\left` groups still open. TeX82 §§1191–1193 give each `\left` both a

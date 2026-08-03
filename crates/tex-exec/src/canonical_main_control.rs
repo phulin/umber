@@ -2395,6 +2395,7 @@ impl CanonicalMainControl {
     fn finish_host_owned_step(
         &mut self,
         applied: Result<ReplayStep, ExecError>,
+        outer_paragraph_was_active: bool,
         artifact_count: usize,
         _effect_count: usize,
         _prepared_page_count: usize,
@@ -2445,7 +2446,33 @@ impl CanonicalMainControl {
             self.page_output_observations.clear();
         }
         self.finish_shipout_publication(artifact_count, stores);
+        self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
         Ok(applied)
+    }
+
+    /// Closes the paragraph-recording ownership transition shared by the
+    /// ordinary and host-owned step tails.
+    fn finish_paragraph_boundary(
+        &mut self,
+        outer_paragraph_was_active: bool,
+        stores: &mut Universe,
+    ) {
+        let outer_paragraph_is_active =
+            self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
+        if !outer_paragraph_was_active && outer_paragraph_is_active {
+            self.paragraph_recorder
+                .begin(&mut self.command, &self.modes, stores);
+        }
+        let outer_paragraph_finished = outer_paragraph_was_active
+            && self.modes.current_mode() == Mode::Vertical
+            && self.modes.depth() == 1
+            || self.paragraph_recorder.pending && self.modes.current_mode() == Mode::DisplayMath;
+        if outer_paragraph_finished {
+            self.paragraph_recorder
+                .finish(&mut self.command, &self.modes, stores);
+            self.completed_boundaries
+                .push(crate::EngineBoundary::OuterParagraphEnd);
+        }
     }
 
     /// Enters TeX82 §1117's live `disc_group` after the command processor has
@@ -2945,6 +2972,7 @@ impl CanonicalMainControl {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
                     applied,
+                    outer_paragraph_was_active,
                     artifact_count,
                     effect_count,
                     prepared_page_count,
@@ -3013,22 +3041,7 @@ impl CanonicalMainControl {
         self.fire_pending_page_output(stores)?;
         self.page_output_observations.clear();
         self.finish_shipout_publication(artifact_count, stores);
-        let outer_paragraph_is_active =
-            self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
-        if !outer_paragraph_was_active && outer_paragraph_is_active {
-            self.paragraph_recorder
-                .begin(&mut self.command, &self.modes, stores);
-        }
-        let outer_paragraph_finished = outer_paragraph_was_active
-            && self.modes.current_mode() == Mode::Vertical
-            && self.modes.depth() == 1
-            || self.paragraph_recorder.pending && self.modes.current_mode() == Mode::DisplayMath;
-        if outer_paragraph_finished {
-            self.paragraph_recorder
-                .finish(&mut self.command, &self.modes, stores);
-            self.completed_boundaries
-                .push(crate::EngineBoundary::OuterParagraphEnd);
-        }
+        self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
         Ok(result)
     }
 
@@ -4493,6 +4506,7 @@ impl CanonicalMainControl {
         self.drain_file_framing_events(stores);
         self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
+        let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
         let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
@@ -4599,6 +4613,7 @@ impl CanonicalMainControl {
             ControlFlow::Break(applied) => {
                 return self.finish_host_owned_step(
                     applied,
+                    outer_paragraph_was_active,
                     artifact_count,
                     effect_count,
                     prepared_page_count,
@@ -4854,6 +4869,9 @@ impl CanonicalMainControl {
             )?;
         }
         self.page_output_observations.clear();
+        if result.is_ok() {
+            self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
+        }
         result
     }
 
