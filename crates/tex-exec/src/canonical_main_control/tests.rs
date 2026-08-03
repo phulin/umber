@@ -150,6 +150,32 @@ fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
 }
 
 #[test]
+fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
+    // TeX82 §§299/1193: the math shift finishes the equation-number mlist in
+    // ordinary math mode, then `fin_mlist` restores the enclosing display
+    // before `get_x_token` expands the next command. Section 367 must compare
+    // that restored mode with `shown_mode` and print the new mode prefix.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingcommands=2\tracingonline=1 $$x\eqno y$\expandafter$\csname!\endcsname\end",
+    );
+
+    run_to_end(&mut control, &mut stores);
+
+    let log = terminal_text(&stores);
+    let eqno_shift = log
+        .find("{math mode: the letter y}\n{math shift character $}")
+        .unwrap_or_else(|| panic!("equation-number closer is traced: {log}"));
+    let restored = log
+        .find("{display math mode: \\expandafter}\n{\\csname}")
+        .unwrap_or_else(|| panic!("restored display expansion is traced: {log}"));
+    assert!(eqno_shift < restored, "{log}");
+}
+
+#[test]
 fn tracingcommands_omits_characters_retired_inside_main_loop() {
     // TeX82 §§1034/1038: after the first character enters `main_loop`,
     // adjacent characters are retired by its raw lookahead and never reach

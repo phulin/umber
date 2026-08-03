@@ -3568,11 +3568,19 @@ impl CanonicalMainControl {
                 if self.modes.current_list().display_eq_no().is_some() {
                     debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
                     let content = self.prepare_canonical_math_list(stores)?;
+                    let (display, finished) =
+                        self.finish_canonical_equation_number(stores, content)?;
                     let paired = self.scan_canonical_display_end(stores)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
-                    self.finish_canonical_equation_number(stores, content)?;
+                    self.finish_canonical_equation_number_group(stores)?;
+                    self.finish_canonical_display_math_content(
+                        stores,
+                        display,
+                        Some(finished),
+                        false,
+                    )?;
                 } else {
                     debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
                     self.finish_canonical_inline_math(stores)?;
@@ -3628,10 +3636,20 @@ impl CanonicalMainControl {
     }
 
     fn scan_canonical_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
-        self.command_machine()
-            .processor(stores)
+        let mode = self.modes.current_mode();
+        let shown_mode = self.shown_mode;
+        let mut machine = self.command_machine();
+        let mut processor = machine.processor(stores);
+        prepare_command_trace(&mut processor, mode, shown_mode);
+        let paired = processor
             .scan_display_end_math_shift()
-            .map_err(command_error)
+            .map_err(command_error)?;
+        let command_trace_printed = processor.command_trace_printed();
+        drop(processor);
+        if command_trace_printed {
+            *machine.shown_mode = Some(mode);
+        }
+        Ok(paired)
     }
 
     fn enter_canonical_math_level(
@@ -3741,7 +3759,13 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
         content: tex_state::ids::NodeListId,
-    ) -> Result<(), ExecError> {
+    ) -> Result<
+        (
+            tex_state::ids::NodeListId,
+            crate::math::display::FinishedEqNo,
+        ),
+        ExecError,
+    > {
         let mut level =
             crate::assignments::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let eq = level
@@ -3749,17 +3773,25 @@ impl CanonicalMainControl {
             .take_display_eq_no()
             .expect("equation number mode state");
         let finished = crate::math::display::finish_eq_no(stores, eq.side, content);
+        // TeX82 §§1193/1197 restore the saved display mlist and mode before
+        // expanding the required second `$`, but §1197's recovery still runs
+        // before `unsave`. Return both owned parts with the equation-number
+        // group live so the caller probes in display mode, then restores the
+        // group and finishes the saved display formula.
+        Ok((eq.display, finished))
+    }
+
+    fn finish_canonical_equation_number_group(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<(), ExecError> {
         let aftergroup = stores
             .leave_group_with_kind(GroupKind::MathShift)
             .map_err(|_| ExecError::MissingToken {
                 context: "equation number group",
             })?;
         self.active_math_shifts.pop();
-        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        // TeX82 §1194's equation-number branch assigns `p:=fin_mlist(null)`
-        // a second time after boxing `a`: the display must be finished from
-        // the saved outer formula, not from the now-empty display mode list.
-        self.finish_canonical_display_math_content(stores, eq.display, Some(finished), false)
+        schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)
     }
 
     fn finish_canonical_display_alignment(
