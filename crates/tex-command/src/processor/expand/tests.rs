@@ -3763,14 +3763,10 @@ fn character_command_renderer_covers_tex82_print_cmd_chr_table() {
         (Catcode::Letter, 'a', "the letter a"),
         (Catcode::Other, '7', "the character 7"),
         (Catcode::Escape, '\\', "[uncommandable character \\]"),
-        (Catcode::Ignored, '\0', "[uncommandable character \0]"),
+        (Catcode::Ignored, '\0', "[uncommandable character ^^@]"),
         (Catcode::Active, '~', "[uncommandable character ~]"),
         (Catcode::Comment, '%', "[uncommandable character %]"),
-        (
-            Catcode::Invalid,
-            '\u{7f}',
-            "[uncommandable character \u{7f}]",
-        ),
+        (Catcode::Invalid, '\u{7f}', "[uncommandable character ^^?]"),
     ] {
         assert_eq!(character_command_text(ch, cat), expected);
     }

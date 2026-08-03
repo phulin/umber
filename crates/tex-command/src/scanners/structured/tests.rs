@@ -550,6 +550,30 @@ fn show_context_labels_an_exhausted_backup_as_recently_read() {
 }
 
 #[test]
+fn show_prints_control_character_meaning_with_caret_notation() {
+    // TeX82 §§49/59/298: `print_cmd_chr` prints a character through its
+    // one-character string. The generated `^^Y` spelling is not rescanned
+    // through the live `\newlinechar`, even when that parameter is `Y`.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(IntParam::NEWLINE_CHAR, i32::from(b'Y'));
+    let mut capabilities = CommandHostCapabilities::default();
+    push(
+        &mut command,
+        [Token::Char {
+            ch: '\u{19}',
+            cat: Catcode::Other,
+        }],
+    );
+
+    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_show()
+        .expect("show operand scans");
+    assert_eq!(shown.content, "> the character ^^Y");
+}
+
+#[test]
 fn show_moves_singular_mark_contents_to_the_next_line() {
     // TeX82 §296 calls `print_ln` between a singular mark's colon and its
     // token list. An empty list still owns the colon and line break.

@@ -1809,7 +1809,7 @@ pub(crate) fn meaning_text(
         Meaning::Undefined => "undefined".to_owned(),
         Meaning::Relax => print_esc_text(state, "relax"),
         Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
-        Meaning::CharGiven(ch) => format!("the character {ch}"),
+        Meaning::CharGiven(ch) => format!("the character {}", printable_character_text(ch)),
         Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
         Meaning::CountRegister(index) => format!("\\count{index}"),
         Meaning::DimenRegister(index) => format!("\\dimen{index}"),
@@ -1991,17 +1991,18 @@ fn meaning_control_sequence_text(
 
 /// TeX82 §298's character-command cases used by `print_meaning`.
 pub fn character_command_text(ch: char, cat: Catcode) -> String {
+    let character = printable_character_text(ch);
     match cat {
-        Catcode::BeginGroup => format!("begin-group character {ch}"),
-        Catcode::EndGroup => format!("end-group character {ch}"),
-        Catcode::MathShift => format!("math shift character {ch}"),
-        Catcode::AlignmentTab => format!("alignment tab character {ch}"),
-        Catcode::Parameter => format!("macro parameter character {ch}"),
-        Catcode::Superscript => format!("superscript character {ch}"),
-        Catcode::Subscript => format!("subscript character {ch}"),
+        Catcode::BeginGroup => format!("begin-group character {character}"),
+        Catcode::EndGroup => format!("end-group character {character}"),
+        Catcode::MathShift => format!("math shift character {character}"),
+        Catcode::AlignmentTab => format!("alignment tab character {character}"),
+        Catcode::Parameter => format!("macro parameter character {character}"),
+        Catcode::Superscript => format!("superscript character {character}"),
+        Catcode::Subscript => format!("subscript character {character}"),
         Catcode::Space => "blank space  ".to_owned(),
-        Catcode::Letter => format!("the letter {ch}"),
-        Catcode::Other => format!("the character {ch}"),
+        Catcode::Letter => format!("the letter {character}"),
+        Catcode::Other => format!("the character {character}"),
         // `get_next` maps a category-5 character to `car_ret` with its
         // character code as operand. It is therefore §298's non-`cr_code`
         // branch, whose vocabulary is `\crcr`.
@@ -2010,8 +2011,19 @@ pub fn character_command_text(ch: char, cat: Catcode) -> String {
         | Catcode::Ignored
         | Catcode::Active
         | Catcode::Comment
-        | Catcode::Invalid => format!("[uncommandable character {ch}]"),
+        | Catcode::Invalid => format!("[uncommandable character {character}]"),
     }
+}
+
+/// TeX82 §§49/59's one-character string spelling used by §298.
+///
+/// Rendering happens before the completed diagnostic reaches its live output
+/// selector, so generated caret notation must not be reinterpreted through
+/// `\newlinechar` character by character.
+fn printable_character_text(ch: char) -> String {
+    let mut text = String::new();
+    tex_state::token_show::append_tex_print_char(ch, &mut text);
+    text
 }
 
 /// TeX82 §63's `print_esc`: the current `\escapechar`, when it names a
