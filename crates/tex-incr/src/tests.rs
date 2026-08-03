@@ -5320,14 +5320,16 @@ fn root_framing_name_is_distinct_from_editor_provenance_path() {
     let mut universe = template();
     let _control = canonical_candidate_control(
         &mut universe,
-        "job",
-        "/job/main.tex",
-        b"\\end".to_vec(),
-        CommandProfile::TEX82,
-        true,
-        true,
-        SourceFramingPolicy::Canonical,
-        Some("./main.tex"),
+        CandidateControlOptions {
+            job_name: "job",
+            source_path: "/job/main.tex",
+            bytes: b"\\end".to_vec(),
+            profile: CommandProfile::TEX82,
+            initex: true,
+            emit_dvi: true,
+            root_framing: SourceFramingPolicy::Canonical,
+            root_framing_name: Some("./main.tex"),
+        },
     )
     .expect("candidate starts");
     let terminal = universe

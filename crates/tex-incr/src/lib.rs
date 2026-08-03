@@ -34,49 +34,55 @@ mod trace;
 
 pub use trace::{TraceCompositionError, TraceOperation, TraceSummary, TraceValidationError};
 
-fn canonical_candidate_control(
-    universe: &mut Universe,
-    job_name: &str,
-    source_path: &str,
+struct CandidateControlOptions<'a> {
+    job_name: &'a str,
+    source_path: &'a str,
     bytes: Vec<u8>,
     profile: CommandProfile,
     initex: bool,
     emit_dvi: bool,
     root_framing: SourceFramingPolicy,
-    root_framing_name: Option<&str>,
+    root_framing_name: Option<&'a str>,
+}
+
+fn canonical_candidate_control(
+    universe: &mut Universe,
+    options: CandidateControlOptions<'_>,
 ) -> Result<CanonicalMainControl, SessionError> {
-    if initex {
+    if options.initex {
         // `prepared_initex` deliberately owns only command-local state. The
         // composed Session is therefore the authoritative owner of the shared
         // primitive meanings, just like `CanonicalMainControl::tex82_initex`.
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(
-            profile.dialect(),
+            options.profile.dialect(),
             tex_command::CommandDialect::Etex26 | tex_command::CommandDialect::Pdftex14027
         ) {
             tex_command::install_etex_expandable_primitives(universe);
             tex_exec::install_etex_unexpandable_primitives(universe);
         }
-        if profile.dialect() == tex_command::CommandDialect::Pdftex14027 {
+        if options.profile.dialect() == tex_command::CommandDialect::Pdftex14027 {
             tex_command::install_pdftex_expandable_primitives(universe);
         }
     }
-    let mut control = if initex {
-        CanonicalMainControl::prepared_initex(profile)
+    let mut control = if options.initex {
+        CanonicalMainControl::prepared_initex(options.profile)
     } else {
-        CanonicalMainControl::with_profile(profile)
+        CanonicalMainControl::with_profile(options.profile)
     };
-    control.set_dvi_output(emit_dvi);
-    let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, bytes)
-        .with_name(source_path)
-        .with_framing(root_framing);
-    if let Some(name) = root_framing_name {
+    control.set_dvi_output(options.emit_dvi);
+    let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
+        .with_name(options.source_path)
+        .with_framing(options.root_framing);
+    if let Some(name) = options.root_framing_name {
         registration = registration.with_framing_name(name);
     }
     control.register_root_source(registration)?;
     control.flush_pending_file_framing(universe);
-    control.capabilities_mut().set_startup_job_name(job_name);
+    control
+        .capabilities_mut()
+        .set_startup_job_name(options.job_name);
     Ok(control)
 }
 
@@ -741,7 +747,7 @@ impl RevisionCandidate {
                     self.validate_execution_budgets()?;
                     if answered_needs.contains(&need) {
                         return Err(SessionError::CanonicalResourceNoProgress {
-                            need,
+                            need: Box::new(need),
                             site: self.control.pending_resource_site(),
                         });
                     }
@@ -1333,14 +1339,16 @@ impl Session {
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
         let control = canonical_candidate_control(
             &mut universe,
-            &self.job_name,
-            &self.source_path,
-            self.source_file_bytes(&self.source),
-            self.effective_command_profile(),
-            self.initex,
-            self.dvi_output,
-            self.root_framing,
-            self.root_framing_name.as_deref(),
+            CandidateControlOptions {
+                job_name: &self.job_name,
+                source_path: &self.source_path,
+                bytes: self.source_file_bytes(&self.source),
+                profile: self.effective_command_profile(),
+                initex: self.initex,
+                emit_dvi: self.dvi_output,
+                root_framing: self.root_framing,
+                root_framing_name: self.root_framing_name.as_deref(),
+            },
         )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
@@ -1630,14 +1638,16 @@ impl Session {
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
         let control = canonical_candidate_control(
             &mut universe,
-            &self.job_name,
-            setup.next_layout.path(),
-            self.source_file_bytes(&setup.next),
-            self.effective_command_profile(),
-            self.initex,
-            self.dvi_output,
-            self.root_framing,
-            self.root_framing_name.as_deref(),
+            CandidateControlOptions {
+                job_name: &self.job_name,
+                source_path: setup.next_layout.path(),
+                bytes: self.source_file_bytes(&setup.next),
+                profile: self.effective_command_profile(),
+                initex: self.initex,
+                emit_dvi: self.dvi_output,
+                root_framing: self.root_framing,
+                root_framing_name: self.root_framing_name.as_deref(),
+            },
         )?;
         memo.begin_paragraph_history(false);
         universe.install_pure_memo_runtime(std::mem::take(&mut memo));
@@ -3534,7 +3544,7 @@ fn drive_synchronous_candidate(
         RevisionCandidateResult::Complete => Ok(()),
         RevisionCandidateResult::AwaitingResources(need) => {
             Err(SessionError::CanonicalResourceNoProgress {
-                need,
+                need: Box::new(need),
                 site: candidate.control.pending_resource_site(),
             })
         }
@@ -3778,7 +3788,7 @@ pub enum SessionError {
     CandidateNotComplete,
     UnexpectedCanonicalResource,
     CanonicalResourceNoProgress {
-        need: CanonicalResourceNeed,
+        need: Box<CanonicalResourceNeed>,
         site: Option<tex_state::provenance::DiagnosticSite>,
     },
     SourceRegistration(SourceRegistrationError),
@@ -3786,7 +3796,7 @@ pub enum SessionError {
     MissingAcceptedSubstrate,
     Execute(tex_exec::ExecError),
     World(WorldError),
-    Restore(EditorRestoreError),
+    Restore(Box<EditorRestoreError>),
     Fork(GenerationForkError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
@@ -3894,7 +3904,7 @@ impl From<WorldError> for SessionError {
 
 impl From<EditorRestoreError> for SessionError {
     fn from(value: EditorRestoreError) -> Self {
-        Self::Restore(value)
+        Self::Restore(Box::new(value))
     }
 }
 
