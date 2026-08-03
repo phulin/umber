@@ -101,6 +101,13 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
     // hpacks are observable effects and must be replayed at every demand.
     ctx.layout
         .replay_pack_observations(&converted.pack_observations);
+    // TeX82 Appendix G descends into this sub-mlist at this point.  The
+    // iterative planner computes its pure layout bottom-up, so replay the
+    // diagnostics captured during that computation at the recursive demand
+    // site instead of leaking them in planner order.
+    ctx.conversion_events
+        .borrow_mut()
+        .extend_from_slice(&converted.conversion_events);
     converted.list
 }
 
@@ -108,6 +115,7 @@ pub(super) fn convert_mlist<S: MathTypesetState>(
 pub(crate) struct ConvertedMlist {
     list: FrozenHList,
     pack_observations: Vec<MathPackObservation>,
+    conversion_events: Vec<MathConversionEvent>,
 }
 
 fn convert_mlist_uncached<S: MathTypesetState>(
@@ -474,13 +482,16 @@ fn prepare_nested_mlists<S: MathTypesetState>(
 
     for (list, style) in postorder.into_iter().filter(|key| *key != root) {
         let observation_start = ctx.layout.pack_observation_count();
+        let event_start = ctx.conversion_events.borrow().len();
         let converted = convert_mlist_uncached(ctx, list, style, false);
         let pack_observations = ctx.layout.take_pack_observations_since(observation_start);
+        let conversion_events = ctx.conversion_events.borrow_mut().split_off(event_start);
         ctx.converted.insert(
             (list, style),
             ConvertedMlist {
                 list: converted,
                 pack_observations,
+                conversion_events,
             },
         );
     }

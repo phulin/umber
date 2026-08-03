@@ -1743,6 +1743,36 @@ fn undefined_math_family_reports_error_and_omits_only_character() {
     assert!(terminal_effect_text(&stores).contains("\\textfont 15 is undefined (character a)"));
 }
 
+/// TeX82 §§703, 720--723 process an outer noad in its current style before
+/// recursively cleaning its script fields.  Bottom-up implementation of that
+/// recursion must preserve the resulting text, script, scriptscript diagnostic
+/// order and each field's selected family.
+#[test]
+fn undefined_math_families_follow_source_style_and_recursion_order() {
+    let source = r#"\font\symbol=cmsy10 \font\extension=cmex10
+        \textfont2=\symbol \scriptfont2=\symbol \scriptscriptfont2=\symbol
+        \textfont3=\extension \scriptfont3=\extension \scriptscriptfont3=\extension
+        $\mathchar"0037 {}_{\mathchar"0D2D {}_{\mathchar"0D41}}$\end"#;
+    let (stores, _) =
+        run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, source, true);
+    let output = terminal_effect_text(&stores);
+
+    let expected = [
+        "\\textfont 0 is undefined (character 7)",
+        "\\scriptfont 13 is undefined (character -)",
+        "\\scriptscriptfont 13 is undefined (character A)",
+    ];
+    let positions = expected.map(|message| {
+        output
+            .find(message)
+            .unwrap_or_else(|| panic!("missing {message:?} in {output:?}"))
+    });
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "Appendix G diagnostic order was {output:?}"
+    );
+}
+
 /// TeX82 §§82/721: Appendix G reports an undefined family only after the
 /// formula has ended, but `error` still shows the live command input at that
 /// closing math shift.  All three size selectors share this boundary.

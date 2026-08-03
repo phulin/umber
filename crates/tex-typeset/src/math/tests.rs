@@ -1393,6 +1393,49 @@ fn shared_nested_sub_mlist_replays_hpack_observations_per_occurrence() {
 }
 
 #[test]
+fn shared_nested_sub_mlist_replays_conversion_events_per_occurrence() {
+    let mut universe = setup_universe();
+    let shared = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+        NoadKind::Normal(NoadClass::Ord),
+        MathField::MathChar(MathChar {
+            family: 13,
+            character: 'X',
+            origin: tex_state::token::OriginId::UNKNOWN,
+        }),
+    ))]);
+    let input = universe.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(shared),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::SubMlist(shared),
+        )),
+    ]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert_eq!(
+        layout.conversion_events(),
+        &[
+            MathConversionEvent::UndefinedFamily {
+                size: MathFontSize::Text,
+                family: 13,
+                character: 'X',
+            },
+            MathConversionEvent::UndefinedFamily {
+                size: MathFontSize::Text,
+                family: 13,
+                character: 'X',
+            },
+        ],
+        "TeX82 §§703 and 720--723 diagnose every recursive occurrence"
+    );
+}
+
+#[test]
 fn fraction_retains_box_around_nested_sub_mlist_nucleus() {
     let mut universe = setup_universe();
     let children = universe.freeze_node_list(&[]);
