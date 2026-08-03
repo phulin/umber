@@ -786,8 +786,12 @@ struct CanonicalParagraphRecorder {
     effect_start: usize,
     starting_provenance: Option<ProvenanceStats>,
     starting_prev_graf: i32,
-    finished: Vec<CanonicalParagraphRegion>,
-    replay: Vec<CanonicalParagraphRegion>,
+    // Aggregate command savepoints clone the recorder before every command.
+    // Paragraph histories must therefore remain persistent roots: copying all
+    // prior regions here makes a document's command cost grow with every
+    // paragraph it has already completed.
+    finished: Arc<Vec<CanonicalParagraphRegion>>,
+    replay: Arc<Vec<CanonicalParagraphRegion>>,
 }
 
 impl CanonicalParagraphRecorder {
@@ -913,7 +917,7 @@ impl CanonicalParagraphRecorder {
         if !barriers.is_empty() {
             stores.record_pure_paragraph_barriers(&barriers);
         }
-        self.finished.push(region);
+        Arc::make_mut(&mut self.finished).push(region);
     }
 
     /// Discards an in-flight paragraph recording before replacing the whole
@@ -1948,7 +1952,7 @@ impl CanonicalMainControl {
     /// Drains completed canonical paragraph input regions in publication order.
     #[must_use]
     pub fn take_finished_paragraph_regions(&mut self) -> Vec<CanonicalParagraphRegion> {
-        std::mem::take(&mut self.paragraph_recorder.finished)
+        Arc::unwrap_or_clone(std::mem::take(&mut self.paragraph_recorder.finished))
     }
 
     /// Installs accepted regions for exact pre-delivery paragraph replay.
@@ -1961,7 +1965,7 @@ impl CanonicalMainControl {
         &mut self,
         regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
     ) {
-        self.paragraph_recorder.replay.extend(regions);
+        Arc::make_mut(&mut self.paragraph_recorder.replay).extend(regions);
     }
 
     fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
@@ -1999,7 +2003,7 @@ impl CanonicalMainControl {
             stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         }
-        let region = self.paragraph_recorder.replay.remove(index);
+        let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
         let finished_nodes = region.materialize_finished_nodes(stores);
         if finished_nodes.is_some() {
             stores.record_pure_paragraph_line_hit();
@@ -2035,7 +2039,7 @@ impl CanonicalMainControl {
         }
         self.paragraph_recorder.next_identity =
             self.paragraph_recorder.next_identity.max(region.identity);
-        self.paragraph_recorder.finished.push(region);
+        Arc::make_mut(&mut self.paragraph_recorder.finished).push(region);
         self.completed_boundaries
             .push(crate::EngineBoundary::OuterParagraphEnd);
         true

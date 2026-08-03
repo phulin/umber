@@ -48,6 +48,18 @@ fn production_token_rendering_stays_on_the_state_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn command_savepoints_keep_paragraph_histories_persistent() {
+    let source = fs::read_to_string(
+        test_support::repository_root().join("crates/tex-exec/src/canonical_main_control.rs"),
+    )
+    .expect("read canonical main-control source");
+    assert!(source.contains("finished: Arc<Vec<CanonicalParagraphRegion>>"));
+    assert!(source.contains("replay: Arc<Vec<CanonicalParagraphRegion>>"));
+    assert!(source.contains("Arc::make_mut(&mut self.finished).push(region)"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn production_replay_kinds_stay_on_the_state_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {
