@@ -2408,23 +2408,26 @@ impl CanonicalMainControl {
                 return Err(error);
             }
         };
-        // Only an episode this step actually starts publishes records: when
-        // nothing is pending, draining the command state's held named
-        // token-list pushes here would reorder pushes another step owns.
         let opens_output_episode =
             stores.page_fire_up().is_some() && !self.boxes.output_routine_active;
         self.fire_pending_page_output(stores)?;
         {
+            // Host-owned transitions are still complete main-control steps.
+            // In particular, §1145's display-math `init_math` installs
+            // `every_display` here, and §323 traces that list before the next
+            // command is fetched. Leaving the push queued until an ordinary
+            // step reverses those events: the hook's final command is traced
+            // and executed before its own `begin_token_list` trace.
+            let mut records: Vec<CommandObservation> = self
+                .command
+                .publish_named_token_list_pushes(&mut stores.command_context())
+                .into_iter()
+                .map(CommandObservation::Input)
+                .collect();
             if opens_output_episode {
                 // Same order as the ordinary tail: the named token-list push
                 // command state held across the transition, then the shipouts
                 // it committed, then the episode's own records.
-                let mut records: Vec<CommandObservation> = self
-                    .command
-                    .publish_named_token_list_pushes(&mut stores.command_context())
-                    .into_iter()
-                    .map(CommandObservation::Input)
-                    .collect();
                 records.extend(
                     committed_shipout_observations(artifact_count, stores)
                         .into_iter()
@@ -2441,8 +2444,8 @@ impl CanonicalMainControl {
                     .map(CommandObservation::Effect),
                 );
                 records.append(&mut self.page_output_observations);
-                self.observe_committed(records);
             }
+            self.observe_committed(records);
             self.page_output_observations.clear();
         }
         self.finish_shipout_publication(artifact_count, stores);

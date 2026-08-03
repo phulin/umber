@@ -81,7 +81,7 @@ fn one_token_everydisplay_traces_its_named_context_before_final_token_execution(
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
-        br"\tracingmacros=2\tracingonline=1\everydisplay{\global}\noindent$$\count7=19$$\end",
+        br"\tracingmacros=2\tracingcommands=3\tracingonline=1\everydisplay{\global}\noindent$$\count7=19$$\end",
     );
 
     run_to_end_observed(&mut control, &mut stores);
@@ -91,6 +91,16 @@ fn one_token_everydisplay_traces_its_named_context_before_final_token_execution(
         terminal.matches("\\everydisplay->\\global").count(),
         1,
         "{terminal:?}"
+    );
+    let hook_trace = terminal
+        .find("\\everydisplay->\\global")
+        .expect("the named hook trace is present");
+    let final_token_trace = terminal
+        .find("{display math mode: \\global}")
+        .expect("the hook's final token reaches main control");
+    assert!(
+        hook_trace < final_token_trace,
+        "§323 traces begin_token_list before §1030 executes the hook's final token: {terminal:?}"
     );
     assert_eq!(stores.count(7), 19);
 }
