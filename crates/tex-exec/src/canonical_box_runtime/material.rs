@@ -128,13 +128,14 @@ pub(crate) fn execute_scanned_saved_vertical_discards(
 
 pub(crate) fn execute_delete_last(
     primitive: UnexpandablePrimitive,
+    error_context: String,
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     flush_pending_hchars(nest, stores, fuel)?;
     if is_outer_vertical(nest) {
-        execute_delete_last_outer_vertical(primitive, stores)?;
+        execute_delete_last_outer_vertical(primitive, &error_context, stores)?;
         return Ok(());
     }
     let Some(tail) = crate::effective_tail::EffectiveTail::find(nest.current_list().nodes().iter())
@@ -156,6 +157,7 @@ pub(crate) fn execute_delete_last(
 
 fn execute_delete_last_outer_vertical(
     primitive: UnexpandablePrimitive,
+    error_context: &str,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let Some(tail) = crate::effective_tail::EffectiveTail::find(stores.page_contributions().iter())
@@ -171,7 +173,7 @@ fn execute_delete_last_outer_vertical(
         // glue; otherwise it is `\unskip` "following non-glue" and silently
         // succeeds, matching the one case tex.web exempts from the apology.
         if primitive != UnexpandablePrimitive::UnSkip || stores.page_has_last_glue() {
-            report_cannot_delete_from_page(primitive, stores)?;
+            report_cannot_delete_from_page(primitive, error_context, stores)?;
         }
         return Ok(());
     };
@@ -196,6 +198,7 @@ fn execute_delete_last_outer_vertical(
 /// the requested node type.
 fn report_cannot_delete_from_page(
     primitive: UnexpandablePrimitive,
+    error_context: &str,
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let command = match primitive {
@@ -210,7 +213,6 @@ fn report_cannot_delete_from_page(
         UnexpandablePrimitive::UnPenalty => "Perhaps you can make the output routine do it.",
         _ => unreachable!("caller restricts delete_last primitives"),
     };
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
     let mut report = stores.print_err("You can't use `");
     report
         .print_esc(command)
@@ -219,7 +221,7 @@ fn report_cannot_delete_from_page(
             "Sorry...I usually can't take things from the current page.",
             last_help,
         ])
-        .context(context);
+        .context(error_context.to_owned());
     report.error().jump_out()?;
     Ok(())
 }

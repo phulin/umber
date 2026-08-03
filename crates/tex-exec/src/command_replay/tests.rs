@@ -10730,11 +10730,13 @@ fn canonical_delete_last_outer_vertical_diagnostics_recover_for_all_three_comman
         run_to_end(&mut control, &mut universe);
 
         let terminal = terminal_text(&universe);
-        assert!(
-            terminal.contains(&format!("You can't use `{command}' in vertical mode")),
-            "{terminal}"
-        );
-        assert!(terminal.contains(help), "{terminal}");
+        let message = terminal
+            .find(&format!("You can't use `{command}' in vertical mode"))
+            .expect("delete-last error message");
+        let context = terminal.find("l.1 ").expect("live source context");
+        let help_position = terminal.find(help).expect("delete-last help");
+        assert!(message < context && context < help_position, "{terminal}");
+        assert!(terminal[context..].contains("\\count0=17"), "{terminal}");
         assert_eq!(universe.count(0), 17);
     }
 }

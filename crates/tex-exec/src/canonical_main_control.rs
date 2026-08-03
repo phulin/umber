@@ -6002,7 +6002,10 @@ enum ScannedStep {
     /// `\unkern`, and `\unskip` are legal in every mode with no scan of their
     /// own (the removed node, if any, is selected purely by matching the
     /// primitive against the current list's tail).
-    DeleteLast(UnexpandablePrimitive),
+    DeleteLast {
+        primitive: UnexpandablePrimitive,
+        context: String,
+    },
     /// TeX82 §1264's `new_interaction`: `\batchmode`/`\nonstopmode`/
     /// `\scrollmode`/`\errorstopmode` carry no operand of their own -- the
     /// target `InteractionMode` is selected from the delivered primitive at
@@ -9558,7 +9561,10 @@ fn scan_command(
             primitive @ (UnexpandablePrimitive::UnPenalty
             | UnexpandablePrimitive::UnKern
             | UnexpandablePrimitive::UnSkip),
-        ) => Ok(ScannedStep::DeleteLast(primitive)),
+        ) => Ok(ScannedStep::DeleteLast {
+            primitive,
+            context: processor.error_context(),
+        }),
         // TeX82 §1111's "Forbidden cases" (`vmode+ital_corr`) vs. §1112's
         // `hmode+ital_corr`/`mmode+ital_corr`. Mode legality is decided here
         // (only `scan_command` sees `command` to back it up before the
@@ -11948,7 +11954,7 @@ fn applied_mutation_observation(
         | ScannedStep::Kern { .. }
         | ScannedStep::Penalty { .. }
         | ScannedStep::CharacterCode { .. }
-        | ScannedStep::DeleteLast(..)
+        | ScannedStep::DeleteLast { .. }
         | ScannedStep::ItalicCorrection
         | ScannedStep::IllegalItalicCorrection { .. }
         | ScannedStep::NoBoundary { .. }
@@ -13856,9 +13862,10 @@ fn apply_scanned_step(
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::DeleteLast(primitive) => {
+        ScannedStep::DeleteLast { primitive, context } => {
             crate::canonical_box_runtime::execute_delete_last(
                 primitive,
+                context,
                 modes,
                 stores,
                 command.fuel,

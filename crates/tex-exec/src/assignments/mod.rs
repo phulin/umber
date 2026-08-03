@@ -2247,7 +2247,8 @@ fn execute_prefixed_command(
             | UnexpandablePrimitive::UnKern
             | UnexpandablePrimitive::UnSkip => {
                 reject_all_prefixes(prefixes)?;
-                execute_delete_last(primitive, nest, stores, execution.command_fuel())?;
+                let context = diagnostics::show_context(stores, &input.summary());
+                execute_delete_last(primitive, context, nest, stores, execution.command_fuel())?;
                 Ok(CommandOutcome::continue_only())
             }
             UnexpandablePrimitive::LastPenalty

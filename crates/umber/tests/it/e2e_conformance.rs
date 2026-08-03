@@ -2257,6 +2257,24 @@ fn trip_loaded_character_constant_alignment_template_traces_endv_once() {
 }
 
 #[test]
+fn trip_loaded_delete_last_error_shows_command_context_before_help() {
+    // TeX82 §§82/1105: the page-removal apology installs its help and calls
+    // `error`; the live command input context is printed before §90's help.
+    let log = run_focused_loaded_trip_through(345);
+    let message = log
+        .rfind("You can't use `\\unpenalty' in vertical mode.")
+        .expect("line-345 unpenalty error");
+    let report = &log[message..];
+    let context = report
+        .find("\\lastpenalty\\unpenalty")
+        .expect("unpenalty source context");
+    let help = report
+        .find("Sorry...I usually can't take things from the current page.")
+        .expect("delete-last help");
+    assert!(context < help, "{report}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated
