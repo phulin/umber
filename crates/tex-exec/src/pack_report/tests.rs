@@ -49,7 +49,63 @@ fn sink_text(stores: &Universe, terminal: bool) -> String {
 }
 
 #[test]
-fn short_display_skips_materialized_replacement_by_side_list_count() {
+fn short_display_skips_the_physical_discretionary_replacement_count() {
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let replacement = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let space = stores.intern_glue(GlueSpec {
+        width: Scaled::from_raw(Scaled::UNITY),
+        ..GlueSpec::ZERO
+    });
+    let mut nodes = vec![
+        empty_hbox(&mut stores),
+        empty_hbox(&mut stores),
+        empty_hbox(&mut stores),
+    ];
+    for _ in 0..3 {
+        nodes.push(Node::Glue {
+            spec: space,
+            kind: GlueKind::Normal,
+            leader: None,
+        });
+        nodes.push(empty_hbox(&mut stores));
+    }
+    nodes.extend([
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: replacement,
+            physical_replace_count: 1,
+        },
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+    ]);
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "[][][] [] [] []|"
+    );
+}
+
+#[test]
+fn short_display_retains_rule_after_nonphysical_discretionary_replacement() {
+    // TeX82 §174 uses the disc node's `replace_count`, not the length of its
+    // replacement side list. This is the source shape produced by the TRIP
+    // display's `\discretionary{...}{...}{...}` after math conversion: the
+    // immutable replacement remains available, but no replacement node is
+    // linked after the disc, and the following rule must print as `|`.
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);
     let replacement = stores.freeze_node_list(&[Node::Kern {
@@ -62,6 +118,34 @@ fn short_display_skips_materialized_replacement_by_side_list_count() {
             pre: empty,
             post: empty,
             replace: replacement,
+            physical_replace_count: 0,
+        },
+        Node::Rule {
+            width: None,
+            height: None,
+            depth: None,
+        },
+    ];
+
+    assert_eq!(
+        ShortDisplayRenderer::new().render_nodes(&stores, &nodes),
+        "|"
+    );
+}
+
+#[test]
+fn short_display_physical_count_is_independent_of_empty_side_list() {
+    // Counterexample in the other direction: physical replacement nodes are
+    // skipped even when this frozen representation no longer needs to retain
+    // their source side list.
+    let mut stores = Universe::new();
+    let empty = stores.freeze_node_list(&[]);
+    let nodes = [
+        Node::Disc {
+            kind: DiscKind::Discretionary,
+            pre: empty,
+            post: empty,
+            replace: empty,
             physical_replace_count: 1,
         },
         Node::Rule {

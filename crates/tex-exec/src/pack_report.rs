@@ -309,16 +309,21 @@ fn append_short_display_nodes(
             ) => out.push('$'),
             Node::Direction(_) => out.push_str("[]"),
             Node::Disc {
-                pre, post, replace, ..
+                pre,
+                post,
+                physical_replace_count,
+                ..
             } => {
                 append_short_display(stores, *pre, font_in_short_display, out);
                 append_short_display(stores, *post, font_in_short_display, out);
                 // TeX82 §174 advances past `replace_count` nodes linked after
-                // the discretionary. Post-line materialization retains the
-                // side list as that count while placing its replacement nodes
-                // directly after the disc in this containing list.
+                // the discretionary. The immutable replacement side list is
+                // the replacement's content, not proof that those nodes are
+                // physically present after this particular disc. Math-list
+                // conversion, for example, retains the side list with a zero
+                // physical count, so a following rule must not be skipped.
                 index = index
-                    .saturating_add(stores.nodes(*replace).len())
+                    .saturating_add(usize::from(*physical_replace_count))
                     .min(nodes.len());
             }
             // §175's `othercases do_nothing`: kerns, penalties, and the math
