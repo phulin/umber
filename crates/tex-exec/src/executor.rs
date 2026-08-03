@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tex_expand::get_x_token_with_context;
@@ -11,7 +9,7 @@ use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    FileContent, InputReadState, InputResolver, InputSummary, ParagraphBarrierReason, ReadRecorder,
+    InputReadState, InputResolver, InputSummary, ParagraphBarrierReason, ReadRecorder,
     ReadRecorderBatch, TokenListReplayKind, Universe,
 };
 
@@ -20,54 +18,11 @@ use crate::dispatch::{dispatch_delivered_token_with_context, unimplemented_types
 use crate::error_report::{back_error, report_input_error};
 use crate::output;
 use crate::timing::TelemetryTimer;
-use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
-
-/// Outcome of an executor-owned font or image host lookup.
-#[derive(Debug)]
-pub enum ResourceLookup<T> {
-    Available(T),
-    Unavailable,
-    NeedResource(ResourceNeed),
-}
-
-impl<T> ResourceLookup<T> {
-    #[must_use]
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> ResourceLookup<U> {
-        match self {
-            Self::Available(value) => ResourceLookup::Available(f(value)),
-            Self::Unavailable => ResourceLookup::Unavailable,
-            Self::NeedResource(need) => ResourceLookup::NeedResource(need),
-        }
-    }
-}
-
-/// Fatal host failures remain errors; absence and suspension are typed
-/// executor outcomes.
-pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
-
-/// Stable identity of one executor-owned resolver call within an execution attempt.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ResourceNeed {
-    request_index: u64,
-}
-
-impl ResourceNeed {
-    #[must_use]
-    pub const fn new(request_index: u64) -> Self {
-        Self { request_index }
-    }
-
-    #[must_use]
-    pub const fn request_index(self) -> u64 {
-        self.request_index
-    }
-}
-
-impl From<tex_state::ResourceNeed> for ResourceNeed {
-    fn from(value: tex_state::ResourceNeed) -> Self {
-        Self::new(value.request_index())
-    }
-}
+use crate::{
+    Cancellation, DispatchAction, ExecError, ExecutionBudgetCounters, ExecutionBudgets,
+    ExecutionStats, FontResolver, FontSource, ModeNest, PdfImageRequest, PdfImageResolver,
+    PendingInterrupt, ResourceLookup, ResourceNeed, ResourceResult, assignments,
+};
 
 fn report_recoverable_expansion_diagnostics(
     input: &InputStack,
@@ -262,71 +217,6 @@ fn report_runaway(stores: &mut Universe, kind: &str, partial: &[tex_state::token
     printer.print_char('?');
     printer.print_ln();
     printer.print_rendered(&display);
-}
-
-/// Object-safe host boundary used only by the `\font` assignment.
-pub trait FontResolver {
-    fn open_font(
-        &mut self,
-        input: &mut dyn InputReadState,
-        path: &Path,
-        request_index: u64,
-    ) -> ResourceResult<FontSource>;
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum PdfImagePageBox {
-    #[default]
-    Crop,
-    Media,
-    Bleed,
-    Trim,
-    Art,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum PdfImagePageSelection {
-    Number(u32),
-    Named(Vec<u8>),
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct PdfImageRequest {
-    pub name: String,
-    pub page: PdfImagePageSelection,
-    pub color_space_object: i32,
-    pub page_box: PdfImagePageBox,
-    pub resolution: u32,
-}
-
-/// Host boundary for loading and validating `\pdfximage` resources.
-pub trait PdfImageResolver {
-    fn open_image(
-        &mut self,
-        input: &mut dyn InputReadState,
-        request: &PdfImageRequest,
-        request_index: u64,
-    ) -> ResourceResult<tex_state::PdfExternalImageSource>;
-}
-
-/// Font inputs selected atomically by the host.
-pub enum FontSource {
-    /// Classic TFM metrics, optionally paired with an OpenType program for
-    /// Unicode character queries and shaping.
-    Tfm {
-        metrics: FileContent,
-        opentype: Option<tex_fonts::OpenTypeProgramSelection>,
-    },
-    /// A TFM-style text selection upgraded by an exact content-identity map.
-    MappedTfm {
-        metrics: FileContent,
-        opentype: tex_fonts::OpenTypeProgramSelection,
-        encoding_map: tex_fonts::LegacyEncodingMap,
-    },
-    /// An explicitly recorded classic fallback under `OpenTypePreferred`.
-    ClassicTfmFallback { metrics: FileContent },
-    /// A validated OpenType program selected without any TFM dependency.
-    OpenType(tex_fonts::OpenTypeProgramSelection),
 }
 
 /// Concrete execution-session context shared by stomach operations.
@@ -582,33 +472,6 @@ pub struct ExecutionTelemetry {
     pub savepoint_restore_time: Duration,
 }
 
-/// Run-level ceilings checked at the owned executor's atomic step boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ExecutionBudgets {
-    pub steps: u64,
-    pub input_frames: u64,
-    pub journal_bytes: u64,
-    pub effects: u64,
-}
-
-impl Default for ExecutionBudgets {
-    fn default() -> Self {
-        Self {
-            steps: u64::MAX,
-            input_frames: u64::MAX,
-            journal_bytes: u64::MAX,
-            effects: u64::MAX,
-        }
-    }
-}
-
-/// Future-relevant monotonic accounting stored in named checkpoints.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ExecutionBudgetCounters {
-    pub committed_steps: u64,
-    pub cumulative_fuel: u64,
-}
-
 #[derive(Debug)]
 pub enum ExecutionStepResult {
     Progress(ExecutionProgress),
@@ -616,56 +479,6 @@ pub enum ExecutionStepResult {
     Complete(ExecutionStats),
     Failed(ExecError),
     Cancelled,
-}
-
-/// Shareable monotonic cancellation latch polled at executor step boundaries.
-#[derive(Clone, Debug, Default)]
-pub struct Cancellation(Arc<AtomicBool>);
-
-impl Cancellation {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-}
-
-/// Shareable recoverable-interrupt latch polled only between atomic executor
-/// steps.
-///
-/// Unlike [`Cancellation`], an interrupt does not terminate the run. A host
-/// signal handler requests it, and the command boundary consumes it once at
-/// the next safe point. Requests raised while a scanner or executor step is
-/// live therefore remain pending until that critical section has committed.
-#[derive(Clone, Debug, Default)]
-pub struct PendingInterrupt(Arc<AtomicBool>);
-
-impl PendingInterrupt {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn request(&self) {
-        self.0.store(true, Ordering::Release);
-    }
-
-    #[must_use]
-    pub fn is_pending(&self) -> bool {
-        self.0.load(Ordering::Acquire)
-    }
-
-    fn take(&self) -> bool {
-        self.0.swap(false, Ordering::AcqRel)
-    }
 }
 
 pub struct ExecutionContext<'a> {

@@ -62,7 +62,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/effects/tests.rs`: canonical-replay tests for stream lifecycle, immediate and deferred effects, and shipout-time special/write/open/close behavior.
 - `src/fixtures/etex-empty-botmark-fire-up.tex`: bounded e-TeX page-fire-up semantic fixture proving that an empty class-zero bot mark remains present while an empty sparse-class bot mark becomes absent before later enquiries.
 - `src/effective_tail.rs`: merged e-TeX blocks 99/253 effective-tail selection and generated `beginM`/`endM` removal planning shared by enquiries and list mutations.
-- `src/executor.rs`: `Executor` run loop, concrete execution context, executor-owned font/image resource-result and suspension-identity contracts, localized font resolver and atomic `FontSource` handoff, expansion snapshot synchronization, runtime-only session command-fuel ownership across detached operations, configurable atomic run budgets, monotonic step/fuel enforcement, and step/replay telemetry.
+- `src/executor.rs`: retired `Executor` scanner/run loop, concrete legacy execution context, expansion snapshot synchronization, runtime-only session command-fuel ownership across detached operations, and step/replay telemetry.
+- `src/host_api.rs`: stable host resource lookup values plus font and PDF-image resolver contracts shared by canonical session adapters and compatibility tests.
 - `src/job.rs`: TeX's job framing -- the start-up banner (§61/§536), the `**`
   first line (§534), rendering `tex-command`'s drained §537/§362 `(name`/`)`
   file-bracketing queue, §1335's `final_cleanup` tail (paren close,
@@ -90,6 +91,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/raw_delivery.rs`: single retired lexer bridge for compatibility scanners
   that still require one unexpanded semantic token; canonical execution
   receives command delivery from `tex-command`.
+- `src/session_api.rs`: host-neutral execution budgets, checkpoint counters, cancellation, and recoverable-interrupt latches shared by canonical sessions and compatibility tests.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
 - `src/packing_params/tests.rs`: source-backed packing-observation ordering tests, including TeX82's pre-readjustment `vpackage` geometry for `\vtop`.
 - `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, tex.web §§987/1005/1006's `\tracingpages` reporting, and detached page-episode reuse up to the output-routine barrier.

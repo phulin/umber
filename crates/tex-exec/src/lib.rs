@@ -16,6 +16,7 @@ mod effective_tail;
 mod error;
 mod error_report;
 mod executor;
+mod host_api;
 mod job;
 mod job_output;
 #[cfg(test)]
@@ -30,6 +31,7 @@ mod page_builder;
 mod paragraph_memo;
 mod raw_delivery;
 mod retained_resource;
+mod session_api;
 mod splitting;
 mod timing;
 mod transaction;
@@ -58,11 +60,13 @@ pub(crate) use dispatch::{
 };
 pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use executor::{
-    Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
-    ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,
-    ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
-    PdfImagePageSelection, PdfImageRequest, PdfImageResolver, PendingInterrupt, ResourceLookup,
-    ResourceNeed, ResourceResult, ResourceSite, ResourceSuspension,
+    ExecutionContext, ExecutionLifecycle, ExecutionProgress, ExecutionRun, ExecutionServices,
+    ExecutionState, ExecutionStep, ExecutionStepResult, ExecutionTelemetry, Executor, ResourceSite,
+    ResourceSuspension,
+};
+pub use host_api::{
+    FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
+    PdfImageResolver, ResourceLookup, ResourceNeed, ResourceResult,
 };
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
@@ -76,6 +80,7 @@ pub use retained_resource::{
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
     CanonicalResourceWorld, canonical_font_resource_path,
 };
+pub use session_api::{Cancellation, ExecutionBudgetCounters, ExecutionBudgets, PendingInterrupt};
 
 #[cfg(test)]
 mod test_harness;

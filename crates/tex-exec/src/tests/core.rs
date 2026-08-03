@@ -5462,3 +5462,31 @@ fn retired_editor_input_stack_restart_is_test_only() {
         );
     }
 }
+
+#[test]
+fn shipped_session_and_host_apis_do_not_depend_on_legacy_command_crates() {
+    for (name, source) in [
+        ("host", include_str!("../host_api.rs")),
+        ("session", include_str!("../session_api.rs")),
+    ] {
+        for forbidden in ["tex_expand", "tex_lex", "ExecutionContext", "Executor"] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} API regained {forbidden}"
+            );
+        }
+    }
+    let executor = include_str!("../executor.rs");
+    for moved in [
+        "pub struct ExecutionBudgets",
+        "pub struct ExecutionBudgetCounters",
+        "pub struct Cancellation",
+        "pub trait FontResolver",
+        "pub trait PdfImageResolver",
+    ] {
+        assert!(
+            !executor.contains(moved),
+            "executor regained moved API {moved}"
+        );
+    }
+}
