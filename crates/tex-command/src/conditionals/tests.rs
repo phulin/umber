@@ -1846,6 +1846,51 @@ fn ifcase_zero_negative_else_and_fi_boundaries() {
 }
 
 #[test]
+fn negative_ifcase_unwinds_condition_opened_while_scanning_its_operand() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
+    let ifcase = install(
+        &mut universe,
+        "nested-operand-ifcase",
+        ExpandablePrimitive::IfCase,
+    );
+    let iftrue = install(
+        &mut universe,
+        "nested-operand-iftrue",
+        ExpandablePrimitive::IfTrue,
+    );
+    let otherwise = install(
+        &mut universe,
+        "nested-operand-else",
+        ExpandablePrimitive::Else,
+    );
+    let fi = install(&mut universe, "nested-operand-fi", ExpandablePrimitive::Fi);
+    let mut tokens = vec![ifcase, iftrue];
+    tokens.extend(chars("-1a"));
+    tokens.extend([otherwise, fi, ifcase]);
+    tokens.extend(chars("0"));
+    tokens.extend([fi, otherwise, ifcase]);
+    tokens.extend(chars("5a"));
+    tokens.extend([fi, fi, other('z')]);
+    push(&mut command, tokens);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+    assert_eq!(next_character(&mut processor), 'z');
+    assert!(processor.get_x_token().expect("input exhausts").is_none());
+    assert!(processor.command.conditions.current().is_none());
+    drop(processor);
+
+    let diagnostics = diagnostic_text(&universe);
+    let case_negative = diagnostics.find("{case -1}").expect("negative case trace");
+    let suffix = &diagnostics[case_negative..];
+    let case_five = suffix.find("{case 5}").expect("else-branch case trace");
+    assert!(!suffix[..case_five].contains("{case 0}"), "{diagnostics:?}");
+}
+
+#[test]
 fn conditional_delimiter_legality_matrix() {
     for (limit, accepted) in [
         (IfLimit::Evaluating, [false, false, true]),

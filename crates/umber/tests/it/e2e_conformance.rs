@@ -2360,6 +2360,23 @@ fn trip_loaded_runaway_context_escapes_nul_control_sequence_name() {
 }
 
 #[test]
+fn trip_loaded_nested_ifcase_operand_preserves_skip_nesting() {
+    // TeX82 §509 keeps skipping while an operand-expanded conditional is
+    // above the saved `\ifcase` frame, popping only that newer frame's `\fi`.
+    let log = run_focused_loaded_trip_through(359);
+    let case_negative = log.rfind("{case -1}").expect("line-359 negative case");
+    let report = &log[case_negative..];
+    let nested_ifcase = report.find("{\\ifcase}").expect("skipped nested ifcase");
+    let nested_fi = report.find("{\\fi}").expect("skipped nested fi");
+    let case_five = report.find("{case 5}").expect("outer else-branch case");
+    assert!(
+        nested_ifcase < nested_fi && nested_fi < case_five,
+        "{report}"
+    );
+    assert!(!report[..case_five].contains("{case 0}"), "{report}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

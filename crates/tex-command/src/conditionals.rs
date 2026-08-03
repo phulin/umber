@@ -963,6 +963,29 @@ impl CommandProcessor<'_> {
     ) -> Result<bool, CommandError> {
         while remaining != 0 {
             let delimiter = self.pass_text(condition, ScannerWarning(0))?.delimiter;
+            // TeX82 §509 compares `cond_ptr` with the frame saved before
+            // scanning the case number.  Operand expansion can have pushed a
+            // newer conditional, in which case only its `\fi` is acted on;
+            // its `\or` or `\else` is passed and the limb scan continues.
+            // This is deliberately different from `common_ending`: the
+            // delimiter does not belong to this `\ifcase` until its frame is
+            // current again.
+            if self
+                .command
+                .conditions
+                .current()
+                .is_some_and(|frame| frame.identity != condition)
+            {
+                if delimiter == ConditionalDelimiter::Fi {
+                    let frame = self
+                        .command
+                        .conditions
+                        .pop()
+                        .ok_or(CommandError::input_invariant())?;
+                    self.observe_condition("pop", &frame, None);
+                }
+                continue;
+            }
             if delimiter == ConditionalDelimiter::Or {
                 remaining = remaining.saturating_sub(1);
                 continue;
