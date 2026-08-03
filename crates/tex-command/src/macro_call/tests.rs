@@ -780,7 +780,7 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
     let source = command
         .register_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(&b"\\m\\outer"[..]),
+            Arc::<[u8]>::from(&b"\\m{\\outer"[..]),
         ))
         .expect("source registers");
     command
@@ -857,6 +857,18 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
         ))
         .expect("outer control sequence backup");
     assert!(diagnostic < backup, "diagnostic precedes raw backup");
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            runaway: Some(runaway),
+            ..
+        },
+    ] = command.semantic_diagnostics.as_slice()
+    else {
+        panic!("expected one outer-validity runaway diagnostic")
+    };
+    // TeX82 §§23/306/396: the temporary recovery spacer is `cur_cmd`, not
+    // an argument-list token, so the pseudoprint ends after the retained `{`.
+    assert_eq!(runaway.partial, "{");
 }
 
 #[test]

@@ -638,6 +638,14 @@ impl CommandProcessor<'_> {
             let command = self
                 .get_token()?
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
+            // TeX82 §23's recovered `cur_cmd := spacer` is the return
+            // value of the interrupted raw delivery, not a token linked into
+            // §394's temporary argument list. The inserted frozen `\par`
+            // aborts this match on the next demand; §306's already-owned
+            // runaway pseudoprint must therefore end at the last real token.
+            if command.is_outer_recovery_space() {
+                continue;
+            }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 self.set_runaway_partial(&tokens);
                 return Err(CommandError::OuterInMacroArgument);
@@ -690,6 +698,9 @@ impl CommandProcessor<'_> {
                     .get_token()?
                     .ok_or(CommandError::ParagraphInMacroArgument)?,
             };
+            if command.is_outer_recovery_space() {
+                continue;
+            }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 let mut partial = tokens.clone();
                 partial.extend(prefix.iter().copied());
