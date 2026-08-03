@@ -1522,6 +1522,38 @@ fn shipped_umber_has_no_tex_expand_dependency() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn shipped_umber_has_no_retired_command_core_dependencies() {
+    let root = test_support::repository_root();
+    let manifest =
+        std::fs::read_to_string(root.join("crates/umber/Cargo.toml")).expect("read Umber manifest");
+    let (production, development) = manifest
+        .split_once("[dev-dependencies]")
+        .expect("Umber manifest has dev dependencies");
+    for retired in ["tex-expand", "tex-lex"] {
+        assert!(
+            !production.contains(retired),
+            "shipped Umber must not depend directly on {retired}"
+        );
+        assert!(
+            development.contains(&format!("{retired} =")),
+            "inline compatibility tests retain an explicit {retired} dev dependency"
+        );
+    }
+
+    let source =
+        std::fs::read_to_string(root.join("crates/umber/src/lib.rs")).expect("read Umber library");
+    assert!(
+        source.contains("#[cfg(test)]\npub struct EngineSession"),
+        "the retired InputStack session adapter must remain test-only"
+    );
+    assert!(
+        source.contains("CanonicalEngineSession, CanonicalExpansionStats"),
+        "shipped Umber must retain the command-owned canonical session"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");

@@ -41,7 +41,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
 - `src/tex_fixed_point.rs`: public bibliography-free TeX fixed-point adapter over the shared project candidate machinery.
 - `src/tex_fixed_point/tests.rs`: shared primitive/LaTeX-surface fixture convergence, cold identity, generated-input selection, resource resumption, bounds, oscillation, and rollback coverage.
-- `src/lib.rs`: shared engine session, file resolvers, typed effect-before-driver finalization, run helpers, and one-artifact-at-a-time DVI construction.
+- `src/lib.rs`: canonical retained-root run helpers, file resolvers, typed
+  effect-before-driver finalization, one-artifact-at-a-time DVI construction,
+  and the test-only retired `InputStack` session adapter.
 - `src/memory_output.rs`: exact committed terminal/log/DVI/aux collection for successful memory-backed runs, aggregate output limits, and auxiliary publication into VFS stage transactions.
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.

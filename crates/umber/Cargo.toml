@@ -29,7 +29,6 @@ tex-command = { path = "../tex-command" }
 tex-exec = { path = "../tex-exec" }
 tex-fonts = { path = "../tex-fonts" }
 tex-incr = { path = "../tex-incr" }
-tex-lex = { path = "../tex-lex" }
 tex-observe = { path = "../tex-observe" }
 tex-oracle = { path = "../tex-oracle" }
 tex-out = { path = "../tex-out" }
@@ -56,6 +55,7 @@ tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-command-stream = { path = "../../tools/tex-command-stream" }
 tex-expand = { path = "../tex-expand" }
+tex-lex = { path = "../tex-lex" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 ttf-parser = "0.25.1"
 

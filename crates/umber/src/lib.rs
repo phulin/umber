@@ -3,18 +3,24 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tex_command::{
-    CommandProfile, FontResource, PdfImageRequest, PdfImageResource, RegisteredSourceKind,
-    SourceRegistration, SourceRegistrationError,
+    CommandProfile, FontResource, PdfImageResource, RegisteredSourceKind, SourceRegistration,
+};
+#[cfg(test)]
+use tex_command::{PdfImageRequest, SourceRegistrationError};
+#[cfg(test)]
+use tex_exec::{
+    CanonicalMainControl, CanonicalStepResult, ExecutionBudgetCounters, ExecutionStats, Executor,
+    MainControlStep, try_execute_assignment,
 };
 use tex_exec::{
-    CanonicalMainControl, CanonicalStepResult, CheckpointSink, EngineBoundary,
-    ExecutionBudgetCounters, ExecutionContext, ExecutionStats, Executor, FontResolver,
-    MainControlStep, PdfImageRequest as LegacyPdfImageRequest, PdfImageResolver,
-    try_execute_assignment,
+    CheckpointSink, EngineBoundary, ExecutionContext, FontResolver,
+    PdfImageRequest as LegacyPdfImageRequest, PdfImageResolver,
 };
+#[cfg(test)]
 use tex_lex::InputStack;
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
+#[cfg(test)]
 use tex_state::token::TracedTokenWord;
 use tex_state::{
     CommittedArtifact, ContentHash, EffectPos, EffectRecord, FileContent, InputResolver, PrintSink,
@@ -212,11 +218,13 @@ pub use virtual_compile::{
 
 /// The only checkpoint policy supported by composed engine sessions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub enum CheckpointPolicy {
     NamedExecutorBoundaries,
 }
 
 /// Exclusive composition boundary for input, context, state, diagnostics, and artifacts.
+#[cfg(test)]
 pub struct EngineSession<'a, 'context> {
     input: &'a mut InputStack,
     stores: &'a mut Universe,
@@ -234,6 +242,7 @@ pub struct EngineSession<'a, 'context> {
     checkpoint_policy: CheckpointPolicy,
 }
 
+#[cfg(test)]
 impl<'a, 'context> EngineSession<'a, 'context> {
     pub fn new(
         input: &'a mut InputStack,
