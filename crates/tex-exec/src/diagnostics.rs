@@ -248,9 +248,8 @@ pub(crate) fn report_misplaced_alignment_command(
 }
 
 pub(crate) fn execute_show(input: &mut InputStack, stores: &mut Universe) -> Result<(), ExecError> {
-    let token =
-        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
-            .ok_or(ExecError::MissingToken { context: "\\show" })?;
+    let token = crate::raw_delivery::next_semantic_raw_token(input, stores)?
+        .ok_or(ExecError::MissingToken { context: "\\show" })?;
     let token = token.semantic_token();
     let text = match token {
         Token::Cs(_)
@@ -1024,9 +1023,7 @@ fn scan_balanced_raw_text(
     }
     let mut depth = 1usize;
     let mut tokens = Vec::new();
-    while let Some(traced) =
-        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
-    {
+    while let Some(traced) = crate::raw_delivery::next_semantic_raw_token(input, stores)? {
         let token = traced.semantic_token();
         if is_begin_group(token) {
             depth += 1;

@@ -87,6 +87,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/pack_report/tests.rs`: interaction-mode channel and ordering coverage for packed-box diagnostics.
 - `src/output.rs`: output-routine fire-up, `\box255` packaging, held-over material, deadcycle handling, and final `\end` page cleanup.
 - `src/paragraph_memo.rs`: centralized fail-before-mutation accepted-history paragraph validation, generation-interned exact-stamp observations and typed semantic dependency tiers, accepted-history-owned hlist/finished-line mounts, ordered count/integer-parameter redo, full source-transition checks, lazy accepted-generation diagnostic provenance, barrier classification, and telemetry.
+- `src/raw_delivery.rs`: single retired lexer bridge for compatibility scanners
+  that still require one unexpanded semantic token; canonical execution
+  receives command delivery from `tex-command`.
 - `src/packing_params.rs`: execution-side snapshots of packing-related integer and dimension parameters before calling pure `tex-typeset` kernels.
 - `src/page_builder.rs`: TeX.web page-builder accounting, insertion splitting, pending fire-up records, tex.web §§987/1005/1006's `\tracingpages` reporting, and detached page-episode reuse up to the output-routine barrier.
 - `src/splitting.rs`: shared vertical split helpers for insertion and `\vsplit` remainder pruning/repacking.

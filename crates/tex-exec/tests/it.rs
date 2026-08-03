@@ -95,7 +95,23 @@ fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
                 path.display()
             );
         }
+        if path
+            .file_name()
+            .is_none_or(|name| name != "raw_delivery.rs")
+        {
+            assert!(
+                !source.contains("tex_lex::next_semantic_raw_token"),
+                "{} must cross raw delivery only through raw_delivery.rs",
+                path.display()
+            );
+        }
     }
+    let bridge = fs::read_to_string(source_root.join("raw_delivery.rs"))
+        .expect("read retired raw-delivery bridge");
+    assert_eq!(
+        bridge.matches("tex_lex::next_semantic_raw_token").count(),
+        1
+    );
     let expand =
         fs::read_to_string(test_support::repository_root().join("crates/tex-expand/src/lib.rs"))
             .expect("read expansion public surface");

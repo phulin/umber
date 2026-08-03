@@ -27,6 +27,7 @@ mod pack_report;
 mod packing_params;
 mod page_builder;
 mod paragraph_memo;
+mod raw_delivery;
 mod retained_resource;
 mod splitting;
 mod timing;

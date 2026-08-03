@@ -288,9 +288,7 @@ fn scan_balanced_text_after_open_group(
 ) -> Result<tex_state::ids::TokenListId, ExecError> {
     let mut depth = 1usize;
     let mut builder = stores.token_list_builder();
-    while let Some(traced) =
-        tex_lex::next_semantic_raw_token(input, &mut tex_state::ExpansionContext::new(stores))?
-    {
+    while let Some(traced) = crate::raw_delivery::next_semantic_raw_token(input, stores)? {
         let token = traced.semantic_token();
         let meaning = token_meaning(stores, token);
         if matches!(
