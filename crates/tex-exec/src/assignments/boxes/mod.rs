@@ -1,10 +1,10 @@
 use tex_lex::InputStack;
+use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, KernKind, Node};
 use tex_state::scaled::Scaled;
 use tex_state::token::{Token, TracedTokenWord};
-use tex_state::{BoxDimension, Universe};
 
 use super::*;
 use crate::vertical::{
@@ -20,7 +20,8 @@ pub(crate) mod vsplit;
 
 use crate::canonical_box_runtime::hmode::infinite_glue;
 use crate::canonical_box_runtime::{
-    append_box_node_to_current_list, append_box_register, apply_box_shift_delta,
+    acquire_box_register, append_box_node_to_current_list, append_box_register,
+    apply_box_shift_delta, assign_box_dimension, box_dimension_for_primitive,
     execute_scanned_saved_vertical_discards, execute_scanned_unbox, first_box_node, take_last_box,
 };
 use leaders::{scan_leader_glue, scan_leader_payload};
@@ -80,17 +81,8 @@ pub(crate) fn scan_math_box(
         UnexpandablePrimitive::Box | UnexpandablePrimitive::Copy => {
             let index = scan_register_index(input, stores, execution, context)?;
             let source_proven = execution.paragraph_box_is_source_proven(index);
-            let id = if primitive == UnexpandablePrimitive::Box {
-                stores.take_box_reg_same_level(index)
-            } else {
-                stores.box_reg(index)
-            };
+            let id = acquire_box_register(stores, index, primitive == UnexpandablePrimitive::Copy);
             account_external_box_access(execution, index, source_proven, primitive, id.is_some());
-            if primitive == UnexpandablePrimitive::Copy
-                && let Some(id) = id
-            {
-                stores.pin_survivor(id);
-            }
             first_box_node(stores, id)
         }
         UnexpandablePrimitive::Raise | UnexpandablePrimitive::Lower => {
@@ -168,12 +160,8 @@ pub(super) fn execute_box_dimension_assignment(
     let index = scan_register_index(input, stores, execution, context)?;
     skip_optional_equals_x(input, stores, execution)?;
     let value = scan_scaled(input, stores, execution, context)?;
-    let dimension = box_dimension(primitive)?;
-    if global {
-        stores.set_box_dimension_global(index, dimension, value);
-    } else {
-        stores.set_box_dimension(index, dimension, value);
-    }
+    let dimension = box_dimension_for_primitive(primitive)?;
+    assign_box_dimension(stores, index, dimension, value, global);
     Ok(())
 }
 
@@ -264,17 +252,8 @@ pub(crate) fn execute_box_register_read(
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<(), ExecError> {
     let source_proven = execution.paragraph_box_is_source_proven(index);
-    let id = if primitive == UnexpandablePrimitive::Box {
-        stores.take_box_reg_same_level(index)
-    } else {
-        stores.box_reg(index)
-    };
+    let id = acquire_box_register(stores, index, primitive == UnexpandablePrimitive::Copy);
     account_external_box_access(execution, index, source_proven, primitive, id.is_some());
-    if primitive == UnexpandablePrimitive::Copy
-        && let Some(id) = id
-    {
-        stores.pin_survivor(id);
-    }
     append_box_register(nest, stores, id, execution.command_fuel())
 }
 
@@ -494,19 +473,4 @@ fn apply_shift(
         _ => unreachable!("caller restricts shift primitives"),
     };
     apply_box_shift_delta(node, delta)
-}
-
-/// TeX82 §1073's `shift_amount(cur_box):=box_context`, applied directly to an
-/// already-signed delta. `\raise`/`\moveleft` negate their scanned dimension
-/// and `\lower`/`\moveright` keep it (tex.web's `t:=cur_chr; scan_normal_dimen;
-/// if t=0 then scan_box(cur_val) else scan_box(-cur_val)`); callers that have
-/// already resolved that sign (the canonical box-shift path) call this
-/// directly, while [`apply_shift`] resolves it from a legacy primitive first.
-fn box_dimension(primitive: UnexpandablePrimitive) -> Result<BoxDimension, ExecError> {
-    match primitive {
-        UnexpandablePrimitive::Wd => Ok(BoxDimension::Width),
-        UnexpandablePrimitive::Ht => Ok(BoxDimension::Height),
-        UnexpandablePrimitive::Dp => Ok(BoxDimension::Depth),
-        _ => Err(ExecError::UnsupportedAssignmentTarget),
-    }
 }

@@ -36,7 +36,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   hyphen-boundary, spacing, and italic-correction runtime, while scanner fronts
   remain under assignments; `material.rs` owns post-scan box-register reads,
   unboxing, saved discards, delete-last behavior, migration, contribution, and
-  shifts; `leaders.rs` owns payload admissibility, leader-kind/fill conversion,
+  shifts, plus destructive/copy acquisition and box-dimension mutation;
+  `leaders.rs` owns payload admissibility, leader-kind/fill conversion,
   register extraction, and final list/page contribution.
 - `src/assignments/boxes/`: box-making, `\setbox`, leader payload/glue scanning, `\vsplit`, packing scans, and box list contribution; `mod.rs` holds command-facing handlers while `leaders.rs`, `packaging.rs`, and `vsplit.rs` hold focused helpers.
 - `src/assignments/boxes/tests.rs`: focused box-list operation tests, including pdfTeX margin-kern removal and immutable source-list identity during unboxing.

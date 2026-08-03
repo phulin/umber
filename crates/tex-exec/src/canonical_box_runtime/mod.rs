@@ -28,9 +28,9 @@ pub(crate) use leaders::{
     payload_from_node, take_register_payload,
 };
 pub(crate) use material::{
-    append_box_node_to_current_list, append_box_register, apply_box_shift_delta,
-    execute_delete_last, execute_scanned_saved_vertical_discards, execute_scanned_unbox,
-    split_hpack_migrations,
+    acquire_box_register, append_box_node_to_current_list, append_box_register,
+    apply_box_shift_delta, assign_box_dimension, box_dimension_for_primitive, execute_delete_last,
+    execute_scanned_saved_vertical_discards, execute_scanned_unbox, split_hpack_migrations,
 };
 
 pub(crate) use crate::assignments::{indent_in_hmode, norm_min};

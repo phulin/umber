@@ -456,6 +456,9 @@ fn canonical_box_material_physically_owns_post_scan_mutations() {
         "fn append_unboxed(",
         "fn report_incompatible_unbox(",
         "fn apply_box_shift_delta(",
+        "fn acquire_box_register(",
+        "fn assign_box_dimension(",
+        "fn box_dimension_for_primitive(",
     ] {
         assert!(
             owner.contains(implementation),
