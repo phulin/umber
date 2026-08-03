@@ -3405,6 +3405,41 @@ fn paragraph_hlist_mount_rejects_unsupported_graph_before_replay() {
     let expected = cold.cold().expect("cold comparison");
     assert_eq!(output.effects, expected.effects);
     assert_eq!(output.artifacts, expected.artifacts);
+    let resolved_artifact_provenance = |session: &Session| {
+        let substrate = session.substrate.as_ref().expect("accepted substrate");
+        session
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                (0..artifact.render_node_count())
+                    .map(|node| {
+                        (0..16)
+                            .map(|source| match artifact.render_origin(node, source) {
+                                tex_state::ArtifactOrigin::Live(origin) => substrate
+                                    .resolve_layout_origin(
+                                        origin,
+                                        &session.fragments,
+                                        &session.layout,
+                                    ),
+                                tex_state::ArtifactOrigin::Stable(span) => substrate
+                                    .resolve_stable_layout_origin(
+                                        span,
+                                        &session.fragments,
+                                        &session.layout,
+                                    ),
+                                tex_state::ArtifactOrigin::Unknown => LayoutResolvedOrigin::Unknown,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        resolved_artifact_provenance(&session),
+        resolved_artifact_provenance(&cold),
+        "mixed cold and retained page provenance must be source-exact"
+    );
     assert_eq!(
         output.dvi_bytes().expect("incremental DVI"),
         expected.dvi_bytes().expect("cold DVI")

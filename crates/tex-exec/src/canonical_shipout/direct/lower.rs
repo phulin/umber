@@ -21,7 +21,12 @@ pub(super) fn pending_page_effects(
 ) -> PendingPageEffects {
     let mut effects = Vec::new();
     let mut open_out_occurrences = Vec::new();
-    for (world_index, record) in world.effect_records()[..pending_end].iter().enumerate() {
+    for (world_index, record) in world
+        .page_effect_prefix()
+        .iter()
+        .chain(world.effect_records()[..pending_end].iter())
+        .enumerate()
+    {
         let Some(effect) = lower_effect_record(record) else {
             continue;
         };
@@ -30,8 +35,8 @@ pub(super) fn pending_page_effects(
             open_out_occurrences.push((
                 page_index,
                 world
-                    .effect_position(world_index)
-                    .expect("enumerated retained effect has a position"),
+                    .page_effect_position(world_index)
+                    .expect("enumerated page-visible effect has a position"),
             ));
         }
         effects.push(effect);

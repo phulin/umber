@@ -1647,6 +1647,9 @@ pub(crate) struct WorldStateHashCursor {
 #[derive(Debug)]
 pub struct World {
     backend: WorldBackend,
+    /// Accepted effects detached from publication but still preceding every
+    /// page produced by a retained generation fork.
+    page_effect_prefix: Arc<Vec<EffectRecord>>,
     effect_base: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
     stream_bufs: Arc<StreamBufState>,
@@ -1693,6 +1696,7 @@ impl Clone for World {
     fn clone(&self) -> Self {
         Self {
             backend: self.backend.clone(),
+            page_effect_prefix: self.page_effect_prefix.clone(),
             effect_base: self.effect_base,
             effects: self.effects.clone(),
             stream_bufs: self.stream_bufs.clone(),
@@ -1733,6 +1737,7 @@ impl Clone for World {
 impl PartialEq for World {
     fn eq(&self, other: &Self) -> bool {
         self.backend == other.backend
+            && self.page_effect_prefix == other.page_effect_prefix
             && self.effect_base == other.effect_base
             && self.effects == other.effects
             && self.stream_bufs == other.stream_bufs
@@ -1911,6 +1916,7 @@ impl World {
     ) -> Self {
         Self {
             backend,
+            page_effect_prefix: Arc::new(Vec::new()),
             effect_base: EffectPos::default(),
             effects: Arc::new(Vec::new()),
             stream_bufs: Arc::new(StreamBufState::default()),
@@ -3322,6 +3328,27 @@ impl World {
         self.effects.as_slice()
     }
 
+    /// Effects already accepted before a generation fork's restart anchor.
+    /// They remain page-visible but are excluded from the publishable suffix.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn page_effect_prefix(&self) -> &[EffectRecord] {
+        self.page_effect_prefix.as_slice()
+    }
+
+    /// Absolute position of a page-visible prefix-or-live effect.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn page_effect_position(&self, index: usize) -> Option<EffectPos> {
+        let len = self
+            .page_effect_prefix
+            .len()
+            .checked_add(self.effects.len())?;
+        (index < len).then(|| {
+            EffectPos::from_raw(u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1))
+        })
+    }
+
     /// Absolute append-only identity of one currently retained effect.
     #[must_use]
     pub fn effect_position(&self, index: usize) -> Option<EffectPos> {
@@ -3756,6 +3783,14 @@ impl World {
         self.input_identities
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
+        let mut page_effect_prefix = self.page_effect_prefix.as_ref().clone();
+        page_effect_prefix.extend(snapshot.effects.iter().cloned());
+        assert_eq!(
+            u64::try_from(page_effect_prefix.len()).unwrap_or(u64::MAX),
+            snapshot.effect_pos.raw(),
+            "generation fork page-effect prefix must cover the absolute effect cursor"
+        );
+        self.page_effect_prefix = Arc::new(page_effect_prefix);
         self.effect_base = snapshot.effect_pos;
         self.effects = Arc::new(Vec::new());
         self.stream_bufs = snapshot.stream_bufs.clone();
