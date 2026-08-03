@@ -1851,6 +1851,72 @@ mod tests {
     }
 
     #[test]
+    fn halign_first_entry_body_handoff_stays_inside_main_loop_trace() {
+        // TeX82 §§789, 1034, and 1038: the u-template's final `A` enters
+        // main_loop. Its bare lookahead fetches the adjacent first body `A`
+        // without returning to §1030's traced reswitch boundary.
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed cmr10");
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\font\\tracefont=cmr10 \\tracefont\\tracingcommands=2\\tracingonline=1\\halign{A#\\cr A\\cr}\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+        assert_eq!(output.matches("the letter A}").count(), 1, "{output}");
+        assert!(
+            output.contains(
+                "{restricted horizontal mode: the letter A}\n{end of alignment template}"
+            ),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn halign_entry_trace_preserves_genuinely_separate_repeated_characters() {
+        // A non-character returns to §1030's big_switch. The following `A`
+        // is therefore a genuinely distinct traced reswitch, even though it
+        // has the same token value as the template and first body tokens.
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        stores
+            .world_mut()
+            .set_memory_file(
+                "cmr10.tfm",
+                include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
+            )
+            .expect("seed cmr10");
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\font\\tracefont=cmr10 \\tracefont\\tracingcommands=2\\tracingonline=1\\halign{A#\\cr A\\kern0pt A\\cr}\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+        assert_eq!(output.matches("the letter A}").count(), 2, "{output}");
+        assert!(
+            output.contains("{restricted horizontal mode: the letter A}\n{\\kern}\n{the letter A}"),
+            "{output}"
+        );
+    }
+
+    #[test]
     fn valign_packing_scan_preserves_same_horizontal_mode_capability() {
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_run_stores(&mut stores);

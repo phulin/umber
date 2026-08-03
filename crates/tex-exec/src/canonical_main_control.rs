@@ -6904,7 +6904,23 @@ fn scan_alignment_delivery_step(
         // *enclosing* cell/field context, not the just-retired episode.
         Some(AlignmentDelivery::Completed(episode)) => Ok(ScannedStep::ReplayCompleted(episode)),
         Some(AlignmentDelivery::Command(command)) => {
-            report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+            // TeX82 §§1034/1038 keeps an adjacent character fetched by
+            // `main_loop_lookahead` inside `main_loop`, even when §789's
+            // u-template/body handoff lies between the two characters. The
+            // lookahead is a raw delivery owned by alignment control, but it
+            // does not create a second §1030 `reswitch` trace boundary.
+            let continues_main_loop = main_loop_active
+                && matches!(
+                    command.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::Letter | Catcode::Other,
+                        ..
+                    } | Meaning::CharGiven(_)
+                        | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
+                );
+            if !continues_main_loop {
+                report_main_control_command_trace(processor, mode, &command, boxes, shown_mode);
+            }
             // TeX82 §1132 dispatches every right brace seen with an active
             // `align_group` through the missing-\cr recovery, independent of
             // `align_state`. The command-owned fast path emits a structural
