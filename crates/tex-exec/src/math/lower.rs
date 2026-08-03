@@ -335,7 +335,10 @@ impl MathLayoutSink for LoweredMathSink<'_> {
                         .print_char(' ')
                         .print_int(i32::from(family))
                         .print(" is undefined (character ")
-                        .print_char(character)
+                        // TeX82 §721 calls `print_ASCII(c)`: byte-domain
+                        // characters use TeX's one-character-string spelling,
+                        // while Umber's Unicode extension remains lossless.
+                        .print_ascii(character)
                         .print_char(')');
                     report.help(&[
                         "Somewhere in the math formula just ended, you used the",

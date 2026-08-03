@@ -545,6 +545,14 @@ impl<'a> ErrorReport<'a> {
         self
     }
 
+    /// tex.web §68's `print_ASCII`, via the one-character string table.
+    /// Eight-bit codes receive TeX's `^^` spelling when required; Unicode
+    /// extension characters outside that table pass through unchanged.
+    pub fn print_ascii(&mut self, character: char) -> &mut Self {
+        self.printer.print_character_string(character);
+        self
+    }
+
     /// tex.web §62's `print_nl`, for a report whose message text spans more
     /// than one line (§288's `prepare_mag` is one).
     pub fn print_nl(&mut self, text: &str) -> &mut Self {

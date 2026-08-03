@@ -328,6 +328,23 @@ fn print_err_prefixes_the_message_and_error_terminates_it_with_a_period() {
 }
 
 #[test]
+fn error_report_print_ascii_distinguishes_tex_bytes_from_unicode_extensions() {
+    let mut universe = Universe::new();
+    universe.set_interaction_mode(InteractionMode::Nonstop);
+    let mut report = universe.print_err("characters ");
+    report
+        .print_ascii('\u{7}')
+        .print_char(' ')
+        .print_ascii('\u{c8}')
+        .print_char(' ')
+        .print_ascii('∑');
+    assert_eq!(report.error(), ErrorOutcome::Continue);
+
+    let output = terminal_text(&universe);
+    assert!(output.contains("! characters ^^G ^^c8 ∑."), "{output:?}");
+}
+
+#[test]
 fn int_error_appends_texweb_91_parenthesized_value() {
     let mut universe = Universe::new();
     universe.set_interaction_mode(InteractionMode::Nonstop);

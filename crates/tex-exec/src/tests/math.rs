@@ -1743,6 +1743,29 @@ fn undefined_math_family_reports_error_and_omits_only_character() {
     assert!(terminal_effect_text(&stores).contains("\\textfont 15 is undefined (character a)"));
 }
 
+/// TeX82 §721 sends the undefined-family character through `print_ASCII`.
+/// Control and high bytes therefore use TeX's one-character-string spelling.
+#[test]
+fn undefined_math_family_prints_control_and_high_bytes_canonically() {
+    let source = r#"\font\symbol=cmsy10 \font\extension=cmex10
+        \textfont2=\symbol \scriptfont2=\symbol \scriptscriptfont2=\symbol
+        \textfont3=\extension \scriptfont3=\extension \scriptscriptfont3=\extension
+        $\mathchar"0F07\mathchar"0FC8$\end"#;
+    let (stores, _) =
+        run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, source, true);
+    let output = terminal_effect_text(&stores);
+
+    assert!(
+        output.contains("\\textfont 15 is undefined (character ^^G)"),
+        "{output:?}"
+    );
+    assert!(
+        output.contains("\\textfont 15 is undefined (character ^^c8)"),
+        "{output:?}"
+    );
+    assert!(!output.contains("character È"), "{output:?}");
+}
+
 /// TeX82 §§703, 720--723 process an outer noad in its current style before
 /// recursively cleaning its script fields.  Bottom-up implementation of that
 /// recursion must preserve the resulting text, script, scriptscript diagnostic
