@@ -22,6 +22,7 @@ mod executor;
 mod host_api;
 mod job;
 mod job_output;
+mod legacy_assignments;
 mod legacy_diagnostics;
 mod legacy_dispatch;
 #[cfg(test)]
@@ -47,10 +48,10 @@ use canonical_diagnostics as diagnostics;
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 
-pub use assignments::{
-    cached_pretolerance_plan, install_etex_unexpandable_primitives,
-    install_unexpandable_primitives, register_etex_unexpandable_primitives,
-    register_unexpandable_primitives, retry_unavailable_stream_open, try_execute_assignment,
+pub use assignments::cached_pretolerance_plan;
+pub use canonical_assignments::{
+    install_etex_unexpandable_primitives, install_unexpandable_primitives,
+    register_etex_unexpandable_primitives, register_unexpandable_primitives,
 };
 pub use canonical_main_control::{
     CanonicalAdvanceOutcome, CanonicalAdvanceReadiness, CanonicalAdvanceTelemetry,
@@ -76,6 +77,7 @@ pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
     PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
 };
+pub use legacy_assignments::{retry_unavailable_stream_open, try_execute_assignment};
 pub use legacy_dispatch::dispatch_delivered_token;
 pub(crate) use legacy_dispatch::{
     insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,

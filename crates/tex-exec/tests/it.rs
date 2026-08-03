@@ -160,7 +160,7 @@ fn legacy_diagnostics_has_no_canonical_command_control_callers() {
                         "lib.rs"
                             | "executor.rs"
                             | "assignments/mod.rs"
-                            | "assignments/scanning.rs"
+                            | "assignments/legacy_scan.rs"
                             | "assignments/boxes/packaging.rs"
                             | "legacy_diagnostics.rs"
                     )
@@ -216,11 +216,43 @@ fn canonical_assignment_owner_has_only_declared_callers() {
                         "lib.rs"
                             | "canonical_main_control.rs"
                             | "assignments/mod.rs"
-                            | "assignments/variables.rs"
+                            | "assignments/legacy_variables.rs"
                             | "canonical_assignments/mod.rs"
                     )
                 ),
                 "{} must not bypass the canonical assignment owner",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_command_control_bypasses_legacy_assignment_front() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("legacy_assignments"));
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("legacy_assignments") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "executor.rs"
+                            | "legacy_assignments.rs"
+                            | "legacy_dispatch.rs"
+                            | "legacy_output.rs"
+                            | "math/legacy_front.rs"
+                            | "math/legacy_scan.rs"
+                    )
+                ),
+                "{} must not call the retired assignment scanner facade",
                 relative.display()
             );
         }

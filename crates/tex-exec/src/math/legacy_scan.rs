@@ -14,8 +14,8 @@ use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::{ExpansionState, GroupKind, Universe};
 
-use crate::assignments;
 use crate::executor::sync_engine_state;
+use crate::legacy_assignments;
 use crate::mode::IncompleteFraction;
 use crate::packing_params::vpack;
 use crate::{DispatchAction, ExecError, Mode, ModeNest};
@@ -97,7 +97,7 @@ pub(super) fn scan_math_field(
                 }
             }
             Token::Cs(_)
-                if assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) =>
+                if legacy_assignments::has_catcode_meaning(stores, token, Catcode::BeginGroup) =>
             {
                 scan_math_field_group_after_open(nest, input, stores, execution)
             }
@@ -116,7 +116,7 @@ pub(super) fn scan_math_field(
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char) => {
                     let context =
                         TracedTokenWord::pack(Token::Cs(symbol.symbol()), OriginId::UNKNOWN);
-                    let value = assignments::scan_i32(input, stores, execution, context)?;
+                    let value = legacy_assignments::scan_i32(input, stores, execution, context)?;
                     let ch = u8::try_from(value).map(char::from).map_err(|_| {
                         ExecError::InvalidCode {
                             context: "\\char",
@@ -213,12 +213,15 @@ fn scan_math_group_after_open_inner(
             context: "math group closing brace",
         })?;
         let semantic = token.semantic_token();
-        if assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
+        if legacy_assignments::has_catcode_meaning(stores, semantic, Catcode::EndGroup) {
             crate::leave_group_with_origin(input, stores, GroupKind::Math, token.origin())?;
             execution.paragraph_group_exited(stores);
             let list = finish_current_math_list(nest, stores);
-            let _ =
-                crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+            let _ = crate::legacy_assignments::commit_current_list(
+                nest,
+                stores,
+                execution.command_fuel(),
+            )?;
             return Ok(list);
         }
         match dispatch_math_token_with_context(nest, token, input, stores, execution)? {
@@ -415,7 +418,7 @@ fn close_left_group(
         MathField::Empty,
     )));
     let content = stores.freeze_node_list(&nodes);
-    let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
+    let _ = crate::legacy_assignments::commit_current_list(nest, stores, fuel)?;
     append_noad(
         nest,
         NoadKind::Normal(NoadClass::Inner),
@@ -449,7 +452,7 @@ pub(super) fn start_fraction(
             FractionThickness::Explicit(Scaled::from_raw(0))
         }
         UnexpandablePrimitive::Above | UnexpandablePrimitive::AboveWithDelims => {
-            FractionThickness::Explicit(assignments::scan_scaled(
+            FractionThickness::Explicit(legacy_assignments::scan_scaled(
                 input, stores, execution, context,
             )?)
         }
@@ -557,9 +560,9 @@ fn scan_required_math_group(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
-    match assignments::next_non_space_traced_x(input, stores, execution)? {
+    match legacy_assignments::next_non_space_traced_x(input, stores, execution)? {
         Some(opener)
-            if assignments::has_catcode_meaning(
+            if legacy_assignments::has_catcode_meaning(
                 stores,
                 opener.semantic_token(),
                 Catcode::BeginGroup,
@@ -591,13 +594,13 @@ pub(super) fn scan_vcenter_field(
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
 ) -> Result<MathField, ExecError> {
-    let spec = assignments::scan_pack_spec(input, stores, execution, context)?;
-    let opener = assignments::next_non_space_x(input, stores, execution)?.ok_or(
+    let spec = legacy_assignments::scan_pack_spec(input, stores, execution, context)?;
+    let opener = legacy_assignments::next_non_space_x(input, stores, execution)?.ok_or(
         ExecError::MissingToken {
             context: "\\vcenter",
         },
     )?;
-    if !assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
+    if !legacy_assignments::has_catcode_meaning(stores, opener, Catcode::BeginGroup) {
         return Err(ExecError::MissingToken {
             context: "\\vcenter",
         });
@@ -612,8 +615,9 @@ pub(super) fn scan_vcenter_field(
     if !stores.tokens(everyvbox).is_empty() {
         input.push_token_list(everyvbox, TokenListReplayKind::EveryVBox);
     }
-    assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
-    let level = crate::assignments::commit_current_list(inner, stores, execution.command_fuel())?;
+    legacy_assignments::scan_box_group(inner, input, stores, execution, box_group_depth)?;
+    let level =
+        crate::legacy_assignments::commit_current_list(inner, stores, execution.command_fuel())?;
     let children = stores.freeze_node_list(level.list().nodes());
     let vbox = Node::VList(
         vpack(
@@ -637,7 +641,7 @@ pub(super) fn scan_math_char_code(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<u32, ExecError> {
-    let value = assignments::scan_i32(input, stores, execution, context)?;
+    let value = legacy_assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=32_767).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\mathchar",
@@ -653,7 +657,7 @@ pub(super) fn scan_delimiter_code(
     execution: &mut crate::ExecutionContext<'_>,
     context: TracedTokenWord,
 ) -> Result<u32, ExecError> {
-    let value = assignments::scan_i32(input, stores, execution, context)?;
+    let value = legacy_assignments::scan_i32(input, stores, execution, context)?;
     if !(0..=0x07ff_ffff).contains(&value) {
         return Err(ExecError::InvalidCode {
             context: "\\delimiter",
@@ -764,7 +768,7 @@ fn next_non_space_traced_x(
         else {
             return Ok(None);
         };
-        if !assignments::is_space(traced.semantic_token()) {
+        if !legacy_assignments::is_space(traced.semantic_token()) {
             return Ok(Some(traced));
         }
     }

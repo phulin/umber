@@ -21,7 +21,7 @@ use crate::timing::TelemetryTimer;
 use crate::{
     Cancellation, DispatchAction, ExecError, ExecutionBudgetCounters, ExecutionBudgets,
     ExecutionStats, FontResolver, FontSource, ModeNest, PdfImageRequest, PdfImageResolver,
-    PendingInterrupt, ResourceLookup, ResourceNeed, ResourceResult, assignments,
+    PendingInterrupt, ResourceLookup, ResourceNeed, ResourceResult, legacy_assignments,
 };
 
 fn report_recoverable_expansion_diagnostics(
@@ -2068,7 +2068,7 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.macro_text_span_tokens += macro_text.len();
-                if assignments::try_append_tfm_character_span(
+                if legacy_assignments::try_append_tfm_character_span(
                     nest,
                     &macro_text,
                     stores,
@@ -2079,7 +2079,7 @@ where
                 }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
-                    let appended = assignments::try_append_character(
+                    let appended = legacy_assignments::try_append_character(
                         nest,
                         token,
                         stores,
@@ -2100,7 +2100,7 @@ where
             {
                 stats.delivered_tokens += macro_text.len();
                 stats.source_text_span_tokens += macro_text.len();
-                if assignments::try_append_tfm_character_span(
+                if legacy_assignments::try_append_tfm_character_span(
                     nest,
                     &macro_text,
                     stores,
@@ -2111,7 +2111,7 @@ where
                 }
                 for token in macro_text.drain(..) {
                     execution.count_paragraph_token();
-                    let appended = assignments::try_append_character(
+                    let appended = legacy_assignments::try_append_character(
                         nest,
                         token,
                         stores,
@@ -2201,7 +2201,7 @@ where
         };
         let Some(token) = token else {
             abandon_stale_vertical_paragraph_probe(nest, stores, execution);
-            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+            legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             return Ok(MainControlExit::EndOfInput);
         };
         if stores.world().execution_tracing_enabled() {
@@ -2275,7 +2275,7 @@ where
                     ),
                     _ => false,
                 };
-                assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+                legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
                 abandon_stale_vertical_paragraph_probe(nest, stores, execution);
                 return Ok(MainControlExit::End { token });
             }

@@ -8,7 +8,7 @@ use tex_state::{GroupKind, GroupMismatch, Universe};
 
 use crate::dispatch::DispatchAction;
 use crate::executor::sync_engine_state;
-use crate::{ExecError, Mode, ModeNest, assignments};
+use crate::{ExecError, Mode, ModeNest, legacy_assignments};
 
 /// Dispatches one gullet-delivered token in the current mode.
 pub fn dispatch_delivered_token(
@@ -57,7 +57,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
     ) {
         crate::math::legacy_front::insert_dollar_sign(traced, input, stores)?;
         if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-            assignments::ensure_horizontal_for_character(
+            legacy_assignments::ensure_horizontal_for_character(
                 nest,
                 input,
                 stores,
@@ -78,7 +78,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             // \everypar must run before main control retries the `$` and
             // performs the doubled-shift lookahead in horizontal mode.
             push_traced_tokens(input, stores, [traced]);
-            assignments::ensure_horizontal_for_character(
+            legacy_assignments::ensure_horizontal_for_character(
                 nest,
                 input,
                 stores,
@@ -94,7 +94,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             ch,
             cat: Catcode::Active,
         } => {
-            let symbol = assignments::active_character_symbol(stores, ch);
+            let symbol = legacy_assignments::active_character_symbol(stores, ch);
             stores.meaning(symbol)
         }
         Token::Char { .. } => {
@@ -118,7 +118,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             | Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Char)
     );
     if matches!(mode, Mode::Horizontal | Mode::RestrictedHorizontal) && !continues_character_run {
-        assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+        legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
         sync_engine_state(execution, nest, stores);
     }
 
@@ -146,7 +146,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             Ok(DispatchAction::Continue)
         }
         Meaning::CharGiven(ch) => {
-            assignments::append_given_char(
+            legacy_assignments::append_given_char(
                 nest,
                 input,
                 stores,
@@ -181,7 +181,7 @@ pub(crate) fn dispatch_delivered_token_with_context(
             dispatch_delivered_expandable(token, primitive, origin)
         }
         Meaning::UnexpandablePrimitive(primitive) => {
-            assignments::execute_unexpandable_with_context(
+            legacy_assignments::execute_unexpandable_with_context(
                 primitive, traced, nest, input, stores, execution,
             )
         }
@@ -211,13 +211,13 @@ pub(crate) fn dispatch_delivered_token_with_context(
         | Meaning::MuGlueParam(_)
         | Meaning::TokParam(_)
         | Meaning::PageDimension(_)
-        | Meaning::PageInteger(_)) => {
-            assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
-        }
+        | Meaning::PageInteger(_)) => legacy_assignments::execute_assignment_meaning(
+            meaning, traced, input, stores, execution,
+        ),
         Meaning::MathCharGiven(_) => {
             crate::math::legacy_front::insert_dollar_sign(traced, input, stores)?;
             if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
-                assignments::ensure_horizontal_for_character(
+                legacy_assignments::ensure_horizontal_for_character(
                     nest,
                     input,
                     stores,
@@ -248,7 +248,7 @@ fn dispatch_character_token(
             cat: Catcode::BeginGroup,
             ..
         } => {
-            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+            legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             stores.enter_group_with_kind(GroupKind::Simple);
             Ok(DispatchAction::Continue)
         }
@@ -256,7 +256,7 @@ fn dispatch_character_token(
             cat: Catcode::EndGroup,
             ..
         } => {
-            assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+            legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
             if let Err(error) = leave_group_with_origin(input, stores, GroupKind::Simple, origin) {
                 match error {
                     // tex.web §1068's `bottom_level` case of `handle_right_brace`.
@@ -289,7 +289,7 @@ fn dispatch_character_token(
         } => {
             if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
                 push_traced_tokens(input, stores, [traced]);
-                assignments::ensure_horizontal_for_character(
+                legacy_assignments::ensure_horizontal_for_character(
                     nest,
                     input,
                     stores,
@@ -304,8 +304,12 @@ fn dispatch_character_token(
             cat: Catcode::Space,
             ..
         } => {
-            let _ =
-                assignments::try_append_character(nest, traced, stores, execution.command_fuel())?;
+            let _ = legacy_assignments::try_append_character(
+                nest,
+                traced,
+                stores,
+                execution.command_fuel(),
+            )?;
             Ok(DispatchAction::Continue)
         }
         Token::Char {
@@ -324,10 +328,15 @@ fn dispatch_character_token(
                 start_paragraph_before_replaying_character(nest, traced, input, stores, execution)?;
                 return Ok(DispatchAction::Continue);
             }
-            if assignments::try_append_character(nest, traced, stores, execution.command_fuel())? {
+            if legacy_assignments::try_append_character(
+                nest,
+                traced,
+                stores,
+                execution.command_fuel(),
+            )? {
                 return Ok(DispatchAction::Continue);
             }
-            assignments::append_given_char(
+            legacy_assignments::append_given_char(
                 nest,
                 input,
                 stores,
@@ -378,7 +387,12 @@ fn start_paragraph_before_replaying_character(
     // TeX82 backs up the triggering token before `new_graf`, whose `every_par`
     // replay must therefore run before that first character is reconsidered.
     push_traced_tokens(input, stores, [traced]);
-    assignments::ensure_horizontal_for_character(nest, input, stores, execution.command_fuel())
+    legacy_assignments::ensure_horizontal_for_character(
+        nest,
+        input,
+        stores,
+        execution.command_fuel(),
+    )
 }
 
 fn dispatch_delivered_expandable(

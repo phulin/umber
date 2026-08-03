@@ -5,12 +5,12 @@ use tex_state::env::banks::{IntParam, TokParam};
 use tex_state::page::{PageFireUp, PageInteger};
 use tex_state::{GroupKind, TokenListReplayKind, Universe};
 
-use crate::assignments::shipout_node;
 use crate::canonical_page_output::{
     append_end_job_contributions, job_is_quiescent, prepare_box255, prepend_output_heldover,
     report_box255_not_emptied, report_output_loop, take_box255_node,
 };
 use crate::executor::{MainControlExit, run_main_control_until};
+use crate::legacy_assignments::shipout_node;
 use crate::mode::ignored_depth;
 use crate::page_builder::build_page;
 use crate::{ExecError, ExecutionStats, Mode, ModeNest, leave_group, push_traced_tokens};
@@ -125,7 +125,7 @@ fn run_output_routine_inner(
     nest.push(Mode::InternalVertical)?;
     nest.current_list_mutation()
         .set_prev_depth(ignored_depth(stores));
-    crate::assignments::normal_paragraph(nest, stores);
+    crate::legacy_assignments::normal_paragraph(nest, stores);
     let output_replay = input.push_token_list(output, TokenListReplayKind::OutputRoutine);
     *replay = Some(output_replay);
 
@@ -152,7 +152,7 @@ fn run_output_routine_inner(
     }
 
     let output_level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+        crate::legacy_assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     leave_group(input, stores, GroupKind::Output)?;
     stores.set_output_routine_active(false);
     if let Some(box255) = stores.box_reg(255) {

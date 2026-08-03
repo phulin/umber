@@ -16,8 +16,8 @@ use tex_state::provenance::InsertedOriginKind;
 use tex_state::scaled::Scaled;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
-use crate::assignments;
 use crate::executor::sync_engine_state;
+use crate::legacy_assignments;
 use crate::mode::DisplayInterrupt;
 use crate::{
     DispatchAction, ExecError, Mode, ModeNest, insert_traced_tokens, leave_group_with_origin,
@@ -196,7 +196,7 @@ pub(crate) fn enter_math(
         nest.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
     ) {
-        assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
+        legacy_assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
     }
     if display {
         crate::legacy_paragraph_memo::publish_prepared_hlist(
@@ -207,7 +207,8 @@ pub(crate) fn enter_math(
             nest.enclosing_vertical_prev_graf(),
             crate::executor::ParagraphContinuation::Display,
         );
-        let paragraph = assignments::interrupt_paragraph_for_display(nest, stores, execution)?;
+        let paragraph =
+            legacy_assignments::interrupt_paragraph_for_display(nest, stores, execution)?;
         return enter_math_after_paragraph(nest, input, stores, execution, Some(paragraph));
     }
     // Inline math is fully lowered into the paragraph's retained line graph.
@@ -221,11 +222,11 @@ fn enter_math_after_paragraph(
     input: &mut InputStack,
     stores: &mut Universe,
     execution: &mut crate::ExecutionContext<'_>,
-    paragraph: Option<assignments::ParagraphBreakResult>,
+    paragraph: Option<legacy_assignments::ParagraphBreakResult>,
 ) -> Result<DispatchAction, ExecError> {
     let display = paragraph.is_some();
     let interrupt = paragraph.map(|paragraph| {
-        let dimensions = assignments::display_line_dimensions(nest, stores);
+        let dimensions = legacy_assignments::display_line_dimensions(nest, stores);
         let pre_display_size = paragraph
             .last_line
             .as_ref()
@@ -285,7 +286,7 @@ pub(crate) fn enter_display_after_reused_paragraph(
     last_line: Option<tex_state::node::BoxNode>,
     active_directions: Vec<tex_state::node::Direction>,
 ) -> Result<(), ExecError> {
-    let paragraph = assignments::ParagraphBreakResult {
+    let paragraph = legacy_assignments::ParagraphBreakResult {
         last_line,
         active_directions,
         finished_nodes: Vec::new(),
@@ -450,7 +451,7 @@ fn finish_math(
         content = stores.freeze_node_list(&[]);
     }
     let mut level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+        crate::legacy_assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     if display {
         let conversion_error_context = MathConversionErrorContext::new(
             crate::diagnostics::show_context(stores, &input.summary()),
@@ -546,7 +547,7 @@ fn finish_equation_number(
         content = stores.freeze_node_list(&[]);
     }
     let mut eq_level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+        crate::legacy_assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let mut eq_no = eq_level
         .list_mutation()
         .take_display_eq_no()
@@ -566,7 +567,7 @@ fn finish_equation_number(
         eq_no.display = stores.freeze_node_list(&[]);
     }
     let mut display_level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+        crate::legacy_assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let interrupt = display_level
         .list_mutation()
         .take_display_interrupt()
@@ -667,8 +668,10 @@ fn dispatch_math_control(
             name: stores.resolve(symbol).to_owned(),
             origin,
         }),
-        meaning if assignments::is_assignment_target_meaning(meaning) => {
-            assignments::execute_assignment_meaning(meaning, traced, input, stores, execution)
+        meaning if legacy_assignments::is_assignment_target_meaning(meaning) => {
+            legacy_assignments::execute_assignment_meaning(
+                meaning, traced, input, stores, execution,
+            )
         }
         Meaning::Font(id) => {
             stores.set_current_font_selector(symbol, id);
@@ -704,7 +707,7 @@ fn dispatch_math_primitive(
         }
         UnexpandablePrimitive::Indent | UnexpandablePrimitive::NoIndent => {
             if primitive == UnexpandablePrimitive::Indent {
-                let box_node = assignments::make_indent_box(stores);
+                let box_node = legacy_assignments::make_indent_box(stores);
                 let list = stores.freeze_node_list(&[box_node]);
                 append_noad(
                     nest,
@@ -738,7 +741,7 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Char => {
-            let value = assignments::scan_i32(input, stores, execution, traced)?;
+            let value = legacy_assignments::scan_i32(input, stores, execution, traced)?;
             let ch = u8::try_from(value)
                 .map(char::from)
                 .map_err(|_| ExecError::InvalidCode {
@@ -837,9 +840,9 @@ fn dispatch_math_primitive(
         | UnexpandablePrimitive::Copy
         | UnexpandablePrimitive::Raise
         | UnexpandablePrimitive::Lower => {
-            if let Some(node) =
-                assignments::scan_math_box(primitive, traced, nest, input, stores, execution)?
-            {
+            if let Some(node) = legacy_assignments::scan_math_box(
+                primitive, traced, nest, input, stores, execution,
+            )? {
                 let list = stores.freeze_node_list(&[node]);
                 append_noad(
                     nest,
@@ -854,7 +857,7 @@ fn dispatch_math_primitive(
         | UnexpandablePrimitive::UnHCopy
         | UnexpandablePrimitive::Leaders
         | UnexpandablePrimitive::CLeaders
-        | UnexpandablePrimitive::XLeaders => assignments::execute_unexpandable_with_context(
+        | UnexpandablePrimitive::XLeaders => legacy_assignments::execute_unexpandable_with_context(
             primitive, traced, nest, input, stores, execution,
         ),
         UnexpandablePrimitive::HSkip
@@ -863,9 +866,9 @@ fn dispatch_math_primitive(
         | UnexpandablePrimitive::HSs
         | UnexpandablePrimitive::HFilNeg => {
             let spec = if primitive == UnexpandablePrimitive::HSkip {
-                assignments::scan_glue_id(input, stores, execution, false, traced)?
+                legacy_assignments::scan_glue_id(input, stores, execution, false, traced)?
             } else {
-                let spec = assignments::fixed_infinite_glue(primitive);
+                let spec = legacy_assignments::fixed_infinite_glue(primitive);
                 stores.intern_glue(spec)
             };
             nest.current_list_mutation().push(Node::Glue {
@@ -876,7 +879,7 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::MSkip => {
-            let spec = assignments::scan_glue_id(input, stores, execution, true, traced)?;
+            let spec = legacy_assignments::scan_glue_id(input, stores, execution, true, traced)?;
             nest.current_list_mutation().push(Node::Glue {
                 spec,
                 kind: GlueKind::MuSkip,
@@ -893,7 +896,7 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Kern => {
-            let amount = assignments::scan_scaled(input, stores, execution, traced)?;
+            let amount = legacy_assignments::scan_scaled(input, stores, execution, traced)?;
             nest.current_list_mutation().push(Node::Kern {
                 amount,
                 kind: KernKind::Explicit,
@@ -913,7 +916,8 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::VRule => {
-            let rule = assignments::scan_rule_node(input, stores, execution, primitive, traced)?;
+            let rule =
+                legacy_assignments::scan_rule_node(input, stores, execution, primitive, traced)?;
             nest.current_list_mutation().push(rule);
             Ok(DispatchAction::Continue)
         }
@@ -927,7 +931,7 @@ fn dispatch_math_primitive(
             Ok(DispatchAction::Continue)
         }
         UnexpandablePrimitive::Penalty => {
-            let penalty = assignments::scan_i32(input, stores, execution, traced)?;
+            let penalty = legacy_assignments::scan_i32(input, stores, execution, traced)?;
             nest.current_list_mutation().push(Node::Penalty(penalty));
             Ok(DispatchAction::Continue)
         }
@@ -978,8 +982,8 @@ fn dispatch_math_primitive(
                 .push(Node::MathStyle(style_for_primitive(primitive)));
             Ok(DispatchAction::Continue)
         }
-        primitive if assignments::math_allows_mode_independent_primitive(primitive) => {
-            assignments::execute_unexpandable_with_context(
+        primitive if legacy_assignments::math_allows_mode_independent_primitive(primitive) => {
+            legacy_assignments::execute_unexpandable_with_context(
                 primitive, traced, nest, input, stores, execution,
             )
         }
@@ -1030,7 +1034,7 @@ fn finish_display_halign(
         let _ = nest.current_list_mutation().take_display_eq_no();
     }
     let mut level =
-        crate::assignments::commit_current_list(nest, stores, execution.command_fuel())?;
+        crate::legacy_assignments::commit_current_list(nest, stores, execution.command_fuel())?;
     let interrupt = level.list_mutation().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
@@ -1126,7 +1130,7 @@ fn finish_display_alignment_assignments(
             // §1241 scans the register and optional equals before consulting
             // `set_box_allowed`; only the box command and its body remain input.
             let context = *command.last().expect("setbox command token");
-            let _ = assignments::scan_setbox_target(input, stores, execution, context)?;
+            let _ = legacy_assignments::scan_setbox_target(input, stores, execution, context)?;
             // §1241's `set_box` guard on `set_box_allowed`.
             crate::error_report::report_input_error(
                 input,
@@ -1144,7 +1148,7 @@ fn finish_display_alignment_assignments(
         if !command.is_empty() {
             push_traced_tokens(input, stores, command);
         }
-        if !assignments::try_execute_assignment(first, input, stores, execution)? {
+        if !legacy_assignments::try_execute_assignment(first, input, stores, execution)? {
             push_traced_tokens(input, stores, [first]);
             return Ok(());
         }

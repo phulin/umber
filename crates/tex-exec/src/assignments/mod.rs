@@ -32,16 +32,17 @@ use crate::{
 };
 use crate::{Mode, ModeNest};
 
-mod arithmetic;
 mod boxes;
 pub(super) mod fonts;
 mod hmode;
 mod hyphenation;
-mod macros;
+mod legacy_arithmetic;
+mod legacy_macros;
+mod legacy_scan;
+mod legacy_variables;
 mod paragraph;
 mod pdf_actions;
 mod pdf_fonts;
-mod scanning;
 mod shipout;
 #[cfg(test)]
 pub(crate) use hmode::test_fix_hyphen_language;
@@ -52,7 +53,6 @@ pub(crate) use paragraph::test_discretionary_diagnostics_differ;
 #[cfg(test)]
 pub(crate) use shipout::test_stage_shipout_artifact;
 mod tokens;
-mod variables;
 
 /// Resumes TeX82 §§530 and 1373--1375 after an authoritative output-open
 /// failure retained the failed effect and its following suffix.
@@ -69,11 +69,6 @@ mod tests;
 pub(crate) use crate::canonical_assignments::math_allows_mode_independent_primitive;
 use crate::canonical_assignments::tracing;
 use crate::canonical_assignments::*;
-pub use crate::canonical_assignments::{
-    install_etex_unexpandable_primitives, install_unexpandable_primitives,
-    register_etex_unexpandable_primitives, register_unexpandable_primitives,
-};
-use arithmetic::*;
 pub(crate) use boxes::append_box_node_to_current_list;
 pub(crate) use boxes::execute_delete_last;
 pub(crate) use boxes::execute_scanned_saved_vertical_discards;
@@ -111,7 +106,14 @@ pub(crate) use hyphenation::test_physical_post_break_span;
 pub(crate) use hyphenation::test_physical_pre_break_projection;
 use hyphenation::*;
 pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
-use macros::*;
+use legacy_arithmetic::*;
+use legacy_macros::*;
+use legacy_scan::*;
+pub(crate) use legacy_scan::{
+    is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,
+    scan_i32, scan_optional_keyword_x, scan_scaled,
+};
+use legacy_variables::*;
 #[cfg(test)]
 pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
 #[cfg(test)]
@@ -133,11 +135,6 @@ pub(crate) use paragraph::{
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
 pub(crate) use pdf_fonts::{GlyphToUnicodeParse, parse_glyph_to_unicode};
-use scanning::*;
-pub(crate) use scanning::{
-    is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,
-    scan_i32, scan_optional_keyword_x, scan_scaled,
-};
 use shipout::*;
 pub(crate) use shipout::{
     ReplayTextKind, ShipoutOrigin, shipout_node, shipout_node_with_input_summary, stage_pdf_form,
@@ -146,7 +143,6 @@ use tokens::*;
 pub(crate) use tokens::{
     active_character_symbol, has_catcode_meaning, is_begin_group, is_end_group, is_space,
 };
-use variables::*;
 
 /// Executes a delivered token if it is an assignment/prefix primitive.
 pub fn try_execute_assignment(

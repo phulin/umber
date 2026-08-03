@@ -788,7 +788,7 @@ fn retry_openout_target(
     name: String,
     context: &str,
 ) -> Result<String, ExecError> {
-    let mut path = super::super::super::variables::openout_target(name);
+    let mut path = super::super::super::legacy_variables::openout_target(name);
     while stores.world().retained_output_open_outcome(&path)
         == tex_state::RetainedOutputOpenOutcome::Unavailable
     {
@@ -839,7 +839,7 @@ pub(super) fn scan_terminal_output_name(line: &str) -> String {
     if name.is_empty() {
         return ".tex".to_owned();
     }
-    super::super::super::variables::openout_target(name)
+    super::super::super::legacy_variables::openout_target(name)
 }
 
 fn validate_pdf_matrix(payload: &[u8]) -> Result<(), ExecError> {

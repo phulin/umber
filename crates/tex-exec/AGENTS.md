@@ -19,7 +19,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 
 - `AGENTS.md`: crate-specific guidance and file ownership map for future agents.
 - `Cargo.toml`: crate manifest declaring execution-layer dependencies and workspace lints.
-- `src/assignments/arithmetic.rs`: checked arithmetic helpers for `\advance`, `\multiply`, and `\divide`.
+- `src/assignments/legacy_arithmetic.rs`: retired expansion-driven arithmetic
+  operand scanning plus checked arithmetic helpers for `\advance`, `\multiply`,
+  and `\divide`.
 - `src/canonical_assignments/`: source-free canonical assignment identity,
   primitive registration/naming, admissibility, typed variable writes, and
   tracing.
@@ -30,12 +32,14 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/hmode.rs`: horizontal-mode character, glue, kern, discretionary, and ligature handling.
 - `src/assignments/hmode/tests.rs`: focused text-accent scanner recovery and traced-token replay tests.
 - `src/assignments/hyphenation.rs`: installation of the words `\patterns` and `\hyphenation` scanned (the scan itself is `tex-command`'s §934/§960 scanner), the retired `InputStack` scanner, and paragraph hyphenation.
-- `src/assignments/macros.rs`: macro-definition primitives plus `\aftergroup` and `\afterassignment`.
+- `src/assignments/legacy_macros.rs`: retired macro-definition scanner plus
+  `\aftergroup` and `\afterassignment` execution fronts.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
 - `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan experiment.
 - `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
-- `src/assignments/scanning.rs`: assignment classification and operand scanners for variables and definitions.
+- `src/assignments/legacy_scan.rs`: retired assignment classification and
+  expansion-driven operand scanners for variables and definitions.
 - `src/assignments/shipout.rs`: `\shipout` transaction, commit, publication orchestration, and finalized effect-free artifact reuse; deferred and host-effect paths remain explicit barriers.
 - `src/assignments/shipout/tests.rs`: direct TeX82 huge-page dimension-boundary, deletion-path, and maximum-legal-page tests.
 - `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI
@@ -49,8 +53,13 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
 - `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.
 - `src/canonical_diagnostics.rs`: source-free canonical error reporting, `\show` rendering, activity/page diagnostics, token rendering, and diagnostic sink policy; it has no legacy scanner or executor dependency.
-- `src/assignments/variables.rs`: register, parameter, font variable, and stream assignment routing.
-- `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
+- `src/assignments/legacy_variables.rs`: retired register, parameter, font
+  variable, and stream assignment scanner routing.
+- `src/assignments/legacy_variables/streams.rs`: retired `\openin`, `\read`,
+  `\openout`, `\write`, and stream whatsit execution fronts.
+- `src/legacy_assignments.rs`: explicit retired assignment facade used only by
+  legacy Executor, dispatch, output, and math fronts; canonical command control
+  must not call it.
 - `src/checkpoint.rs`: executor-owned named boundary sessions plus opaque aggregate checkpoint restore over `Universe`, live input, and the rooted mode nest.
 - `src/align/`: alignment machinery split between canonical and retired fronts. `canonical_execution.rs`, `packaging.rs`, `support.rs`, `transitions.rs`, and `widths/` are source-free completion, unset-node, state-access, lifecycle, and width-resolution owners. `legacy_front.rs` owns the retired aggregate InputStack transaction; `legacy_execution.rs`, `preamble.rs`, `template.rs`, and `noalign.rs` own Executor row/cell execution and scanning. Focused tests remain under the corresponding historical `execution/`, `preamble/`, `widths/`, and `noalign/` test directories.
 - `src/dispatch.rs`: source-free canonical dispatch result, execution statistics, and prepared-page contract shared by canonical command control and the compatibility front.
