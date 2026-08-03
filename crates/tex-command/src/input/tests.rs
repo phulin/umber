@@ -78,6 +78,36 @@ fn source_context_pseudoprints_synthetic_endline_on_the_live_cursor_side() {
 }
 
 #[test]
+fn source_context_prints_physical_characters_through_live_newlinechar() {
+    // TeX82 §§59/313: source pseudoprint calls `print(buffer[k])`; it does
+    // not copy the physical line directly to the diagnostic sink.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"leftYright".as_slice(),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    command
+        .prepare_started_input(13)
+        .expect("opening line is acquired");
+    let InputLevel::Source(level) = command.input.levels.last_mut().expect("source level") else {
+        panic!("source level expected");
+    };
+    level.cursor.line.as_mut().expect("loaded line").byte_cursor = 5;
+
+    let context =
+        InputState::source_context_level(level, true, None, Some('Y')).expect("source context");
+    assert_eq!(
+        render_error_context(&[context], ErrorContextWidths::default(), 5),
+        "\nl.1 left\n\n         right^^M"
+    );
+}
+
+#[test]
 fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     // TeX82 §§354/390: `get_next` returns `frozen_end_template` when the
     // v-template's stored list is exhausted. Although `loc=null`, §315 shows

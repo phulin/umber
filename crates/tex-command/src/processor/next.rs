@@ -2655,7 +2655,7 @@ mod tests {
             ]
         );
         assert!(
-            context.contains("\x7f"),
+            context.contains("^^?"),
             "the report captures the consumed invalid character's source context: {context:?}"
         );
         assert!(

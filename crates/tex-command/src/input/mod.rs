@@ -219,6 +219,18 @@ impl InputState {
     ) -> Option<tex_state::print::ErrorContextLevel> {
         use crate::input::SourceNameClass;
 
+        fn print_source_text(text: &str, newlinechar: Option<char>) -> String {
+            let mut rendered = String::new();
+            for character in text.chars() {
+                if Some(character) == newlinechar {
+                    rendered.push('\n');
+                } else {
+                    tex_state::token_show::append_tex_print_char(character, &mut rendered);
+                }
+            }
+            rendered
+        }
+
         let line = source.cursor.line.as_ref()?;
         let bytes = &source.cursor.current_backing().bytes;
         let start = line.physical.content_range().start();
@@ -244,8 +256,13 @@ impl InputState {
                 format!("l.{} ", line.physical.number())
             }
         };
-        let mut before = String::from_utf8_lossy(&bytes[start..cursor]).into_owned();
-        let mut after = String::from_utf8_lossy(&bytes[cursor..end]).into_owned();
+        // §313 pseudoprints each buffer character through §59's `print`, so
+        // both the live `new_line_char` and TeX's printable character-string
+        // spelling apply to physical source text just as they do to tokens.
+        let mut before =
+            print_source_text(&String::from_utf8_lossy(&bytes[start..cursor]), newlinechar);
+        let mut after =
+            print_source_text(&String::from_utf8_lossy(&bytes[cursor..end]), newlinechar);
         if let Some(endline) = line.endline {
             let character = if endline.is_byte() {
                 char::from(endline.to_byte().ok()?)
