@@ -20,7 +20,7 @@
 //! Every site therefore calls one of the entry points here. Adding a new
 //! error message means adding a `report_*` call, never a `write_text`.
 
-use tex_expand::{back_error_input, insert_input};
+use tex_expand::back_error_input;
 use tex_lex::InputStack;
 use tex_state::token::TracedTokenWord;
 use tex_state::{ExpansionContext, Universe};
@@ -110,5 +110,5 @@ pub(crate) fn insert_tokens<I>(input: &mut InputStack, stores: &mut Universe, to
 where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    insert_input(input, &mut ExpansionContext::new(stores), tokens);
+    crate::insert_traced_tokens(input, stores, tokens);
 }

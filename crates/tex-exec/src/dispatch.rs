@@ -561,11 +561,17 @@ where
     tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
 }
 
-pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
+pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    tex_expand::insert_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
+    let mut traced = input.take_transient_token_buffer();
+    traced.extend(tokens);
+    if traced.is_empty() {
+        input.recycle_transient_token_buffer(traced);
+        return;
+    }
+    input.push_transient_tokens(traced, tex_state::TokenListReplayKind::Inserted);
 }
 
 pub(crate) fn unimplemented_typesetting(
