@@ -518,6 +518,29 @@ mod tests {
     }
 
     #[test]
+    fn vbox_uses_signed_local_box_max_depth_saved_before_group_restore() {
+        // TeX82 §§668/1086: `package` saves `box_max_depth` before
+        // `unsave`, and `vpackage` may therefore assign a negative depth to
+        // the new box. The positive and zero boxes guard ordinary paths.
+        let mut stores = pdftex_oracle_stores();
+        prepare_pdftex_run_stores(&mut stores);
+        let output = run_pdf_memory(
+            "\\tracingonline=1\\showboxbreadth=10\\showboxdepth=10\
+             \\boxmaxdepth=100pt\
+             \\setbox0=\\vbox to10pt{\\boxmaxdepth=-1pt\\mark{negative}}\
+             \\setbox1=\\vbox{\\boxmaxdepth=3pt\\hbox{\\vrule height10pt depth8pt}}\
+             \\setbox2=\\vbox{}\\showbox0\\showbox1\\showbox2\\end",
+            &mut stores,
+        )
+        .expect("signed local boxmaxdepth run");
+        let output = complete_memory_terminal(&output, &stores);
+
+        assert!(output.contains("\\vbox(10.0+-1.0)x0.0"), "{output}");
+        assert!(output.contains("\\vbox(15.0+3.0)x0.4"), "{output}");
+        assert!(output.contains("\\vbox(0.0+0.0)x0.0"), "{output}");
+    }
+
+    #[test]
     fn source_derived_inventory_is_the_exact_pinned_158_name_set() {
         let document = include_str!("../../../docs/pdftex_primitives.md");
         let table = document
