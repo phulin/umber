@@ -951,6 +951,27 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
+    /// Pushes TeX82 §327's synthesized `ins_error` token above any
+    /// ordinary input that the caller has already backed up.
+    ///
+    /// `ins_error` is not merely a diagnostic annotation: it runs
+    /// `back_input`, then changes that new level's `token_type` to `inserted`
+    /// before §82 calls `show_context`. Keeping this as a distinct live level
+    /// is what gives the recovery token its `<inserted text>` context while an
+    /// enclosing §325 backup remains `<to be read again>`.
+    pub(crate) fn push_inserted_error_token(&mut self, token: Token) {
+        let level = self.command.push_token_level(
+            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
+                token,
+                OriginId::UNKNOWN,
+            )])),
+            TokenBehavior::Recovery,
+            RetirementBehavior::Pop,
+            ReplayTrace::Inserted,
+        );
+        self.observe_inserted_token_recovery(level, token);
+    }
+
     /// Starts TeX82 §1025's already-selected output token list.
     ///
     /// Page selection and `\box255` packing belong to the stomach (§1012's

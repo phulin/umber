@@ -1040,38 +1040,44 @@ impl CommandProcessor<'_> {
     /// the inaccessible target. The rejected delivery is backed up, so the
     /// caller's following operand scan still owns it.
     fn scan_definition_target(&mut self) -> Result<tex_state::interner::Symbol, CommandError> {
-        let command = match self.next_non_space_raw()? {
-            Some(command) => command,
-            None => self
-                .next_non_space_raw()?
-                .ok_or(CommandError::input_invariant())?,
-        };
-        if let Some(target) = command.control_sequence() {
-            return Ok(target);
-        }
+        loop {
+            let command = match self.next_non_space_raw()? {
+                Some(command) => command,
+                None => self
+                    .next_non_space_raw()?
+                    .ok_or(CommandError::input_invariant())?,
+            };
+            if let Some(target) = command.control_sequence() {
+                return Ok(target);
+            }
 
-        // §1215 backs up an ordinary non-control token (`cur_cs=0`), while
-        // an already-frozen control token is consumed before the inaccessible
-        // sentinel is inserted.
-        if !matches!(
-            command.spelling().semantic_token(),
-            tex_state::token::Token::Frozen(_)
-        ) {
-            self.back_input(command)?;
+            // §1215 backs up an ordinary non-control token (`cur_cs=0`),
+            // while an already-frozen control token is consumed before the
+            // inaccessible sentinel is inserted.
+            if !matches!(
+                command.spelling().semantic_token(),
+                tex_state::token::Token::Frozen(_)
+            ) {
+                self.back_input(command)?;
+            }
+            let inaccessible = Token::Cs(self.state.intern_control_sequence("inaccessible"));
+            // §1215's `ins_error` is §327: the synthesized token is a live
+            // `inserted` level during §82's report, and `goto restart` then
+            // consumes that same level as the definition target.
+            self.push_inserted_error_token(inaccessible);
+            let context = self.command.output_open_context(&self.state);
+            let mut report = self.state.print_err("Missing control sequence inserted");
+            report
+                .help(&[
+                    "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
+                    "I've inserted an inaccessible control sequence so that your",
+                    "definition will be completed without mixing me up too badly.",
+                    "You can recover graciously from this error, if you're",
+                    "careful; see exercise 27.2 in The TeXbook.",
+                ])
+                .context(context);
+            report.error().jump_out()?;
         }
-        let context = self.command.output_open_context(&self.state);
-        let mut report = self.state.print_err("Missing control sequence inserted");
-        report
-            .help(&[
-                "Please don't say `\\def cs{...}', say `\\def\\cs{...}'.",
-                "I've inserted an inaccessible control sequence so that your",
-                "definition will be completed without mixing me up too badly.",
-                "You can recover graciously from this error, if you're",
-                "careful; see exercise 27.2 in The TeXbook.",
-            ])
-            .context(context);
-        report.error().jump_out()?;
-        Ok(self.state.intern_control_sequence("inaccessible"))
     }
 
     /// Scans TeX82 §1224's complete `\\chardef` or `\\mathchardef` operand.

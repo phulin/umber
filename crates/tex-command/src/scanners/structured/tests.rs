@@ -273,6 +273,64 @@ fn frozen_control_target_becomes_inaccessible_without_consuming_following_input(
     assert!(diagnostic_text(&universe).contains("Missing control sequence inserted"));
 }
 
+#[test]
+fn inaccessible_recovery_is_inserted_above_the_ordinary_backup() {
+    // TeX82 §§1215, 314: `get_r_token` backs up the rejected character,
+    // then `ins_error` makes the synthesized control sequence an `inserted`
+    // level before `show_context` runs.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
+    let mut capabilities = CommandHostCapabilities::default();
+    push(&mut command, text_tokens("x=65"));
+
+    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
+        .expect("character definition recovers");
+
+    assert_eq!(universe.resolve(definition.target), "inaccessible");
+    let diagnostics = diagnostic_text(&universe);
+    let expected_context = "\n<inserted text> \n                \\inaccessible \
+\n<to be read again> \n                   x\
+\n<to be read again> x\n                    =65";
+    assert!(diagnostics.contains(expected_context), "{diagnostics:?}");
+}
+
+#[test]
+fn ordinary_error_backup_remains_to_be_read_again() {
+    // TeX82 §§325, 314: a normal `back_input` used by number recovery is not
+    // retyped as §327's inserted input.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let target = universe.intern("ordinary").symbol();
+    push(
+        &mut command,
+        [
+            Token::Cs(target),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+
+    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
+        .expect("missing number recovers");
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains(
+            "! Missing number, treated as zero.\n<to be read again> \n                   x"
+        ),
+        "{diagnostics:?}"
+    );
+    assert!(!diagnostics.contains("<inserted text>"), "{diagnostics:?}");
+}
+
 /// TeX82 §1224 spells `\chardef`'s value scan as §434's `scan_char_num` and
 /// `\mathchardef`'s as §436's `scan_fifteen_bit_int`, so an out-of-range
 /// operand is already `cur_val=0` when the assignment reads it.
