@@ -9,7 +9,7 @@ use tex_command::{
 };
 use tex_oracle::{
     CanonicalValue, EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason,
-    InputTransition, Normalizer, ObservationStream, Tex82ObserverProfile,
+    InputTransition, Normalizer, ObservationStream, SchemaVersion, Tex82ObserverProfile,
 };
 
 /// Collects only the stable full-document events admitted by the TRIP
@@ -106,7 +106,7 @@ impl CommandObserver for TripProfileObserver {
     }
 }
 
-/// Identity-separated schema-v2 geometry projection for full TRIP runs.
+/// Identity-separated geometry projection for full TRIP runs.
 #[derive(Default)]
 pub struct TripGeometryObserver {
     events: Vec<Event>,
@@ -124,8 +124,9 @@ impl TripGeometryObserver {
         }
         let oracle = ObservationStream::from_canonical_json_lines(oracle)
             .context("pinned TRIP geometry oracle stream is invalid")?;
-        if oracle.header.schema != 2 {
-            bail!("pinned TRIP geometry oracle must use schema-v2");
+        let schema = SchemaVersion::try_from(oracle.header.schema).map_err(anyhow::Error::msg)?;
+        if schema < SchemaVersion::V2 {
+            bail!("pinned TRIP geometry oracle must use a geometry schema");
         }
         let mut bytes = serde_json::to_vec(&oracle.header)?;
         bytes.push(b'\n');
@@ -199,7 +200,7 @@ impl CommandObserver for TripGeometryObserver {
     }
 }
 
-/// Captures the schema-v1 command profile and schema-v2 geometry profile from
+/// Captures the schema-v1 command profile and an identity-separated geometry profile from
 /// one production execution while retaining separate stream identities.
 #[derive(Default)]
 pub struct TripObservers {

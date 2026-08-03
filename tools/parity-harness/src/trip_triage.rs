@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use test_support::dvi::normalized_dvi_for_comparison;
 use tex_oracle::{
     CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, MutationEvent,
-    NormalizedEvent, ObservationStream, StateTarget,
+    NormalizedEvent, ObservationStream, SchemaVersion, StateTarget,
 };
 
 const ARTIFACT_NAME: &str = "trip-triage-v1.txt";
@@ -40,7 +40,7 @@ pub struct TripTriageChannels<'a> {
     pub initialization_events: Option<&'a [u8]>,
     /// Canonical schema-v1 JSONL. `None` is itself a meaningful mismatch.
     pub command_events: Option<&'a [u8]>,
-    /// Canonical schema-v2 geometry JSONL, kept identity-separate from v1.
+    /// Canonical schema-v2 or schema-v3 geometry JSONL, kept identity-separate from v1.
     pub geometry_events: Option<&'a [u8]>,
     pub transcript: &'a [u8],
     pub log: &'a [u8],
@@ -314,11 +314,29 @@ fn event_divergence(
                 .context("expected TRIP command-event stream is not canonical schema-v1 JSONL")?;
             let actual = ObservationStream::from_canonical_json_lines(actual)
                 .context("actual TRIP command-event stream is not canonical schema-v1 JSONL")?;
-            let expected_schema = if channel == "command_events" { 1 } else { 2 };
-            if expected.header.schema != expected_schema || actual.header.schema != expected_schema
-            {
+            let expected_schema =
+                SchemaVersion::try_from(expected.header.schema).map_err(anyhow::Error::msg)?;
+            let actual_schema =
+                SchemaVersion::try_from(actual.header.schema).map_err(anyhow::Error::msg)?;
+            match channel {
+                "command_events"
+                    if expected_schema != SchemaVersion::V1
+                        || actual_schema != SchemaVersion::V1 =>
+                {
+                    anyhow::bail!("command_events must use canonical schema-v1 on both sides");
+                }
+                "geometry_events"
+                    if expected_schema < SchemaVersion::V2 || actual_schema < SchemaVersion::V2 =>
+                {
+                    anyhow::bail!("geometry_events require a canonical geometry schema");
+                }
+                _ => {}
+            }
+            if expected_schema != actual_schema {
                 anyhow::bail!(
-                    "{channel} must use canonical schema-v{expected_schema} on both sides"
+                    "{channel} schema mismatch: expected v{}, actual v{}",
+                    expected_schema.number(),
+                    actual_schema.number()
                 );
             }
             if expected.header != actual.header {
@@ -1052,6 +1070,14 @@ mod tests {
     }
 
     fn geometry_events(count0: i32) -> Vec<u8> {
+        geometry_events_for_schema(count0, SchemaVersion::V2, None)
+    }
+
+    fn geometry_events_for_schema(
+        count0: i32,
+        schema: SchemaVersion,
+        location: Option<tex_oracle::GeometryLocation>,
+    ) -> Vec<u8> {
         let mut normalizer = Normalizer::new();
         let mut counts = [0; 10];
         counts[0] = count0;
@@ -1059,10 +1085,14 @@ mod tests {
             page_width_sp: 10,
             page_height_sp: 20,
             counts,
-            location: None,
+            location,
         });
-        let mut out =
-            format!("{{\"schema\":2,\"manifest\":\"{}\"}}\n", "b".repeat(64)).into_bytes();
+        let mut out = format!(
+            "{{\"schema\":{},\"manifest\":\"{}\"}}\n",
+            schema.number(),
+            "b".repeat(64)
+        )
+        .into_bytes();
         out.extend_from_slice(&serde_json::to_vec(&normalizer.normalize(event)).expect("event"));
         out.push(b'\n');
         out
@@ -2034,6 +2064,120 @@ mod tests {
         assert!(
             report.contains("earliest.channel: geometry_events"),
             "{report}"
+        );
+    }
+
+    #[test]
+    fn schema_three_geometry_writes_and_preserves_source_locations() {
+        let temp = tempfile::tempdir().expect("temp");
+        let command = events(1);
+        let dvi = dvi(b"ref", &[140]);
+        let expected = geometry_events_for_schema(
+            117,
+            SchemaVersion::V3,
+            Some(tex_oracle::GeometryLocation {
+                source: "trip.tex".into(),
+                line: 105,
+            }),
+        );
+        let actual = geometry_events_for_schema(
+            118,
+            SchemaVersion::V3,
+            Some(tex_oracle::GeometryLocation {
+                source: "trip.tex".into(),
+                line: 106,
+            }),
+        );
+        let base = TripTriageChannels {
+            initialization_events: None,
+            command_events: Some(&command),
+            geometry_events: Some(&expected),
+            transcript: b"same",
+            log: b"same",
+            dvi: Some(&dvi),
+        };
+        let verdict = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                base,
+                TripTriageChannels {
+                    geometry_events: Some(&actual),
+                    ..base
+                },
+            ),
+        )
+        .expect("schema-v3 geometry comparison writes");
+        assert!(verdict.advisory_geometry_mismatch);
+        let report = fs::read_to_string(verdict.expect("schema-v3 report")).expect("report");
+        assert!(
+            report.contains("\"source\":\"trip.tex\",\"line\":105"),
+            "{report}"
+        );
+        assert!(
+            report.contains("\"source\":\"trip.tex\",\"line\":106"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn schema_two_geometry_remains_compatible() {
+        let temp = tempfile::tempdir().expect("temp");
+        let command = events(1);
+        let geometry = geometry_events(117);
+        let dvi = dvi(b"ref", &[140]);
+        let channels = TripTriageChannels {
+            initialization_events: None,
+            command_events: Some(&command),
+            geometry_events: Some(&geometry),
+            transcript: b"same",
+            log: b"same",
+            dvi: Some(&dvi),
+        };
+
+        assert!(
+            write_trip_triage_artifact(temp.path(), input(channels, channels))
+                .expect("schema-v2 comparison")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn geometry_schema_mismatch_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp");
+        let command = events(1);
+        let v2 = geometry_events_for_schema(117, SchemaVersion::V2, None);
+        let v3 = geometry_events_for_schema(
+            117,
+            SchemaVersion::V3,
+            Some(tex_oracle::GeometryLocation {
+                source: "trip.tex".into(),
+                line: 105,
+            }),
+        );
+        let dvi = dvi(b"ref", &[140]);
+        let base = TripTriageChannels {
+            initialization_events: None,
+            command_events: Some(&command),
+            geometry_events: Some(&v2),
+            transcript: b"same",
+            log: b"same",
+            dvi: Some(&dvi),
+        };
+        let error = write_trip_triage_artifact(
+            temp.path(),
+            input(
+                base,
+                TripTriageChannels {
+                    geometry_events: Some(&v3),
+                    ..base
+                },
+            ),
+        )
+        .expect_err("schema mismatch must fail");
+
+        assert!(
+            error.to_string().contains("expected v2, actual v3"),
+            "{error:#}"
         );
     }
 }
