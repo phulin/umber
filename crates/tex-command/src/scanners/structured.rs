@@ -3194,11 +3194,21 @@ impl CommandProcessor<'_> {
             .alignment
             .set_preamble_phase(alignment)
             .map_err(|_| CommandError::input_invariant())?;
+        let builder = TokenBuilderId(self.command.transient.next_builder_identity);
+        self.command.transient.next_builder_identity =
+            self.command.transient.next_builder_identity.wrapping_add(1);
+        self.command
+            .transient
+            .builders
+            .push(crate::state::LiveTokenBuilder {
+                identity: builder.0,
+                tokens: Vec::new(),
+            });
         let _prior =
             self.command
                 .begin_scanner_status(ScannerStatus::Aligning(AlignmentScanContext {
                     alignment: AlignmentId(alignment.raw()),
-                    builder: TokenBuilderId(0),
+                    builder,
                     owner,
                     warning: ScannerWarning(0),
                 }));
@@ -3313,6 +3323,14 @@ impl CommandProcessor<'_> {
                 {
                     // TeX82 §760 eliminates only leading u-template spaces.
                     u_template.push(command.spelling());
+                    self.command
+                        .transient
+                        .builders
+                        .iter_mut()
+                        .find(|live| live.identity == builder.0)
+                        .ok_or(CommandError::input_invariant())?
+                        .tokens
+                        .push(command.spelling());
                 }
             }
 
@@ -3384,6 +3402,14 @@ impl CommandProcessor<'_> {
                     continue;
                 }
                 v_template.push(command.spelling());
+                self.command
+                    .transient
+                    .builders
+                    .iter_mut()
+                    .find(|live| live.identity == builder.0)
+                    .ok_or(CommandError::input_invariant())?
+                    .tokens
+                    .push(command.spelling());
             };
             columns.push(AlignmentCellTemplates {
                 // `init_col` installs a u-template even when its token list
@@ -3427,6 +3453,10 @@ impl CommandProcessor<'_> {
             prior.status().clone(),
             self.command.scanner.status().clone(),
         );
+        self.command
+            .transient
+            .builders
+            .retain(|live| live.identity != builder.0);
         Ok(())
     }
 

@@ -2168,7 +2168,27 @@ impl CommandProcessor<'_> {
                             ScannerStatus::Absorbing(_) => "Runaway text?",
                             ScannerStatus::Normal | ScannerStatus::Skipping(_) => unreachable!(),
                         },
-                        partial: String::new(),
+                        partial: match &status {
+                            ScannerStatus::Aligning(context) => self
+                                .command
+                                .transient
+                                .builders
+                                .iter()
+                                .find(|builder| builder.identity == context.builder.0)
+                                .map_or_else(String::new, |builder| {
+                                    builder
+                                        .tokens
+                                        .iter()
+                                        .fold(String::new(), |mut text, token| {
+                                            text.push_str(&super::expand::token_list_token_text(
+                                                &self.state,
+                                                token.semantic_token(),
+                                            ));
+                                            text
+                                        })
+                                }),
+                            _ => String::new(),
+                        },
                     }),
                     message: format!("{opening} while scanning {kind} of {name}"),
                     help: &[
@@ -4646,6 +4666,19 @@ mod tests {
         let mut recorder = Recorder::default();
 
         command.begin_alignment(crate::AlignmentIdentity::new(4));
+        command
+            .transient
+            .builders
+            .push(crate::state::LiveTokenBuilder {
+                identity: 5,
+                tokens: vec![TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '{',
+                        cat: Catcode::BeginGroup,
+                    },
+                    OriginId::UNKNOWN,
+                )],
+            });
         command.with_scanner_status(
             ScannerStatus::Aligning(AlignmentScanContext {
                 alignment: AlignmentId(4),
@@ -4705,6 +4738,17 @@ mod tests {
             outer_validity < frozen_cr_recovery,
             "TeX82 §23 observes outer-validity recovery before frozen \\cr insertion"
         );
+        let diagnostics = command.take_semantic_diagnostics();
+        let [
+            crate::CommandSemanticDiagnostic::Recoverable {
+                runaway: Some(runaway),
+                ..
+            },
+        ] = diagnostics.as_slice()
+        else {
+            panic!("one alignment runaway diagnostic: {diagnostics:?}");
+        };
+        assert_eq!(runaway.partial, "{");
     }
 
     #[test]

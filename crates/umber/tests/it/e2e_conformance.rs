@@ -2377,6 +2377,19 @@ fn trip_loaded_nested_ifcase_operand_preserves_skip_nesting() {
 }
 
 #[test]
+fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
+    // TeX82 §§338--339 prints the already collected preamble token list
+    // before `print_err` opens the forbidden-control diagnostic.
+    let log = run_focused_loaded_trip_through(363);
+    assert!(
+        log.contains(
+            "Runaway preamble?\n{\n! Forbidden control sequence found while scanning preamble"
+        ),
+        "{log}"
+    );
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

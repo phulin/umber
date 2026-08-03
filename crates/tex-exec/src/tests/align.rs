@@ -2442,6 +2442,12 @@ fn outer_macro_in_skipped_span_expansion_recovers_runaway_preamble() {
     // control sequence rather than as an exhausted file.
     let output = support::terminal_effect_text_unbroken(&stores);
     assert!(
+        output.contains(
+            "Runaway preamble?\n{\n! Forbidden control sequence found while scanning preamble"
+        ),
+        "{output}"
+    );
+    assert!(
         output.contains("Forbidden control sequence found while scanning preamble of \\halign."),
         "{output}"
     );
