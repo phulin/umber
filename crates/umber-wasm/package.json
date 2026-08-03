@@ -34,6 +34,10 @@
 			"types": "./html-preview.d.ts",
 			"import": "./html-preview.js"
 		},
+		"./html-patch": {
+			"types": "./html-patch.d.ts",
+			"import": "./html-patch.js"
+		},
 		"./source-map": {
 			"types": "./source-map.d.ts",
 			"import": "./source-map.js"
