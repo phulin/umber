@@ -1000,14 +1000,12 @@ fn dump_unset(
     depth: i32,
     out: &mut String,
 ) {
-    let name = match unset.kind {
-        UnsetKind::HBox => "unsetbox",
-        UnsetKind::VBox => "unsetvbox",
-    };
+    // TeX82 §§183--185 dispatch on the single `unset_node` type and always
+    // print `\unsetbox`. Umber retains the former packing direction in
+    // `kind` for measurement and recursive list context, not as a subtype.
     let _ = write!(
         out,
-        "\\{}({}+{})x{}",
-        name,
+        "\\unsetbox({}+{})x{}",
         format_scaled_without_unit(unset.height),
         format_scaled_without_unit(unset.depth),
         format_scaled_without_unit(unset.width)
@@ -1223,5 +1221,42 @@ impl GlueKindDump for GlueKind {
         // `print_spec`. The zero glue specification is only a sentinel here;
         // ordinary zero glue still prints as `0.0`.
         self != Self::NonScript
+    }
+}
+
+#[cfg(test)]
+mod unset_diagnostic_tests {
+    use super::*;
+    use tex_state::node::UnsetNodeFields;
+
+    #[test]
+    fn vertical_unset_node_uses_tex82_unsetbox_name() {
+        let mut stores = Universe::new();
+        let children = stores.freeze_node_list(&[]);
+        let unset = Node::Unset(UnsetNode::new(UnsetNodeFields {
+            kind: UnsetKind::VBox,
+            width: Scaled::from_raw(0),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            span_count: 0,
+            stretch: Scaled::from_raw(0),
+            stretch_order: Order::Normal,
+            shrink: Scaled::from_raw(0),
+            shrink_order: Order::Normal,
+            children,
+        }));
+
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &[unset],
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "\\unsetbox(0.0+0.0)x0.0\n"
+        );
     }
 }
