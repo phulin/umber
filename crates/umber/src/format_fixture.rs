@@ -28,14 +28,14 @@ use crate::{
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
-// Version 4 includes TeX82 §478's direct `the_toks` command-delivery semantics
-// in detached construction evidence; version 3 added §962's zero/nonletter
-// edge-of-word pattern semantics in generated hyphenation tries.
+// Version 5 includes TeX82 §§785/1038's raw character-loop delivery inside
+// alignment cells; version 4 added §478's direct `the_toks` delivery and
+// version 3 added §962's zero/nonletter edge-of-word pattern semantics.
 // Bump whenever the construction engine or its detached evidence semantics
 // change. Persistent entries contain both the format image and the evidence
 // produced by that exact construction episode; accepting an entry from an
 // older producer would bypass the current engine entirely.
-const PRODUCER_CONTRACT_VERSION: u32 = 4;
+const PRODUCER_CONTRACT_VERSION: u32 = 5;
 // Version 2 carries the producing source identity on geometry observations.
 const COMMAND_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 

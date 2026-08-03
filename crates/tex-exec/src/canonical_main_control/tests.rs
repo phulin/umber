@@ -259,6 +259,72 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
 }
 
 #[test]
+fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
+    // TeX82 §§785/1034/1038: an alignment cell body is ordinary main
+    // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
+    // `get_next`; only the following assignment returns to `x_token`.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
+    register_source(
+        &mut control,
+        br"\font\f=cmr10 \f\setbox0=\hbox{\valign{#\cr 7A\righthyphenmin0\cr}}\end",
+    );
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(&mut stores, &mut observations)
+            .expect("source-fed valign executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let deliveries: Vec<_> = observations
+        .0
+        .iter()
+        .filter_map(|observation| match observation {
+            CommandObservation::Command(record)
+                if record.command == "other_char" && record.command_operand == Some(55) =>
+            {
+                Some((record.boundary, "7"))
+            }
+            CommandObservation::Command(record)
+                if record.command == "letter" && record.command_operand == Some(65) =>
+            {
+                Some((record.boundary, "A"))
+            }
+            CommandObservation::Command(record)
+                if record.command == "assign_int"
+                    && record.spelling
+                        == tex_command::ObservedToken::ControlSequence("righthyphenmin".into()) =>
+            {
+                Some((record.boundary, "righthyphenmin"))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        deliveries,
+        [
+            (tex_command::CommandDeliveryBoundary::Raw, "7"),
+            (tex_command::CommandDeliveryBoundary::Expanded, "7"),
+            (tex_command::CommandDeliveryBoundary::Raw, "7"),
+            (tex_command::CommandDeliveryBoundary::Expanded, "7"),
+            (tex_command::CommandDeliveryBoundary::Raw, "7"),
+            (tex_command::CommandDeliveryBoundary::Expanded, "7"),
+            (tex_command::CommandDeliveryBoundary::Raw, "A"),
+            (tex_command::CommandDeliveryBoundary::Raw, "righthyphenmin"),
+            (
+                tex_command::CommandDeliveryBoundary::Expanded,
+                "righthyphenmin"
+            ),
+        ]
+    );
+}
+
+#[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

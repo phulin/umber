@@ -159,14 +159,14 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
     .expect("actual construction semantics validate as schema v3");
     let semantic_stream =
         ObservationStream::from_canonical_json_lines(&semantic).expect("semantic stream");
-    assert_eq!(semantic_stream.events.len(), 8717);
+    assert_eq!(semantic_stream.events.len(), 8707);
     let semantic_payload = semantic
         .splitn(2, |byte| *byte == b'\n')
         .nth(1)
         .expect("semantic stream has a header and events");
     assert_eq!(
         format!("{:x}", Sha256::digest(semantic_payload)),
-        "80d9fb481c05cea94ce679a7c26de3cbca7d2d14ac5beaf1087f9d1d15c5c8cb"
+        "27ab2ebaf1a9bb07f7364e90aa0b68bf2620064371c8eadaede492396839816e"
     );
     let event = |sequence: usize| &semantic_stream.events[sequence].semantic;
     assert!(matches!(
@@ -191,6 +191,32 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
             if command.delivery == tex_oracle::CommandDelivery::Expanded
                 && command.command.command == "assign_toks"
                 && command.command.control_sequence.as_deref() == Some("output")
+    ));
+    assert!(matches!(
+        event(4660),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Raw
+                && command.command.command == "letter"
+                && command.command.operand == tex_oracle::CanonicalValue::Integer(65)
+                && command.command.location.as_ref().is_some_and(|location|
+                    location.source == "trip.tex" && location.line == 77 && location.byte == 13)
+    ));
+    assert!(matches!(
+        event(4661),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Raw
+                && command.command.command == "assign_int"
+                && command.command.operand == tex_oracle::CanonicalValue::Integer(27219)
+                && command.command.control_sequence.as_deref() == Some("righthyphenmin")
+                && command.command.location.as_ref().is_some_and(|location|
+                    location.source == "trip.tex" && location.line == 77 && location.byte == 28)
+    ));
+    assert!(matches!(
+        event(4662),
+        tex_oracle::Event::Command(command)
+            if command.delivery == tex_oracle::CommandDelivery::Expanded
+                && command.command.command == "assign_int"
+                && command.command.control_sequence.as_deref() == Some("righthyphenmin")
     ));
     let actual = tex_observe::canonical_evidence_json_lines(
         &prepared.construction_evidence().geometry,

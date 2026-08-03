@@ -483,19 +483,6 @@ impl CommandState {
             })
     }
 
-    /// Whether ordinary main control owns the next delivery strongly enough
-    /// to use TeX82 §1038's character-loop lookahead.
-    ///
-    /// An active cell is delivered through the alignment scanner/replay
-    /// boundary instead.  Even though its characters execute in ordinary
-    /// horizontal main control, that boundary must retain token-at-a-time
-    /// ownership so delimiter interception and replay retirement remain
-    /// ordered with every delivered command.
-    #[must_use]
-    pub fn main_loop_batching_is_eligible(&self) -> bool {
-        self.alignment.active_cell.is_none()
-    }
-
     /// Returns the committed observation for a command-owned outer alignment
     /// suspension. The executor chooses the structural boundary, while this
     /// state remains the sole owner of the saved delivery snapshot.
