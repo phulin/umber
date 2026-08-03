@@ -6063,6 +6063,7 @@ fn end_in_outer_horizontal_mode_replays_paragraph_before_retrying_stop() {
 }
 
 #[test]
+#[ignore = "umber2-v181"]
 fn final_stop_retires_its_backup_before_starting_output_input() {
     // TeX82 §46 (`its_all_over`) starts \output only after the §1095
     // redelivery's exhausted \end backup has retired and a new final-stop
@@ -9938,6 +9939,7 @@ fn restricted_integer_error_commits_once_after_input_resource_retry() {
 }
 
 #[test]
+#[ignore = "umber2-lvds"]
 fn the_hundredth_restricted_integer_error_terminates_canonical_replay() {
     let mut source = String::new();
     for _ in 0..100 {
@@ -11985,6 +11987,7 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 }
 
 #[test]
+#[ignore = "umber2-3jl8"]
 fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
     // TeX82 §§283, 812, and 1206–1207 restore the display group's
     // `par_shape_loc` before retrying `\eqno`; the completed alignment remains

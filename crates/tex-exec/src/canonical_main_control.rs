@@ -877,6 +877,19 @@ impl CanonicalParagraphRecorder {
         }
         self.finished.push(region);
     }
+
+    /// Discards an in-flight paragraph recording before replacing the whole
+    /// command/universe state from a durable checkpoint.
+    fn abandon(&mut self, command: &mut CommandState, stores: &mut Universe) {
+        if !std::mem::take(&mut self.pending) {
+            return;
+        }
+        command.abandon_paragraph_input_transaction();
+        let _ = stores.finish_paragraph_dependency_region();
+        let _ = stores.finish_pure_paragraph_recording();
+        self.starting_universe = None;
+        self.starting_provenance = None;
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1226,6 +1239,7 @@ impl CanonicalMainControl {
         checkpoint: &crate::EngineCheckpoint,
         stores: &mut Universe,
     ) -> Result<(), crate::CanonicalCheckpointRestoreError> {
+        self.paragraph_recorder.abandon(&mut self.command, stores);
         checkpoint.restore_canonical_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
@@ -2771,7 +2785,11 @@ impl CanonicalMainControl {
     /// Compatibility wrapper for callers which have not yet adopted typed
     /// resource suspension. New production hosts should use [`Self::advance`].
     pub fn step(&mut self, stores: &mut Universe) -> Result<ReplayStep, ExecError> {
-        match self.advance(stores)? {
+        let result = self.advance(stores).map_err(|error| match error {
+            ExecError::Captured { error, .. } => *error,
+            error => error,
+        })?;
+        match result {
             CanonicalStepResult::Progress(step) => Ok(step),
             CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })

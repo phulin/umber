@@ -1578,12 +1578,15 @@ fn shipout_special_expansion_error_commits_no_partial_artifact() {
         ))
         .expect("register recursive special source");
     let failure = loop {
-        match control.step(&mut stores) {
-            Ok(MainControlStep::Continue) => {}
+        match control.advance(&mut stores) {
+            Ok(CanonicalStepResult::Progress(MainControlStep::Continue)) => {}
             Err(error) => break error,
-            Ok(MainControlStep::End | MainControlStep::EndOfInput) => {
+            Ok(CanonicalStepResult::Progress(
+                MainControlStep::End | MainControlStep::EndOfInput,
+            )) => {
                 panic!("recursive expansion must fail")
             }
+            Ok(CanonicalStepResult::Suspended(_)) => panic!("fixture has no resource suspension"),
         }
     };
     assert!(

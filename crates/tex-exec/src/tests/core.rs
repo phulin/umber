@@ -99,7 +99,7 @@ fn effect_budget_failure_rolls_back_the_entire_candidate_step() {
     control.set_fuel_limit(64).expect("finite fuel limit");
     let state_before = stores.snapshot().state_hash();
     let failure = control
-        .step(&mut stores)
+        .advance(&mut stores)
         .expect_err("recursive message exhausts fuel");
     assert!(matches!(failure, ExecError::Captured { .. }));
     assert_eq!(stores.snapshot().state_hash(), state_before);
