@@ -121,7 +121,11 @@ impl<'a> ProvenanceResolver<'a> {
     ) -> LayoutResolvedOrigin {
         let mut current = origin;
         for _ in 0..self.trace_depth.saturating_add(4) {
-            if let Some(span) = direct_fragment_span(current, fragments) {
+            if let Some(span) = fragments
+                .direct_root_span_id(current)
+                .and_then(|span| fragments.source_span_for_root(span))
+                .or_else(|| direct_fragment_span(current, fragments))
+            {
                 return resolve_fragment_span(span, fragments, layout)
                     .unwrap_or(LayoutResolvedOrigin::Unknown);
             }

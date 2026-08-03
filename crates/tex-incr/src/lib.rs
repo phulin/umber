@@ -1440,7 +1440,7 @@ impl Session {
             next: self.source.clone(),
             fragments,
             next_layout,
-            map: EditMap::new(0..0, 0),
+            map: EditMap::new(0..0, 0, true),
             revision_setup_latency: revision_setup_started.elapsed(),
         });
         let restart = setup
@@ -1496,7 +1496,13 @@ impl Session {
         } else {
             select_restart(&old_history, &old_source, &next, &edit)
         };
-        let map = EditMap::new(edit.range.clone(), edit.replacement.len());
+        let map = EditMap::new(
+            edit.range.clone(),
+            edit.replacement.len(),
+            old_source
+                .get(edit.range.clone())
+                .is_some_and(|replaced| replaced == edit.replacement),
+        );
         if !force_job_start {
             self.substrate
                 .as_ref()
@@ -2352,7 +2358,13 @@ impl Session {
             LayoutGeneration::new(next_revision.raw()),
         )?;
         let restart_index = select_restart(&old_history, &old_source, &next, &edit);
-        let map = EditMap::new(edit.range.clone(), edit.replacement.len());
+        let map = EditMap::new(
+            edit.range.clone(),
+            edit.replacement.len(),
+            old_source
+                .get(edit.range.clone())
+                .is_some_and(|replaced| replaced == edit.replacement),
+        );
         self.substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?
@@ -2712,11 +2724,28 @@ impl Session {
             PendingSubstrate::Retained {
                 scratch,
                 adopted_origins,
-            } => self
-                .substrate
-                .as_mut()
-                .ok_or(SessionError::MissingAcceptedSubstrate)?
-                .retain_artifact_origins_from_fork(&scratch, &adopted_origins)?,
+            } => {
+                let retained_origins = artifacts
+                    .iter()
+                    .flat_map(|artifact| artifact.live_render_origins().iter())
+                    .copied()
+                    .collect::<Vec<_>>();
+                let substrate = self
+                    .substrate
+                    .as_mut()
+                    .ok_or(SessionError::MissingAcceptedSubstrate)?;
+                substrate.retain_artifact_origin_spans(
+                    &retained_origins,
+                    &self.fragments,
+                    &self.layout,
+                );
+                substrate.retain_artifact_origins_from_fork_with_layout(
+                    &scratch,
+                    &adopted_origins,
+                    &fragments,
+                    &layout,
+                )?;
+            }
             PendingSubstrate::Replaced(substrate) => self.substrate = Some(substrate),
         }
         let substrate_transition_latency = substrate_transition_started.elapsed();
@@ -3195,7 +3224,7 @@ impl ResumeSink {
             next_expected: 0,
             convergence_old_index: None,
             schedule_diverged: false,
-            changed_new_range: map.old.start..map.old.start + map.replacement_len,
+            changed_new_range: map.changed_new_range(),
             same_history_attempts: 0,
             same_history_hash_mismatches: 0,
             trace_validation_latency: Duration::ZERO,
@@ -3616,13 +3645,19 @@ impl tex_exec::FontResolver for DirectFontResolver {
 struct EditMap {
     old: std::ops::Range<usize>,
     replacement_len: usize,
+    preserves_replaced_bytes: bool,
 }
 
 impl EditMap {
-    fn new(old: std::ops::Range<usize>, replacement_len: usize) -> Self {
+    fn new(
+        old: std::ops::Range<usize>,
+        replacement_len: usize,
+        preserves_replaced_bytes: bool,
+    ) -> Self {
         Self {
             old,
             replacement_len,
+            preserves_replaced_bytes,
         }
     }
 
@@ -3633,8 +3668,18 @@ impl EditMap {
             position
                 .checked_sub(self.old.end - self.old.start)
                 .and_then(|position| position.checked_add(self.replacement_len))
+        } else if self.preserves_replaced_bytes {
+            Some(position)
         } else {
             None
+        }
+    }
+
+    fn changed_new_range(&self) -> std::ops::Range<usize> {
+        if self.preserves_replaced_bytes {
+            self.old.start..self.old.start
+        } else {
+            self.old.start..self.old.start + self.replacement_len
         }
     }
 }

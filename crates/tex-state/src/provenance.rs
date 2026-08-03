@@ -179,8 +179,10 @@ impl ParagraphOriginResolver {
                     OriginRecord::MacroInvocation(invocation) => invocation.invocation(),
                     OriginRecord::Inserted(inserted) => inserted.parent(),
                     OriginRecord::Synthesized(synthesized) => synthesized.parent(),
+                    OriginRecord::SourceSpan(span) => {
+                        return self.fragments.root_span_for_source_span(span);
+                    }
                     OriginRecord::Source(_)
-                    | OriginRecord::SourceSpan(_)
                     | OriginRecord::UnknownBootstrap
                     | OriginRecord::Synthetic(_) => return None,
                 },

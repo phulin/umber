@@ -554,6 +554,30 @@ impl FragmentStore {
         })
     }
 
+    /// Identifies one document range when it is wholly backed by one layout piece.
+    #[must_use]
+    pub fn root_span_for_layout_range(
+        &self,
+        layout: &EditorLayout,
+        range: Range<u64>,
+    ) -> Option<RootSpanId> {
+        if range.start > range.end || range.end > layout.byte_len {
+            return None;
+        }
+        let index = layout
+            .doc_starts()
+            .partition_point(|&start| start <= range.start)
+            .checked_sub(1)?;
+        let piece = layout.pieces().get(index)?;
+        let piece_end = layout.doc_starts()[index] + u64::from(piece.end() - piece.start());
+        if range.end > piece_end {
+            return None;
+        }
+        let start = u32::try_from(range.start - layout.doc_starts()[index]).ok()?;
+        let end = u32::try_from(range.end - layout.doc_starts()[index]).ok()?;
+        self.root_span_id(piece, start..end)
+    }
+
     /// Resolves a registered editor-fragment delivery to stable backing identity.
     #[must_use]
     pub fn registered_root_span_id(
@@ -619,6 +643,25 @@ impl FragmentStore {
         let span = self.span_for_direct(position)?;
         let (fragment_id, fragment) = self.fragment_at(span.lo())?;
         if span.hi().raw() > fragment.anchor() {
+            return None;
+        }
+        let start = u32::try_from(span.lo().raw() - fragment.region_start.raw()).ok()?;
+        let end = u32::try_from(span.hi().raw() - fragment.region_start.raw()).ok()?;
+        let content = self
+            .bytes(fragment_id)
+            .and_then(|bytes| bytes.get(start as usize..end as usize))
+            .map_or_else(|| ContentHash::from_bytes(&[]), ContentHash::from_bytes);
+        Some(RootSpanId {
+            piece: PieceId(fragment_id),
+            start,
+            end,
+            content,
+        })
+    }
+
+    pub(crate) fn root_span_for_source_span(&self, span: SourceSpan) -> Option<RootSpanId> {
+        let (fragment_id, fragment) = self.fragment_at(span.lo())?;
+        if span.hi().raw() < span.lo().raw() || span.hi().raw() > fragment.anchor() {
             return None;
         }
         let start = u32::try_from(span.lo().raw() - fragment.region_start.raw()).ok()?;

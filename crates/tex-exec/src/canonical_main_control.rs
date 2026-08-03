@@ -5818,6 +5818,7 @@ enum ScannedStep {
     },
     CharacterCode {
         value: i32,
+        origin: tex_state::token::OriginId,
         suppress_left_boundary: bool,
     },
     /// TeX82 §1105's `any_mode(remove_item): delete_last` -- `\unpenalty`,
@@ -8029,6 +8030,7 @@ fn scan_command(
             let value = processor.scan_integer().map_err(command_error)?.value;
             Ok(ScannedStep::CharacterCode {
                 value,
+                origin: command.spelling().origin(),
                 suppress_left_boundary: false,
             })
         }
@@ -10069,6 +10071,7 @@ fn scan_unclassified_meaning(
         // no `scan_char_num`.
         Meaning::CharGiven(ch) => Ok(ScannedStep::CharacterCode {
             value: ch as i32,
+            origin: command.spelling().origin(),
             suppress_left_boundary: false,
         }),
         // TeX82 §1046's `non_math(math_given): insert_dollar_sign`, the same
@@ -13782,6 +13785,7 @@ fn apply_scanned_step(
         }
         ScannedStep::CharacterCode {
             value,
+            origin,
             suppress_left_boundary,
         } => {
             let ch = u32::try_from(value).ok().and_then(char::from_u32).ok_or(
@@ -13797,13 +13801,7 @@ fn apply_scanned_step(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_canonical_math_char(
-                    ch,
-                    tex_state::token::OriginId::UNKNOWN,
-                    stores,
-                    modes,
-                    command,
-                )?;
+                set_canonical_math_char(ch, origin, stores, modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
@@ -13819,7 +13817,7 @@ fn apply_scanned_step(
                 modes,
                 stores,
                 ch,
-                tex_state::token::OriginId::UNKNOWN,
+                origin,
                 command.state.profile() == CommandProfile::ETEX26,
                 command.fuel,
             )?;

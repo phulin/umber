@@ -514,6 +514,7 @@ pub struct GenerationSubstrate {
     universe: Universe,
     charged_bytes: usize,
     retained_origin_locations: HashMap<OriginId, crate::ResolvedSourceLocation>,
+    retained_origin_spans: HashMap<OriginId, crate::RootSpanId>,
 }
 
 /// Rejection from the narrow validated generation-fork/retarget operations.
@@ -823,11 +824,17 @@ impl GenerationSubstrate {
     #[must_use]
     pub fn new(universe: Universe) -> Self {
         let retained_origin_locations = HashMap::new();
-        let charged_bytes = generation_charged_bytes(&universe, &retained_origin_locations);
+        let retained_origin_spans = HashMap::new();
+        let charged_bytes = generation_charged_bytes(
+            &universe,
+            &retained_origin_locations,
+            &retained_origin_spans,
+        );
         Self {
             universe,
             charged_bytes,
             retained_origin_locations,
+            retained_origin_spans,
         }
     }
 
@@ -861,6 +868,9 @@ impl GenerationSubstrate {
         fragments: &crate::FragmentStore,
         layout: &crate::EditorLayout,
     ) -> crate::LayoutResolvedOrigin {
+        if let Some(&span) = self.retained_origin_spans.get(&origin) {
+            return self.resolve_stable_layout_origin(span, fragments, layout);
+        }
         let resolved = crate::ProvenanceResolver::new(&self.universe)
             .resolve_layout_origin(origin, fragments, layout);
         if resolved == crate::LayoutResolvedOrigin::Unknown
@@ -903,6 +913,9 @@ impl GenerationSubstrate {
         }
         let resolver = crate::ProvenanceResolver::new(fork);
         for &root in roots {
+            if let Some(span) = fork.root_span_for_origin(root) {
+                self.retained_origin_spans.entry(root).or_insert(span);
+            }
             if let Some(location) = resolver.resolve_origin(root) {
                 self.retained_origin_locations
                     .entry(root)
@@ -912,9 +925,78 @@ impl GenerationSubstrate {
         self.universe
             .stores
             .retain_diagnostic_origins_from(&fork.stores, roots);
-        self.charged_bytes =
-            generation_charged_bytes(&self.universe, &self.retained_origin_locations);
+        self.charged_bytes = generation_charged_bytes(
+            &self.universe,
+            &self.retained_origin_locations,
+            &self.retained_origin_spans,
+        );
         Ok(())
+    }
+
+    /// Retains fork-owned origins, detaching editor-backed source records
+    /// against the candidate layout while it is still available.
+    pub fn retain_artifact_origins_from_fork_with_layout(
+        &mut self,
+        fork: &Universe,
+        roots: &[OriginId],
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) -> Result<(), GenerationForkError> {
+        let origin = fork.fork_origin.ok_or(GenerationForkError::UnrelatedFork)?;
+        if origin.source_owner != self.universe.owner.snapshot_owner() {
+            return Err(GenerationForkError::UnrelatedFork);
+        }
+        let resolver = crate::ProvenanceResolver::new(fork);
+        for &root in roots {
+            let location = resolver.resolve_origin(root);
+            if let Some(span) = fork.root_span_for_origin(root).or_else(|| {
+                let location = location.as_ref()?;
+                (location.path == layout.path()).then_some(())?;
+                fragments.root_span_for_layout_range(layout, location.start..location.end)
+            }) {
+                self.retained_origin_spans.entry(root).or_insert(span);
+            }
+            if let Some(location) = location {
+                self.retained_origin_locations
+                    .entry(root)
+                    .or_insert(location);
+            }
+        }
+        self.universe
+            .stores
+            .retain_diagnostic_origins_from(&fork.stores, roots);
+        self.charged_bytes = generation_charged_bytes(
+            &self.universe,
+            &self.retained_origin_locations,
+            &self.retained_origin_spans,
+        );
+        Ok(())
+    }
+
+    /// Detaches live artifact origins owned by this accepted generation to
+    /// stable editor-piece spans before the session layout changes.
+    pub fn retain_artifact_origin_spans(
+        &mut self,
+        roots: &[OriginId],
+        fragments: &crate::FragmentStore,
+        layout: &crate::EditorLayout,
+    ) {
+        let resolver = crate::ProvenanceResolver::new(&self.universe);
+        for &root in roots {
+            let span = self.universe.root_span_for_origin(root).or_else(|| {
+                let location = resolver.resolve_origin(root)?;
+                (location.path == layout.path()).then_some(())?;
+                fragments.root_span_for_layout_range(layout, location.start..location.end)
+            });
+            if let Some(span) = span {
+                self.retained_origin_spans.entry(root).or_insert(span);
+            }
+        }
+        self.charged_bytes = generation_charged_bytes(
+            &self.universe,
+            &self.retained_origin_locations,
+            &self.retained_origin_spans,
+        );
     }
 
     #[doc(hidden)]
@@ -1025,6 +1107,7 @@ impl GenerationSubstrate {
 fn generation_charged_bytes(
     universe: &Universe,
     retained_origin_locations: &HashMap<OriginId, crate::ResolvedSourceLocation>,
+    retained_origin_spans: &HashMap<OriginId, crate::RootSpanId>,
 ) -> usize {
     universe
         .stores
@@ -1043,6 +1126,11 @@ fn generation_charged_bytes(
                 .values()
                 .map(|location| location.path.capacity())
                 .sum::<usize>(),
+        )
+        .saturating_add(
+            retained_origin_spans
+                .capacity()
+                .saturating_mul(std::mem::size_of::<(OriginId, crate::RootSpanId)>()),
         )
 }
 
@@ -3371,7 +3459,7 @@ impl Universe {
     /// before any additional accepted diagnostic-origin map is installed.
     #[must_use]
     pub fn live_generation_charged_bytes(&self) -> usize {
-        generation_charged_bytes(self, &HashMap::new())
+        generation_charged_bytes(self, &HashMap::new(), &HashMap::new())
     }
 
     /// Rehomes the stable root editor frame without registering a document-sized backing.
@@ -3424,9 +3512,13 @@ impl Universe {
                 }
                 crate::provenance::OriginRecord::Inserted(inserted) => inserted.parent(),
                 crate::provenance::OriginRecord::Synthesized(synthesized) => synthesized.parent(),
-                crate::provenance::OriginRecord::Source(_)
-                | crate::provenance::OriginRecord::SourceSpan(_)
-                | crate::provenance::OriginRecord::UnknownBootstrap
+                crate::provenance::OriginRecord::Source(source) => {
+                    return self.stores.source_origin_root_span_id(source);
+                }
+                crate::provenance::OriginRecord::SourceSpan(span) => {
+                    return self.stores.source_span_root_span_id(span);
+                }
+                crate::provenance::OriginRecord::UnknownBootstrap
                 | crate::provenance::OriginRecord::Synthetic(_) => return None,
             };
         }

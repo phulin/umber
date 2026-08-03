@@ -377,6 +377,24 @@ impl Stores {
         self.source_fragments.direct_root_span_id(origin)
     }
 
+    pub(crate) fn source_origin_root_span_id(
+        &self,
+        source: crate::provenance::SourceOrigin,
+    ) -> Option<crate::RootSpanId> {
+        let position = self
+            .source_position(source.source(), source.byte_offset())
+            .ok()?;
+        self.source_fragments
+            .direct_root_span_id(OriginId::direct_source(position)?)
+    }
+
+    pub(crate) fn source_span_root_span_id(
+        &self,
+        span: crate::source_map::SourceSpan,
+    ) -> Option<crate::RootSpanId> {
+        self.source_fragments.root_span_for_source_span(span)
+    }
+
     pub(crate) fn registered_root_span_id(
         &self,
         registration: crate::source_map::RegisteredSource,
