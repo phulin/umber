@@ -183,6 +183,18 @@ export class EditorCompileFacade {
 		return this.#requireSession().contentHash;
 	}
 
+	get renderUpdate() {
+		return this.#requireSession().renderUpdate?.() ?? null;
+	}
+
+	acknowledgeRenderUpdate(revision, digest) {
+		this.#requireSession().acknowledgeRenderUpdate(revision, digest);
+	}
+
+	renderResync() {
+		return this.#requireSession().renderResync?.() ?? null;
+	}
+
 	applyPatch(patch) {
 		this.#requireSession().applyPatch(patch);
 	}

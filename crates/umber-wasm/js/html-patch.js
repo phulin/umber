@@ -143,7 +143,11 @@ export class HtmlPatchMount {
 		const lease = await this.#resources.stage(patch.resourceAdditions ?? []);
 		let staged;
 		try {
-			staged = stageInsertions(this.#document, patch.operations);
+			staged = stageInsertions(
+				this.#document,
+				patch.operations,
+				candidate.pages,
+			);
 		} catch (error) {
 			await lease.rollback();
 			throw error;
@@ -213,12 +217,13 @@ export class HtmlPatchMount {
 				break;
 			}
 			case "remove-page": {
+				const model = modelPage(this.#state.pages, operation.key);
 				const page = required(this.#nodes, operation.key);
-				for (const key of operation.nodeKeys) this.#nodes.delete(key);
+				for (const node of model.nodes) this.#nodes.delete(node.key);
 				page.remove();
 				this.#nodes.delete(operation.key);
 				this.#pageContent.delete(operation.key);
-				this.#metrics.removed += operation.nodeKeys.length + 1;
+				this.#metrics.removed += model.nodes.length + 1;
 				break;
 			}
 			case "insert-page": {
@@ -533,7 +538,7 @@ function simulateOperation(pages, operation, limits) {
 	void limits;
 }
 
-function stageInsertions(document, operations) {
+function stageInsertions(document, operations, pages) {
 	const staged = new Map();
 	for (const operation of operations) {
 		if (operation.kind === "insert-page") {
@@ -549,7 +554,8 @@ function stageInsertions(document, operations) {
 			operation.kind === "insert-node" ||
 			operation.kind === "update-node"
 		) {
-			const element = buildNode(document, operation.node);
+			const page = modelPage(pages, operation.page);
+			const element = buildNode(document, operation.node, page.mag);
 			staged.set(operation.node.key, { element });
 		}
 	}
@@ -564,7 +570,7 @@ function buildPage(document, page, nodes, pageContent, staged = nodes) {
 	content.className = "umber-page-content";
 	updatePage(section, page);
 	for (const node of page.nodes) {
-		const element = buildNode(document, node);
+		const element = buildNode(document, node, page.mag);
 		content.append(element);
 		nodes.set(node.key, element);
 	}
@@ -575,7 +581,7 @@ function buildPage(document, page, nodes, pageContent, staged = nodes) {
 	return section;
 }
 
-function buildNode(document, node) {
+function buildNode(document, node, mag) {
 	let element;
 	switch (node.kind) {
 		case "box":
@@ -589,6 +595,9 @@ function buildNode(document, node) {
 			element = document.createElementNS(SVG_NS, "svg");
 			const text = document.createElementNS(SVG_NS, "text");
 			text.textContent = boundedString(node.text, DEFAULT_LIMITS);
+			if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family)) fail("font-family");
+			text.style.fontFamily = node.family;
+			text.style.fontSize = cssPx(node.fontSizeSp, mag);
 			if (node.link !== undefined && node.link !== null) {
 				if (!safeLink(node.link)) fail("unsafe-link");
 				const anchor = document.createElementNS(SVG_NS, "a");
@@ -668,6 +677,10 @@ function validatePage(page, keys, limits) {
 		}
 		for (const value of [node.text, node.link, node.color, node.class]) {
 			if (value !== undefined && value !== null) boundedString(value, limits);
+		}
+		if (node.kind === "text") {
+			if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family)) fail("font-family");
+			exactInteger(node.fontSizeSp);
 		}
 		if (node.link !== undefined && node.link !== null && !safeLink(node.link))
 			fail("unsafe-link");

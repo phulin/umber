@@ -662,6 +662,7 @@ test("retained editor facade exposes provisional and stable lifecycle", async ()
 		static instances = [];
 
 		constructor() {
+			this.update = { kind: "snapshot", revision: 1, digest: "a".repeat(64) };
 			this.advanceResults = [
 				{ ...need("tex", "plain.tex"), phase: "advance" },
 				{
@@ -715,6 +716,16 @@ test("retained editor facade exposes provisional and stable lifecycle", async ()
 		cancelStabilization() {
 			return true;
 		}
+		renderUpdate() {
+			return this.update;
+		}
+		acknowledgeRenderUpdate(revision, digest) {
+			this.acknowledgement = { revision, digest };
+			this.update = null;
+		}
+		renderResync() {
+			return { kind: "snapshot", revision: 1, digest: "a".repeat(64) };
+		}
 		dispose() {
 			this.wasDisposed = true;
 		}
@@ -738,6 +749,10 @@ test("retained editor facade exposes provisional and stable lifecycle", async ()
 	const provisional = await editor.advance();
 	assert.equal(provisional.kind, "provisional");
 	assert.equal(provisional.output.acceptedInputObservations, ledger);
+	assert.equal(editor.renderUpdate.kind, "snapshot");
+	editor.acknowledgeRenderUpdate(1, "a".repeat(64));
+	assert.equal(editor.renderUpdate, null);
+	assert.equal(editor.renderResync().kind, "snapshot");
 	const stable = await editor.stabilize();
 	assert.equal(stable.kind, "stable");
 	assert.equal(stable.passes, 2);

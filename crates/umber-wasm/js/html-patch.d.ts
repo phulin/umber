@@ -6,6 +6,114 @@ export interface HtmlPatchAcknowledgement {
 	readonly digest: string;
 }
 
+export interface HtmlRenderResource {
+	readonly identity: string;
+	readonly kind: "font";
+	readonly family: string;
+	readonly bytes: Uint8Array;
+	readonly provenance: string;
+}
+
+export interface HtmlRenderNode {
+	readonly key: string;
+	readonly kind:
+		| "box"
+		| "rule"
+		| "text"
+		| "special"
+		| "math-start"
+		| "math-glyph"
+		| "math-rule"
+		| "math-end";
+	readonly xSp?: number;
+	readonly ySp?: number;
+	readonly widthSp?: number;
+	readonly heightSp?: number;
+	readonly baselineSp?: number;
+	readonly text?: string;
+	readonly family?: string;
+	readonly fontSizeSp?: number;
+	readonly glyphId?: number;
+	readonly color?: string;
+	readonly link?: string;
+	readonly class?: string;
+}
+
+export interface HtmlRenderPage {
+	readonly key: string;
+	readonly ordinal: number;
+	readonly widthSp: number;
+	readonly heightSp: number;
+	readonly originXSp: number;
+	readonly originYSp: number;
+	readonly mag: number;
+	readonly nodes: readonly HtmlRenderNode[];
+}
+
+export interface HtmlRenderSnapshot {
+	readonly kind: "snapshot";
+	readonly schemaVersion: 1;
+	readonly sessionId: string;
+	readonly revision: number;
+	readonly digest: string;
+	readonly title: string;
+	readonly language: string;
+	readonly resources: readonly HtmlRenderResource[];
+	readonly pages: readonly HtmlRenderPage[];
+}
+
+export type HtmlPatchOperation =
+	| {
+			readonly kind: "remove-node";
+			readonly page: string;
+			readonly key: string;
+	  }
+	| { readonly kind: "remove-page"; readonly key: string }
+	| {
+			readonly kind: "insert-page";
+			readonly index: number;
+			readonly page: HtmlRenderPage;
+	  }
+	| { readonly kind: "move-page"; readonly key: string; readonly index: number }
+	| {
+			readonly kind: "insert-node";
+			readonly page: string;
+			readonly index: number;
+			readonly node: HtmlRenderNode;
+	  }
+	| {
+			readonly kind: "move-node";
+			readonly page: string;
+			readonly key: string;
+			readonly index: number;
+	  }
+	| {
+			readonly kind: "update-page";
+			readonly page: Omit<HtmlRenderPage, "nodes">;
+	  }
+	| {
+			readonly kind: "update-node";
+			readonly page: string;
+			readonly node: HtmlRenderNode;
+	  };
+
+export interface HtmlRenderPatch {
+	readonly kind: "patch";
+	readonly schemaVersion: 1;
+	readonly sessionId: string;
+	readonly baseRevision: number;
+	readonly targetRevision: number;
+	readonly beforeDigest: string;
+	readonly afterDigest: string;
+	readonly title?: string;
+	readonly language?: string;
+	readonly resourceAdditions: readonly HtmlRenderResource[];
+	readonly resourceReleases: readonly string[];
+	readonly operations: readonly HtmlPatchOperation[];
+}
+
+export type HtmlRenderUpdate = HtmlRenderSnapshot | HtmlRenderPatch;
+
 export interface HtmlPatchMountOptions {
 	document?: Document;
 	limits?: Partial<{
@@ -33,8 +141,10 @@ export class HtmlPatchMount {
 	readonly digest: string | null;
 	readonly needsResync: boolean;
 	readonly metrics: Readonly<Record<string, unknown>>;
-	mountSnapshot(snapshot: unknown): Promise<HtmlPatchAcknowledgement>;
-	applyPatch(patch: unknown): Promise<HtmlPatchAcknowledgement>;
+	mountSnapshot(
+		snapshot: HtmlRenderSnapshot,
+	): Promise<HtmlPatchAcknowledgement>;
+	applyPatch(patch: HtmlRenderPatch): Promise<HtmlPatchAcknowledgement>;
 	acknowledgement(): HtmlPatchAcknowledgement | null;
 	nodeForKey(key: string): Node | null;
 	dispose(): Promise<void>;
@@ -57,7 +167,7 @@ export class HtmlResourceRegistry {
 		bytes: number;
 		churnBytes: number;
 	}>;
-	stage(additions: readonly unknown[]): Promise<{
+	stage(additions: readonly HtmlRenderResource[]): Promise<{
 		commit(
 			releases: readonly string[],
 			retained: readonly string[],

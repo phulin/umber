@@ -1991,6 +1991,36 @@ fn classic_tfm_html_acquires_exact_paint_resource_without_changing_dvi() {
 }
 
 #[test]
+fn accepted_html_revision_publishes_acknowledged_snapshot_and_resync() {
+    let source = "\\shipout\\hbox{\\vrule width 1pt height 1pt}\\end";
+    let mut session = VirtualCompileSession::new(SessionOptions {
+        outputs: OutputCapabilitySet::HTML,
+        ..SessionOptions::default()
+    })
+    .expect("HTML session");
+    session
+        .add_user_file("main.tex", source.as_bytes().to_vec())
+        .expect("source");
+    let CompileAttemptResult::Complete(_) = session.compile_attempt() else {
+        panic!("initial HTML revision should complete");
+    };
+    let RenderUpdate::Snapshot(snapshot) = session.render_update().expect("initial snapshot")
+    else {
+        panic!("initial update must be a snapshot");
+    };
+    let first_digest = snapshot.digest;
+    session
+        .acknowledge_render_update(1, first_digest)
+        .expect("snapshot acknowledgement");
+    assert!(session.render_update().is_none());
+    let Some(RenderUpdate::Snapshot(resync)) = session.render_resync() else {
+        panic!("explicit resync should return the accepted snapshot");
+    };
+    assert_eq!(resync.revision, 1);
+    assert_eq!(resync.digest, first_digest);
+}
+
+#[test]
 fn classic_html_font_names_bind_one_tfm_identity() {
     let key = FontRequestKey::new(
         "cmr10",

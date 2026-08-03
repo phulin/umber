@@ -70,6 +70,7 @@ pub(super) fn revision_digest(
     for resource in resources {
         hash.bytes(&resource.identity);
         hash.u64(resource.bytes.len() as u64);
+        hash.string(&resource.family);
     }
     hash.finish()
 }
@@ -120,6 +121,7 @@ pub(super) fn node_value_digest(value: &RenderNodeValue, matching: bool) -> Rend
                     }
                 }
                 hash.string(&value.text);
+                hash.string(&value.family);
                 hash.bytes(&value.resource);
                 hash.u8(match value.direction {
                     RenderDirection::LeftToRight => 0,

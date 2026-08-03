@@ -388,6 +388,38 @@ impl CompilerSession {
         Ok(self.session_mut()?.cancel_pending_patch())
     }
 
+    #[wasm_bindgen(js_name = renderUpdate)]
+    pub fn render_update(&self) -> Result<JsValue, JsValue> {
+        self.session_ref()?
+            .render_update()
+            .map(result::render_update)
+            .transpose()
+            .map(|value| value.unwrap_or(JsValue::NULL))
+    }
+
+    #[wasm_bindgen(js_name = acknowledgeRenderUpdate)]
+    pub fn acknowledge_render_update(
+        &mut self,
+        revision: u32,
+        digest: &str,
+    ) -> Result<(), JsValue> {
+        let digest = umber::RenderDigest::parse_hex(digest)
+            .ok_or_else(|| js_error("render digest must be 64 lowercase hexadecimal digits"))?;
+        self.session_mut()?
+            .acknowledge_render_update(u64::from(revision), digest)
+            .map_err(compile_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = renderResync)]
+    pub fn render_resync(&self) -> Result<JsValue, JsValue> {
+        self.session_ref()?
+            .render_resync()
+            .as_ref()
+            .map(result::render_update)
+            .transpose()
+            .map(|value| value.unwrap_or(JsValue::NULL))
+    }
+
     pub fn dispose(&mut self) {
         self.session = None;
     }
@@ -538,6 +570,38 @@ impl EditorSession {
     #[wasm_bindgen(js_name = cancelStabilization)]
     pub fn cancel_stabilization(&mut self) -> Result<bool, JsValue> {
         Ok(self.session_mut()?.cancel_stabilization())
+    }
+
+    #[wasm_bindgen(js_name = renderUpdate)]
+    pub fn render_update(&self) -> Result<JsValue, JsValue> {
+        self.session_ref()?
+            .render_update()
+            .map(result::render_update)
+            .transpose()
+            .map(|value| value.unwrap_or(JsValue::NULL))
+    }
+
+    #[wasm_bindgen(js_name = acknowledgeRenderUpdate)]
+    pub fn acknowledge_render_update(
+        &mut self,
+        revision: u32,
+        digest: &str,
+    ) -> Result<(), JsValue> {
+        let digest = umber::RenderDigest::parse_hex(digest)
+            .ok_or_else(|| js_error("render digest must be 64 lowercase hexadecimal digits"))?;
+        self.session_mut()?
+            .acknowledge_render_update(u64::from(revision), digest)
+            .map_err(compile_boundary_error)
+    }
+
+    #[wasm_bindgen(js_name = renderResync)]
+    pub fn render_resync(&self) -> Result<JsValue, JsValue> {
+        self.session_ref()?
+            .render_resync()
+            .as_ref()
+            .map(result::render_update)
+            .transpose()
+            .map(|value| value.unwrap_or(JsValue::NULL))
     }
 
     #[wasm_bindgen(getter)]

@@ -116,6 +116,8 @@ function page(pageKey, ordinal, nodeKey, text) {
 				xSp: 10,
 				baselineSp: 20,
 				text,
+				family: `umber-font-${"a".repeat(24)}`,
+				fontSizeSp: 655_360,
 			},
 		],
 	};
@@ -197,6 +199,8 @@ test("invalid and hostile patches perform no mutation and request recovery", asy
 					key: key("5"),
 					kind: "text",
 					text: "x",
+					family: `umber-font-${"a".repeat(24)}`,
+					fontSizeSp: 655_360,
 					link: "javascript:alert(1)",
 				},
 			},

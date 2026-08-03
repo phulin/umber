@@ -7,6 +7,7 @@ import type {
 	SourcePatch,
 } from "./umber_wasm.js";
 import type { EditorCancellationResult } from "./compile.js";
+import type { HtmlRenderUpdate } from "./html-patch.js";
 import type { HttpManifestResolverOptions } from "./manifest-resolver.js";
 
 export interface WorkerCompileControl {
@@ -43,10 +44,10 @@ export function compileInWorker(
 export class EditorWorkerFacade {
 	readonly disposed: boolean;
 	readonly status: EditorStatus | undefined;
-	advance(
-		onProgress?: EditorProgressCallback,
-	): Promise<
-		| Extract<EditorAttemptResult, { kind: "provisional" | "stable" }>
+	advance(onProgress?: EditorProgressCallback): Promise<
+		| (Extract<EditorAttemptResult, { kind: "provisional" | "stable" }> & {
+				renderUpdate: HtmlRenderUpdate | null;
+		  })
 		| EditorCancellationResult
 	>;
 	stabilize(
@@ -57,6 +58,14 @@ export class EditorWorkerFacade {
 	applyPatch(
 		patch: SourcePatch,
 	): Promise<{ kind: "patched"; status: EditorStatus | undefined }>;
+	acknowledgeRenderUpdate(
+		revision: number,
+		digest: string,
+	): Promise<{ kind: "render-acknowledged" }>;
+	renderResync(): Promise<{
+		kind: "render-resync";
+		update: HtmlRenderUpdate | null;
+	}>;
 	renderedSourceLocation(
 		page: number,
 		event: number,

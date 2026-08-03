@@ -191,6 +191,7 @@ if (isWorkerRealm) {
 			switch (event.data.kind) {
 				case "editor-advance":
 					result = await editor.advance(undefined, progress);
+					result = { ...result, renderUpdate: editor.renderUpdate };
 					break;
 				case "editor-stabilize":
 					result = await editor.stabilize(undefined, progress);
@@ -198,6 +199,16 @@ if (isWorkerRealm) {
 				case "editor-apply-patch":
 					editor.applyPatch(event.data.patch);
 					result = { kind: "patched", status: editor.status };
+					break;
+				case "editor-render-ack":
+					editor.acknowledgeRenderUpdate(
+						event.data.revision,
+						event.data.digest,
+					);
+					result = { kind: "render-acknowledged" };
+					break;
+				case "editor-render-resync":
+					result = { kind: "render-resync", update: editor.renderResync() };
 					break;
 				case "editor-rendered-source":
 					result = {
@@ -233,7 +244,10 @@ if (isWorkerRealm) {
 				default:
 					throw new Error("invalid editor worker operation");
 			}
-			const transfers = result.output ? outputTransfers(result.output) : [];
+			const transfers = [
+				...(result.output ? outputTransfers(result.output) : []),
+				...renderUpdateTransfers(result.renderUpdate ?? result.update),
+			];
 			scope.postMessage(
 				{ kind: "editor-result", id: event.data.id, result },
 				transfers,
@@ -246,6 +260,15 @@ if (isWorkerRealm) {
 			});
 		}
 	});
+}
+
+function renderUpdateTransfers(update) {
+	if (!update) return [];
+	const resources =
+		update.kind === "snapshot" ? update.resources : update.resourceAdditions;
+	return [
+		...new Set((resources ?? []).map((resource) => resource.bytes.buffer)),
+	];
 }
 
 function serializedError(error) {

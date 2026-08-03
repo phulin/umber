@@ -222,6 +222,7 @@ fn count_patch(patch: &PatchPlan) -> PatchCounts {
     add_string(&mut counts, patch.title.as_deref());
     add_string(&mut counts, patch.language.as_deref());
     for resource in &patch.resource_additions {
+        add_string(&mut counts, Some(&resource.family));
         add_string(&mut counts, Some(&resource.provenance));
     }
     for operation in &patch.operations {
@@ -257,6 +258,7 @@ fn count_node_strings(counts: &mut PatchCounts, node: &super::RenderNode) {
         RenderNodeValue::Text(text) => {
             add_string(counts, Some(&text.text));
             add_string(counts, Some(&text.font.name));
+            add_string(counts, Some(&text.family));
             add_string(counts, text.language.as_deref());
             add_string(counts, text.color.as_deref());
             add_string(counts, text.link.as_deref());
@@ -286,6 +288,12 @@ fn validate_strings(patch: &PatchPlan, max: usize) -> Result<(), PatchProtocolEr
         patch
             .resource_additions
             .iter()
+            .map(|resource| resource.family.as_str()),
+    );
+    strings.extend(
+        patch
+            .resource_additions
+            .iter()
             .map(|resource| resource.provenance.as_str()),
     );
     for operation in &patch.operations {
@@ -301,6 +309,7 @@ fn validate_strings(patch: &PatchPlan, max: usize) -> Result<(), PatchProtocolEr
                 RenderNodeValue::Text(text) => {
                     strings.push(&text.text);
                     strings.push(&text.font.name);
+                    strings.push(&text.family);
                     strings.extend(text.language.iter().map(String::as_str));
                     strings.extend(text.color.iter().map(String::as_str));
                     strings.extend(text.link.iter().map(String::as_str));

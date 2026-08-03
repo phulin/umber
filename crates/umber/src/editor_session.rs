@@ -202,6 +202,24 @@ impl EditorCompileSession {
         self.hot.content_hash()
     }
 
+    #[must_use]
+    pub fn render_update(&self) -> Option<&crate::RenderUpdate> {
+        self.hot.render_update()
+    }
+
+    pub fn acknowledge_render_update(
+        &mut self,
+        revision: u64,
+        digest: crate::RenderDigest,
+    ) -> Result<(), CompileError> {
+        self.hot.acknowledge_render_update(revision, digest)
+    }
+
+    #[must_use]
+    pub fn render_resync(&self) -> Option<crate::RenderUpdate> {
+        self.hot.render_resync()
+    }
+
     /// Resolves one HTML page/event/unit against the current display output.
     pub fn rendered_source_location(
         &self,

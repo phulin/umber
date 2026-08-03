@@ -10,6 +10,7 @@ import type {
 	SessionLimits,
 	SessionOptions,
 } from "./umber_wasm.js";
+import type { HtmlRenderUpdate } from "./html-patch.js";
 
 export interface ResourceResolver {
 	resolve(
@@ -113,6 +114,9 @@ export class EditorCompileFacade {
 	readonly status: EditorStatus | undefined;
 	readonly revision: number | undefined;
 	readonly contentHash: string | undefined;
+	readonly renderUpdate: HtmlRenderUpdate | null;
+	acknowledgeRenderUpdate(revision: number, digest: string): void;
+	renderResync(): HtmlRenderUpdate | null;
 	applyPatch(patch: import("./umber_wasm.js").SourcePatch): void;
 	renderedSourceLocation(
 		page: number,

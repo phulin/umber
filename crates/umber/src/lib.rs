@@ -94,8 +94,14 @@ pub use tex_fonts::{
     ResolvedFont, VariationCoordinate, VariationInstance, VariationSelection, WritingDirection,
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
+pub use tex_out::html::incremental::{
+    PatchEnvelope, PatchOp, RenderDigest, RenderDirection, RenderKey, RenderNode, RenderNodeValue,
+    RenderPage, RenderPageHeader, RenderResource, RenderRevision, RenderRule, RenderSessionId,
+    RenderSpecial, RenderSpecialAction, RenderText,
+};
 pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutcome};
 pub use umber_vfs::FileContentId;
+pub use virtual_compile::RenderUpdate;
 
 /// Complete immutable startup capability for one retained canonical run.
 pub struct RetainedRootRequest {

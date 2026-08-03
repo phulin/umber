@@ -47,6 +47,11 @@ impl RenderSessionId {
     pub const fn as_bytes(self) -> [u8; 16] {
         self.0
     }
+
+    #[must_use]
+    pub fn hex(self) -> String {
+        hex(&self.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -59,6 +64,11 @@ impl RenderKey {
     pub const fn as_bytes(self) -> [u8; 16] {
         self.0
     }
+
+    #[must_use]
+    pub fn hex(self) -> String {
+        hex(&self.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -68,6 +78,48 @@ impl RenderDigest {
     #[must_use]
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
+    }
+
+    #[must_use]
+    pub fn hex(self) -> String {
+        hex(&self.0)
+    }
+
+    #[must_use]
+    pub fn parse_hex(value: &str) -> Option<Self> {
+        parse_hex(value).map(Self)
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        value.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        value.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    value
+}
+
+fn parse_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
+    if value.len() != N * 2 {
+        return None;
+    }
+    let mut bytes = [0; N];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        let offset = index * 2;
+        let high = hex_nibble(value.as_bytes()[offset])?;
+        let low = hex_nibble(value.as_bytes()[offset + 1])?;
+        *byte = (high << 4) | low;
+    }
+    Some(bytes)
+}
+
+const fn hex_nibble(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        _ => None,
     }
 }
 
@@ -165,6 +217,7 @@ pub struct RenderText {
     pub units: Vec<TextUnit>,
     pub text: String,
     pub font: HtmlFontKey,
+    pub family: String,
     pub resource: [u8; 32],
     pub direction: RenderDirection,
     pub script: Option<[u8; 4]>,
@@ -205,6 +258,7 @@ pub enum RenderSpecialAction {
 pub struct RenderResource {
     pub identity: [u8; 32],
     pub bytes: Vec<u8>,
+    pub family: String,
     pub provenance: String,
 }
 
@@ -333,6 +387,7 @@ pub fn build_positioned_render_revision<R: HtmlFontAssets>(
                 .or_insert_with(|| RenderResource {
                     identity: checked.web.sha256,
                     bytes: checked.web.woff2.clone(),
+                    family: checked.family.clone(),
                     provenance: checked.web.provenance.clone(),
                 });
             resolved.insert(key, checked);
@@ -453,6 +508,7 @@ fn render_page(
                     units: value.units.clone(),
                     text,
                     font: HtmlFontKey::from(*artifact_font),
+                    family: font.family.clone(),
                     resource: font.web.sha256,
                     direction: if opentype.is_some_and(|font| {
                         font.direction == tex_fonts::WritingDirection::RightToLeft

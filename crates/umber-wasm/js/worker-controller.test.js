@@ -227,10 +227,17 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 						id: message.id,
 						result:
 							message.kind === "editor-advance"
-								? provisional
+								? {
+										...provisional,
+										renderUpdate: { kind: "snapshot", revision: 1 },
+									}
 								: message.kind === "editor-stabilize"
 									? stable
-									: { kind: "disposed" },
+									: message.kind === "editor-render-ack"
+										? { kind: "render-acknowledged" }
+										: message.kind === "editor-render-resync"
+											? { kind: "render-resync", update: { kind: "snapshot" } }
+											: { kind: "disposed" },
 					};
 		queueMicrotask(() => worker.emit("message", { data: response }));
 	});
@@ -242,11 +249,17 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 	);
 	const first = await editor.advance();
 	assert.equal(first.kind, "provisional");
+	assert.equal(first.renderUpdate.kind, "snapshot");
 	assert.deepEqual([...first.output.tex.dvi], [2, 0]);
 	assert.equal(editor.status.kind, "provisional");
 	const final = await editor.stabilize();
 	assert.equal(final.kind, "stable");
 	assert.equal(editor.status.passes, 2);
+	assert.equal(
+		(await editor.acknowledgeRenderUpdate(1, "a".repeat(64))).kind,
+		"render-acknowledged",
+	);
+	assert.equal((await editor.renderResync()).update.kind, "snapshot");
 	await editor.dispose();
 	assert.equal(Worker.instances[0].terminated, 1);
 });

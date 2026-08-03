@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bib-engine = { path = "../bib-engine" }
 js-sys = "0.3"
+tex-arith = { path = "../tex-arith" }
 tex-state = { path = "../tex-state" }
 umber = { path = "../umber" }
 wasm-bindgen = "0.2"
@@ -21,7 +22,6 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 [dev-dependencies]
-tex-arith = { path = "../tex-arith" }
 tex-fonts = { path = "../tex-fonts" }
 tex-out = { path = "../tex-out" }
 wasm-bindgen-futures = "0.4"

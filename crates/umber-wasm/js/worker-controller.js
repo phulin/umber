@@ -210,6 +210,14 @@ export class EditorWorkerFacade {
 		return this.#operation("editor-apply-patch", { patch });
 	}
 
+	async acknowledgeRenderUpdate(revision, digest) {
+		return this.#operation("editor-render-ack", { revision, digest });
+	}
+
+	async renderResync() {
+		return this.#operation("editor-render-resync");
+	}
+
 	async renderedSourceLocation(page, event, unit, outputId, revision) {
 		const result = await this.#operation("editor-rendered-source", {
 			page,

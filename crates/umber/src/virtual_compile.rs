@@ -10,6 +10,10 @@ use tex_fonts::{
     AcceptedFontContainers, FontLayoutPolicy, FontLimits, FontMappingFallbackPolicy, FontPurposes,
     FontRequest, FontRequestKey, OpenTypeFont, PdfPkFontRequest, ResolvedFont,
 };
+use tex_out::html::incremental::{
+    PatchEnvelope, PatchLimits, RenderDigest, RenderLimits, RenderRevision, RenderSessionId,
+    build_render_revision, plan_patch,
+};
 use tex_out::html::{HtmlFontAsset, HtmlFontAssets, HtmlFontKey};
 use tex_state::{ContentHash, JobClock, Universe, World};
 
@@ -734,6 +738,8 @@ pub struct VirtualCompileSession {
     html_asset_mode: tex_out::html::AssetMode,
     incremental: Option<tex_incr::Session>,
     accepted_output: Option<MemoryRunOutput>,
+    accepted_render_revision: Option<RenderRevision>,
+    pending_render_update: Option<RenderUpdate>,
     pending_patch: Option<(tex_incr::RevisionId, tex_incr::Edit)>,
     candidate: Option<RetainedCandidate>,
     response_generation: u64,
@@ -750,6 +756,30 @@ pub struct VirtualCompileSession {
     vfs_stage_time: Duration,
     #[cfg(not(target_arch = "wasm32"))]
     resource_wait_started: Option<Instant>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RenderUpdate {
+    Snapshot(RenderRevision),
+    Patch(PatchEnvelope),
+}
+
+impl RenderUpdate {
+    #[must_use]
+    pub fn target_revision(&self) -> u64 {
+        match self {
+            Self::Snapshot(revision) => revision.revision,
+            Self::Patch(envelope) => envelope.patch.target_revision,
+        }
+    }
+
+    #[must_use]
+    pub fn target_digest(&self) -> RenderDigest {
+        match self {
+            Self::Snapshot(revision) => revision.digest,
+            Self::Patch(envelope) => envelope.patch.after_digest,
+        }
+    }
 }
 
 enum CandidateExecution {
@@ -982,6 +1012,8 @@ impl VirtualCompileSession {
             html_asset_mode: options.html_asset_mode,
             incremental: None,
             accepted_output: None,
+            accepted_render_revision: None,
+            pending_render_update: None,
             pending_patch: None,
             candidate: None,
             response_generation: 0,
@@ -1149,6 +1181,41 @@ impl VirtualCompileSession {
     pub fn rendered_output_id(&self) -> Option<tex_incr::RenderedOutputId> {
         self.revision()
             .and_then(|_| self.incremental.as_ref().map(tex_incr::Session::output_id))
+    }
+
+    #[must_use]
+    pub const fn render_update(&self) -> Option<&RenderUpdate> {
+        self.pending_render_update.as_ref()
+    }
+
+    /// Acknowledges exactly the delivered render target. Stale or conflicting
+    /// acknowledgements never retire the pending resource/revision base.
+    pub fn acknowledge_render_update(
+        &mut self,
+        revision: u64,
+        digest: RenderDigest,
+    ) -> Result<(), CompileError> {
+        let Some(update) = &self.pending_render_update else {
+            return Err(CompileError::Incremental(
+                "there is no pending HTML render update".to_owned(),
+            ));
+        };
+        if update.target_revision() != revision || update.target_digest() != digest {
+            return Err(CompileError::Incremental(
+                "HTML render acknowledgement does not match the delivered target".to_owned(),
+            ));
+        }
+        self.pending_render_update = None;
+        Ok(())
+    }
+
+    /// Returns a bounded full snapshot for explicit protocol recovery.
+    #[must_use]
+    pub fn render_resync(&self) -> Option<RenderUpdate> {
+        self.accepted_render_revision
+            .as_ref()
+            .cloned()
+            .map(RenderUpdate::Snapshot)
     }
 
     /// Resolves one HTML page/event/unit against the currently accepted output.
@@ -2459,6 +2526,7 @@ impl VirtualCompileSession {
                     .sum::<usize>(),
             );
         let remaining = self.limits.output_bytes.saturating_sub(existing);
+        let mut next_render_revision = None;
         let html = if self.outputs.contains(OutputCapability::Html) {
             let output_id = match &execution {
                 PreparedExecution::Initial { session, .. } => session.output_id(),
@@ -2481,12 +2549,42 @@ impl VirtualCompileSession {
                 max_asset_bytes: remaining,
                 ..tex_out::html::HtmlOptions::default()
             };
+            let pages = execution
+                .artifacts()
+                .iter()
+                .map(|artifact| tex_out::PageArtifact::from_bytes(artifact.bytes()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| CompileError::OutputCapability {
+                    capability: OutputCapability::Html,
+                    message: error.to_string(),
+                })?;
+            next_render_revision = Some(
+                build_render_revision(
+                    &pages,
+                    &assets,
+                    &html_options,
+                    RenderSessionId::from_bytes(output_id.as_bytes()),
+                    execution.revision().raw(),
+                    self.accepted_render_revision.as_ref(),
+                    RenderLimits {
+                        max_pages: html_options.max_pages,
+                        max_nodes: html_options.max_positioned_events,
+                        max_resources: 65_536,
+                        max_resource_bytes: remaining,
+                    },
+                )
+                .map_err(|error| CompileError::OutputCapability {
+                    capability: OutputCapability::Html,
+                    message: error.to_string(),
+                })?,
+            );
             Some(
-                crate::html_from_committed_artifacts(execution.artifacts(), &assets, &html_options)
-                    .map_err(|error| CompileError::OutputCapability {
+                tex_out::html::write_html(&pages, &assets, &html_options).map_err(|error| {
+                    CompileError::OutputCapability {
                         capability: OutputCapability::Html,
                         message: error.to_string(),
-                    })?,
+                    }
+                })?,
             )
         } else {
             None
@@ -2530,6 +2628,25 @@ impl VirtualCompileSession {
         self.last_reuse = Some(reuse);
         self.last_stabilization_required = previous_generated != next_generated;
         self.accepted_output = Some(output.clone());
+        if let Some(target) = next_render_revision {
+            let update = if self.pending_render_update.is_some() {
+                // The consumer missed an acknowledgement. Coalesce to the
+                // newest accepted target through the explicit snapshot path.
+                RenderUpdate::Snapshot(target.clone())
+            } else if let Some(base) = &self.accepted_render_revision {
+                let patch = plan_patch(base, &target, PatchLimits::default()).map_err(|error| {
+                    CompileError::OutputCapability {
+                        capability: OutputCapability::Html,
+                        message: error.to_string(),
+                    }
+                })?;
+                RenderUpdate::Patch(PatchEnvelope::new(patch))
+            } else {
+                RenderUpdate::Snapshot(target.clone())
+            };
+            self.accepted_render_revision = Some(target);
+            self.pending_render_update = Some(update);
+        }
         Ok(CompileAttemptResult::Complete(output))
     }
 
