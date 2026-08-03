@@ -3784,6 +3784,13 @@ impl World {
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
         let mut page_effect_prefix = self.page_effect_prefix.as_ref().clone();
+        let snapshot_base = usize::try_from(snapshot.effect_base.raw())
+            .expect("effect position must fit in memory address space");
+        assert!(
+            page_effect_prefix.len() >= snapshot_base,
+            "generation fork page-effect prefix must cover the snapshot base"
+        );
+        page_effect_prefix.truncate(snapshot_base);
         page_effect_prefix.extend(snapshot.effects.iter().cloned());
         assert_eq!(
             u64::try_from(page_effect_prefix.len()).unwrap_or(u64::MAX),
