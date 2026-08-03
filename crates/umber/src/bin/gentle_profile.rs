@@ -12,12 +12,10 @@ use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
-use tex_expand::InputResolver;
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
     SameHistoryStop, Session,
 };
-use tex_lex::{InputSource, MemoryInput};
 #[cfg(feature = "profiling")]
 use tex_state::measurement::{
     ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
@@ -29,8 +27,8 @@ use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
+use tex_state::{InputResolver, ResourceLookup, ResourceResult};
 use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
-use tex_state::{ResourceLookup, ResourceResult};
 #[cfg(feature = "profiling")]
 use umber::CanonicalExpansionStats;
 use umber::{CanonicalEngineSession, FileSessionResolvers, dvi_from_page_plans};
@@ -604,11 +602,15 @@ impl InputResolver for OverlayInputResolver<'_> {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         request_index: u64,
-    ) -> ResourceResult<Box<dyn InputSource>> {
+    ) -> ResourceResult<tex_state::FileContent> {
         if name == STABILIZATION_INPUT {
-            return Ok(ResourceLookup::Available(Box::new(MemoryInput::new(
-                self.generated,
-            ))));
+            return input
+                .read_supplied_input_file(
+                    Path::new(name),
+                    self.generated.as_bytes().to_vec().into(),
+                )
+                .map(ResourceLookup::Available)
+                .map_err(|error| error.to_string());
         }
         self.fallback.open_input(input, name, request_index)
     }

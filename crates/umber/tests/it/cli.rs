@@ -1473,6 +1473,55 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn shipped_umber_has_no_tex_expand_dependency() {
+    let manifest =
+        std::fs::read_to_string(test_support::repository_root().join("crates/umber/Cargo.toml"))
+            .expect("read Umber manifest");
+    let (production, development) = manifest
+        .split_once("[dev-dependencies]")
+        .expect("Umber manifest has dev dependencies");
+    assert!(
+        !production.contains("tex-expand"),
+        "shipped Umber must not depend directly on retired tex-expand"
+    );
+    assert!(
+        development.contains("tex-expand ="),
+        "legacy inline tests retain an explicit dev-only dependency"
+    );
+
+    for relative in ["src/lib.rs", "src/bin/gentle_profile.rs"] {
+        let source = std::fs::read_to_string(
+            test_support::repository_root()
+                .join("crates/umber")
+                .join(relative),
+        )
+        .expect("read Umber production source");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(&source);
+        assert!(
+            !production.contains("tex_expand::") && !production.contains("use tex_expand"),
+            "{relative} must not restore a shipped tex-expand route"
+        );
+    }
+    let library =
+        std::fs::read_to_string(test_support::repository_root().join("crates/umber/src/lib.rs"))
+            .expect("read Umber library");
+    let resolver = library
+        .split_once("struct FileInputResolver")
+        .and_then(|(_, tail)| tail.split_once("struct FileFontResolver"))
+        .map(|(resolver, _)| resolver)
+        .expect("find shipped file input resolver");
+    assert!(
+        !resolver.contains("tex_expand") && !resolver.contains("tex_lex"),
+        "shipped input resolution must return state-owned immutable content"
+    );
+    assert!(
+        !library.contains("pub fn next_expanded_token"),
+        "shipped Umber must not expose the retired expansion driver"
+    );
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");

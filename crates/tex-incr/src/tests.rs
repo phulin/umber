@@ -4660,20 +4660,21 @@ impl CanonicalResourceHost for DecliningStagedCanonicalHost<'_> {
 impl InputResolver for StagedInputResolver {
     fn open_input(
         &mut self,
-        _input: &mut dyn InputReadState,
+        input: &mut dyn InputReadState,
         name: &str,
         request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
+    ) -> tex_expand::ResourceResult<tex_state::FileContent> {
         Ok(self.files.get(name).cloned().map_or_else(
             || {
                 tex_expand::ResourceLookup::NeedResource(tex_expand::ResourceNeed::new(
                     request_index,
                 ))
             },
-            |source| {
-                tex_expand::ResourceLookup::Available(
-                    Box::new(MemoryInput::new(source)) as Box<dyn InputSource>
-                )
+            |source| match input
+                .read_supplied_input_file(std::path::Path::new(name), source.into_bytes().into())
+            {
+                Ok(content) => tex_expand::ResourceLookup::Available(content),
+                Err(_) => tex_expand::ResourceLookup::Unavailable,
             },
         ))
     }

@@ -21,15 +21,16 @@ use tex_exec::{
     CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint, ExecutionBudgetCounters,
     ExecutionContext, ExecutionStats, Executor, MainControlStep, canonical_font_resource_path,
 };
-use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
-use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
+use tex_expand::{ResourceLookup, ResourceResult};
+use tex_lex::{InputStack, MemoryInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::token::OriginId;
 use tex_state::{
     ArtifactOrigin, CommittedArtifact, ContentHash, EditorLayout, EditorLayoutError, EffectRecord,
-    FragmentStore, GenerationForkError, GenerationSubstrate, InputReadState, LayoutGeneration,
-    LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation, Universe, WorldError,
+    FragmentStore, GenerationForkError, GenerationSubstrate, InputReadState, InputResolver,
+    LayoutGeneration, LayoutResolvedOrigin, Piece, ProvenanceResolver, ResolvedSourceLocation,
+    Universe, WorldError,
 };
 
 mod trace;
@@ -3452,11 +3453,9 @@ impl InputResolver for DirectInputResolver {
         input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> ResourceResult<Box<dyn InputSource>> {
+    ) -> ResourceResult<tex_state::FileContent> {
         Ok(match input.read_input_file(Path::new(name)) {
-            Ok(content) => ResourceLookup::Available(
-                Box::new(WorldInput::from_content(content)) as Box<dyn InputSource>
-            ),
+            Ok(content) => ResourceLookup::Available(content),
             Err(_) => ResourceLookup::Unavailable,
         })
     }

@@ -6230,7 +6230,7 @@ impl crate::InputResolver for SuspendingResolver {
         _input: &mut dyn InputReadState,
         _name: &str,
         request_index: u64,
-    ) -> crate::ResourceResult<Box<dyn tex_lex::InputSource>> {
+    ) -> crate::ResourceResult<tex_state::FileContent> {
         Ok(crate::ResourceLookup::NeedResource(
             crate::ResourceNeed::new(request_index),
         ))
@@ -6291,17 +6291,21 @@ impl MemoryResolverFixture {
 impl crate::InputResolver for MemoryResolver {
     fn open_input(
         &mut self,
-        _input: &mut dyn InputReadState,
+        input: &mut dyn InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> crate::ResourceResult<Box<dyn tex_lex::InputSource>> {
+    ) -> crate::ResourceResult<tex_state::FileContent> {
         let Some(source) = self.sources.get(name) else {
             return Ok(crate::ResourceLookup::Unavailable);
         };
         self.opened.push(name.to_owned());
-        Ok(crate::ResourceLookup::Available(Box::new(
-            MemoryInput::new(source.clone()),
-        )))
+        input
+            .read_supplied_input_file(
+                std::path::Path::new(name),
+                source.as_bytes().to_vec().into(),
+            )
+            .map(crate::ResourceLookup::Available)
+            .map_err(|error| error.to_string())
     }
 
     fn input_file_size(

@@ -12,14 +12,13 @@ use tex_exec::{
     MainControlStep, PdfImageRequest as LegacyPdfImageRequest, PdfImageResolver,
     try_execute_assignment,
 };
-use tex_expand::{InputResolver, get_x_token_with_context};
-use tex_lex::{InputSource, InputStack};
+use tex_lex::InputStack;
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, FileContent,
-    PrintSink, ResourceLookup, ResourceResult, Universe, WorldCommitMode, WorldError,
+    CommittedArtifact, ContentHash, EffectPos, EffectRecord, FileContent, InputResolver, PrintSink,
+    ResourceLookup, ResourceResult, Universe, WorldCommitMode, WorldError,
 };
 
 mod canonical_session;
@@ -569,13 +568,6 @@ impl<'a, 'context> EngineSession<'a, 'context> {
         }
     }
 
-    pub fn next_expanded_token(
-        &mut self,
-    ) -> Result<Option<TracedTokenWord>, tex_expand::ExpandError> {
-        let mut expansion = ExpansionContext::new(self.stores);
-        get_x_token_with_context(self.input, &mut expansion, &mut self.context)
-    }
-
     pub fn try_execute_assignment(
         &mut self,
         token: TracedTokenWord,
@@ -912,18 +904,17 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> ResourceResult<Box<dyn InputSource>> {
+    ) -> ResourceResult<FileContent> {
         if let Some(output) = self.0.read_restricted_pipe(input, name) {
-            return output.map(|text| {
-                ResourceLookup::Available(
-                    Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>
-                )
+            return output.and_then(|text| {
+                input
+                    .read_supplied_input_file(Path::new(name), text.into_bytes().into())
+                    .map(ResourceLookup::Available)
+                    .map_err(|error| error.to_string())
             });
         }
         Ok(match self.0.read(input, name) {
-            Ok(content) => ResourceLookup::Available(Box::new(tex_lex::WorldInput::from_content(
-                content,
-            )) as Box<dyn InputSource>),
+            Ok(content) => ResourceLookup::Available(content),
             Err(_) => ResourceLookup::Unavailable,
         })
     }

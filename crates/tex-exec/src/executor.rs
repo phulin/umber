@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tex_expand::{InputResolver, get_x_token_with_context};
+use tex_expand::get_x_token_with_context;
 use tex_lex::{InputStack, InputStackSnapshot};
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, ReadRecorder,
+    FileContent, InputReadState, InputResolver, InputSummary, ParagraphBarrierReason, ReadRecorder,
     ReadRecorderBatch, TokenListReplayKind, Universe,
 };
 

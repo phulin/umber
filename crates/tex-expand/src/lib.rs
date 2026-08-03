@@ -14,7 +14,7 @@ use tex_state::World;
 
 use tex_lex::{
     InputSource, InputStack, LexError, MacroArguments, MacroReplaySite, TokenListReplayKind,
-    TracedExpansionToken,
+    TracedExpansionToken, WorldInput,
 };
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
@@ -116,6 +116,7 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
     tex_command::install_pdftex_expandable_primitives(stores);
 }
 
+pub use tex_state::InputResolver;
 /// Records state reads performed by expansion.
 ///
 /// Recorder implementations are erased behind [`ExpansionContext`]. Ordinary
@@ -581,65 +582,6 @@ impl ExpandError {
                 site,
             }
         }
-    }
-}
-
-/// Object-safe host boundary for expansion-time input access and enquiries.
-pub trait InputResolver {
-    fn open_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<Box<dyn InputSource>>;
-
-    /// Resolves an input and returns its byte size.
-    ///
-    /// Resolvers with a meaningful not-found state should override this and
-    /// return `Ok(None)`. The default preserves retry behavior for virtual
-    /// resolvers by delegating to `open_input`.
-    fn input_file_size(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<u64> {
-        self.open_input(input, name, request_index)
-            .map(|lookup| match lookup {
-                ResourceLookup::Available(source) => source
-                    .source_descriptor()
-                    .map_or(ResourceLookup::Unavailable, |descriptor| {
-                        ResourceLookup::Available(descriptor.byte_len())
-                    }),
-                ResourceLookup::Unavailable => ResourceLookup::Unavailable,
-                ResourceLookup::NeedResource(need) => ResourceLookup::NeedResource(need),
-            })
-    }
-
-    /// Resolves immutable file bytes and metadata for read-only enquiries.
-    fn input_file_content(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        self.open_stream_input(input, name, request_index)
-    }
-
-    /// Resolves content for a TeX input stream such as `\openin`.
-    ///
-    /// Missing streams are not fatal in TeX, so the default converts any
-    /// direct World read failure into `Ok(None)`.
-    fn open_stream_input(
-        &mut self,
-        input: &mut dyn InputReadState,
-        name: &str,
-        _request_index: u64,
-    ) -> ResourceResult<FileContent> {
-        Ok(match input.read_input_file(Path::new(name)) {
-            Ok(content) => ResourceLookup::Available(content),
-            Err(_) => ResourceLookup::Unavailable,
-        })
     }
 }
 
@@ -1348,6 +1290,11 @@ impl<'a> ExpansionContext<'a> {
             .as_deref_mut()
             .ok_or_else(|| "no input resolver is installed".to_owned())?
             .open_input(input, name, request_index)
+            .map(|lookup| {
+                lookup.map(|content| {
+                    Box::new(WorldInput::from_content(content)) as Box<dyn InputSource>
+                })
+            })
     }
 
     pub fn input_file_size(

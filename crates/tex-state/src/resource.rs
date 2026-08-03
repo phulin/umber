@@ -1,5 +1,9 @@
 //! Host-resource lookup outcomes shared across engine layers.
 
+use std::path::Path;
+
+use crate::{FileContent, InputReadState};
+
 /// A host resource lookup distinguishes authoritative absence from a request
 /// which can be satisfied before replaying the current operation.
 #[derive(Debug)]
@@ -41,6 +45,50 @@ impl ResourceNeed {
 /// Fatal resolver failures remain errors; normal absence and suspension are
 /// represented by [`ResourceLookup`] rather than diagnostic strings.
 pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
+
+/// Object-safe host boundary for legacy expansion-time input acquisition.
+///
+/// Resolvers return immutable state-owned content. Input-stack construction
+/// remains private to the command-delivery implementation that consumes it.
+pub trait InputResolver {
+    fn open_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> ResourceResult<FileContent>;
+
+    fn input_file_size(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> ResourceResult<u64> {
+        self.open_input(input, name, request_index)
+            .map(|lookup| lookup.map(|content| content.bytes().len() as u64))
+    }
+
+    fn input_file_content(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        request_index: u64,
+    ) -> ResourceResult<FileContent> {
+        self.open_stream_input(input, name, request_index)
+    }
+
+    fn open_stream_input(
+        &mut self,
+        input: &mut dyn InputReadState,
+        name: &str,
+        _request_index: u64,
+    ) -> ResourceResult<FileContent> {
+        Ok(match input.read_input_file(Path::new(name)) {
+            Ok(content) => ResourceLookup::Available(content),
+            Err(_) => ResourceLookup::Unavailable,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

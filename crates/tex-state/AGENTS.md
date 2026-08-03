@@ -99,7 +99,8 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
 - `src/pure_memo.rs`: Optional bounded session-local pure-query experiments plus the ordered accepted paragraph history, stable-start cursor, generation-interned exact paragraph observations, validation telemetry, opaque accepted-generation output provenance, and accepted-history-owned retained node mounts.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
-  suspension identities shared across engine-layer resolver contracts.
+  suspension identities plus the state-owned immutable input-content resolver
+  contract shared across engine layers.
 - `src/read_observation.rs`: State-owned read-recorder contract, detached
   transactional batches, and deterministic dependency-set recorder.
 - `src/pure_memo/tests.rs`: Collision, eviction, retention-release, and disabled-cache tests.

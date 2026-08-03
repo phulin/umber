@@ -53,6 +53,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/lib.rs` retains compatibility re-exports for the state-owned read
   recorder contract and detached transactional batches; production consumers
   use `tex-state` directly.
+- `src/lib.rs` also retains an `InputResolver` compatibility re-export; the
+  trait and immutable content result are owned by `tex-state`, while expansion
+  privately constructs its legacy input source.
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.

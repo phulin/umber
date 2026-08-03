@@ -116,7 +116,7 @@ pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
 pub use read_observation::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
-pub use resource::{ResourceLookup, ResourceNeed, ResourceResult};
+pub use resource::{InputResolver, ResourceLookup, ResourceNeed, ResourceResult};
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
 pub use dependency::{

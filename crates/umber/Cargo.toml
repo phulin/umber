@@ -27,7 +27,6 @@ test-support = { path = "../test-support", optional = true }
 tex-arith = { path = "../tex-arith" }
 tex-command = { path = "../tex-command" }
 tex-exec = { path = "../tex-exec" }
-tex-expand = { path = "../tex-expand" }
 tex-fonts = { path = "../tex-fonts" }
 tex-incr = { path = "../tex-incr" }
 tex-lex = { path = "../tex-lex" }
@@ -56,6 +55,7 @@ proptest.workspace = true
 tempfile.workspace = true
 test-support = { path = "../test-support" }
 tex-command-stream = { path = "../../tools/tex-command-stream" }
+tex-expand = { path = "../tex-expand" }
 tex-state = { path = "../tex-state", features = ["testing"] }
 ttf-parser = "0.25.1"
 
