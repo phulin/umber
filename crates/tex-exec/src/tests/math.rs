@@ -558,7 +558,6 @@ fn math_shift_aftergroup_replay_has_inserted_provenance() {
 }
 
 #[test]
-#[ignore = "umber2-dhxp"]
 fn math_shift_group_replay_converges_after_snapshot_rollback() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.set_int_param(IntParam::FAM, 6);
