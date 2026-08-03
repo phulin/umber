@@ -58,6 +58,56 @@ fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
 }
 
 #[test]
+fn overfull_rule_requires_excess_beyond_hfuzz() {
+    // TeX82 §§663/174: `hbadness<100` can request an overfull diagnostic
+    // within `\hfuzz`, but §663 appends `\overfullrule` only when the excess
+    // is greater than `\hfuzz`. The glue therefore remains §174's space.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\hbadness=0\hfuzz=2pt\overfullrule=5pt
+           \setbox0=\hbox to0pt{\hskip10pt minus9pt}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("1.0pt too wide) detected at line 2\n \n"),
+        "unexpected short display: {terminal}"
+    );
+    let root = stores.box_reg(0).expect("box0 exists");
+    let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {
+        panic!("box0 should contain an hbox");
+    };
+    assert!(matches!(
+        stores.nodes(hbox.children).first(),
+        Some(tex_state::node_arena::NodeRef::Glue { .. })
+    ));
+    assert_eq!(stores.nodes(hbox.children).len(), 1);
+}
+
+#[test]
+fn explicit_rule_remains_a_short_display_rule_marker() {
+    // TeX82 §174 prints `|` for a real rule node independently of §663's
+    // overfull-rule insertion condition.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\tracingonline=1\hbadness=0\hfuzz=2pt\overfullrule=0pt
+           \setbox0=\hbox to0pt{\vrule width1pt}\end",
+    );
+    run_to_end(&mut control, &mut stores);
+
+    let terminal = terminal_text(&stores);
+    assert!(
+        terminal.contains("1.0pt too wide) detected at line 2\n|\n"),
+        "unexpected short display: {terminal}"
+    );
+}
+
+#[test]
 fn vbox_restores_local_parameters_before_reporting_outer_overfull_box() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

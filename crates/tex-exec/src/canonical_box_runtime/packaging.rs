@@ -109,7 +109,9 @@ pub(crate) fn hpack_with_overfull_rule(
         && packed
             .diagnostics
             .iter()
-            .any(|diagnostic| matches!(diagnostic, PackDiagnostic::Overfull { .. }))
+            .any(|diagnostic| {
+                matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
+            })
     {
         let mut nodes = stores.nodes(packed.node.children).to_vec();
         nodes.push(Node::Rule {
@@ -140,7 +142,9 @@ pub(crate) fn hpack_owned_with_overfull_rule(
         && plan
             .diagnostics
             .iter()
-            .any(|diagnostic| matches!(diagnostic, PackDiagnostic::Overfull { .. }))
+            .any(|diagnostic| {
+                matches!(diagnostic, PackDiagnostic::Overfull { excess } if *excess > params.hfuzz)
+            })
     {
         nodes.push(Node::Rule {
             width: Some(params.overfull_rule),
