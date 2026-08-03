@@ -60,6 +60,8 @@ fn macro_arguments_stay_on_the_state_owner() {
                     && !source.contains("tex_lex::TracedExpansionToken")
                     && !source.contains("tex_lex::LiteralSpanPolicy")
                     && !source.contains("LexError, LiteralSpanPolicy")
+                    && !source.contains("tex_lex::ConditionLimb")
+                    && !source.contains("ConditionKind, ConditionLimb")
                     && !source.contains("MacroReplaySite, TokenListReplayKind")
                     && !source.contains("TokenListReplayKind, TracedExpansionToken"),
                 "{} must consume immutable replay payloads from tex-state",

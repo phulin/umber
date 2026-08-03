@@ -1481,7 +1481,7 @@ pub(crate) fn current_if_branch(input: &InputStack) -> i32 {
     input.current_condition().map_or(0, |condition| {
         if condition.evaluating() {
             0
-        } else if condition.limb() == tex_lex::ConditionLimb::Else {
+        } else if condition.limb() == tex_state::ConditionLimb::Else {
             -1
         } else {
             1

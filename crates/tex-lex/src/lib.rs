@@ -31,9 +31,9 @@ use tex_state::{ProfilingTimer, World};
 
 use tex_state::TokenListReplayMarker;
 pub use tex_state::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
-    InputSummary, LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments,
-    SourceFrameSummary, SourceId, TokenListReplayKind, TracedTokenList,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, InputFrameSummary, InputSummary,
+    LexerState, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, SourceFrameSummary,
+    SourceId, TokenListReplayKind, TracedTokenList,
 };
 
 /// Classifies and applies TeX's alignment-sensitive raw-token delivery.

@@ -66,6 +66,8 @@ Use this crate for behavior that is defined before stomach execution sees an une
   them without lexer-owned public value types.
 - Literal-span policy is a `tex-state` replay value shared by lexer
   segmentation and expanded replacement scanning.
+- Conditional limb identity is consumed from `tex-state`; `tex-lex` owns only
+  the live condition-frame stack operations.
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.

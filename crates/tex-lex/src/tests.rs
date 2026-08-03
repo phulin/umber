@@ -1,12 +1,13 @@
 use super::{
     AlignmentTerminator, AlignmentTokenDelivery, ConditionFrameSummary, ConditionKind,
-    ConditionLimb, ImmutableSourceKind, InputFrame, InputFrameSummary, InputSource, InputStack,
-    LayoutCursor, LayoutCursorError, LexError, Lexer, LexerState, LineEvent, LineReader,
-    LiteralSpanPolicy, MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput,
-    PhysicalLine, StableSourceSpanId, TokenListReplayKind, load_next_line,
+    ImmutableSourceKind, InputFrame, InputFrameSummary, InputSource, InputStack, LayoutCursor,
+    LayoutCursorError, LexError, Lexer, LexerState, LineEvent, LineReader, LiteralSpanPolicy,
+    MACRO_ARGUMENT_SLOTS, MacroArgumentRange, MacroArguments, MemoryInput, PhysicalLine,
+    StableSourceSpanId, TokenListReplayKind, load_next_line,
 };
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tex_state::ConditionLimb;
 use tex_state::env::banks::IntParam;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::provenance::{InsertedOriginKind, OriginRecord};

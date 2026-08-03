@@ -1,11 +1,10 @@
 use tex_lex::{
-    ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputStack,
-    TokenListReplayKind,
+    ConditionFrameSummary, ConditionFrameToken, ConditionKind, InputStack, TokenListReplayKind,
 };
-use tex_state::ExpansionState;
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::{ConditionLimb, ExpansionState};
 
 use crate::{
     Dispatch, ExpandError, ExpandableOpcode, ExpansionContext, ExpansionMode,
