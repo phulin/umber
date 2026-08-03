@@ -4045,6 +4045,7 @@ impl CanonicalMainControl {
         let shown_mode = self.shown_mode;
         let mut machine = self.command_machine();
         let mut processor = machine.processor(stores);
+        let mut diagnostics = Vec::new();
         // TeX82 §§299/1200: resume_after_display has already pushed the new
         // horizontal mode when its scanner expands this token. The expansion
         // therefore owns the same pending mode prefix as every other
@@ -4067,11 +4068,22 @@ impl CanonicalMainControl {
             Ok(_) => {}
             Err(err) => return Err(command_error(err)),
         }
+        diagnostics.extend(
+            processor
+                .take_semantic_diagnostics()
+                .into_iter()
+                .map(PendingDiagnostic::Command),
+        );
         drop(processor);
         if command_trace_printed {
             *machine.shown_mode = Some(mode);
         }
-        Ok(())
+        // §1200 performs this expanded fetch synchronously before §1125's
+        // page builder. Diagnostics produced by expansion therefore belong
+        // to this nested scanner boundary; leaving them on CommandState lets
+        // the following outer main-control step report them only after
+        // build_page has emitted its tracingpages state.
+        report_pending_diagnostics(stores, diagnostics)
     }
 
     fn apply_canonical_math_delimiter(

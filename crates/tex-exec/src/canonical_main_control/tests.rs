@@ -232,6 +232,7 @@ fn tracingcommands_aftergroup_expansion_reports_resumed_horizontal_mode() {
         assert!(display < horizontal, "{log}");
         assert_eq!(log.matches("\\expandafter}").count(), 2, "{log}");
         assert!(!log.contains("{\\expandafter}"), "{log}");
+        assert!(log.contains("{undefined}"), "{log}");
     }
 }
 

@@ -636,17 +636,18 @@ impl CommandProcessor<'_> {
             .saturating_add(1);
         // TeX82 §367 traces non-macro expandable commands inside `expand`,
         // before the primitive consumes operands or changes the input stack.
+        // Undefined control sequences reach the same branch through §370.
         // Macros and `end_template` take §366's other two branches and do not
         // cross this diagnostic boundary.
         if self
             .state
             .int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS)
             > 1
-            && matches!(
+            && (matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(primitive)
                     if primitive != ExpandablePrimitive::EndTemplate
-            )
+            ) || matches!(command.meaning(), Meaning::Undefined))
         {
             self.print_command_trace(crate::PrintCommand::from_current(&command));
         }
@@ -1030,7 +1031,7 @@ impl CommandProcessor<'_> {
     fn expand_expandafter(&mut self) -> Result<(), CommandError> {
         let first = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let second = self.get_token()?.ok_or(CommandError::input_invariant())?;
-        if is_expandable(second.meaning()) {
+        if is_expandable_command(&second) {
             self.expand(second)?;
         } else {
             self.back_input(second)?;

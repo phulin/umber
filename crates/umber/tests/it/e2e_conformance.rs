@@ -2030,6 +2030,13 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
         1,
         "{log}"
     );
+    let undefined = log
+        .find("{undefined}")
+        .unwrap_or_else(|| panic!("undefined command trace:\n{log}"));
+    let page = log
+        .find("% t=21.7 plus")
+        .unwrap_or_else(|| panic!("page-builder trace:\n{log}"));
+    assert!(undefined < page, "{log}");
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
