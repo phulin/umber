@@ -34,6 +34,8 @@ fn production_token_rendering_stays_on_the_state_owner() {
             "tex_expand::append_token_selector_text",
             "tex_expand::token_text",
             "tex_expand::semantic_token",
+            "tex_expand::meaning_text",
+            "tex_expand::bounded_meaning_text",
         ] {
             assert!(
                 !source.contains(forbidden),
@@ -83,10 +85,7 @@ fn production_mode_snapshots_stay_on_the_state_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     for path in production_rust_sources(&source_root) {
         let source = fs::read_to_string(&path).expect("read production Rust source");
-        for forbidden in [
-            "tex_expand::EngineMode",
-            "tex_expand::EngineStateSnapshot",
-        ] {
+        for forbidden in ["tex_expand::EngineMode", "tex_expand::EngineStateSnapshot"] {
             assert!(
                 !source.contains(forbidden),
                 "{} must use the tex-state-owned mode snapshot instead of `{forbidden}`",

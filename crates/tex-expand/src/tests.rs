@@ -3823,7 +3823,7 @@ fn meaning_uses_tex_printable_forms_for_nonprinting_macro_tokens() {
     );
 
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
         "macro:->^^M^^?^^80"
     );
 }
@@ -3838,7 +3838,7 @@ fn meaning_uses_the_canonical_name_for_a_radical_alias() {
     );
 
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(alias.symbol())),
         "\\radical"
     );
 }
@@ -3857,11 +3857,11 @@ fn meaning_uses_registered_names_for_primitive_aliases() {
     stores.set_meaning(mark_alias, mark);
 
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(expanded_alias.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(expanded_alias.symbol())),
         "\\expanded"
     );
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(mark_alias.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(mark_alias.symbol())),
         "\\mark"
     );
 }
@@ -3881,7 +3881,7 @@ fn meaning_renders_macro_prefixes_in_tex_order() {
     );
 
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(macro_cs.symbol())),
         "\\protected\\long\\outer macro:->"
     );
 }
@@ -3898,7 +3898,7 @@ fn meaning_resolves_an_active_character_macro() {
     );
 
     assert_eq!(
-        crate::meaning_text(
+        tex_state::token_show::meaning_text(
             &stores,
             Token::Char {
                 ch: '~',
@@ -3916,7 +3916,7 @@ fn meaning_reports_a_font_selection_by_font_identity() {
     stores.set_meaning(alias, Meaning::Font(tex_state::font::NULL_FONT));
 
     assert_eq!(
-        crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+        tex_state::token_show::meaning_text(&stores, Token::Cs(alias.symbol())),
         "select font nullfont"
     );
 }
@@ -4669,7 +4669,7 @@ fn etex_numbered_mark_meanings_use_exact_page_and_split_spellings() {
         let alias = stores.intern(&format!("{name}alias"));
         stores.set_meaning(alias, Meaning::ExpandablePrimitive(primitive));
         assert_eq!(
-            crate::meaning_text(&stores, Token::Cs(alias.symbol())),
+            tex_state::token_show::meaning_text(&stores, Token::Cs(alias.symbol())),
             format!("\\{name}")
         );
     }

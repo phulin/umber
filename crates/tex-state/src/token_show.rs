@@ -8,8 +8,155 @@
 
 use crate::env::banks::IntParam;
 use crate::interner::ControlSequenceKind;
+use crate::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use crate::token::{Catcode, Token};
 use crate::universe::ExpansionState;
+
+/// Renders the meaning TeX82's `\meaning` and `\show` expose for one token.
+#[must_use]
+pub fn meaning_text(stores: &impl ExpansionState, token: Token) -> String {
+    match token {
+        Token::Char {
+            ch,
+            cat: Catcode::Active,
+        } => stores.active_character_symbol(ch).map_or_else(
+            || "undefined".to_owned(),
+            |symbol| meaning_text(stores, Token::Cs(symbol)),
+        ),
+        Token::Char {
+            ch,
+            cat: Catcode::Letter,
+        } => format!("the letter {ch}"),
+        Token::Char { ch, .. } => format!("the character {ch}"),
+        Token::Param(slot) => format!("macro parameter character #{slot}"),
+        Token::Frozen(_) => "end of alignment template".to_owned(),
+        Token::Cs(symbol) => match stores.meaning(symbol) {
+            Meaning::Undefined => "undefined".to_owned(),
+            Meaning::Relax => "\\relax".to_owned(),
+            Meaning::EndV => "\\endtemplate".to_owned(),
+            Meaning::CharGiven(ch) => format!("the character {ch}"),
+            Meaning::CharToken {
+                ch,
+                cat: Catcode::Letter,
+            } => format!("the letter {ch}"),
+            Meaning::CharToken { ch, .. } => format!("the character {ch}"),
+            Meaning::MathCharGiven(value) => format!("\\mathchar\"{value:X}"),
+            Meaning::CountRegister(index) => format!("\\count{index}"),
+            Meaning::DimenRegister(index) => format!("\\dimen{index}"),
+            Meaning::SkipRegister(index) => format!("\\skip{index}"),
+            Meaning::MuskipRegister(index) => format!("\\muskip{index}"),
+            Meaning::ToksRegister(index) => format!("\\toks{index}"),
+            Meaning::IntParam(_)
+            | Meaning::InternalInteger(_)
+            | Meaning::DimenParam(_)
+            | Meaning::GlueParam(_)
+            | Meaning::MuGlueParam(_)
+            | Meaning::TokParam(_)
+            | Meaning::PageDimension(_)
+            | Meaning::PageInteger(_) => format!("\\{}", stores.resolve(symbol)),
+            Meaning::Font(font) => format!("select font {}", stores.font_name(font)),
+            meaning @ Meaning::ExpandablePrimitive(_) => format!(
+                "\\{}",
+                stores
+                    .primitive_name(meaning)
+                    .unwrap_or_else(|| stores.resolve(symbol))
+            ),
+            Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Radical) => {
+                "\\radical".to_owned()
+            }
+            meaning @ Meaning::UnexpandablePrimitive(_) => format!(
+                "\\{}",
+                stores
+                    .primitive_name(meaning)
+                    .unwrap_or_else(|| stores.resolve(symbol))
+            ),
+            Meaning::Macro { flags, definition } => {
+                let macro_meaning = stores.macro_definition(definition);
+                let mut text = macro_prefix(flags);
+                text.push_str("macro:");
+                append_token_list(stores, macro_meaning.parameter_text(), &mut text);
+                text.push_str("->");
+                append_token_list(stores, macro_meaning.replacement_text(), &mut text);
+                text
+            }
+            Meaning::Unknown(_) => "unknown".to_owned(),
+        },
+    }
+}
+
+/// TeX82 §252's `show_eqtb` meaning text, bounded like `show_token_list`.
+#[must_use]
+pub fn bounded_meaning_text(stores: &impl ExpansionState, token: Token, breadth: usize) -> String {
+    let Token::Cs(symbol) = token else {
+        return meaning_text(stores, token);
+    };
+    let Meaning::Macro { flags, definition } = stores.meaning(symbol) else {
+        return meaning_text(stores, token);
+    };
+    let macro_meaning = stores.macro_definition(definition);
+    let mut text = macro_prefix(flags);
+    text.push_str("macro:");
+    let parameter = stores.tokens(macro_meaning.parameter_text());
+    let replacement = stores.tokens(macro_meaning.replacement_text());
+    let mut shown = 0;
+    let mut tally = 0;
+    while shown < parameter.len() && tally < breadth {
+        let before = text.chars().count();
+        append_token_show_text(stores, parameter[shown], &mut text);
+        tally += text.chars().count() - before;
+        shown += 1;
+    }
+    let mut remaining = shown < parameter.len();
+    if !remaining {
+        if tally < breadth {
+            text.push_str("->");
+            tally += 2;
+            shown = 0;
+            while shown < replacement.len() && tally < breadth {
+                let before = text.chars().count();
+                append_token_show_text(stores, replacement[shown], &mut text);
+                tally += text.chars().count() - before;
+                shown += 1;
+            }
+            remaining = shown < replacement.len();
+        } else {
+            remaining = true;
+        }
+    }
+    if remaining {
+        text.push_str("\\ETC.");
+    }
+    text
+}
+
+fn macro_prefix(flags: MeaningFlags) -> String {
+    let mut text = String::new();
+    for (flag, label) in [
+        (MeaningFlags::PROTECTED, "\\protected"),
+        (MeaningFlags::LONG, "\\long"),
+        (MeaningFlags::OUTER, "\\outer"),
+    ] {
+        if flags.contains(flag) {
+            text.push_str(label);
+        }
+    }
+    if flags.bits() & (MeaningFlags::PROTECTED | MeaningFlags::LONG | MeaningFlags::OUTER).bits()
+        != 0
+    {
+        text.push(' ');
+    }
+    text
+}
+
+fn append_token_list(
+    stores: &impl ExpansionState,
+    list: crate::ids::TokenListId,
+    text: &mut String,
+) {
+    for &token in stores.tokens(list) {
+        append_token_show_text(stores, token, text);
+    }
+}
 
 /// Appends the form TeX82's `show_token_list` prints for one token.
 ///

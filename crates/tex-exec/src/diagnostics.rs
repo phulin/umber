@@ -3,14 +3,15 @@
 use std::fmt::Write as _;
 
 use tex_expand::{
-    get_x_token_with_context, meaning_text, scan_dimen::DimensionDiagnostic,
-    scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
+    get_x_token_with_context, scan_dimen::DimensionDiagnostic, scan_int::IntegerDiagnostic,
+    scan_the_text_with_context, token_text,
 };
 use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;
 use tex_state::page::{PageContents, PageDimension, PageInsertionStatus};
 use tex_state::print::Selector;
 use tex_state::token::{Catcode, Token, TracedTokenWord};
+use tex_state::token_show::meaning_text;
 use tex_state::{PrintSink, Universe};
 
 use crate::mode::ignored_depth;

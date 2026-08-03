@@ -3,6 +3,7 @@ use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::page::PageMark;
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};
 use tex_state::token::{OriginId, Token, TracedTokenWord};
+use tex_state::token_show::meaning_text;
 use tex_state::{ExpansionState, InputOpenState};
 
 use crate::{

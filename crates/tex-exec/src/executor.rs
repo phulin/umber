@@ -103,7 +103,7 @@ fn report_recoverable_expansion_diagnostics(
             }
             tex_expand::RecoverableExpansionDiagnostic::InvalidTheTarget { context } => {
                 // §428's `Complain that \the can't do this; give zero result`.
-                let token = tex_expand::meaning_text(stores, context.semantic_token());
+                let token = tex_state::token_show::meaning_text(stores, context.semantic_token());
                 report_input_error(
                     input,
                     stores,
