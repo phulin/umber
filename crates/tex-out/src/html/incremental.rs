@@ -9,8 +9,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tex_arith::Scaled;
 
 mod digest;
+mod patch;
 
 use digest::{derive_key, node_value_digest, page_digest, page_match_digest, revision_digest};
+pub use patch::{
+    PatchApplyError, PatchLimits, PatchOp, PatchPlan, PatchPlanError, RenderPageHeader,
+    apply_patch, plan_patch,
+};
 
 use super::{
     HtmlError, HtmlFontAssets, HtmlFontKey, HtmlOptions, InterpretedSpecial, ResolvedFont,
@@ -556,11 +561,26 @@ fn render_page(
 
 fn reuse_page_keys(old: Option<&[RenderPage]>, new: &mut [RenderPage]) {
     let Some(old) = old else { return };
+    let old_keys = old.iter().map(|page| page.key).collect::<BTreeSet<_>>();
     reuse_keys(
         old.iter().map(|value| (value.key, value.match_digest)),
         new.iter_mut()
             .map(|value| (&mut value.key, value.match_digest)),
     );
+    let reused = new
+        .iter()
+        .filter_map(|page| old_keys.contains(&page.key).then_some(page.key))
+        .collect::<BTreeSet<_>>();
+    for (index, page) in new.iter_mut().enumerate() {
+        if old_keys.contains(&page.key) {
+            continue;
+        }
+        if let Some(candidate) = old.get(index)
+            && !reused.contains(&candidate.key)
+        {
+            page.key = candidate.key;
+        }
+    }
 }
 
 fn reuse_node_keys(old: Option<&[RenderNode]>, new: &mut [RenderNode]) {

@@ -7,7 +7,10 @@ use crate::{
     PageNode, UnvalidatedPageArtifact,
 };
 
-use super::incremental::{RenderLimits, RenderSessionId, build_render_revision};
+use super::incremental::{
+    PatchApplyError, PatchLimits, PatchOp, RenderKey, RenderLimits, RenderSessionId, apply_patch,
+    build_render_revision, plan_patch,
+};
 use super::{
     AssetMode, HtmlError, HtmlFontAsset, HtmlFontAssets, HtmlFontKey, HtmlOptions,
     RenderedOutputId, write_html, write_positioned_html,
@@ -767,6 +770,98 @@ fn prefix_page_insertion_retains_suffix_page_and_node_identity() {
             new.nodes.iter().map(|node| node.key).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn deterministic_patch_application_equals_fresh_target() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([11; 16]);
+    let base_page = page();
+    let base = build_render_revision(
+        std::slice::from_ref(&base_page),
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("base render revision");
+    let mut changed = base_page;
+    changed.testing_mut().counts[0] = 7;
+    let PageNode::HList(root) = &mut changed.testing_mut().root else {
+        unreachable!()
+    };
+    let PageNode::Char { ch, .. } = &mut root.children[0] else {
+        unreachable!()
+    };
+    *ch = b'B' as u32;
+    let target = build_render_revision(
+        &[changed],
+        &resolver,
+        &options,
+        session,
+        2,
+        Some(&base),
+        RenderLimits::default(),
+    )
+    .expect("target render revision");
+    let first = plan_patch(&base, &target, PatchLimits::default()).expect("patch plan");
+    let second = plan_patch(&base, &target, PatchLimits::default()).expect("repeat patch plan");
+
+    assert_eq!(first, second);
+    assert!(
+        first
+            .operations
+            .iter()
+            .any(|operation| matches!(operation, PatchOp::UpdateNode { .. }))
+    );
+    assert_eq!(
+        apply_patch(&base, &first, PatchLimits::default()).expect("applied patch"),
+        target
+    );
+}
+
+#[test]
+fn no_op_patch_is_empty_and_invalid_operation_is_atomic() {
+    let resolver = Resolver { missing_b: false };
+    let options = HtmlOptions::default();
+    let session = RenderSessionId::from_bytes([12; 16]);
+    let base = build_render_revision(
+        &[page()],
+        &resolver,
+        &options,
+        session,
+        1,
+        None,
+        RenderLimits::default(),
+    )
+    .expect("base render revision");
+    let target = build_render_revision(
+        &[page()],
+        &resolver,
+        &options,
+        session,
+        2,
+        Some(&base),
+        RenderLimits::default(),
+    )
+    .expect("target render revision");
+    let empty = plan_patch(&base, &target, PatchLimits::default()).expect("empty patch");
+    assert!(empty.operations.is_empty());
+    assert!(empty.resource_additions.is_empty());
+    assert!(empty.resource_releases.is_empty());
+
+    let mut corrupt = empty;
+    corrupt.operations.push(PatchOp::RemovePage {
+        key: RenderKey::ROOT,
+    });
+    assert_eq!(
+        apply_patch(&base, &corrupt, PatchLimits::default()),
+        Err(PatchApplyError::InvalidOperation)
+    );
+    assert_eq!(base.revision, 1);
 }
 
 fn page() -> crate::PageArtifact {
