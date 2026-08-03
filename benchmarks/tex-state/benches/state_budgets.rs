@@ -3,8 +3,11 @@ use std::sync::Arc;
 use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
-use tex_expand::{get_x_token, install_expandable_primitives};
-use tex_lex::{InputStack, LayoutCursor, MemoryInput, TokenListReplayKind};
+use tex_command::{
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+    install_tex82_expandable_primitives,
+};
+use tex_lex::{InputStack, LayoutCursor, MemoryInput};
 use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
 use tex_state::glue::Order;
@@ -969,8 +972,9 @@ fn provenance_expansion(c: &mut Criterion) {
     group.bench_function("macro_body_replay_invocation_origins", |b| {
         b.iter_batched(
             macro_heavy_case,
-            |(mut stores, mut input, baseline)| {
-                let count = drain_expansion(&mut stores, &mut input);
+            |(mut stores, mut command, mut runtime, mut capabilities, baseline)| {
+                let count =
+                    drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
                 black_box((count, stores.provenance_stats().saturating_sub(baseline)));
             },
             BatchSize::SmallInput,
@@ -980,8 +984,9 @@ fn provenance_expansion(c: &mut Criterion) {
     group.bench_function("scanner_number_runs", |b| {
         b.iter_batched(
             scanner_heavy_case,
-            |(mut stores, mut input, baseline)| {
-                let count = drain_expansion(&mut stores, &mut input);
+            |(mut stores, mut command, mut runtime, mut capabilities, baseline)| {
+                let count =
+                    drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
                 black_box((count, stores.provenance_stats().saturating_sub(baseline)));
             },
             BatchSize::SmallInput,
@@ -991,8 +996,9 @@ fn provenance_expansion(c: &mut Criterion) {
     group.bench_function("generated_value_origin_sharing", |b| {
         b.iter_batched(
             generated_run_case,
-            |(mut stores, mut input, baseline)| {
-                let count = drain_expansion(&mut stores, &mut input);
+            |(mut stores, mut command, mut runtime, mut capabilities, baseline)| {
+                let count =
+                    drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
                 black_box((count, stores.provenance_stats().saturating_sub(baseline)));
             },
             BatchSize::SmallInput,
@@ -1172,9 +1178,9 @@ fn print_provenance_report() {
         );
     }
 
-    let (mut stores, mut input, baseline) = generated_run_case();
+    let (mut stores, mut command, mut runtime, mut capabilities, baseline) = generated_run_case();
     let snapshot = stores.snapshot();
-    let _ = drain_expansion(&mut stores, &mut input);
+    let _ = drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
     let peak = stores.provenance_stats().saturating_sub(baseline);
     stores.rollback(&snapshot);
     let post = stores.provenance_stats().saturating_sub(baseline);
@@ -1213,7 +1219,15 @@ fn source_universe(needs_control_sequences: bool) -> Universe {
     stores
 }
 
-fn macro_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
+type CanonicalExpansionCase = (
+    Universe,
+    CommandState,
+    CommandRuntime,
+    CommandHostCapabilities,
+    ProvenanceStats,
+);
+
+fn macro_heavy_case() -> CanonicalExpansionCase {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("hotmacro");
     let params = stores.intern_token_list(&[]);
@@ -1230,18 +1244,27 @@ fn macro_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
     );
 
     let call_tokens = vec![Token::Cs(macro_cs.symbol()); MACRO_CALLS];
-    let calls = stores.intern_token_list(&call_tokens);
     let call_origin = stores.source_origin(SourceId::new(1), 80, 2, 1);
-    let call_origins = stores.allocate_repeated_origin_list(call_origin, call_tokens.len());
+    let traced_calls = call_tokens
+        .into_iter()
+        .map(|token| TracedTokenWord::pack(token, call_origin))
+        .collect::<Vec<_>>();
+    let calls = stores.finish_traced_token_list(&traced_calls);
     let baseline = stores.provenance_stats();
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list_with_origins(calls, call_origins, TokenListReplayKind::Inserted);
-    (stores, input, baseline)
+    let mut command = CommandState::default();
+    command.push_everyjob(calls);
+    (
+        stores,
+        command,
+        CommandRuntime::default(),
+        CommandHostCapabilities::default(),
+        baseline,
+    )
 }
 
-fn scanner_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
+fn scanner_heavy_case() -> CanonicalExpansionCase {
     let mut stores = Universe::new();
-    install_expandable_primitives(&mut stores);
+    install_tex82_expandable_primitives(&mut stores);
     let number = stores.symbol("number").expect("number primitive");
     let mut tokens = Vec::with_capacity(SCANNER_REPETITIONS * 7);
     for _ in 0..SCANNER_REPETITIONS {
@@ -1254,9 +1277,9 @@ fn scanner_heavy_case() -> (Universe, InputStack, ProvenanceStats) {
     traced_token_list_input(stores, tokens)
 }
 
-fn generated_run_case() -> (Universe, InputStack, ProvenanceStats) {
+fn generated_run_case() -> CanonicalExpansionCase {
     let mut stores = Universe::new();
-    install_expandable_primitives(&mut stores);
+    install_tex82_expandable_primitives(&mut stores);
     let roman = stores
         .symbol("romannumeral")
         .expect("romannumeral primitive");
@@ -1271,41 +1294,58 @@ fn generated_run_case() -> (Universe, InputStack, ProvenanceStats) {
     traced_token_list_input(stores, tokens)
 }
 
-fn traced_token_list_input(
-    mut stores: Universe,
-    tokens: Vec<Token>,
-) -> (Universe, InputStack, ProvenanceStats) {
-    let token_list = stores.intern_token_list(&tokens);
+fn traced_token_list_input(mut stores: Universe, tokens: Vec<Token>) -> CanonicalExpansionCase {
     let origin = stores.source_origin(SourceId::new(2), 0, 1, 1);
-    let origins = stores.allocate_repeated_origin_list(origin, tokens.len());
+    let traced = tokens
+        .into_iter()
+        .map(|token| TracedTokenWord::pack(token, origin))
+        .collect::<Vec<_>>();
+    let token_list = stores.finish_traced_token_list(&traced);
     let baseline = stores.provenance_stats();
-    let mut input = InputStack::new(MemoryInput::new(""));
-    input.push_token_list_with_origins(token_list, origins, TokenListReplayKind::Inserted);
-    (stores, input, baseline)
+    let mut command = CommandState::default();
+    command.push_everyjob(token_list);
+    (
+        stores,
+        command,
+        CommandRuntime::default(),
+        CommandHostCapabilities::default(),
+        baseline,
+    )
 }
 
-fn drain_expansion(stores: &mut Universe, input: &mut InputStack) -> usize {
-    let mut expansion_stores = tex_state::ExpansionContext::new(stores);
+fn drain_expansion(
+    stores: &mut Universe,
+    command: &mut CommandState,
+    runtime: &mut CommandRuntime,
+    capabilities: &mut CommandHostCapabilities,
+) -> usize {
+    let mut processor = CommandProcessor::new(
+        command,
+        runtime,
+        stores.command_context(),
+        CommandHostContext::new(capabilities),
+    );
     let mut count = 0;
-    while let Some(token) =
-        get_x_token(input, &mut expansion_stores).expect("expansion should succeed")
+    while let Some(command) = processor
+        .get_x_token()
+        .expect("canonical expansion should succeed")
     {
-        black_box(token);
+        black_box(command);
         count += 1;
     }
     count
 }
 
 fn macro_long_run_growth() -> ProvenanceStats {
-    let (mut stores, mut input, baseline) = macro_heavy_case();
-    let count = drain_expansion(&mut stores, &mut input);
+    let (mut stores, mut command, mut runtime, mut capabilities, baseline) = macro_heavy_case();
+    let count = drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
     assert_eq!(count, MACRO_CALLS * MACRO_BODY_LEN);
     stores.provenance_stats().saturating_sub(baseline)
 }
 
 fn assert_macro_long_run_budget() {
-    let (mut stores, mut input, _) = macro_heavy_case();
-    let count = drain_expansion(&mut stores, &mut input);
+    let (mut stores, mut command, mut runtime, mut capabilities, _) = macro_heavy_case();
+    let count = drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
     assert_eq!(count, MACRO_CALLS * MACRO_BODY_LEN);
     let macro_stats = stores.macro_invocation_provenance_stats();
     assert_eq!(macro_stats.invocations(), MACRO_CALLS);
@@ -1320,9 +1360,9 @@ fn assert_macro_long_run_budget() {
 }
 
 fn discarded_fork_growth_after_rollback() -> ProvenanceStats {
-    let (mut stores, mut input, baseline) = generated_run_case();
+    let (mut stores, mut command, mut runtime, mut capabilities, baseline) = generated_run_case();
     let snapshot = stores.snapshot();
-    let _ = drain_expansion(&mut stores, &mut input);
+    let _ = drain_expansion(&mut stores, &mut command, &mut runtime, &mut capabilities);
     stores.rollback(&snapshot);
     stores.provenance_stats().saturating_sub(baseline)
 }
