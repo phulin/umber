@@ -327,7 +327,7 @@ fn valign_row_uses_raw_main_loop_lookahead_before_assignment() {
 
 #[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
-    let mut stores = Universe::new_with_plain_catcodes();
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,

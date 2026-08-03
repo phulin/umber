@@ -45,7 +45,7 @@ fn extension_commands_dispatch_in_each_mode_with_canonical_stream_fallbacks() {
         Mode::Math,
         Mode::DisplayMath,
     ] {
-        let mut stores = Universe::new_with_plain_catcodes();
+        let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CommandReplayControl::tex82_initex(&mut stores);
         if mode != Mode::Vertical {
             control.modes.push(mode).expect("test mode push");
