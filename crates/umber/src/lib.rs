@@ -9,12 +9,12 @@ use tex_command::{
 use tex_command::{PdfImageRequest, SourceRegistrationError};
 #[cfg(test)]
 use tex_exec::{
-    CanonicalMainControl, CanonicalStepResult, ExecutionBudgetCounters, ExecutionStats, Executor,
-    MainControlStep, try_execute_assignment,
+    CanonicalMainControl, CanonicalStepResult, ExecutionBudgetCounters, ExecutionContext,
+    ExecutionStats, Executor, MainControlStep, try_execute_assignment,
 };
 use tex_exec::{
-    CheckpointSink, EngineBoundary, ExecutionContext, FontResolver,
-    PdfImageRequest as LegacyPdfImageRequest, PdfImageResolver,
+    CheckpointSink, EngineBoundary, FontResolver, PdfImageRequest as LegacyPdfImageRequest,
+    PdfImageResolver,
 };
 #[cfg(test)]
 use tex_lex::InputStack;
@@ -595,6 +595,7 @@ pub struct FileSessionResolvers {
     input: FileInputResolver,
     font: FileFontResolver,
     image: FileImageResolver,
+    #[cfg(test)]
     job_name: String,
 }
 
@@ -616,6 +617,7 @@ impl FileSessionResolvers {
     #[must_use]
     pub fn new(path: &Path, tex_input_areas: Vec<PathBuf>, tex_font_areas: Vec<PathBuf>) -> Self {
         let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_owned();
+        #[cfg(test)]
         let job_name = path
             .file_stem()
             .and_then(std::ffi::OsStr::to_str)
@@ -626,10 +628,12 @@ impl FileSessionResolvers {
             input: FileInputResolver(input_search.clone()),
             font: FileFontResolver(TexFontSearchPath::new(base_dir, tex_font_areas)),
             image: FileImageResolver(input_search),
+            #[cfg(test)]
             job_name,
         }
     }
 
+    #[cfg(test)]
     pub fn context(&mut self) -> ExecutionContext<'_> {
         ExecutionContext::with_resource_resolvers(
             &self.job_name,

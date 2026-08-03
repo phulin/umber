@@ -1548,9 +1548,47 @@ fn shipped_umber_has_no_retired_command_core_dependencies() {
         "the retired InputStack session adapter must remain test-only"
     );
     assert!(
+        source.contains("#[cfg(test)]\n    pub fn context(&mut self) -> ExecutionContext<'_>"),
+        "the retired ExecutionContext resolver adapter must remain test-only"
+    );
+    let test_import = source
+        .split_once("#[cfg(test)]\nuse tex_exec::{")
+        .and_then(|(_, tail)| tail.split_once("};"))
+        .map(|(import, _)| import)
+        .expect("find test-only tex-exec compatibility import");
+    assert!(test_import.contains("Executor"));
+    assert!(test_import.contains("ExecutionContext"));
+    assert!(test_import.contains("try_execute_assignment"));
+    let shipped_import = source
+        .split("use tex_exec::{")
+        .nth(2)
+        .and_then(|tail| tail.split_once("};"))
+        .map(|(import, _)| import)
+        .expect("find shipped tex-exec import");
+    for retired in ["Executor", "ExecutionContext", "try_execute_assignment"] {
+        assert!(
+            !shipped_import.contains(retired),
+            "shipped Umber import must not regain {retired}"
+        );
+    }
+    assert!(
         source.contains("CanonicalEngineSession, CanonicalExpansionStats"),
         "shipped Umber must retain the command-owned canonical session"
     );
+
+    let incremental = std::fs::read_to_string(root.join("crates/tex-incr/src/lib.rs"))
+        .expect("read incremental session owner");
+    assert_eq!(
+        incremental.matches("Executor::new()").count(),
+        2,
+        "retired incremental Executor sites must remain a bounded dead island"
+    );
+    for function in ["execute_revision", "execute_advance"] {
+        assert!(
+            incremental.contains(&format!("#[cfg(any())]\nfn {function}(")),
+            "retired incremental function {function} must remain unbuildable"
+        );
+    }
 }
 
 #[test]
