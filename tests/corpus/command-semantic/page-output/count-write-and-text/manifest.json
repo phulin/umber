@@ -31,7 +31,7 @@
         "artifact:0d98c980d2c4196eb02fb8dcdf47194219f36c79d285f625d9f1871535c3e1d1"
       ],
       "channels": {
-        "events": 258,
+        "events": 257,
         "status": "clean",
         "terminal": { "kind": "file" },
         "log": { "kind": "file" },

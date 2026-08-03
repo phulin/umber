@@ -205,6 +205,56 @@ fn declared_command_semantic_cases_match() {
 }
 
 #[test]
+fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
+    let formats = HermeticFormats::new();
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let declared = cases
+        .iter()
+        .find(|declared| declared.case.id == "count-write-and-text")
+        .expect("count-write-and-text fixture");
+    let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+        .expect("count-write-and-text source");
+    let run = formats
+        .execute(&source, &declared.case)
+        .expect("count-write-and-text executes");
+
+    assert_eq!(run.observations.len(), 257);
+    assert_eq!(
+        run.observations
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                tex_command::CommandObservation::Command(command)
+                    if command.command == "the"
+                        && command.boundary
+                            == tex_command::CommandDeliveryBoundary::Raw
+                        && !command.provenance.has_origin
+            ))
+            .count(),
+        1,
+        "TeX82 §478 delivers the replayed direct `the` raw exactly once"
+    );
+    assert!(!run.observations.iter().any(|observation| matches!(
+        observation,
+        tex_command::CommandObservation::Command(command)
+            if command.command == "the"
+                && command.boundary == tex_command::CommandDeliveryBoundary::Expanded
+    )));
+    assert_eq!(
+        run.observations
+            .iter()
+            .filter(|observation| matches!(
+                observation,
+                tex_command::CommandObservation::TokenList(record)
+                    if record.transition == "splice" && record.purpose == "the_toks"
+            ))
+            .count(),
+        1,
+        "TeX82 §478 publishes the direct `the_toks` splice exactly once"
+    );
+}
+
+#[test]
 fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() {
     let formats = HermeticFormats::new();
     let cases = load_suite().expect("valid command-semantic corpus");
