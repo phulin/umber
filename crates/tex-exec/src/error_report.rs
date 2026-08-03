@@ -20,10 +20,9 @@
 //! Every site therefore calls one of the entry points here. Adding a new
 //! error message means adding a `report_*` call, never a `write_text`.
 
-use tex_expand::back_error_input;
 use tex_lex::InputStack;
+use tex_state::Universe;
 use tex_state::token::TracedTokenWord;
-use tex_state::{ExpansionContext, Universe};
 
 use crate::diagnostics::show_context;
 
@@ -72,11 +71,11 @@ pub(crate) fn back_error(
 
 /// tex.web §325's `back_input` for a report that backs up more than one
 /// token, or that must back up before printing anything.
-pub(crate) fn back_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
+pub(crate) fn back_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    back_error_input(input, &mut ExpansionContext::new(stores), tokens);
+    input.back_error_input(tokens);
 }
 
 /// tex.web §327's `ins_error`: `back_input` with the list retyped as

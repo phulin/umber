@@ -408,11 +408,7 @@ fn next_write_expansion_token(
             return Ok(Some(token));
         }
     }
-    tex_expand::back_input(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        [traced],
-    );
+    input.back_input([traced]);
     Ok(get_x_token_with_context(
         input,
         &mut tex_state::ExpansionContext::new(stores),

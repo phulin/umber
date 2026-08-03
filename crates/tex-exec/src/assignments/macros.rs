@@ -202,11 +202,7 @@ pub(super) fn execute_futurelet(
             stores.set_meaning(target, meaning);
         }
     });
-    tex_expand::back_input(
-        input,
-        &mut tex_state::ExpansionContext::new(stores),
-        [first, second],
-    );
+    input.back_input([first, second]);
     Ok(())
 }
 

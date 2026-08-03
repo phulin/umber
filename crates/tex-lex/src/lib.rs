@@ -2577,6 +2577,66 @@ impl InputStack {
         self.undo_alignment_token_delivery(traced);
     }
 
+    /// TeX82 §325's `back_input`: returns delivered tokens to the live input.
+    ///
+    /// A single token reuses its exact delivery frame when possible. Multiple
+    /// tokens form an `inserted` replay level because only the most recent
+    /// delivery has enough identity to rewind its owning frame safely.
+    pub fn back_input<I>(&mut self, tokens: I)
+    where
+        I: IntoIterator<Item = TracedTokenWord>,
+    {
+        let mut traced = tokens.into_iter();
+        let Some(first) = traced.next() else {
+            return;
+        };
+        self.undo_alignment_token_delivery(first);
+        let Some(second) = traced.next() else {
+            if self.rewind_last_macro_token_delivery(first) {
+                return;
+            }
+            if self.push_current_source_pending(first) {
+                return;
+            }
+            let mut buffer = self.take_transient_token_buffer();
+            buffer.push(first);
+            self.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
+            return;
+        };
+
+        self.undo_alignment_token_delivery(second);
+        let (lower, _) = traced.size_hint();
+        let mut buffer = self.take_transient_token_buffer();
+        buffer.reserve(lower.saturating_add(2));
+        buffer.extend([first, second]);
+        for token in traced {
+            self.undo_alignment_token_delivery(token);
+            buffer.push(token);
+        }
+        self.push_transient_tokens(buffer, TokenListReplayKind::Inserted);
+    }
+
+    /// TeX82 §327's error-reporting form of `back_input`.
+    ///
+    /// This deliberately creates a visible `backed_up` replay level instead
+    /// of taking the single-token rewind shortcuts, so §311 can display the
+    /// offending token as `<to be read again>`.
+    pub fn back_error_input<I>(&mut self, tokens: I)
+    where
+        I: IntoIterator<Item = TracedTokenWord>,
+    {
+        let mut buffer = self.take_transient_token_buffer();
+        for token in tokens {
+            self.undo_alignment_token_delivery(token);
+            buffer.push(token);
+        }
+        if buffer.is_empty() {
+            self.recycle_transient_token_buffer(buffer);
+            return;
+        }
+        self.push_transient_tokens(buffer, TokenListReplayKind::BackedUp);
+    }
+
     pub fn push_token_list(
         &mut self,
         token_list: TokenListId,

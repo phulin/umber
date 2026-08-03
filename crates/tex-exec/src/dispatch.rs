@@ -554,11 +554,11 @@ where
     input.push_token_list(token_list, tex_state::TokenListReplayKind::Inserted);
 }
 
-pub(crate) fn push_traced_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
+pub(crate) fn push_traced_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,
 {
-    tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), tokens);
+    input.back_input(tokens);
 }
 
 pub(crate) fn insert_traced_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)

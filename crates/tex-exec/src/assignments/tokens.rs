@@ -43,11 +43,7 @@ pub(super) fn skip_optional_equals_x(
         }
     };
     if !is_other_equals(traced.semantic_token()) {
-        tex_expand::back_input(
-            input,
-            &mut tex_state::ExpansionContext::new(stores),
-            [traced],
-        );
+        input.back_input([traced]);
     } else {
         let Some(next) = get_x_token_with_context(
             input,
@@ -58,7 +54,7 @@ pub(super) fn skip_optional_equals_x(
             return Ok(());
         };
         if !is_space(next.semantic_token()) {
-            tex_expand::back_input(input, &mut tex_state::ExpansionContext::new(stores), [next]);
+            input.back_input([next]);
         }
     }
     Ok(())
