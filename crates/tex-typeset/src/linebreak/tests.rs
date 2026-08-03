@@ -1304,6 +1304,53 @@ fn consecutive_discardable_breakpoints_do_not_form_a_backwards_chain() {
     );
 }
 
+/// tex.web §§822/851--854: advancing a break-width cursor across
+/// discardable material does not suppress a syntactically later breakpoint.
+#[test]
+fn glue_route_is_considered_at_immediately_following_forced_penalty() {
+    let mut universe = Universe::new();
+    let zero = universe.intern_glue(GlueSpec::ZERO);
+    let nodes = vec![
+        rule(1),
+        Node::Glue {
+            spec: zero,
+            kind: GlueKind::Normal,
+            leader: None,
+        },
+        Node::Penalty(EJECT_PENALTY),
+        Node::Penalty(INF_PENALTY),
+    ];
+    let mut parameters = params(100);
+    parameters.pretolerance = 10_000;
+
+    let (plan, trace) = try_line_break_without_hyphenation_traced(&universe, &nodes, &parameters);
+    plan.expect("the unhyphenated pass finds the forced break");
+    let glue_serial = trace
+        .iter()
+        .find_map(|event| match event {
+            LineBreakTrace::Active {
+                serial,
+                previous: 0,
+                ..
+            } => Some(*serial),
+            _ => None,
+        })
+        .expect("the glue breakpoint creates an active route");
+
+    assert!(
+        trace.iter().any(|event| matches!(
+            event,
+            LineBreakTrace::Feasible {
+                breakpoint: TraceBreakpoint::Penalty,
+                via,
+                penalty: EJECT_PENALTY,
+                ..
+            } if *via == glue_serial
+        )),
+        "{trace:?}"
+    );
+}
+
 #[test]
 fn line_break_includes_left_and_right_skip_in_background_widths() {
     let mut universe = Universe::new();
@@ -2151,7 +2198,6 @@ fn final_hyphen_demerits_rank_terminal_routes_before_candidate_pruning() {
     };
     let terminal = Breakpoint {
         position: 1,
-        width_position: 1,
         penalty: EJECT_PENALTY,
         hyphenated: false,
         add_width: Widths::zero(),

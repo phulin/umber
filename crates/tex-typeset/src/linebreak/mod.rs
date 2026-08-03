@@ -518,7 +518,6 @@ struct PassiveRoute {
 #[derive(Clone, Copy, Debug)]
 struct Breakpoint {
     position: usize,
-    width_position: usize,
     penalty: i32,
     hyphenated: bool,
     add_width: Widths,
@@ -577,11 +576,14 @@ fn run_pass<S: TypesetState>(
         let mut traced_feasible = false;
         for active_index in 0..prior_active_len {
             let active_candidate = active[active_index];
-            // Material discarded after the active break can extend beyond a
-            // later syntactic breakpoint (for example, through consecutive
-            // penalties). Such a breakpoint is no longer reachable from this
-            // active node and must not create a backwards break chain.
-            if active_candidate.width_position > bp.width_position {
+            // TeX82 §822's break width can advance past discardable nodes,
+            // but that adjusted width cursor does not remove those nodes from
+            // §§851--854's later active-list traversal. In particular, a
+            // glue break may be followed immediately by a forced penalty;
+            // the route through the glue still has to be considered there.
+            // Only an already chosen breakpoint at or beyond this syntactic
+            // position would make the chain non-forward.
+            if active_candidate.position >= bp.position {
                 active[survivor_count] = active_candidate;
                 survivor_count += 1;
                 continue;
@@ -1415,7 +1417,6 @@ impl<'a, S: TypesetState> LegalBreakpoints<'a, S> {
         }
         Breakpoint {
             position,
-            width_position,
             penalty,
             hyphenated,
             add_width,
