@@ -2,13 +2,18 @@
 
 mod canonical_execution;
 pub(crate) use canonical_execution::{FinishedAlignment, append_finished_alignment};
+#[cfg(test)]
 pub(crate) mod legacy_execution;
+#[cfg(test)]
 pub(crate) mod legacy_front;
 
+#[cfg(test)]
 mod noalign;
 pub(crate) mod packaging;
+#[cfg(test)]
 mod preamble;
 mod support;
+#[cfg(test)]
 mod template;
 mod transitions;
 pub(crate) mod widths;
@@ -40,7 +45,7 @@ pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
     } else {
         nest.current_list_mutation()
             .set_prev_depth(crate::mode::ignored_depth(stores));
-        crate::assignments::normal_paragraph(nest, stores);
+        crate::canonical_paragraph_end::normal_paragraph(nest, stores);
     }
 }
 

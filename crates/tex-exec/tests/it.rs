@@ -1481,3 +1481,69 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
     assert!(!manifest.contains("tex-expand/profiling"));
     assert!(!manifest.contains("tex-lex/profiling"));
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn production_cutover_keeps_legacy_execution_out_of_the_shipping_graph() {
+    let root = test_support::repository_root().join("crates/tex-exec");
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read tex-exec manifest");
+    let normal_dependencies = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .and_then(|tail| tail.split("[dev-dependencies]").next())
+        .expect("bounded normal dependency section");
+    for dependency in ["tex-expand", "tex-lex"] {
+        assert!(
+            !normal_dependencies
+                .lines()
+                .any(|line| line.trim_start().starts_with(dependency)),
+            "shipping tex-exec must not retain a normal {dependency} edge"
+        );
+    }
+
+    let lib = fs::read_to_string(root.join("src/lib.rs")).expect("read tex-exec root");
+    for module in [
+        "assignments",
+        "executor",
+        "legacy_assignments",
+        "legacy_diagnostics",
+        "legacy_dispatch",
+        "legacy_output",
+        "legacy_paragraph_memo",
+        "raw_delivery",
+    ] {
+        assert!(
+            lib.contains(&format!("#[cfg(test)]\nmod {module};")),
+            "retired {module} must be absent from the shipping module graph"
+        );
+    }
+    for export in [
+        "pub use executor::",
+        "pub use legacy_assignments::",
+        "pub use legacy_dispatch::",
+    ] {
+        let position = lib
+            .find(export)
+            .expect("retained test-only compatibility export");
+        assert!(
+            lib[..position].ends_with("#[cfg(test)]\n"),
+            "{export} must not be reachable from a normal build"
+        );
+    }
+
+    let canonical = fs::read_to_string(root.join("src/canonical_main_control.rs"))
+        .expect("read canonical main control");
+    for forbidden in [
+        "crate::assignments",
+        "crate::legacy_",
+        "ExecutionContext",
+        "Executor",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !canonical.contains(forbidden),
+            "shipping canonical control must not reach {forbidden}"
+        );
+    }
+}

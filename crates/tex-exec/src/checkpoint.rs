@@ -14,6 +14,7 @@ use tex_state::{
 };
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
+#[cfg(test)]
 use tex_lex::InputStack;
 
 /// In-memory schema version for aggregate engine checkpoints.
@@ -442,6 +443,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         self.mode_projection
     }
 
+    #[cfg(test)]
     pub(crate) fn publish(
         &mut self,
         boundary: EngineBoundary,

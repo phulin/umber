@@ -20,8 +20,10 @@
 //! Every site therefore calls one of the entry points here. Adding a new
 //! error message means adding a `report_*` call, never a `write_text`.
 
+#[cfg(test)]
 use tex_lex::InputStack;
 use tex_state::Universe;
+#[cfg(test)]
 use tex_state::token::TracedTokenWord;
 
 use crate::diagnostics::show_context;
@@ -43,6 +45,7 @@ pub(crate) fn report_error(
 }
 
 /// [`report_error`] with §82's context read from the live input stack.
+#[cfg(test)]
 pub(crate) fn report_input_error(
     input: &InputStack,
     stores: &mut Universe,
@@ -58,6 +61,7 @@ pub(crate) fn report_input_error(
 /// Backing the offending token up first is what makes §314 describe it as
 /// `<to be read again>␣` on its own context line, so the report names the
 /// token that caused it without the message text having to quote it.
+#[cfg(test)]
 pub(crate) fn back_error(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -71,6 +75,7 @@ pub(crate) fn back_error(
 
 /// tex.web §325's `back_input` for a report that backs up more than one
 /// token, or that must back up before printing anything.
+#[cfg(test)]
 pub(crate) fn back_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,
@@ -84,6 +89,7 @@ where
 /// The tokens are what TeX is inserting on the user's behalf -- the `$` of
 /// `Missing $ inserted`, the `{` of `Missing { inserted` -- so §314 shows
 /// them under `<inserted text>␣` rather than as something the user wrote.
+#[cfg(test)]
 pub(crate) fn ins_error<I>(
     input: &mut InputStack,
     stores: &mut Universe,
@@ -105,6 +111,7 @@ where
 /// repair, delivered for the first time, so the alignment brace count must
 /// see them exactly as it would see any other token. Backing them up instead
 /// would cancel a delivery that never happened.
+#[cfg(test)]
 pub(crate) fn insert_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
 where
     I: IntoIterator<Item = TracedTokenWord>,

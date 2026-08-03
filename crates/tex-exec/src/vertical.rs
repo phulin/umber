@@ -6,7 +6,7 @@ use tex_state::scaled::Scaled;
 
 use crate::mode::ignored_depth;
 use crate::page_builder::build_page;
-use crate::{ExecError, Mode, ModeNest, assignments};
+use crate::{ExecError, Mode, ModeNest};
 
 pub(crate) fn append_node_to_current_list(
     nest: &mut ModeNest,
@@ -14,7 +14,7 @@ pub(crate) fn append_node_to_current_list(
     node: Node,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    assignments::flush_pending_hchars(nest, stores, fuel)?;
+    crate::canonical_box_runtime::flush_pending_hchars(nest, stores, fuel)?;
     if matches!(nest.current_mode(), Mode::Vertical | Mode::InternalVertical) {
         append_node_to_vertical_list(nest, stores, node)
     } else {

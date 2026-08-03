@@ -948,6 +948,44 @@ pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
     stores.set_paragraph_shape(&[], false);
 }
 
+pub(crate) fn start_canonical_paragraph(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    indent: bool,
+) -> Result<(), ExecError> {
+    match nest.current_mode() {
+        crate::Mode::Vertical | crate::Mode::InternalVertical => {
+            nest.set_enclosing_vertical_prev_graf(0);
+            let parskip = stores.glue_param(GlueParam::PAR_SKIP);
+            if nest.current_mode() == crate::Mode::Vertical || !nest.current_list().is_empty() {
+                append_vertical_contribution(
+                    nest,
+                    stores,
+                    Node::Glue {
+                        spec: parskip,
+                        kind: GlueKind::ParSkip,
+                        leader: None,
+                    },
+                );
+                build_page_if_outer_vertical(nest, stores)?;
+            }
+            nest.push_at_line(crate::Mode::Horizontal, stores.current_input_line())?;
+            stores.push_paragraph_start_line(stores.current_input_line());
+            if indent {
+                let mut fuel = tex_command::CommandFuelLedger::default();
+                crate::canonical_box_runtime::indent_in_hmode(nest, stores, true, fuel.fuel_mut())?;
+            }
+            Ok(())
+        }
+        mode => Err(ExecError::UnimplementedTypesetting {
+            mode,
+            token: tex_state::token::Token::Cs(stores.intern("par").symbol()),
+            origin: tex_state::token::OriginId::UNKNOWN,
+            operation: "canonical paragraph start",
+        }),
+    }
+}
+
 fn reset_after_par(nest: &mut ModeNest, stores: &mut Universe) {
     normal_paragraph(nest, stores);
 }

@@ -1,5 +1,21 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// Monotonic work and retry telemetry shared by canonical execution hosts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ExecutionTelemetry {
+    pub cold_starts: u64,
+    pub advance_calls: u64,
+    pub suspensions: u64,
+    pub local_step_retries: u64,
+    pub replayed_delivered_tokens: u64,
+    pub replayed_dispatches: u64,
+    pub cumulative_fuel: u64,
+    pub engine_time: Duration,
+    pub savepoint_capture_time: Duration,
+    pub savepoint_restore_time: Duration,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExecutionBudgets {

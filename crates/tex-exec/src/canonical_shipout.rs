@@ -8,6 +8,7 @@ use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
 pub(crate) mod direct;
+mod transaction;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReplayTextKind {
@@ -53,7 +54,7 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         stores: &mut Universe,
         emit_dvi: bool,
     ) -> Result<Option<PreparedDviPage>, ExecError> {
-        crate::assignments::shipout::stage_canonical_page(
+        transaction::stage_canonical_page(
             node,
             input_summary,
             origin,
@@ -69,6 +70,6 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         form: PdfFormRecord,
         stores: &mut Universe,
     ) -> Result<PdfFormArtifact, ExecError> {
-        crate::assignments::shipout::stage_canonical_form(form, stores, self.write, self.replay)
+        transaction::stage_canonical_form(form, stores, self.write, self.replay)
     }
 }

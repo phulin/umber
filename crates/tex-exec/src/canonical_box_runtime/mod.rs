@@ -33,4 +33,4 @@ pub(crate) use material::{
     execute_scanned_saved_vertical_discards, execute_scanned_unbox, split_hpack_migrations,
 };
 
-pub(crate) use crate::assignments::{indent_in_hmode, norm_min};
+pub(crate) use hmode::{indent_in_hmode, norm_min};

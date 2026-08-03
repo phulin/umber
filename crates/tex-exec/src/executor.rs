@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::time::Duration;
 
 use tex_expand::get_x_token_with_context;
 use tex_lex::{InputStack, InputStackSnapshot};
@@ -20,8 +19,9 @@ use crate::legacy_output as output;
 use crate::timing::TelemetryTimer;
 use crate::{
     Cancellation, DispatchAction, ExecError, ExecutionBudgetCounters, ExecutionBudgets,
-    ExecutionStats, FontResolver, FontSource, ModeNest, PdfImageRequest, PdfImageResolver,
-    PendingInterrupt, ResourceLookup, ResourceNeed, ResourceResult, legacy_assignments,
+    ExecutionStats, ExecutionTelemetry, FontResolver, FontSource, ModeNest, PdfImageRequest,
+    PdfImageResolver, PendingInterrupt, ResourceLookup, ResourceNeed, ResourceResult,
+    legacy_assignments,
 };
 
 fn report_recoverable_expansion_diagnostics(
@@ -455,21 +455,6 @@ pub struct ExecutionProgress {
     pub next_step: ExecutionStep,
     pub checkpoints: Vec<crate::EngineCheckpoint>,
     pub stop_requested: bool,
-}
-
-/// Monotonic work and retry telemetry for one owned executor run.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ExecutionTelemetry {
-    pub cold_starts: u64,
-    pub advance_calls: u64,
-    pub suspensions: u64,
-    pub local_step_retries: u64,
-    pub replayed_delivered_tokens: u64,
-    pub replayed_dispatches: u64,
-    pub cumulative_fuel: u64,
-    pub engine_time: Duration,
-    pub savepoint_capture_time: Duration,
-    pub savepoint_restore_time: Duration,
 }
 
 #[derive(Debug)]

@@ -20,6 +20,7 @@ pub(crate) use hyphenation::{
 pub use runtime::cached_pretolerance_plan;
 pub(crate) use runtime::{
     ParagraphBreakResult, break_current_paragraph, display_line_dimensions, normal_paragraph,
+    start_canonical_paragraph,
 };
 #[cfg(test)]
 pub(crate) use runtime::{

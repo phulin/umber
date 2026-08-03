@@ -1,0 +1,548 @@
+#[cfg(any())]
+use tex_lex::InputStack;
+use tex_out::dvi::DviPagePlan;
+use tex_state::env::banks::{DimenParam, IntParam};
+use tex_state::node::Node;
+#[cfg(any())]
+use tex_state::token::TracedTokenWord;
+use tex_state::{
+    ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
+    PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
+};
+
+use crate::ExecError;
+#[cfg(any())]
+use crate::assignments::scan_box_value_node;
+use crate::dispatch::PreparedDviPage;
+
+use super::direct;
+use super::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
+
+const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
+const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
+const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
+
+#[cfg(any())]
+pub(super) fn retry_unavailable_stream_open(
+    stores: &mut Universe,
+    failed: &tex_state::StreamOpenFailure,
+) -> Result<std::path::PathBuf, ExecError> {
+    let interaction = stores.interaction_mode();
+    let failed_name = failed.path().to_string_lossy();
+    if matches!(
+        interaction,
+        tex_state::InteractionMode::Batch | tex_state::InteractionMode::Nonstop
+    ) {
+        stores
+            .print_err("I can't write on file `")
+            .print(&failed_name)
+            .print("'.");
+        return Err(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+            "job aborted, file error in nonstop mode",
+        )));
+    }
+    let mut report = stores.print_err("I can't write on file `");
+    report
+        .print(&failed_name)
+        .print("'.")
+        .print_rendered(failed.context())
+        .print_rendered("\n")
+        .print("Please type another output file name");
+    drop(report);
+    let replacement = stores
+        .command_context()
+        .input_ln(tex_state::CommandLineSource::Terminal { prompt: ": " })
+        .ok_or(ExecError::Fatal(tex_command::FatalError::emergency_stop(
+            "End of file on the terminal!",
+        )))?;
+    let replacement = direct::terminal_output_name(&replacement);
+    Ok(replacement.into())
+}
+
+// TeX82 map: `ship_out` consumes a box whose child list is visited by
+// `hlist_out`/`vlist_out`. Fresh pages use the direct two-phase emitter in
+// `direct`: mutation and rare-node normalization finish first, then one live
+// compact-list traversal writes canonical artifact bytes and DVI plan bytes.
+// No detached node tree or per-list snapshot crosses that traversal.
+
+#[cfg(any())]
+pub(super) fn execute_shipout(
+    context: TracedTokenWord,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
+    let Some(node) = scan_box_value_node(input, stores, execution, context)? else {
+        return Ok(None);
+    };
+    shipout_node(node, input, stores, execution)
+}
+
+#[cfg(any())]
+pub(crate) fn shipout_node(
+    node: Node,
+    input: &mut InputStack,
+    stores: &mut Universe,
+    execution: &mut crate::ExecutionContext<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
+    let input_summary = input.publication_summary(stores);
+    let emit_dvi = execution.emits_dvi();
+    // The legacy path prints no progress marker of its own, so every live
+    // effect is genuine carried-forward whatsit output.
+    let pending_end = stores.world().effect_records().len();
+    let announce_openout = stores.pdf_output_enabled();
+    execution.with_nested(|expansion| {
+        let expansion = std::cell::RefCell::new(expansion);
+        let mut legacy_write_expander = |stores: &mut Universe, _: tex_state::PrintSink, tokens| {
+            crate::legacy_output::expand_shipout_write(stores, &mut expansion.borrow_mut(), tokens)
+        };
+        let mut legacy_replay_expander = |stores: &mut Universe, kind, tokens| {
+            crate::legacy_output::expand_shipout_text(
+                stores,
+                &mut expansion.borrow_mut(),
+                kind,
+                tokens,
+            )
+        };
+        shipout_node_with_input_summary(
+            node,
+            input_summary,
+            ShipoutOrigin {
+                output_open_context: None,
+                pending_end,
+                // TeX82 §1374 is silent; pdfTeX retains Web2C's notice.
+                announce_openout,
+            },
+            stores,
+            emit_dvi,
+            &mut legacy_write_expander,
+            &mut legacy_replay_expander,
+        )
+    })
+}
+
+/// What the surrounding job already was when a `\shipout` began.
+///
+/// Both fields are boundaries between the job and the page: the §82 context
+/// an `\openout` retry reports against, and the point in the live effect log
+/// past which nothing belongs to the page. They travel together because a
+/// caller that knows one always knows the other.
+/// Ships a completed box using an already-owned publication summary.
+///
+/// Canonical command replay has no legacy `InputStack`: it publishes the
+/// most recently committed input summary while retaining command input in its
+/// own state.  The direct artifact kernel needs only this detached summary,
+/// never a source-consumption capability.
+#[allow(clippy::too_many_arguments)] // Canonical and retired replay capabilities remain disjoint.
+pub(crate) fn shipout_node_with_input_summary(
+    node: Node,
+    input_summary: tex_state::InputSummary,
+    origin: ShipoutOrigin,
+    stores: &mut Universe,
+    emit_dvi: bool,
+    write_expander: &mut direct::WriteExpander<'_>,
+    replay_expander: &mut direct::ReplayTextExpander<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
+    let pending_end = origin.pending_end;
+    prepare_pdf_output_policy(stores)?;
+    let geometry = shipout_geometry(&node, stores);
+    if huge_shipout_box(&node, stores) {
+        // TeX.web §641 drops the page rather than emitting it, so the report
+        // is the whole of the engine's response. Shipout also runs from
+        // canonical replay, which owns no live `InputStack`; the published
+        // summary is what §82 has to display from.
+        let context = crate::diagnostics::show_context(stores, &input_summary);
+        crate::error_report::report_error(
+            stores,
+            "Huge page cannot be shipped out",
+            &[
+                "The page just created is more than 18 feet tall or",
+                "more than 18 feet wide, so I suspect something went wrong.",
+            ],
+            context,
+        )?;
+        return Ok(None);
+    }
+    if stores.pure_memo_enabled() && !stores.shipout_memo_enabled() {
+        stores.record_pure_memo_not_attempted(PureMemoLayer::Shipout);
+    }
+    let cacheable = stores.shipout_memo_enabled()
+        && effect_free_shipout_graph(stores, &node)
+        && stores.world().effect_records()[..pending_end].is_empty()
+        && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
+    let validation_started = crate::timing::TelemetryTimer::start();
+    let key = cacheable.then(|| shipout_key(stores, &node));
+    if cacheable {
+        stores.record_pure_memo_timing(
+            PureMemoLayer::Shipout,
+            MemoTimingPhase::Validation,
+            validation_started.elapsed(),
+        );
+    }
+    if !cacheable {
+        stores.record_pure_shipout_barrier();
+    }
+    if let Some(key) = key
+        && let Some(entry) = stores.lookup_pure_shipout(key)
+    {
+        let import_started = crate::timing::TelemetryTimer::start();
+        let detached = entry.artifact.artifact(MemoValueLimits::default());
+        if let Ok(detached) = detached {
+            let imported_bytes = entry.artifact.retained_bytes();
+            let hash = stores.commit_replayed_artifact(
+                detached.payload,
+                entry.render_origin_ends,
+                entry.render_provenance,
+            )?;
+            stores.record_pure_memo_timing(
+                PureMemoLayer::Shipout,
+                MemoTimingPhase::Import,
+                import_started.elapsed(),
+            );
+            stores.record_pure_shipout_hit(imported_bytes);
+            // The memo retains the detached artifact, not an execution-owned
+            // plan. Rebuild its equivalent pure receipt exactly once at this
+            // publication boundary so canonical callers never need to lower
+            // an already-committed page during finalization.
+            if let Some(geometry) = geometry {
+                stores.record_geometry_observation(geometry);
+            }
+            let plan = DviPagePlan::compile_v10(
+                stores
+                    .world()
+                    .committed_artifacts()
+                    .last()
+                    .expect("replayed artifact commit must publish a receipt")
+                    .bytes(),
+            )
+            .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
+            return Ok(Some(PreparedDviPage {
+                hash,
+                plan,
+                committed_effects: Box::new([]),
+            }));
+        }
+        stores.record_pure_memo_timing(
+            PureMemoLayer::Shipout,
+            MemoTimingPhase::Import,
+            import_started.elapsed(),
+        );
+        stores.reject_pure_memo(key);
+    }
+    let effect_start = stores.world().effect_records().len();
+    // Absolute, unlike the index above: committing the transaction *drains*
+    // the live effect log, so only a position that survives the drain can
+    // answer "did staging this page produce an effect of its own?" below.
+    let effect_pos_start = stores.world().effect_pos();
+    let mut transaction = stores.begin_shipout();
+    let staged = direct::stage_shipout(
+        node,
+        input_summary,
+        origin,
+        &mut transaction,
+        emit_dvi,
+        write_expander,
+        replay_expander,
+    )?;
+    let committed_effects = transaction.world().effect_records()[effect_start..]
+        .to_vec()
+        .into_boxed_slice();
+    let retained_diagnostics = staged.retained_diagnostics.clone();
+    let memo_payload =
+        (key.is_some() && !staged.artifact.has_deferred_render_origins()).then(|| {
+            let artifact_bytes = staged.artifact.bytes().to_vec();
+            let render_origin_ends = staged.artifact.render_origin_ends_for_memo().to_vec();
+            let render_origins = staged
+                .artifact
+                .render_origins_for_memo()
+                .iter()
+                .flat_map(|origins| origins.iter().copied())
+                .collect::<Vec<_>>();
+            (artifact_bytes, render_origin_ends, render_origins)
+        });
+    let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    if let Some(geometry) = geometry {
+        stores.record_geometry_observation(geometry);
+    }
+    for (sink, text) in retained_diagnostics {
+        stores.world_mut().write_text(sink, &text);
+    }
+    if let (Some(key), Some((artifact_bytes, render_origin_ends, render_origins))) =
+        (key, memo_payload)
+        && stores.world().effect_pos() == effect_pos_start
+        && let Ok(artifact) = tex_state::DetachedMemoValue::from_artifact(&DetachedArtifact {
+            artifact_schema: 10,
+            payload: artifact_bytes,
+        })
+    {
+        let render_provenance =
+            crate::canonical_paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
+        stores.insert_pure_shipout(
+            key,
+            PureShipoutEntry {
+                artifact,
+                render_origin_ends,
+                render_provenance,
+            },
+        );
+    }
+    Ok(staged.dvi_plan.map(|plan| PreparedDviPage {
+        hash,
+        plan,
+        committed_effects,
+    }))
+}
+
+pub(crate) fn stage_canonical_page(
+    node: Node,
+    input_summary: tex_state::InputSummary,
+    origin: ShipoutOrigin,
+    stores: &mut Universe,
+    emit_dvi: bool,
+    write_expander: &mut WriteReplayHost<'_>,
+    replay_expander: &mut TextReplayHost<'_>,
+) -> Result<Option<PreparedDviPage>, ExecError> {
+    shipout_node_with_input_summary(
+        node,
+        input_summary,
+        origin,
+        stores,
+        emit_dvi,
+        write_expander,
+        replay_expander,
+    )
+}
+
+pub(crate) fn stage_pdf_form(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    write_expander: &mut direct::WriteExpander<'_>,
+    replay_expander: &mut direct::ReplayTextExpander<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    direct::stage_form(form, stores, write_expander, replay_expander)
+}
+
+pub(crate) fn stage_canonical_form(
+    form: tex_state::PdfFormRecord,
+    stores: &mut Universe,
+    write_expander: &mut WriteReplayHost<'_>,
+    replay_expander: &mut TextReplayHost<'_>,
+) -> Result<tex_state::PdfFormArtifact, ExecError> {
+    direct::stage_form(form, stores, write_expander, replay_expander)
+}
+
+#[cfg(test)]
+pub(crate) fn test_stage_shipout_artifact(
+    node: Node,
+    stores: &mut Universe,
+) -> Result<tex_out::PageArtifact, ExecError> {
+    let execution = crate::ExecutionContext::new("texput");
+    let emit_dvi = execution.emits_dvi();
+    let mut legacy_write_expander =
+        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| {
+            Ok(crate::canonical_shipout::ExpandedWrite(String::new()))
+        };
+    let mut legacy_replay_expander =
+        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| {
+            Ok(crate::canonical_shipout::ExpandedReplayText(Vec::new()))
+        };
+    let pending_end = stores.world().effect_records().len();
+    let staged = direct::stage_shipout(
+        node,
+        tex_state::InputSummary::default(),
+        ShipoutOrigin {
+            output_open_context: None,
+            pending_end,
+            announce_openout: true,
+        },
+        stores,
+        emit_dvi,
+        &mut legacy_write_expander,
+        &mut legacy_replay_expander,
+    )?;
+    tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
+        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
+}
+
+fn shipout_geometry(node: &Node, stores: &Universe) -> Option<GeometryObservation> {
+    let (Node::HList(node) | Node::VList(node)) = node else {
+        return None;
+    };
+    Some(GeometryObservation::Shipout {
+        page_width_sp: i64::from(node.width.raw()),
+        page_height_sp: i64::from(node.height.raw()) + i64::from(node.depth.raw()),
+        counts: direct::page_counts(stores),
+        line: stores.current_input_line().max(0) as u32,
+        source: stores.current_input_source(),
+    })
+}
+
+fn prepare_pdf_output_policy(stores: &mut Universe) -> Result<(), ExecError> {
+    let current_output = stores.int_param(IntParam::PDF_OUTPUT);
+    if let Some(fixed) = stores.fixed_pdf_output_parameters() {
+        if current_output != fixed.output {
+            return Err(ExecError::PdfOutputModeChanged);
+        }
+        let current_major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+        let current_minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+        if fixed.output > 0
+            && (current_major != fixed.major_version || current_minor != fixed.minor_version)
+        {
+            return Err(ExecError::PdfVersionChanged);
+        }
+        if stores.int_param(IntParam::PDF_DRAFT_MODE) != fixed.draft_mode {
+            return Err(ExecError::PdfDraftModeChanged);
+        }
+        return Ok(());
+    }
+    if current_output <= 0 {
+        return Ok(());
+    }
+
+    let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+    if major < 1 {
+        report_invalid_pdf_version(
+            stores,
+            "pdfTeX error (invalid pdfmajorversion)",
+            &[
+                "The pdfmajorversion must be 1 or greater.",
+                "I changed this to 1.",
+            ],
+            major,
+        )?;
+        stores.set_int_param(IntParam::PDF_MAJOR_VERSION, 1);
+    }
+    let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+    if !(0..=9).contains(&minor) {
+        report_invalid_pdf_version(
+            stores,
+            "pdfTeX error (invalid pdfminorversion)",
+            &[
+                "The pdfminorversion must be between 0 and 9.",
+                "I changed this to 4.",
+            ],
+            minor,
+        )?;
+        stores.set_int_param(IntParam::PDF_MINOR_VERSION, 4);
+    }
+
+    let major = stores.int_param(IntParam::PDF_MAJOR_VERSION);
+    let minor = stores.int_param(IntParam::PDF_MINOR_VERSION);
+    if stores
+        .int_param(IntParam::PDF_OBJ_COMPRESS_LEVEL)
+        .clamp(0, 3)
+        > 0
+        && major == 1
+        && minor < 5
+    {
+        stores.world_mut().write_text(
+            PrintSink::TerminalAndLog,
+            "\npdfTeX warning (Object streams): \\pdfobjcompresslevel > 0 requires PDF-1.5 or greater. Object streams disabled now.\n",
+        );
+    }
+    Ok(())
+}
+
+/// pdftex.web's `check_pdfversion`: `print_err`, `print_ln`, `help2`, then
+/// tex.web §91's `int_error` naming the rejected value.
+///
+/// The version is fixed at the first page, long after the command that set it
+/// was scanned, so §82's context is whatever input the job last published.
+fn report_invalid_pdf_version(
+    stores: &mut Universe,
+    message: &str,
+    help: &[&str],
+    value: i32,
+) -> Result<(), ExecError> {
+    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+    let mut report = stores.print_err(message);
+    // pdftex.web breaks the line before the value; `print_nl` on an open line
+    // is that `print_ln`.
+    report.print_nl("").help(help).context(context);
+    report.int_error(value).jump_out()?;
+    Ok(())
+}
+
+fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
+    let root = stores.freeze_node_list(std::slice::from_ref(node));
+    let environment = stores.engine_boundary_hash(SHIPOUT_ENV_HASH_DOMAIN, |hash| {
+        hash.node_list(root);
+        hash.i32(stores.int_param(IntParam::MAG));
+        hash.i32(stores.dimen_param(DimenParam::H_OFFSET).raw());
+        hash.i32(stores.dimen_param(DimenParam::V_OFFSET).raw());
+        for index in 0..10 {
+            hash.i32(stores.count(index));
+        }
+    });
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&SHIPOUT_EPISODE_SCHEMA.to_le_bytes());
+    bytes.extend_from_slice(&environment.to_le_bytes());
+    PureMemoKey::new(
+        SHIPOUT_EPISODE_DOMAIN,
+        environment,
+        ContentHash::from_bytes(&bytes),
+    )
+}
+
+fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
+    let mut nodes = vec![root.clone()];
+    while let Some(node) = nodes.pop() {
+        let children = match node {
+            Node::HList(box_node) | Node::VList(box_node) => Some(box_node.children),
+            Node::Glue {
+                leader:
+                    Some(
+                        tex_state::node::LeaderPayload::HList(box_node)
+                        | tex_state::node::LeaderPayload::VList(box_node),
+                    ),
+                ..
+            } => Some(box_node.children),
+            Node::Disc {
+                pre, post, replace, ..
+            } => {
+                nodes.extend(stores.nodes(pre).into_iter().map(|node| node.to_owned()));
+                nodes.extend(stores.nodes(post).into_iter().map(|node| node.to_owned()));
+                Some(replace)
+            }
+            Node::Whatsit(_)
+            | Node::Unset(_)
+            | Node::Ins { .. }
+            | Node::Direction(_)
+            | Node::MathNoad(_)
+            | Node::FractionNoad(_)
+            | Node::MathStyle(_)
+            | Node::MathChoice(_)
+            | Node::MathList(_)
+            | Node::Nonscript
+            | Node::Adjust(_) => return false,
+            _ => None,
+        };
+        if let Some(children) = children {
+            nodes.extend(
+                stores
+                    .nodes(children)
+                    .into_iter()
+                    .map(|node| node.to_owned()),
+            );
+        }
+    }
+    true
+}
+
+fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {
+    let (width, height, depth) = match node {
+        Node::HList(box_node) | Node::VList(box_node) => {
+            (box_node.width, box_node.height, box_node.depth)
+        }
+        _ => return false,
+    };
+    height > tex_state::scaled::Scaled::MAX_DIMEN
+        || depth > tex_state::scaled::Scaled::MAX_DIMEN
+        || height
+            .checked_add(depth)
+            .and_then(|value| value.checked_add(stores.dimen_param(DimenParam::V_OFFSET)))
+            .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
+        || width
+            .checked_add(stores.dimen_param(DimenParam::H_OFFSET))
+            .is_none_or(|value| value > tex_state::scaled::Scaled::MAX_DIMEN)
+}

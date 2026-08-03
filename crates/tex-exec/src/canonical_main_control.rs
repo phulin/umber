@@ -54,6 +54,10 @@ use tex_state::{
 use tex_typeset::PackSpec;
 
 use crate::canonical_assignments::tracing as assignment_tracing;
+use crate::canonical_font_support::{
+    FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
+    report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
+};
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
@@ -3799,7 +3803,8 @@ impl CanonicalMainControl {
             stores,
             self.fuel.fuel_mut(),
         )?;
-        let dimensions = crate::assignments::display_line_dimensions(&self.modes, stores);
+        let dimensions =
+            crate::canonical_paragraph_end::display_line_dimensions(&self.modes, stores);
         let pre_display_size = paragraph
             .last_line
             .as_ref()
@@ -10346,7 +10351,7 @@ fn apply_pdf_navigation_request(
                 .pdf_destination(&identity, structure.is_some())
                 .is_some_and(tex_state::PdfDestinationRecord::defined)
             {
-                crate::assignments::warn_pdf_destination_duplicate(stores, &identity);
+                warn_pdf_destination_duplicate(stores, &identity);
                 return Ok(ReplayStep::Continue);
             }
             crate::canonical_box_runtime::append_whatsit(
@@ -14183,16 +14188,16 @@ fn apply_scanned_step(
                 // font specification.
                 let selector = stores.resolve(request.target).to_owned();
                 let selector_kind = stores.control_sequence_kind(request.target);
-                crate::assignments::fonts::report_font_not_loadable_with_context(
+                report_font_not_loadable_with_context(
                     stores,
                     selector_kind,
                     &selector,
                     &request.name,
                     request.size,
                     if request.name.starts_with("opentype:") {
-                        crate::assignments::fonts::FontLoadFailure::MissingOpenType
+                        FontLoadFailure::MissingOpenType
                     } else {
-                        crate::assignments::fonts::FontLoadFailure::MissingTfm
+                        FontLoadFailure::MissingTfm
                     },
                     request.error_context.clone(),
                 )?;
@@ -14208,13 +14213,13 @@ fn apply_scanned_step(
                     // replaced by nullfont with its requested assignment scope.
                     let selector = stores.resolve(request.target).to_owned();
                     let selector_kind = stores.control_sequence_kind(request.target);
-                    crate::assignments::fonts::report_font_not_loadable_with_context(
+                    report_font_not_loadable_with_context(
                         stores,
                         selector_kind,
                         &selector,
                         &request.name,
                         request.size,
-                        crate::assignments::fonts::FontLoadFailure::MalformedTfm,
+                        FontLoadFailure::MalformedTfm,
                         request.error_context.clone(),
                     )?;
                     bind_null_font(stores);
@@ -14230,7 +14235,7 @@ fn apply_scanned_step(
                 ) => {
                     let selector = stores.resolve(request.target).to_owned();
                     let selector_kind = stores.control_sequence_kind(request.target);
-                    crate::assignments::fonts::report_font_capacity(
+                    report_font_capacity(
                         stores,
                         selector_kind,
                         &selector,
@@ -14541,8 +14546,6 @@ fn apply_scanned_step(
             first,
             second,
         } => {
-            use crate::assignments::{GlyphToUnicodeParse, parse_glyph_to_unicode};
-
             let first = first.map(|tokens| pdf_graphics_text(tokens, stores));
             match primitive {
                 UnexpandablePrimitive::PdfFontAttr => stores.set_pdf_font_attribute(
@@ -14991,9 +14994,9 @@ fn apply_scanned_step(
             // the live scan, where §82 could still show the character that
             // caused them; installing is all that is left here.
             if patterns {
-                crate::assignments::apply_scanned_patterns(stores, pattern_specs)?;
+                crate::canonical_paragraph_end::apply_scanned_patterns(stores, pattern_specs)?;
             } else {
-                crate::assignments::apply_scanned_hyphenation_exceptions(stores, words);
+                crate::canonical_paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
             }
             Ok(ReplayStep::Continue)
         }
@@ -15407,7 +15410,7 @@ fn apply_scanned_step(
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
-            crate::assignments::normal_paragraph(modes, stores);
+            crate::canonical_paragraph_end::normal_paragraph(modes, stores);
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
@@ -15526,7 +15529,7 @@ fn apply_scanned_step(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::assignments::normal_paragraph(modes, stores);
+                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -15574,7 +15577,7 @@ fn apply_scanned_step(
             // `scan_left_brace`. Keep the reset at this consumed-opening-brace
             // boundary: doing it in the deferred page-fire tail runs before
             // command control has established the routine's body boundary.
-            crate::assignments::normal_paragraph(modes, stores);
+            crate::canonical_paragraph_end::normal_paragraph(modes, stores);
             boxes.output_routine_opening_pending = false;
             Ok(ReplayStep::Continue)
         }
@@ -16169,7 +16172,7 @@ fn apply_scanned_step(
             // in restricted horizontal mode, but that level is the alignment
             // list itself, not a paragraph to pop.
             if modes.current_mode() == Mode::InternalVertical {
-                crate::assignments::normal_paragraph(modes, stores);
+                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
             }
             Ok(ReplayStep::Continue)
         }
@@ -16342,7 +16345,7 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                crate::assignments::normal_paragraph(modes, stores);
+                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
                 crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
@@ -17052,7 +17055,7 @@ fn begin_replay_box(
         stores.current_input_line(),
     )?;
     if !kind.horizontal() {
-        crate::assignments::normal_paragraph(modes, stores);
+        crate::canonical_paragraph_end::normal_paragraph(modes, stores);
     }
     boxes.active_boxes.push(ActiveReplayBox {
         target,
@@ -17161,7 +17164,7 @@ fn apply_box_shift(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::assignments::normal_paragraph(modes, stores);
+                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -17606,7 +17609,7 @@ fn start_canonical_paragraph(
     stores: &mut Universe,
     indent: bool,
 ) -> Result<(), ExecError> {
-    crate::assignments::start_canonical_paragraph(modes, stores, indent)?;
+    crate::canonical_paragraph_end::start_canonical_paragraph(modes, stores, indent)?;
     let everypar = stores.tok_param(TokParam::EVERY_PAR);
     if !stores.tokens(everypar).is_empty() {
         let origin = stores.bootstrap_origin();

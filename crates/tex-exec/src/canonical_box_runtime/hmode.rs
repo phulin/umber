@@ -3,9 +3,10 @@ use tex_state::Universe;
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::FontId;
+use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
-use tex_state::node::{DiscKind, GlueKind, KernKind, Node};
-use tex_state::scaled::Scaled;
+use tex_state::node::{BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, Sign};
+use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use crate::mode::{PendingHChar, PendingHRun, PendingHRunChar};
@@ -495,6 +496,46 @@ pub(crate) const fn norm_min(value: i32) -> u8 {
     } else {
         value as u8
     }
+}
+
+pub(crate) fn indent_in_hmode(
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    indent: bool,
+    fuel: &mut tex_command::CommandFuel,
+) -> Result<(), ExecError> {
+    if !indent {
+        return Ok(());
+    }
+    fn make_indent_box(stores: &mut Universe) -> Node {
+        let children = stores.freeze_node_list(&[]);
+        Node::HList(BoxNode::new(BoxNodeFields {
+            width: stores.dimen_param(tex_state::env::banks::DimenParam::PAR_INDENT),
+            height: Scaled::from_raw(0),
+            depth: Scaled::from_raw(0),
+            shift: Scaled::from_raw(0),
+            box_lr: tex_state::node::BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children,
+        }))
+    }
+    if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
+        let indent_box = make_indent_box(stores);
+        let list = stores.freeze_node_list(&[indent_box]);
+        nest.current_list_mutation()
+            .push(Node::MathNoad(MathNoad::new(
+                NoadKind::Normal(NoadClass::Ord),
+                MathField::SubBox(list),
+            )));
+    } else {
+        flush_pending_hchars(nest, stores, fuel)?;
+        nest.current_list_mutation().set_space_factor(1000);
+        let indent_box = make_indent_box(stores);
+        nest.current_list_mutation().push(indent_box);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
