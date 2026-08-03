@@ -381,7 +381,7 @@ impl EngineCheckpoint {
                 (
                     CheckpointContinuation::Canonical(left),
                     CheckpointContinuation::Canonical(right),
-                ) => left.exact_future_state_matches(right),
+                ) => left.exact_future_state_matches(right, self.root_anchor, other.root_anchor),
                 (
                     CheckpointContinuation::LegacyInput(left),
                     CheckpointContinuation::LegacyInput(right),
@@ -423,6 +423,17 @@ impl EngineCheckpoint {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
+        let CheckpointContinuation::Canonical(command) = &mut checkpoint.continuation else {
+            return Err(GenerationForkError::RootRevisionMismatch);
+        };
+        if !command.rebind_root_source_at(
+            roots.old_source.as_bytes(),
+            std::sync::Arc::from(roots.new_source.as_bytes()),
+            self.root_anchor,
+            mapped_anchor,
+        ) {
+            return Err(GenerationForkError::RootRevisionMismatch);
+        }
         checkpoint.root_anchor = mapped_anchor;
         checkpoint.root_content_hash = Some(roots.new_content_hash);
         Ok(checkpoint)
@@ -445,7 +456,16 @@ impl EngineCheckpoint {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
-        checkpoint.root_content_hash = Some(roots.new_content_hash);
+        if let CheckpointContinuation::Canonical(command) = &mut checkpoint.continuation
+            && command.rebind_root_source_at(
+                roots.old_source.as_bytes(),
+                std::sync::Arc::from(roots.new_source.as_bytes()),
+                self.root_anchor,
+                self.root_anchor,
+            )
+        {
+            checkpoint.root_content_hash = Some(roots.new_content_hash);
+        }
         Ok(checkpoint)
     }
 

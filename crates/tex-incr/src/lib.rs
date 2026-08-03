@@ -1883,6 +1883,7 @@ impl Session {
                     record.checkpoint = record
                         .checkpoint
                         .rehome_unchanged_prefix(substrate, &roots)?;
+                    record.revision = setup.next_revision;
                     history.push(record);
                 }
                 for mut record in setup.old_history[old_index..].iter().cloned() {
@@ -2499,6 +2500,7 @@ impl Session {
                     record.checkpoint = record
                         .checkpoint
                         .rehome_unchanged_prefix(substrate, &roots)?;
+                    record.revision = next_revision;
                     history.push(record);
                 }
                 for mut record in old_history[old_index..].iter().cloned() {

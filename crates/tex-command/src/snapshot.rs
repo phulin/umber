@@ -51,7 +51,12 @@ impl CommandSummary {
     /// provenance handles on backed-up tokens through their captured source
     /// provenance.
     #[must_use]
-    pub fn exact_future_state_matches(&self, other: &Self) -> bool {
+    pub fn exact_future_state_matches(
+        &self,
+        other: &Self,
+        self_root_anchor: usize,
+        other_root_anchor: usize,
+    ) -> bool {
         let mut normalized = self.clone();
         let Some((old_backing, expected_backing)) =
             normalized
@@ -71,9 +76,12 @@ impl CommandSummary {
         else {
             return normalized == *other;
         };
-        if old_backing.as_slice() != expected_backing.as_ref()
-            && !normalized.rebind_root_source(&old_backing, expected_backing)
-        {
+        if !normalized.rebind_root_source_at(
+            &old_backing,
+            expected_backing,
+            self_root_anchor,
+            other_root_anchor,
+        ) {
             return false;
         }
         if normalized.input.levels.len() != other.input.levels.len() {
@@ -123,6 +131,44 @@ impl CommandSummary {
     /// Rebinds the bottom generated source to edited bytes while retaining
     /// its exact command-owned identity and lexer cursor.
     pub fn rebind_root_source(&mut self, old: &[u8], new: Arc<[u8]>) -> bool {
+        self.rebind_root_source_at(old, new, 0, 0)
+    }
+
+    /// Rebinds the generated root and maps every live source coordinate from
+    /// one already-proven unchanged suffix anchor to the other.
+    pub fn rebind_root_source_at(
+        &mut self,
+        old: &[u8],
+        new: Arc<[u8]>,
+        old_anchor: usize,
+        new_anchor: usize,
+    ) -> bool {
+        let Ok(old_anchor) = u64::try_from(old_anchor) else {
+            return false;
+        };
+        let Ok(new_anchor) = u64::try_from(new_anchor) else {
+            return false;
+        };
+        let Some(byte_delta) = i64::try_from(new_anchor)
+            .ok()
+            .and_then(|new_anchor| i64::try_from(old_anchor).ok().map(|old| new_anchor - old))
+        else {
+            return false;
+        };
+        let old_line = old
+            .get(..usize::try_from(old_anchor).unwrap_or(usize::MAX))
+            .map(|prefix| prefix.iter().filter(|&&byte| byte == b'\n').count());
+        let new_line = new
+            .get(..usize::try_from(new_anchor).unwrap_or(usize::MAX))
+            .map(|prefix| prefix.iter().filter(|&&byte| byte == b'\n').count());
+        let Some(line_delta) = old_line.zip(new_line).and_then(|(old, new)| {
+            i64::try_from(new)
+                .ok()
+                .zip(i64::try_from(old).ok())
+                .map(|(new, old)| new - old)
+        }) else {
+            return false;
+        };
         let Some(source) = self.input.levels.iter_mut().find_map(|level| match level {
             crate::input::InputLevel::Source(source) => Some(source),
             crate::input::InputLevel::Tokens(_) => None,
@@ -146,18 +192,44 @@ impl CommandSummary {
         };
         *registered = backing.clone();
         source.cursor.backing = backing;
+        let Some(next_physical_offset) = source
+            .cursor
+            .next_physical_offset
+            .checked_add_signed(byte_delta)
+        else {
+            return false;
+        };
+        let Some(next_line_number) = source
+            .cursor
+            .next_line_number
+            .checked_add_signed(line_delta)
+        else {
+            return false;
+        };
+        source.cursor.next_physical_offset = next_physical_offset;
+        source.cursor.next_line_number = next_line_number;
         if let Some(line) = &mut source.cursor.line
             && line
                 .rehome_edited_backing(
                     id,
                     &source.cursor.backing.bytes,
                     source.cursor.backing.mode,
-                    0,
-                    0,
+                    byte_delta,
+                    line_delta,
                 )
                 .is_none()
         {
             return false;
+        }
+        for level in &mut self.input.levels {
+            let InputLevel::Tokens(tokens) = level else {
+                continue;
+            };
+            if let TokenPayload::BackedUp(buffer) = &mut tokens.payload
+                && buffer.rehome_source(id, byte_delta).is_none()
+            {
+                return false;
+            }
         }
         true
     }
