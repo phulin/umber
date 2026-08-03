@@ -5425,3 +5425,22 @@ fn canonical_setbox_from_a_void_source_voids_the_destination() {
         "void \\vsplit voids the target"
     );
 }
+#[test]
+fn canonical_output_replay_owns_every_deferred_expansion_family() {
+    let control = include_str!("../canonical_main_control.rs");
+    assert!(!control.contains("tex_expand::ExpansionContext"));
+    assert!(control.contains("processor.expand_write_text(traced)"));
+    assert!(control.contains("canonical_replay_text("));
+
+    let normalize = include_str!("../assignments/shipout/direct/normalize.rs");
+    for family in [
+        "DeferredWrite",
+        "DeferredSpecial",
+        "DeferredPdfLiteral",
+        "PdfRefXForm",
+    ] {
+        assert!(normalize.contains(family), "missing replay family {family}");
+    }
+    assert!(normalize.contains("expansion.replay_expander"));
+    assert!(normalize.contains("expansion.write_expander"));
+}

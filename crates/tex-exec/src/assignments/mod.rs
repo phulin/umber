@@ -142,7 +142,7 @@ pub(crate) use scanning::{
 };
 use shipout::*;
 pub(crate) use shipout::{
-    ShipoutOrigin, shipout_node, shipout_node_with_input_summary, stage_pdf_form,
+    ReplayTextKind, ShipoutOrigin, shipout_node, shipout_node_with_input_summary, stage_pdf_form,
 };
 use tokens::*;
 pub(crate) use tokens::{
@@ -497,8 +497,12 @@ fn execute_pdf_form(
         .initialize_pdf_form(identity, list, dimensions, attr, resources, immediate)
         .map_err(|_| ExecError::PdfObjectCapacity)?;
     if immediate {
-        let artifact =
-            execution.with_nested(|expansion| stage_pdf_form(form, stores, expansion))?;
+        let artifact = execution.with_nested(|expansion| {
+            let mut write = |_: &mut Universe, _: tex_state::PrintSink, _: TokenListId| Ok(None);
+            let mut replay =
+                |_: &mut Universe, _: shipout::ReplayTextKind, _: TokenListId| Ok(None);
+            stage_pdf_form(form, stores, Some(expansion), &mut write, &mut replay)
+        })?;
         stores
             .publish_pdf_traversal_positions(artifact.last_position(), stores.pdf_snap_reference());
         stores.set_pdf_form_artifact(form.object(), artifact);

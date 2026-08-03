@@ -1013,6 +1013,30 @@ pub enum AlignmentCellOpening {
 }
 
 impl CommandProcessor<'_> {
+    /// Expands a frozen whatsit payload at output traversal time.
+    ///
+    /// The caller decides how the resulting token spellings are rendered;
+    /// this operation owns only canonical replay/expansion state.
+    pub fn expand_output_replay(
+        &mut self,
+        tokens: TracedTokenList,
+    ) -> Result<TracedTokenList, CommandError> {
+        self.command.push_token_level(
+            TokenPayload::Stored {
+                tokens: tokens.token_list(),
+                origins: tokens.origin_list(),
+            },
+            TokenBehavior::Ordinary,
+            RetirementBehavior::Pop,
+            ReplayTrace::Stored(StoredReplayReason::Write),
+        );
+        let mut expanded = Vec::new();
+        while let Some(command) = self.get_x_or_protected_token()? {
+            expanded.push(command.spelling());
+        }
+        Ok(self.state.finish_traced_token_list(&expanded))
+    }
+
     /// TeX82 §1215's `get_r_token`, including its restart after inserting
     /// the inaccessible target. The rejected delivery is backed up, so the
     /// caller's following operand scan still owns it.

@@ -28,17 +28,20 @@ pub(super) struct DirectionPermutation {
 }
 
 struct NormalizeExpansion<'a, 'b> {
-    expansion: &'a mut tex_expand::ExpansionContext<'b>,
+    expansion: Option<&'a mut tex_expand::ExpansionContext<'b>>,
     write_expander: &'a mut super::WriteExpander<'a>,
+    replay_expander: &'a mut super::ReplayTextExpander<'a>,
 }
 
+#[allow(clippy::too_many_arguments)] // Output traversal keeps independent immutable/replay inputs.
 pub(super) fn normalize_page(
     root: NodeListId,
     root_box: (bool, tex_state::node::BoxLr),
     effects_and_context: (PendingPageEffects, String, bool),
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     write_expander: &mut super::WriteExpander<'_>,
+    replay_expander: &mut super::ReplayTextExpander<'_>,
     color_target: tex_state::PdfColorStackTarget,
 ) -> Result<PageOverlay, ExecError> {
     let (root_vertical, root_box_lr) = root_box;
@@ -93,6 +96,7 @@ pub(super) fn normalize_page(
     let mut expansion = NormalizeExpansion {
         expansion,
         write_expander,
+        replay_expander,
     };
     normalize_list(
         stores,
@@ -381,7 +385,14 @@ fn append_whatsit_effect(
         Whatsit::DeferredWrite { sink, tokens } if !suppress_deferred_streams => {
             let text = match (expansion.write_expander)(stores, sink, tokens)? {
                 Some(text) => text,
-                None => expand_write_tokens(stores, expansion.expansion, tokens)?,
+                None => expand_write_tokens(
+                    stores,
+                    expansion
+                        .expansion
+                        .as_deref_mut()
+                        .expect("legacy replay context"),
+                    tokens,
+                )?,
             };
             if let Some(sink) = deferred_write_sink(stores, sink) {
                 // TeX82 §1370's `write_out` frames the expansion as
@@ -402,7 +413,21 @@ fn append_whatsit_effect(
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::DeferredSpecial { class, tokens } => {
-            let payload = expand_special_tokens(stores, expansion.expansion, tokens)?;
+            let payload = match (expansion.replay_expander)(
+                stores,
+                super::ReplayTextKind::Special,
+                tokens,
+            )? {
+                Some(payload) => payload,
+                None => expand_special_tokens(
+                    stores,
+                    expansion
+                        .expansion
+                        .as_deref_mut()
+                        .expect("legacy replay context"),
+                    tokens,
+                )?,
+            };
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::PdfReferenceObject { object } => {
@@ -448,7 +473,21 @@ fn append_whatsit_effect(
             payload,
         }),
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
-            let payload = expand_pdf_literal_tokens(stores, expansion.expansion, tokens)?;
+            let payload = match (expansion.replay_expander)(
+                stores,
+                super::ReplayTextKind::PdfLiteral,
+                tokens,
+            )? {
+                Some(payload) => payload,
+                None => expand_pdf_literal_tokens(
+                    stores,
+                    expansion
+                        .expansion
+                        .as_deref_mut()
+                        .expect("legacy replay context"),
+                    tokens,
+                )?,
+            };
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),
                 payload,
@@ -498,7 +537,13 @@ fn append_whatsit_effect(
                 let form = stores
                     .pdf_form(object)
                     .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-                let artifact = super::stage_form(form, stores, expansion.expansion)?;
+                let artifact = super::stage_form(
+                    form,
+                    stores,
+                    expansion.expansion.as_deref_mut(),
+                    expansion.write_expander,
+                    expansion.replay_expander,
+                )?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),

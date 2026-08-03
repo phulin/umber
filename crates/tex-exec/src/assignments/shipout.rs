@@ -13,6 +13,7 @@ use crate::ExecError;
 use crate::dispatch::PreparedDviPage;
 
 mod direct;
+pub(crate) use direct::ReplayTextKind;
 
 #[cfg(test)]
 mod tests;
@@ -85,6 +86,8 @@ pub(crate) fn shipout_node(
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
+    let mut legacy_replay_expander =
+        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| Ok(None);
     // The legacy path prints no progress marker of its own, so every live
     // effect is genuine carried-forward whatsit output.
     let pending_end = stores.world().effect_records().len();
@@ -99,9 +102,10 @@ pub(crate) fn shipout_node(
             announce_openout,
         },
         stores,
-        execution,
+        Some(execution),
         emit_dvi,
         &mut legacy_write_expander,
+        &mut legacy_replay_expander,
     )
 }
 
@@ -128,14 +132,16 @@ pub(crate) struct ShipoutOrigin {
 /// most recently committed input summary while retaining command input in its
 /// own state.  The direct artifact kernel needs only this detached summary,
 /// never a source-consumption capability.
+#[allow(clippy::too_many_arguments)] // Canonical and retired replay capabilities remain disjoint.
 pub(crate) fn shipout_node_with_input_summary(
     node: Node,
     input_summary: tex_state::InputSummary,
     origin: ShipoutOrigin,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
+    replay_expander: &mut direct::ReplayTextExpander<'_>,
 ) -> Result<Option<PreparedDviPage>, ExecError> {
     let pending_end = origin.pending_end;
     prepare_pdf_output_policy(stores)?;
@@ -237,6 +243,7 @@ pub(crate) fn shipout_node_with_input_summary(
         expansion,
         emit_dvi,
         write_expander,
+        replay_expander,
     )?;
     let committed_effects = transaction.world().effect_records()[effect_start..]
         .to_vec()
@@ -290,9 +297,11 @@ pub(crate) fn shipout_node_with_input_summary(
 pub(crate) fn stage_pdf_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
+    write_expander: &mut direct::WriteExpander<'_>,
+    replay_expander: &mut direct::ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    direct::stage_form(form, stores, expansion)
+    direct::stage_form(form, stores, expansion, write_expander, replay_expander)
 }
 
 #[cfg(test)]
@@ -304,6 +313,8 @@ pub(crate) fn test_stage_shipout_artifact(
     let emit_dvi = execution.emits_dvi();
     let mut legacy_write_expander =
         |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| Ok(None);
+    let mut legacy_replay_expander =
+        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| Ok(None);
     let pending_end = stores.world().effect_records().len();
     let staged = direct::stage_shipout(
         node,
@@ -314,9 +325,10 @@ pub(crate) fn test_stage_shipout_artifact(
             announce_openout: true,
         },
         stores,
-        &mut execution,
+        Some(&mut execution),
         emit_dvi,
         &mut legacy_write_expander,
+        &mut legacy_replay_expander,
     )?;
     tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
         .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))

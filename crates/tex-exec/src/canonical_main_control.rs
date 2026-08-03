@@ -10664,8 +10664,19 @@ fn apply_pdf_form_request(
                 // Use the same typed form traversal as lazy references so
                 // graphics, saved positions, colors, and nested forms have
                 // one ledger/artifact owner.
-                let mut expansion = tex_expand::ExpansionContext::new("texput");
-                let artifact = crate::assignments::stage_pdf_form(form, stores, &mut expansion)?;
+                let mut write = |_: &mut Universe, _: PrintSink, _: TokenListId| Ok(None);
+                let mut replay = |stores: &mut Universe,
+                                  kind: crate::assignments::ReplayTextKind,
+                                  tokens: TokenListId| {
+                    canonical_replay_text(command, stores, kind, tokens, &mut Vec::new()).map(Some)
+                };
+                let artifact = crate::assignments::stage_pdf_form(
+                    form,
+                    stores,
+                    None,
+                    &mut write,
+                    &mut replay,
+                )?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),
@@ -10675,6 +10686,59 @@ fn apply_pdf_form_request(
         }
     }
     Ok(ReplayStep::Continue)
+}
+
+fn canonical_replay_text(
+    command: &mut CommandMachine<'_>,
+    stores: &mut Universe,
+    kind: crate::assignments::ReplayTextKind,
+    tokens: TokenListId,
+    diagnostics: &mut Vec<PendingDiagnostic>,
+) -> Result<Vec<u8>, ExecError> {
+    let traced = stores
+        .tokens(tokens)
+        .iter()
+        .copied()
+        .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+        .collect::<Vec<_>>();
+    let traced = stores.finish_traced_token_list(&traced);
+    let expanded = {
+        let mut processor = command.processor(stores);
+        let expanded = processor
+            .expand_output_replay(traced)
+            .map_err(command_error)?;
+        diagnostics.extend(
+            processor
+                .take_semantic_diagnostics()
+                .into_iter()
+                .map(PendingDiagnostic::Command),
+        );
+        expanded
+    };
+    let mut text = String::new();
+    for &token in stores.tokens(expanded.token_list()) {
+        match kind {
+            crate::assignments::ReplayTextKind::Special => {
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
+            }
+            crate::assignments::ReplayTextKind::PdfLiteral => {
+                crate::diagnostics::append_token_show_text(stores, token, &mut text);
+            }
+        }
+    }
+    if matches!(kind, crate::assignments::ReplayTextKind::PdfLiteral) {
+        return Ok(text.into_bytes());
+    }
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        if let Ok(byte) = u8::try_from(ch as u32) {
+            bytes.push(byte);
+        } else {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    }
+    Ok(bytes)
 }
 
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
@@ -11875,7 +11939,6 @@ fn shipout_replay_box(
     let counts: [i32; 10] =
         std::array::from_fn(|index| stores.count(u16::try_from(index).expect("0..=9 fits u16")));
     let traced_node = (tracing_output > 0).then(|| node.clone());
-    let mut expansion = tex_expand::ExpansionContext::new("texput");
     let input_summary = stores.input_summary().clone();
     let output_open_context = command.state.output_open_context(&stores.command_context());
     // Effects live at this point are genuine whatsit output carried forward
@@ -11885,25 +11948,27 @@ fn shipout_replay_box(
     let pending_end = stores.world().effect_records().len();
     print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
-    let mut effect_cursor = effect_start;
-    let mut write_diagnostics = Vec::new();
+    let effect_cursor = std::cell::Cell::new(effect_start);
+    let write_diagnostics = std::cell::RefCell::new(Vec::new());
     let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
     let emit_dvi = command.emit_dvi_override.unwrap_or(!supports_pdftex);
+    let command_cell = std::cell::RefCell::new(command);
     let mut expand_write =
         |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
+            let mut command = command_cell.borrow_mut();
             // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
             // before moving to the next whatsit. A following write expands only
             // after those effects have happened, so publish the committed prefix
             // before its nested command episode contributes observations.
             if let Some(observations) = command.observations.as_mut() {
                 observations.0.extend(
-                    stores.world().effect_records()[effect_cursor..]
+                    stores.world().effect_records()[effect_cursor.get()..]
                         .iter()
                         .filter_map(stream_effect_observation)
                         .map(CommandObservation::Effect),
                 );
             }
-            effect_cursor = stores.world().effect_records().len();
+            effect_cursor.set(stores.world().effect_records().len());
             let traced = stores
                 .tokens(tokens)
                 .iter()
@@ -11921,7 +11986,7 @@ fn shipout_replay_box(
                 processor.set_command_trace_mode_prefix(mode_prefix);
                 let expanded = processor.expand_write_text(traced).map_err(command_error)?;
                 let command_trace_printed = processor.command_trace_printed();
-                write_diagnostics.extend(
+                write_diagnostics.borrow_mut().extend(
                     processor
                         .take_semantic_diagnostics()
                         .into_iter()
@@ -11972,6 +12037,18 @@ fn shipout_replay_box(
             text.push('\n');
             Ok(Some(text))
         };
+    let mut expand_replay =
+        |stores: &mut Universe, kind: crate::assignments::ReplayTextKind, tokens: TokenListId| {
+            let mut command = command_cell.borrow_mut();
+            canonical_replay_text(
+                &mut command,
+                stores,
+                kind,
+                tokens,
+                &mut write_diagnostics.borrow_mut(),
+            )
+            .map(Some)
+        };
     let mut receipt = crate::assignments::shipout_node_with_input_summary(
         node,
         input_summary,
@@ -11983,12 +12060,14 @@ fn shipout_replay_box(
             announce_openout: supports_pdftex,
         },
         stores,
-        &mut expansion,
+        None,
         emit_dvi,
         &mut expand_write,
+        &mut expand_replay,
     )?;
+    let command = command_cell.into_inner();
     if let Some(receipt) = receipt.as_mut() {
-        receipt.committed_effects = receipt.committed_effects[effect_cursor - effect_start..]
+        receipt.committed_effects = receipt.committed_effects[effect_cursor.get() - effect_start..]
             .to_vec()
             .into_boxed_slice();
     }
@@ -12000,7 +12079,7 @@ fn shipout_replay_box(
     // `write_diagnostics` also contains §367 command traces: direct output
     // inside the artifact transaction is staging scratch, so the command
     // core queues them in detection order with scanner recoveries.
-    report_pending_diagnostics(stores, write_diagnostics)?;
+    report_pending_diagnostics(stores, write_diagnostics.into_inner())?;
     print_ship_out_marker_close(stores, tracing_output);
     if let Some(before) = memory_before {
         let after = stores.shipout_memory_usage();

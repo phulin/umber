@@ -31,6 +31,15 @@ const MAX_SHIPOUT_DEPTH: usize = 4096;
 pub(super) type WriteExpander<'a> =
     dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<Option<String>, ExecError> + 'a;
 
+#[derive(Clone, Copy)]
+pub(crate) enum ReplayTextKind {
+    Special,
+    PdfLiteral,
+}
+
+pub(super) type ReplayTextExpander<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<Option<Vec<u8>>, ExecError>
+    + 'a;
+
 pub(super) struct StagedShipout {
     pub(super) artifact: VerifiedArtifact,
     pub(super) dvi_plan: Option<DviPagePlan>,
@@ -41,10 +50,12 @@ pub(super) struct StagedShipout {
 pub(super) fn stage_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
+    write_expander: &mut WriteExpander<'_>,
+    replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     let color_rollback = stores.pdf_form_color_rollback();
-    let result = stage_form_inner(form, stores, expansion);
+    let result = stage_form_inner(form, stores, expansion, write_expander, replay_expander);
     if result.is_err() {
         stores.rollback_pdf_form_colors(color_rollback);
     }
@@ -54,9 +65,10 @@ pub(super) fn stage_form(
 fn stage_form_inner(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
+    write_expander: &mut WriteExpander<'_>,
+    replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    let mut legacy_write_expander = |_: &mut Universe, _: PrintSink, _: TokenListId| Ok(None);
     let root_node = stores
         .nodes(form.box_list())
         .first()
@@ -80,7 +92,8 @@ fn stage_form_inner(
         ),
         stores,
         expansion,
-        &mut legacy_write_expander,
+        write_expander,
+        replay_expander,
         tex_state::PdfColorStackTarget::Form,
     )?;
     let job = JobInfo {
@@ -147,14 +160,16 @@ fn stage_form_inner(
     ))
 }
 
+#[allow(clippy::too_many_arguments)] // Transitional legacy/canonical replay capabilities are explicit.
 pub(super) fn stage_shipout(
     node: Node,
     input_summary: tex_state::InputSummary,
     origin: super::ShipoutOrigin,
     stores: &mut Universe,
-    expansion: &mut tex_expand::ExpansionContext<'_>,
+    expansion: Option<&mut tex_expand::ExpansionContext<'_>>,
     emit_dvi: bool,
     write_expander: &mut WriteExpander<'_>,
+    replay_expander: &mut ReplayTextExpander<'_>,
 ) -> Result<StagedShipout, ExecError> {
     let super::ShipoutOrigin {
         output_open_context,
@@ -219,17 +234,31 @@ pub(super) fn stage_shipout(
     // math substitutions, and records the rare direction permutations.
     let output_open_context = output_open_context
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, &input_summary));
-    let overlay = expansion.with_nested(|expansion| {
+    let overlay = if let Some(expansion) = expansion {
+        expansion.with_nested(|expansion| {
+            normalize_page(
+                children,
+                (vertical, root_box_lr),
+                (pending_effects, output_open_context, announce_openout),
+                stores,
+                Some(expansion),
+                write_expander,
+                replay_expander,
+                tex_state::PdfColorStackTarget::Page,
+            )
+        })?
+    } else {
         normalize_page(
             children,
             (vertical, root_box_lr),
             (pending_effects, output_open_context, announce_openout),
             stores,
-            expansion,
+            None,
             write_expander,
+            replay_expander,
             tex_state::PdfColorStackTarget::Page,
-        )
-    })?;
+        )?
+    };
     if emit_dvi {
         reject_pdf_nodes_in_dvi(&overlay.effects)?;
     }
