@@ -714,11 +714,23 @@ impl RevisionCandidate {
                             CandidateSink::Advance(sink) => sink,
                         };
                         if sink.wants_checkpoint(boundary) {
-                            let checkpoint = self.control.capture_checkpoint_with_exact_identity(
-                                boundary,
-                                &mut self.universe,
-                                ExecutionBudgetCounters::default(),
-                            )?;
+                            let checkpoint = match self
+                                .control
+                                .capture_checkpoint_with_exact_identity(
+                                    boundary,
+                                    &mut self.universe,
+                                    ExecutionBudgetCounters::default(),
+                                ) {
+                                Ok(checkpoint) => checkpoint,
+                                Err(tex_command::CommandSummaryError::ActiveParagraphInputTransaction) => self
+                                    .control
+                                    .capture_checkpoint_projecting_paragraph(
+                                        boundary,
+                                        &mut self.universe,
+                                        ExecutionBudgetCounters::default(),
+                                    )?,
+                                Err(error) => return Err(error.into()),
+                            };
                             sink.checkpoint(checkpoint);
                         }
                     }
@@ -1843,8 +1855,15 @@ impl Session {
         let expansion_stats = ExpansionStats::default();
         let effects = candidate.universe.world().effect_records().to_vec();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
-        let mut pages_through_stop =
-            setup.old_pages[..setup.old_history[restart].artifact_prefix].to_vec();
+        let artifact_base = candidate
+            .universe
+            .world()
+            .artifact_pos()
+            .saturating_sub(artifacts.len());
+        let retained_artifact_prefix = setup.old_history[restart]
+            .artifact_prefix
+            .max(artifact_base);
+        let mut pages_through_stop = setup.old_pages[..retained_artifact_prefix].to_vec();
         pages_through_stop.extend(dvi_pages);
 
         let roots = tex_exec::RootRehomeContext::new(&setup.old_source, &setup.next);
@@ -1872,7 +1891,14 @@ impl Session {
                 let scratch_effect_count = new_effect_prefix.saturating_sub(anchor.effect_prefix);
                 let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
                 joined_effects.extend_from_slice(&effects[..scratch_effect_count]);
-                joined_effects.extend_from_slice(&setup.old_effects[old_effect_prefix..]);
+                // A terminal retained checkpoint can include final-cleanup
+                // effects that the stopped scratch run has not executed. The
+                // scratch prefix is an absolute effect position even when its
+                // local record vector starts at a restored nonzero base; own
+                // the retained tail from the earlier absolute prefix so the
+                // cleanup records are neither dropped nor replayed twice.
+                let adopted_effect_prefix = old_effect_prefix.min(new_effect_prefix);
+                joined_effects.extend_from_slice(&setup.old_effects[adopted_effect_prefix..]);
 
                 let old_prefix = setup.old_history[old_index].artifact_prefix;
                 let new_prefix = sink
@@ -1965,6 +1991,17 @@ impl Session {
                     },
                 )
             } else {
+                let replayed_artifact_count = usize::try_from(paragraph_replay.hits).unwrap_or(0);
+                let mut candidate_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
+                candidate_effects.extend(effects.iter().cloned());
+                append_retained_terminal_cleanup(&mut candidate_effects, &setup.old_effects);
+                let exact_retained_artifacts = pages_through_stop
+                    .len()
+                    .checked_add(replayed_artifact_count)
+                    == Some(setup.old_artifacts.len())
+                    && replayed_artifact_count > 1
+                    && retained_pages_are_subsequence(&pages_through_stop, &setup.old_pages)
+                    && candidate_effects == setup.old_effects;
                 let target = candidate.universe.freeze_generation();
                 let mut history = Vec::with_capacity(restart + 1 + sink.records.len());
                 for record in &setup.old_history[..=restart] {
@@ -1977,14 +2014,22 @@ impl Session {
                 }
                 history.extend(sink.records);
                 let pages_retyped = artifacts.len();
-                let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
-                joined_artifacts.extend(artifacts);
-                let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
-                joined_effects.extend(effects);
+                let joined_artifacts = if exact_retained_artifacts {
+                    setup.old_artifacts.clone()
+                } else {
+                    let mut joined = setup.old_artifacts[..retained_artifact_prefix].to_vec();
+                    joined.extend(artifacts);
+                    joined
+                };
+                let joined_effects = candidate_effects;
                 (
                     joined_effects,
                     joined_artifacts,
-                    pages_through_stop,
+                    if exact_retained_artifacts {
+                        setup.old_pages.clone()
+                    } else {
+                        pages_through_stop
+                    },
                     history,
                     PendingSubstrate::Replaced(target),
                     ReuseMetrics {
@@ -2499,7 +2544,8 @@ impl Session {
                 let scratch_effect_count = new_effect_prefix.saturating_sub(restart_effect_prefix);
                 let mut effects = old_effects[..restart_effect_prefix].to_vec();
                 effects.extend_from_slice(&advance.effects[..scratch_effect_count]);
-                effects.extend_from_slice(&old_effects[old_effect_prefix..]);
+                let adopted_effect_prefix = old_effect_prefix.min(new_effect_prefix);
+                effects.extend_from_slice(&old_effects[adopted_effect_prefix..]);
                 let old_prefix = old_history[old_index].artifact_prefix;
                 let new_prefix = advance
                     .new_records
@@ -2611,6 +2657,7 @@ impl Session {
                         let mut effects =
                             old_effects[..old_history[restart_index].effect_prefix].to_vec();
                         effects.extend(advance.effects);
+                        append_retained_terminal_cleanup(&mut effects, &old_effects);
                         effects
                     },
                     artifacts,
@@ -3808,6 +3855,26 @@ fn output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> us
                 })
                 .sum::<usize>(),
         )
+}
+
+fn retained_pages_are_subsequence(pages: &[DviPagePlan], old_pages: &[DviPagePlan]) -> bool {
+    let mut old = old_pages.iter();
+    pages
+        .iter()
+        .all(|page| old.by_ref().any(|candidate| candidate == page))
+}
+
+fn append_retained_terminal_cleanup(effects: &mut Vec<EffectRecord>, old_effects: &[EffectRecord]) {
+    let Some(last) = effects.last() else {
+        return;
+    };
+    let Some(index) = old_effects.iter().rposition(|effect| effect == last) else {
+        return;
+    };
+    let tail = &old_effects[index + 1..];
+    if !tail.is_empty() && tail.len() <= 2 {
+        effects.extend_from_slice(tail);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

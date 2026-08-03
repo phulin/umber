@@ -590,6 +590,7 @@ pub struct CanonicalParagraphRegion {
     // the Universe timeline they identify.
     starting_universe: Arc<tex_state::Snapshot>,
     ending_universe: Arc<tex_state::Snapshot>,
+    artifact_count: usize,
     ending_modes: crate::ModeNestSummary,
     finished_lines: Option<tex_state::survivor::RetainedNodeList>,
     effects: std::sync::Arc<[tex_state::EffectRecord]>,
@@ -812,6 +813,8 @@ struct CanonicalParagraphRecorder {
     lookup_attempted: bool,
     next_identity: u64,
     starting_universe: Option<Arc<tex_state::Snapshot>>,
+    starting_artifact_pos: usize,
+    replayed_artifact_prefix: usize,
     starting_vertical_len: usize,
     starting_page_len: usize,
     starting_contribution_len: usize,
@@ -855,6 +858,17 @@ impl CanonicalParagraphRecorder {
         if self.pending {
             return;
         }
+        // A durable checkpoint projected from inside a paragraph deliberately
+        // omits the command/recorder owner. Its restored Universe may still
+        // carry the operational dependency cursor from that event-time root;
+        // discharge that ownerless cursor before opening the next paragraph.
+        if stores.dependency_region_is_active() {
+            stores.record_pure_paragraph_validation_failure(
+                tex_state::ParagraphValidationFailure::ParagraphStart,
+            );
+            let _ = stores.finish_paragraph_dependency_region();
+            let _ = stores.abandon_pure_paragraph_recording();
+        }
         command.begin_paragraph_input_transaction();
         stores.begin_dependency_region();
         stores.begin_pure_paragraph_recording();
@@ -865,6 +879,7 @@ impl CanonicalParagraphRecorder {
         }
         self.lookup_attempted = false;
         self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
+        self.starting_artifact_pos = stores.world().artifact_pos();
         self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
         self.starting_page_len = stores.current_page_nodes().len();
         self.starting_contribution_len = stores.page_contributions().len();
@@ -956,6 +971,10 @@ impl CanonicalParagraphRecorder {
                 .take()
                 .expect("pending paragraph owns its starting Universe"),
             ending_universe: Arc::new(stores.snapshot_with_exact_identity()),
+            artifact_count: stores
+                .world()
+                .artifact_pos()
+                .saturating_sub(self.starting_artifact_pos),
             ending_modes: modes.summary(),
             finished_lines,
             effects,
@@ -1184,7 +1203,7 @@ impl CanonicalMainControl {
 
     fn etex_redundant_local_skip_assignment(
         &self,
-        stores: &Universe,
+        stores: &mut Universe,
         scanned: &ScannedStep,
     ) -> bool {
         stores.int_param(IntParam::ETEX_EXTENDED_MODE) > 0
@@ -1313,14 +1332,17 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        crate::EngineCheckpoint::capture_canonical(
+        let mut checkpoint = crate::EngineCheckpoint::capture_canonical(
             boundary,
             &self.command,
             &self.modes,
             stores,
             budget_counters,
             false,
-        )
+        )?;
+        checkpoint
+            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
+        Ok(checkpoint)
     }
 
     /// Captures a quiescent named checkpoint with the strong optional state
@@ -1331,14 +1353,38 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        crate::EngineCheckpoint::capture_canonical(
+        let mut checkpoint = crate::EngineCheckpoint::capture_canonical(
             boundary,
             &self.command,
             &self.modes,
             stores,
             budget_counters,
             true,
-        )
+        )?;
+        checkpoint
+            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
+        Ok(checkpoint)
+    }
+
+    /// Captures a boundary reached inside an enclosing paragraph without
+    /// ending or snapshotting the live paragraph recorders.
+    pub fn capture_checkpoint_projecting_paragraph(
+        &self,
+        boundary: crate::EngineBoundary,
+        stores: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
+    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
+        let mut checkpoint = crate::EngineCheckpoint::capture_canonical_during_paragraph(
+            boundary,
+            &self.command,
+            &self.modes,
+            stores,
+            budget_counters,
+            true,
+        )?;
+        checkpoint
+            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
+        Ok(checkpoint)
     }
 
     /// Restores a named checkpoint into this command processor.  The
@@ -2158,6 +2204,12 @@ impl CanonicalMainControl {
             crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
                 .expect("prevalidated retained paragraph page contribution must replay");
         }
+        self.paragraph_recorder.replayed_artifact_prefix = self
+            .paragraph_recorder
+            .replayed_artifact_prefix
+            .saturating_add(region.artifact_count);
+        self.pending_shipout_boundary |= region.artifact_count != 0;
+        self.finish_shipout_publication(stores.world().artifact_commits().len(), stores);
         self.paragraph_recorder.next_identity =
             self.paragraph_recorder.next_identity.max(region.identity);
         Arc::make_mut(&mut self.paragraph_recorder.finished).push(region);

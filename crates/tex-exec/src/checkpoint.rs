@@ -100,6 +100,10 @@ impl<'a> RootRehomeContext<'a> {
 }
 
 impl EngineCheckpoint {
+    pub(crate) fn advance_detached_artifact_prefix(&mut self, count: usize) {
+        self.artifact_prefix = self.artifact_prefix.saturating_add(count);
+    }
+
     /// Captures a canonical named boundary.  Command publication proves that
     /// no scanner, macro matcher, or alignment delivery remains live.
     pub fn capture_canonical(
@@ -111,6 +115,45 @@ impl EngineCheckpoint {
         exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
         let command = command.publish_summary()?;
+        let root_anchor = command.root_source_anchor().unwrap_or(0);
+        let root_content_hash = universe.explicit_root_editor_content_hash();
+        let modes = nest.summary();
+        let mode_hash = modes.semantic_fingerprint(universe);
+        let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
+            .expect("effect log position must fit in memory address space");
+        let artifact_prefix = universe.world().artifact_pos();
+        let universe = if exact_state_identity {
+            universe.snapshot_with_exact_identity()
+        } else {
+            universe.snapshot()
+        };
+        let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
+        Ok(Self {
+            schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
+            boundary,
+            universe,
+            continuation: CheckpointContinuation::Canonical(Box::new(command)),
+            modes,
+            state_hash,
+            root_anchor,
+            root_content_hash,
+            effect_prefix,
+            artifact_prefix,
+            budget_counters,
+        })
+    }
+
+    /// Captures the restartable event-time projection of a checkpoint reached
+    /// while an enclosing paragraph recorder remains active.
+    pub(crate) fn capture_canonical_during_paragraph(
+        boundary: EngineBoundary,
+        command: &CommandState,
+        nest: &ModeNest,
+        universe: &mut Universe,
+        budget_counters: crate::ExecutionBudgetCounters,
+        exact_state_identity: bool,
+    ) -> Result<Self, CommandSummaryError> {
+        let command = command.publish_summary_without_paragraph_transaction()?;
         let root_anchor = command.root_source_anchor().unwrap_or(0);
         let root_content_hash = universe.explicit_root_editor_content_hash();
         let modes = nest.summary();

@@ -300,6 +300,22 @@ impl fmt::Display for CommandSummaryError {
 impl std::error::Error for CommandSummaryError {}
 
 impl CommandState {
+    /// Publishes a durable summary of the current command continuation while
+    /// leaving an active paragraph input recorder out of the projection.
+    ///
+    /// A shipout may complete while TeX82 §1091's enclosing paragraph is
+    /// still being recorded. The transaction is incremental-only bookkeeping;
+    /// its current input and parameter state already live in the ordinary
+    /// command roots and are therefore sufficient for a restart checkpoint.
+    #[doc(hidden)]
+    pub fn publish_summary_without_paragraph_transaction(
+        &self,
+    ) -> Result<CommandSummary, CommandSummaryError> {
+        let mut projected = self.clone();
+        projected.paragraph_input_transaction = None;
+        projected.publish_summary()
+    }
+
     /// Captures every future-relevant command field for executor-step retry.
     ///
     /// Capture clones retained source and token backing through their owned
