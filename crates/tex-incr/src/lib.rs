@@ -3487,7 +3487,15 @@ fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit)
         .enumerate()
         .rev()
         .find(|(_, record)| {
-            record.key.position <= edit.range.start
+            // A shipout checkpoint at a zero-width insertion boundary owns a
+            // loaded TeX input line whose old suffix begins at that cursor.
+            // Restoring it would retain the old line front and skip bytes
+            // inserted before that suffix. Select the preceding checkpoint so
+            // TeX's §328 input stack delivers every newly inserted byte.
+            (record.key.position < edit.range.start
+                || record.key.position == edit.range.start
+                    && (!edit.range.is_empty()
+                        || record.key.boundary != EngineBoundary::ShipoutComplete))
                 && old.as_bytes().get(..record.key.position)
                     == new.as_bytes().get(..record.key.position)
         })
