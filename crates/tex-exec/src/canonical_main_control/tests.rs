@@ -1540,7 +1540,6 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
 }
 
 #[test]
-#[ignore = "umber2-v8mq"]
 fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
     // TeX82 §§282/1120–1121: unsave inserts aftergroup material before
     // build_discretionary scans the next part's left brace. Make that token
@@ -1564,15 +1563,30 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
 
     run_to_end(&mut control, &mut stores);
 
+    let [
+        Node::Disc {
+            pre, post, replace, ..
+        },
+        ..,
+    ] = control.modes.current_list().nodes()
+    else {
+        panic!(
+            "the forbidden nested discretionary is pruned from the retained outer discretionary: {:?}",
+            control.modes.current_list().nodes()
+        );
+    };
     assert!(
-        !control
-            .modes
-            .current_list()
-            .nodes()
-            .iter()
-            .any(|node| matches!(node, Node::Disc { .. })),
-        "the forbidden nested discretionary deletes the outer discretionary"
+        stores.nodes(*pre).is_empty(),
+        "the forbidden nested discretionary and its suffix were pruned"
     );
+    assert!(matches!(
+        stores.nodes(*post).testing_decoded(),
+        [Node::Kern { .. }]
+    ));
+    assert!(matches!(
+        stores.nodes(*replace).testing_decoded(),
+        [Node::Kern { .. }]
+    ));
     assert!(terminal_text(&stores).contains("Improper discretionary list"));
     assert!(
         !terminal_text(&stores).contains("Missing { inserted"),
