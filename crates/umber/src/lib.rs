@@ -1825,11 +1825,15 @@ mod tests {
     }
 
     #[test]
-    fn halign_packing_scan_observes_new_internal_vertical_mode() {
+    fn halign_preamble_span_expansion_traces_the_pushed_mode() {
+        // TeX82 §§299, 367, 759, and 774: this is TRIP's `#\span\iftrue`
+        // sequence. The packing scan has already completed when the preamble
+        // processor expands `\iftrue`, so that distinct episode must publish
+        // the internal-vertical mode pushed by `init_align`.
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_run_stores(&mut stores);
         crate::run_memory_with_stores(
-            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\halign to \\ifvmode11pt\\else\\errmessage{halign mode stale}22pt\\fi{#\\cr x\\cr}\\end",
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\halign{&#\\span\\iftrue\\relax\\span\\else\\span\\fi\\span&#\\cr a&b\\cr}\\end",
             &mut stores,
         )
         .expect("run completes");
@@ -1841,10 +1845,9 @@ mod tests {
         );
 
         assert!(
-            output.contains("{internal vertical mode: \\ifvmode}\n{true}"),
+            output.contains("{internal vertical mode: \\iftrue}\n{true}"),
             "{output}"
         );
-        assert!(!output.contains("halign mode stale"), "{output}");
     }
 
     #[test]

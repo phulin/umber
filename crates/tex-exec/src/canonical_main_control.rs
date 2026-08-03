@@ -2356,13 +2356,6 @@ impl CanonicalMainControl {
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         self.drain_file_framing_events(stores);
-        // TeX82 §§299, 367, and 774: `init_align` has already pushed the
-        // alignment mode before `scan_spec` expands its optional dimension.
-        // Publish that live nest for this nested alignment operation, just as
-        // an ordinary main-control operation does before borrowing a command
-        // processor. Otherwise tracing sees the new mode while expandable
-        // mode conditionals still read the pre-alignment capability.
-        self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
@@ -6666,9 +6659,18 @@ fn scan_replay_step(
                 Ok(ScannedStep::AlignmentPreambleOpening { alignment, packing })
             }
             AlignmentPreamblePhase::Start { owner } => {
+                // TeX82 §§299, 367, 759, and 774: `init_align` has already
+                // pushed the alignment mode when §759 expands the token after
+                // `\span`. This scanner episode is the first processor that
+                // can print a command after that push, so it owns the pending
+                // mode prefix just like the packing-spec episode above.
+                prepare_command_trace(processor, mode, *shown_mode);
                 processor
                     .begin_alignment_preamble_scan(owner)
                     .map_err(command_error)?;
+                if processor.command_trace_printed() {
+                    *shown_mode = Some(mode);
+                }
                 Ok(ScannedStep::AlignmentPreambleStart { alignment })
             }
             AlignmentPreamblePhase::CellOpening => {
