@@ -2534,10 +2534,7 @@ impl CommandProcessor<'_> {
         self.push_write_recovery(vec![left_brace], left_brace);
 
         self.outer_recovered_while_absorbing = false;
-        self.observe_write_direct_expansion = true;
-        let expanded = self.scan_balanced_text(true);
-        self.observe_write_direct_expansion = false;
-        let expanded = expanded?.tokens;
+        let expanded = self.scan_balanced_text(true)?.tokens;
         let mut stopper = self.get_token()?.ok_or(CommandError::input_invariant())?;
         let unbalanced =
             self.outer_recovered_while_absorbing || stopper.spelling().semantic_token() != endwrite;

@@ -482,12 +482,9 @@ impl CommandProcessor<'_> {
                     ) {
                         // TeX82 §478 handles `\the` directly in `scan_toks`
                         // instead of routing it through §380's ordinary
-                        // expanded-fetch loop. Ordinary token-list scans keep
-                        // only its raw delivery; §1370's nested write driver
-                        // forwards the active expanded episode explicitly.
-                        if self.observe_write_direct_expansion {
-                            self.observe_expanded_delivery(&command);
-                        }
+                        // expanded-fetch loop. It therefore has only the raw
+                        // delivery produced by `get_next`; the resulting
+                        // `the_toks` splice is the canonical expansion event.
                         if self.append_direct_the_toks(&mut output)? {
                             continue;
                         }

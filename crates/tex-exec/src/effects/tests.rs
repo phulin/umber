@@ -581,13 +581,14 @@ fn deferred_write_expands_at_shipout_time_and_retires_stopper_input() {
 }
 
 #[test]
-fn deferred_write_expansion_publishes_direct_the_delivery() {
+fn deferred_write_expansion_keeps_direct_the_raw_and_publishes_its_splice() {
     // TeX82 §§478 and 1370: shipout expands deferred write text through the
-    // active canonical command episode. Although §478 handles `\the`
-    // directly inside `scan_toks`, its expanded delivery must still precede
-    // the token-list splice produced from the scanned register value.
+    // active canonical command episode. Section 478 handles `\the` directly
+    // inside `scan_toks`: the opener has its ordinary raw delivery, while the
+    // resulting register text is represented by the `the_toks` splice. It
+    // never crosses §380's expanded-command delivery boundary.
     let (_, _, observations) = observed(br"\count0=5 \shipout\hbox{\write16{\the\count0}}\end");
-    let expanded_the: Vec<_> = observations
+    let raw_the: Vec<_> = observations
         .iter()
         .enumerate()
         .filter(|(_, observation)| {
@@ -596,15 +597,21 @@ fn deferred_write_expansion_publishes_direct_the_delivery() {
                 CommandObservation::Command(command)
                     if command.command == "the"
                         && command.boundary
-                            == tex_command::CommandDeliveryBoundary::Expanded
+                            == tex_command::CommandDeliveryBoundary::Raw
             )
         })
         .collect();
     assert_eq!(
-        expanded_the.len(),
+        raw_the.len(),
         1,
-        "shipout-time deferred write expansion publishes `the` exactly once"
+        "shipout-time deferred write scanning publishes raw `the` exactly once"
     );
+    assert!(!observations.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Command(command)
+            if command.command == "the"
+                && command.boundary == tex_command::CommandDeliveryBoundary::Expanded
+    )));
     let splice = observations
         .iter()
         .position(|observation| {
@@ -616,8 +623,8 @@ fn deferred_write_expansion_publishes_direct_the_delivery() {
         })
         .expect("shipout-time `the` expansion publishes its token-list splice");
     assert!(
-        expanded_the[0].0 < splice,
-        "expanded `the` delivery precedes its token-list splice"
+        raw_the[0].0 < splice,
+        "raw `the` delivery precedes its token-list splice"
     );
 }
 
