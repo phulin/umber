@@ -2075,6 +2075,31 @@ fn nested_under_overline_retains_inner_vertical_box() {
 }
 
 #[test]
+fn under_and_overline_rules_retain_running_width_after_packing() {
+    // TeX82 §714 constructs both bars with `fraction_rule`, leaving the
+    // stored width at `running`; §158/§162 therefore display `*` even though
+    // vlist output uses the enclosing box width.
+    let mut universe = setup_universe();
+    let params = MathParams::read(&universe);
+    for kind in [NoadKind::Underline, NoadKind::Overline] {
+        let input = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            kind,
+            MathField::MathChar(math_char('a')),
+        ))]);
+        let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+        let [MathNode::VList(bar)] = root_nodes(&layout).as_slice() else {
+            panic!("expected bar vbox: {:?}", root_nodes(&layout));
+        };
+        assert!(
+            list_nodes(&layout, bar.list)
+                .iter()
+                .any(|node| matches!(node, MathNode::Rule { width: None, .. })),
+            "bar rule must retain TeX's running-width sentinel"
+        );
+    }
+}
+
+#[test]
 fn tex82_clean_box_delimiter_and_mu_helper_matrix() {
     let mut stores = setup_universe();
     let params = MathParams::read(&stores);

@@ -43,7 +43,6 @@ pub(super) fn make_under(
         .default_rule_thickness;
     let base = clean_box(ctx, nucleus, ctx.style);
     let base_height = base.height;
-    let base_width = base.width;
     let list = ctx.layout.hlist([
         boxed_node(base),
         MathNode::Kern {
@@ -53,7 +52,10 @@ pub(super) fn make_under(
             kind: KernKind::Font,
         },
         MathNode::Rule {
-            width: Some(base_width),
+            // TeX82 §714's `fraction_rule` leaves the width running. The
+            // enclosing vbox supplies its width during output, but the stored
+            // sentinel remains observable in §162 list diagnostics.
+            width: None,
             height: Some(thickness),
             depth: Some(Scaled::from_raw(0)),
         },
@@ -279,7 +281,6 @@ fn overbar(
     clearance: Scaled,
     thickness: Scaled,
 ) -> MathBox {
-    let width = base.width;
     let list = ctx.layout.hlist([
         MathNode::Kern {
             amount: thickness,
@@ -288,7 +289,9 @@ fn overbar(
             kind: KernKind::Font,
         },
         MathNode::Rule {
-            width: Some(width),
+            // TeX82 §714 constructs this with `fraction_rule`, whose width
+            // remains running after the enclosing natural vpack.
+            width: None,
             height: Some(thickness),
             depth: Some(Scaled::from_raw(0)),
         },
