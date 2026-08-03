@@ -8,6 +8,8 @@ use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Direction, KernKind, Node, 
 use tex_state::scaled::GlueSetRatio;
 use tex_state::{EffectRecord, PrintSink};
 
+use crate::mode::EqNoSide;
+
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw * Scaled::UNITY)
 }
@@ -741,4 +743,60 @@ fn display_hpack_migrates_insertions_and_adjustments_before_short_display() {
             .any(|node| matches!(node, Node::Ins { class: 0, .. }))
     );
     assert!(page.iter().any(|node| matches!(node, Node::Penalty(7))));
+}
+
+#[test]
+fn display_adjustment_follows_a_separately_stacked_equation_number() {
+    // TeX82 §1196 appends `adjust_head` only after the complete display has
+    // been contributed. When an equation number does not fit beside the
+    // formula, its separate line therefore precedes a migrated `\vadjust`.
+    let mut stores = crate::test_harness::universe_with_plain_catcodes();
+    stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, sp(0));
+    let empty = stores.freeze_node_list(&[]);
+    let boxed = || {
+        BoxNode::new(BoxNodeFields {
+            width: sp(1),
+            height: sp(1),
+            depth: sp(0),
+            shift: sp(0),
+            box_lr: BoxLr::Normal,
+            glue_set: GlueSetRatio::ZERO,
+            glue_sign: Sign::Normal,
+            glue_order: Order::Normal,
+            children: empty,
+        })
+    };
+    let adjustment = stores.freeze_node_list(&[Node::Penalty(7)]);
+    let content = stores.freeze_node_list(&[
+        Node::HList(boxed()),
+        Node::Adjust(tex_state::node::AdjustNode::ordinary(adjustment)),
+    ]);
+    let mut nest = ModeNest::new();
+    nest.push(Mode::Vertical).expect("vertical mode");
+    finish_display_math(
+        &mut nest,
+        &mut stores,
+        content,
+        Some(FinishedEqNo {
+            side: EqNoSide::Right,
+            boxed: boxed(),
+        }),
+        None,
+    )
+    .expect("display packaging succeeds");
+
+    let page = nest.current_list().nodes();
+    let adjustment = page
+        .iter()
+        .position(|node| matches!(node, Node::Penalty(7)))
+        .expect("migrated adjustment reaches the vertical list");
+    assert_eq!(
+        page[..adjustment]
+            .iter()
+            .filter(|node| matches!(node, Node::HList(_)))
+            .count(),
+        2,
+        "both the formula and separate equation-number line precede the adjustment: {page:?}"
+    );
+    assert!(matches!(page[adjustment - 1], Node::HList(_)), "{page:?}");
 }

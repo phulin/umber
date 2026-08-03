@@ -2037,6 +2037,14 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
         .find("% t=21.7 plus")
         .unwrap_or_else(|| panic!("page-builder trace:\n{log}"));
     assert!(undefined < page, "{log}");
+    assert!(
+        !log.contains("% t=191.11256 plus 40.0 plus 1.0fil"),
+        "{log}"
+    );
+    assert!(
+        log.contains("% t=262.41258 plus 80.0 plus 1.0fil plus -803.0fill g=10000.0 b=0 p=7 c="),
+        "{log}"
+    );
 }
 
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {

@@ -247,9 +247,6 @@ pub(crate) fn finish_display_math(
         append_vertical_contribution(nest, stores, node);
     }
     append_node_to_vertical_list(nest, stores, Node::HList(display_line))?;
-    for node in migrated {
-        append_vertical_contribution(nest, stores, node);
-    }
 
     if let Some(mut boxed) = eq_box
         && e.raw() == 0
@@ -259,6 +256,16 @@ pub(crate) fn finish_display_math(
         boxed.shift = s + z - boxed.width;
         append_node_to_vertical_list(nest, stores, Node::HList(boxed))?;
         below = None;
+    }
+
+    // TeX82 §1196 keeps `adjust_tail` live until the display and any
+    // separately stacked equation number have both reached the vertical
+    // list. Only then does it splice the migrated insertion/mark/adjustment
+    // tail ahead of the post-display penalty. Appending it immediately after
+    // the formula exposes adjustment penalties as page-break candidates
+    // before a non-fitting equation-number line contributes its height.
+    for node in migrated {
+        append_vertical_contribution(nest, stores, node);
     }
 
     append_vertical_contribution(
