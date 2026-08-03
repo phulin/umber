@@ -6,6 +6,7 @@ use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
 
 use super::convert::convert_mlist;
+use super::rebox::rebox;
 use super::{
     BoxAxis, Context, FrozenHList, MathBox, MathNode, MathTypesetState, add, boxed_node, char_box,
     clean_box, fetch, neg, sub, variant_box,
@@ -380,28 +381,4 @@ fn apply_math_ligature(nodes: &mut Vec<Node>, index: usize, ligature: LigatureCo
         }
     }
     restart
-}
-
-fn rebox(ctx: &mut Context<'_, impl MathTypesetState>, boxed: &mut MathBox, width: Scaled) {
-    // AppG rule 13a
-    let slack = sub(width, boxed.width);
-    if slack.raw() != 0 && matches!(boxed.axis, BoxAxis::Horizontal) {
-        let left = Scaled::from_raw(tex_arith::half(slack.raw()));
-        let right = sub(slack, left);
-        let left_node = (left.raw() != 0).then_some(MathNode::Kern {
-            amount: left,
-            kind: KernKind::Explicit,
-        });
-        let right_node = (right.raw() != 0).then_some(MathNode::Kern {
-            amount: right,
-            kind: KernKind::Explicit,
-        });
-        boxed.list = ctx.layout.hlist(
-            left_node
-                .into_iter()
-                .chain([MathNode::Sequence(boxed.list)])
-                .chain(right_node),
-        );
-    }
-    boxed.width = width;
 }

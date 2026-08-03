@@ -932,7 +932,7 @@ fn mu_glue_kern_signed_rounding_and_rebox_boundaries() {
         ),
     ] {
         let (layout, boxed) =
-            fractions::test_rebox(&universe, &params, sc(source), sc(target), empty, false);
+            rebox::test_rebox(&universe, &params, sc(source), sc(target), empty, false);
         assert_eq!(boxed.width, sc(target));
         assert_eq!(boxed.glue_sign, expected_sign);
         assert_eq!(boxed.glue_set, expected_ratio);
@@ -957,7 +957,7 @@ fn rebox_observes_each_tex82_packaging_call() {
     // vertical box first has one natural hpack and then the exact hpack.
     let universe = setup_universe();
     let params = MathParams::read(&universe);
-    let (layout, _) = fractions::test_rebox(&universe, &params, sc(11), sc(18), false, false);
+    let (layout, _) = rebox::test_rebox(&universe, &params, sc(11), sc(18), false, false);
 
     assert_eq!(
         layout.pack_observations(),
@@ -977,7 +977,7 @@ fn rebox_observes_each_tex82_packaging_call() {
         ]
     );
 
-    let (layout, _) = fractions::test_rebox(&universe, &params, sc(11), sc(18), false, true);
+    let (layout, _) = rebox::test_rebox(&universe, &params, sc(11), sc(18), false, true);
     assert_eq!(
         layout
             .pack_observations()

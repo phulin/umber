@@ -8,6 +8,7 @@ mod model;
 mod operators;
 mod params;
 mod radicals;
+mod rebox;
 mod scripts;
 mod spacing;
 mod style;

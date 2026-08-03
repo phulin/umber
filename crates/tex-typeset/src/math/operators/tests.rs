@@ -40,6 +40,41 @@ fn character_operator_observes_clean_box_hpack() {
 }
 
 #[test]
+fn displayed_limits_use_shared_rebox_completion() {
+    // TRIP's final `\mathop...\limits^\mathchoice` reaches TeX82 §715 from
+    // displayed limits. The operator path must publish the shared rebox's
+    // exact package; the shared vertical-source test also proves its preceding
+    // natural hpack.
+    let mut stores = setup_universe();
+    let children = stores.freeze_node_list(&[]);
+    let script = stores.freeze_node_list(&[Node::VList(tex_state::node::BoxNode::new(
+        tex_state::node::BoxNodeFields {
+            width: sc(5),
+            height: sc(40),
+            depth: sc(10),
+            shift: sc(0),
+            box_lr: tex_state::node::BoxLr::Normal,
+            glue_set: tex_state::scaled::GlueSetRatio::ZERO,
+            glue_sign: tex_state::node::Sign::Normal,
+            glue_order: tex_state::glue::Order::Normal,
+            children,
+        },
+    ))]);
+    let mut op = MathNoad::new(
+        NoadKind::Operator(LimitType::Limits),
+        MathField::SubBox(script),
+    );
+    op.superscript = MathField::MathChar(math_char('o'));
+    let input = stores.freeze_node_list(&[Node::MathNoad(op)]);
+    let params = MathParams::read(&stores);
+
+    let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
+    let packs = layout.pack_observations();
+    assert_eq!(packs.len(), 3, "{packs:#?}");
+    assert_eq!(packs.last().expect("exact rebox completion").width, sc(14));
+}
+
+#[test]
 fn tex82_noad_constructor_clearance_and_italic_matrix() {
     let mut stores = setup_universe();
     let params = MathParams::read(&stores);
