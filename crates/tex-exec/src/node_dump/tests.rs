@@ -1454,7 +1454,7 @@ fn showlists_renders_all_math_noad_variants_and_empty_fields() {
             ".\\fam1 x\n",
             "^\\kern 1.0\n",
             "_\\mathord\n",
-            "..\\fam3 m\n",
+            "_.\\fam3 m\n",
         ),
     );
 }
@@ -1573,6 +1573,75 @@ fn subsidiary_math_field_matrix_preserves_empty_tags_and_indentation() {
         dump_fraction(&stores, &fraction, &config, -1, &mut out);
         assert_eq!(out, expected);
     }
+}
+
+/// TeX82 §§182/692 retain the subsidiary field marker at its own prefix
+/// level throughout recursive box/mlist traversal. This is the structural
+/// shape exercised by TRIP's hairy display: a superscript box has a nested
+/// child, while adjacent noads in the subscript mlist each retain `_`.
+#[test]
+fn subsidiary_markers_propagate_through_nested_boxes_and_adjacent_noads() {
+    let mut stores = Universe::new();
+    let box_children = stores.freeze_node_list(&[Node::Kern {
+        amount: Scaled::from_raw(Scaled::UNITY),
+        kind: KernKind::Explicit,
+    }]);
+    let sub_box = stores.freeze_node_list(&[Node::HList(zero_sized_hbox(box_children))]);
+    let sub_mlist = stores.freeze_node_list(&[
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(math_char(1, 'B')),
+        )),
+        Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(math_char(0, '-')),
+        )),
+    ]);
+    let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad {
+        kind: NoadKind::Normal(NoadClass::Ord),
+        nucleus: MathField::Empty,
+        superscript: MathField::SubBox(sub_box),
+        subscript: MathField::SubMlist(sub_mlist),
+    })]);
+
+    assert_eq!(
+        dump_node_list(
+            &stores,
+            list,
+            DumpConfig {
+                breadth: 100,
+                depth: 100,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        ),
+        concat!(
+            "\\mathord\n",
+            "^\\hbox(0.0+0.0)x0.0\n",
+            "^.\\kern 1.0\n",
+            "_\\mathord\n",
+            "_.\\fam1 B\n",
+            "_\\mathord\n",
+            "_.\\fam0 -\n",
+        ),
+    );
+
+    let mut nested = String::new();
+    dump_math_field(
+        &stores,
+        &MathField::SubMlist(sub_mlist),
+        &DumpConfig {
+            breadth: 100,
+            depth: 100,
+            profile: tex_command::CommandProfile::TEX82,
+        },
+        2,
+        '^',
+        &mut nested,
+    );
+    assert_eq!(
+        nested,
+        "..^\\mathord\n..^.\\fam1 B\n..^\\mathord\n..^.\\fam0 -\n"
+    );
 }
 
 /// TeX82 §§689--690 (`tex.web:13581-13622`) visit all four choice arms;

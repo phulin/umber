@@ -572,15 +572,13 @@ fn dump_math_field(
         MathField::SubBox(list) => {
             let old_len = out.len();
             dump_list(stores, *list, config, depth, ListContext::Neutral, out);
-            if old_len < out.len() {
-                out.replace_range(old_len..old_len + 1, &marker.to_string());
-            }
+            mark_subsidiary_lines(out, old_len, depth, marker);
         }
         MathField::SubMlist(list) => {
             let old_len = out.len();
             dump_list(stores, *list, config, depth, ListContext::Neutral, out);
             if old_len < out.len() {
-                out.replace_range(old_len..old_len + 1, &marker.to_string());
+                mark_subsidiary_lines(out, old_len, depth, marker);
             } else {
                 // TeX82 §681 represents an empty sub-mlist by a present field
                 // whose info pointer is null. Section 692's subsidiary-data
@@ -590,6 +588,25 @@ fn dump_math_field(
                 let _ = writeln!(out, "{marker}{{}}");
             }
         }
+    }
+}
+
+/// TeX82 §692 calls `print_subsidiary_data` before recursively entering
+/// §182's `show_node_list`. The field marker consequently remains at that
+/// subsidiary level on every line of the recursive node dump; dots before it
+/// belong to enclosing lists, and dots after it belong to descendants.
+fn mark_subsidiary_lines(out: &mut String, start: usize, depth: i32, marker: char) {
+    let prefix_level = depth.max(0) as usize;
+    let mut line_start = start;
+    while line_start < out.len() {
+        let marker_index = line_start + prefix_level;
+        if out.as_bytes().get(marker_index) == Some(&b'.') {
+            out.replace_range(marker_index..marker_index + 1, &marker.to_string());
+        }
+        let Some(newline) = out[line_start..].find('\n') else {
+            break;
+        };
+        line_start += newline + 1;
     }
 }
 
