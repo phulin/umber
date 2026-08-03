@@ -13093,7 +13093,6 @@ fn display_resumption_scans_tex82_s1200_optional_space() {
 /// `\output` inside that same command, ahead of whatever token follows the
 /// display -- not one command later (`umber2-johp.237`).
 #[test]
-#[ignore = "umber2-j2yx"]
 fn display_resumption_enters_output_before_the_next_command() {
     let mut initex = crate::test_harness::universe_with_plain_catcodes();
     let _builder = CanonicalMainControl::tex82_initex(&mut initex);
@@ -13168,7 +13167,7 @@ fn display_resumption_enters_output_before_the_next_command() {
         .collect::<Vec<_>>();
     assert_eq!(
         (widths, universe.world().artifact_commits().len()),
-        (vec![0, 0, 0], 1),
+        (vec![0, 0, 0, 0], 1),
         "loaded host-owned display/output sequence keeps exact packs and ships the final page"
     );
 }
