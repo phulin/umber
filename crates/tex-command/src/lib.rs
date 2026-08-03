@@ -94,7 +94,10 @@ pub use observation::{
     RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
     parameter_mutation_key_for_dialect,
 };
-pub use paragraph::{ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction};
+pub use paragraph::{
+    ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction,
+    ParagraphMathShift,
+};
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,

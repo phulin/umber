@@ -65,6 +65,8 @@ pub struct ParagraphInputTransaction {
     pub(crate) ending_parameters: crate::macro_call::ParameterState,
     pub(crate) starting_conditions: crate::conditionals::ConditionStack,
     pub(crate) ending_conditions: crate::conditionals::ConditionStack,
+    starting_math_shifts: Vec<ParagraphMathShift>,
+    ending_math_shifts: Vec<ParagraphMathShift>,
     coverage: ParagraphInputCoverage,
 }
 
@@ -72,6 +74,16 @@ impl ParagraphInputTransaction {
     #[must_use]
     pub const fn coverage(&self) -> &ParagraphInputCoverage {
         &self.coverage
+    }
+
+    #[must_use]
+    pub fn starting_math_shifts(&self) -> &[ParagraphMathShift] {
+        &self.starting_math_shifts
+    }
+
+    #[must_use]
+    pub fn ending_math_shifts(&self) -> &[ParagraphMathShift] {
+        &self.ending_math_shifts
     }
 
     /// Rebinds a transaction wholly contained in an unchanged root prefix.
@@ -456,9 +468,22 @@ pub(crate) struct ActiveParagraphInputTransaction {
     starting_input: InputState,
     starting_parameters: crate::macro_call::ParameterState,
     starting_conditions: crate::conditionals::ConditionStack,
+    starting_math_shifts: Vec<ParagraphMathShift>,
+    current_math_shifts: Vec<ParagraphMathShift>,
     root_start: Option<usize>,
     delivered_commands: usize,
     transitions: Vec<InputRecord>,
+}
+
+/// Executor-owned `math_shift_group` continuation crossing a paragraph input
+/// transaction. TeX82 §§1090 and 1145 allow display entry to finish an hlist
+/// while the paragraph's remaining input continues inside the new group.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ParagraphMathShift {
+    Inline,
+    Display,
+    EqNoLeft,
+    EqNoRight,
 }
 
 /// Why a recorded paragraph transition could not be installed.
@@ -475,6 +500,8 @@ impl crate::CommandState {
             starting_input: self.input.clone(),
             starting_parameters: self.parameters.clone(),
             starting_conditions: self.conditions.clone(),
+            starting_math_shifts: Vec::new(),
+            current_math_shifts: Vec::new(),
             root_start: root_source_anchor(&self.input),
             delivered_commands: 0,
             transitions: Vec::new(),
@@ -491,6 +518,8 @@ impl crate::CommandState {
             ending_parameters: self.parameters.clone(),
             starting_conditions: active.starting_conditions,
             ending_conditions: self.conditions.clone(),
+            starting_math_shifts: active.starting_math_shifts,
+            ending_math_shifts: active.current_math_shifts,
             coverage: ParagraphInputCoverage {
                 root_start: active.root_start,
                 root_end: root_source_anchor(&self.input),
@@ -505,6 +534,18 @@ impl crate::CommandState {
     /// validate and advance atomically.
     pub fn abandon_paragraph_input_transaction(&mut self) {
         self.paragraph_input_transaction = None;
+    }
+
+    pub fn record_paragraph_math_shift_enter(&mut self, shift: ParagraphMathShift) {
+        if let Some(active) = &mut self.paragraph_input_transaction {
+            active.current_math_shifts.push(shift);
+        }
+    }
+
+    pub fn record_paragraph_math_shift_exit(&mut self) {
+        if let Some(active) = &mut self.paragraph_input_transaction {
+            active.current_math_shifts.pop();
+        }
     }
 
     /// Replays a paragraph transition only from its exact recorded input root.

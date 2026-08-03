@@ -73,6 +73,26 @@ enum MathShiftContext {
     EqNo(crate::mode::EqNoSide),
 }
 
+impl MathShiftContext {
+    fn paragraph_shift(self) -> tex_command::ParagraphMathShift {
+        match self {
+            Self::Inline => tex_command::ParagraphMathShift::Inline,
+            Self::Display => tex_command::ParagraphMathShift::Display,
+            Self::EqNo(crate::mode::EqNoSide::Left) => tex_command::ParagraphMathShift::EqNoLeft,
+            Self::EqNo(crate::mode::EqNoSide::Right) => tex_command::ParagraphMathShift::EqNoRight,
+        }
+    }
+
+    fn from_paragraph_shift(shift: tex_command::ParagraphMathShift) -> Self {
+        match shift {
+            tex_command::ParagraphMathShift::Inline => Self::Inline,
+            tex_command::ParagraphMathShift::Display => Self::Display,
+            tex_command::ParagraphMathShift::EqNoLeft => Self::EqNo(crate::mode::EqNoSide::Left),
+            tex_command::ParagraphMathShift::EqNoRight => Self::EqNo(crate::mode::EqNoSide::Right),
+        }
+    }
+}
+
 fn push_prepared_dvi_page(pages: &mut PreparedDviPages, page: crate::dispatch::PreparedDviPage) {
     Arc::make_mut(pages).push(page);
 }
@@ -956,9 +976,9 @@ impl CanonicalParagraphRecorder {
             .display_interrupt()
             .map(|interrupt| interrupt.active_directions.clone().into());
         let mut barriers = Vec::new();
-        if display_active_directions.is_some() {
-            barriers.push(tex_state::ParagraphBarrierReason::DisplayMath);
-        }
+        // The input transaction owns the live math-shift continuation and
+        // replay recreates its save-stack group before applying local
+        // mutations, so display interruption is no longer a replay barrier.
         if effects.iter().any(|effect| {
             !matches!(
                 effect,
@@ -2212,6 +2232,22 @@ impl CanonicalMainControl {
         // starts.
         let _ = stores.finish_paragraph_dependency_region();
         let _ = stores.finish_pure_paragraph_recording();
+        debug_assert_eq!(
+            self.active_math_shifts
+                .iter()
+                .copied()
+                .map(MathShiftContext::paragraph_shift)
+                .collect::<Vec<_>>(),
+            region.input.starting_math_shifts()
+        );
+        for shift in region.input.ending_math_shifts() {
+            stores.enter_group_with_kind_at_line(
+                GroupKind::MathShift,
+                self.command.current_file_line_number(),
+            );
+            self.active_math_shifts
+                .push(MathShiftContext::from_paragraph_shift(*shift));
+        }
         crate::canonical_paragraph_memo::replay_mutations(stores, &region.mutations);
         for effect in region.effects() {
             assert!(
@@ -3942,7 +3978,10 @@ impl CanonicalMainControl {
                         tex_command::EquationNumberSide::Left => crate::mode::EqNoSide::Left,
                         tex_command::EquationNumberSide::Right => crate::mode::EqNoSide::Right,
                     };
-                    self.active_math_shifts.push(MathShiftContext::EqNo(side));
+                    let shift = MathShiftContext::EqNo(side);
+                    self.active_math_shifts.push(shift);
+                    self.command
+                        .record_paragraph_math_shift_enter(shift.paragraph_shift());
                     self.modes
                         .current_list_mutation()
                         .set_display_eq_no(crate::mode::DisplayEqNo { side, display });
@@ -4152,11 +4191,14 @@ impl CanonicalMainControl {
                 .try_into()
                 .unwrap_or(i32::MAX),
         )?;
-        self.active_math_shifts.push(if display {
+        let shift = if display {
             MathShiftContext::Display
         } else {
             MathShiftContext::Inline
-        });
+        };
+        self.active_math_shifts.push(shift);
+        self.command
+            .record_paragraph_math_shift_enter(shift.paragraph_shift());
         Ok(())
     }
 
@@ -4234,6 +4276,7 @@ impl CanonicalMainControl {
                 context: "math shift group",
             })?;
         self.active_math_shifts.pop();
+        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok(())
     }
@@ -4284,6 +4327,7 @@ impl CanonicalMainControl {
                 context: "equation number group",
             })?;
         self.active_math_shifts.pop();
+        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok((eq.display, finished))
     }
@@ -4321,6 +4365,7 @@ impl CanonicalMainControl {
                 context: "display alignment group",
             })?;
         self.active_math_shifts.pop();
+        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_canonical_display_inner(
             stores,
@@ -4374,6 +4419,7 @@ impl CanonicalMainControl {
                 context: "display math group",
             })?;
         self.active_math_shifts.pop();
+        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_canonical_display(stores, interrupt.active_directions)
     }
