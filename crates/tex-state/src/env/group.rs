@@ -102,8 +102,7 @@ impl RestoreRecord {
 
     fn refresh_restored_eqtb_value(&mut self, env: &Env) {
         if self.cell.bank() != BankTag::TokParam
-            || self.cell.index()
-                != u32::from(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
+            || self.cell.index() != u32::from(crate::env::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
         {
             return;
         }

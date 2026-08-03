@@ -51,8 +51,8 @@ pub mod code_tables;
 mod command_context;
 pub mod dependency;
 pub mod diagnostic;
-pub mod env;
 mod engine_state;
+pub mod env;
 pub mod epoch;
 pub mod etex_tracing;
 pub mod file_framing;
@@ -112,7 +112,6 @@ pub use stores::EngineUsageStatistics;
 pub mod world;
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
-pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
@@ -120,6 +119,7 @@ pub use dependency::{
     PARAGRAPH_END_INPUT_BARRIER_DOMAIN, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
     PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN,
 };
+pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use font::PdfFontCode;
 pub use input::{
     ConditionFrameSummary, ConditionFrameToken, ConditionKind, ConditionLimb, InputFrameSummary,
@@ -140,13 +140,14 @@ pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
 };
 pub use pure_memo::{
-    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphLineProvenance,
-    ParagraphOpportunityMetric, ParagraphOpportunityStats, ParagraphProvenanceNode,
-    ParagraphProvenanceRecipe, ParagraphProvenanceSpan, ParagraphRecordingPhase,
-    ParagraphRecordingStats, ParagraphValidationFailure, PureBreakDecision, PureBreakPlan,
-    PureMemoConfig, PureMemoKey, PureMemoLayer, PureMemoRecordingPolicy, PureMemoRuntime,
-    PureMemoStats, PurePageEntry, PureParagraphMutation, PureParagraphMutationSummary,
-    PureShipoutEntry, RecordedParagraphLines, RecordedParagraphRegion,
+    CanonicalParagraphHistoryRecord, MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason,
+    ParagraphLineProvenance, ParagraphOpportunityMetric, ParagraphOpportunityStats,
+    ParagraphProvenanceNode, ParagraphProvenanceRecipe, ParagraphProvenanceSpan,
+    ParagraphRecordingPhase, ParagraphRecordingStats, ParagraphValidationFailure,
+    PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
+    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphMutation,
+    PureParagraphMutationSummary, PureShipoutEntry, RecordedParagraphLines,
+    RecordedParagraphRegion,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,

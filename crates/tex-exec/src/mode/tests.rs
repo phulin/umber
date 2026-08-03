@@ -126,24 +126,14 @@ fn mode_projection_is_canonical_and_content_sensitive() {
 #[test]
 fn semantic_nest_six_modes_and_fields_initialize_canonically() {
     for (mode, family, inner, horizontal_space_factor) in [
-        (
-            Mode::Vertical,
-            ConditionalMode::Vertical,
-            false,
-            false,
-        ),
+        (Mode::Vertical, ConditionalMode::Vertical, false, false),
         (
             Mode::InternalVertical,
             ConditionalMode::Vertical,
             true,
             false,
         ),
-        (
-            Mode::Horizontal,
-            ConditionalMode::Horizontal,
-            false,
-            true,
-        ),
+        (Mode::Horizontal, ConditionalMode::Horizontal, false, true),
         (
             Mode::RestrictedHorizontal,
             ConditionalMode::Horizontal,
@@ -151,12 +141,7 @@ fn semantic_nest_six_modes_and_fields_initialize_canonically() {
             true,
         ),
         (Mode::Math, ConditionalMode::Math, true, false),
-        (
-            Mode::DisplayMath,
-            ConditionalMode::Math,
-            false,
-            false,
-        ),
+        (Mode::DisplayMath, ConditionalMode::Math, false, false),
     ] {
         let mut nest = ModeNest::new();
         nest.push(mode).expect("test mode push");

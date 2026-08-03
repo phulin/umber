@@ -319,6 +319,25 @@ pub(crate) struct RegisteredSource {
 }
 
 impl RegisteredSource {
+    pub(crate) fn rebind_generated(
+        &self,
+        id: SourceId,
+        bytes: Arc<[u8]>,
+    ) -> Result<Self, SourceRegistrationError> {
+        u64::try_from(bytes.len()).map_err(|_| SourceRegistrationError::BackingTooLarge)?;
+        let descriptor = Arc::new(SourceDescriptor::generated(Arc::clone(&bytes)));
+        Ok(Self {
+            id,
+            kind: RegisteredSourceKind::Generated,
+            mode: self.mode,
+            bytes,
+            name: self.name.clone(),
+            framing_name: self.framing_name.clone(),
+            framing: self.framing,
+            descriptor,
+        })
+    }
+
     /// Returns the immutable backing descriptor used to register source
     /// coordinates with the aggregate source map.
     pub(crate) fn source_descriptor(&self) -> SourceDescriptor {

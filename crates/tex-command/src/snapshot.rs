@@ -167,9 +167,7 @@ impl fmt::Display for CommandSummaryError {
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
             }
-            Self::ActiveParagraphInputTransaction => {
-                "a paragraph input transaction is active"
-            }
+            Self::ActiveParagraphInputTransaction => "a paragraph input transaction is active",
         })
     }
 }

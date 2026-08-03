@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::input::InputState;
 use crate::{CommandObservation, InputRecord};
+use tex_state::SourceId;
 
 fn root_source_anchor(input: &InputState) -> Option<usize> {
     input.levels.iter().find_map(|level| {
@@ -69,6 +70,49 @@ impl ParagraphInputTransaction {
     pub const fn coverage(&self) -> &ParagraphInputCoverage {
         &self.coverage
     }
+
+    /// Rebinds a transaction wholly contained in an unchanged root prefix.
+    ///
+    /// A region crossing or following the edit is deliberately rejected: its
+    /// line cursor and token provenance belong to the old physical mapping.
+    #[must_use]
+    pub fn rebind_unchanged_root_prefix(
+        &self,
+        old: &[u8],
+        new: Arc<[u8]>,
+        unchanged_end: usize,
+    ) -> Option<Self> {
+        if self.coverage.root_end? > unchanged_end
+            || unchanged_end > old.len()
+            || unchanged_end > new.len()
+            || old[..unchanged_end] != new[..unchanged_end]
+        {
+            return None;
+        }
+        let mut rebound = self.clone();
+        rebind_root_input(&mut rebound.starting_input, old, Arc::clone(&new))?;
+        rebind_root_input(&mut rebound.ending_input, old, new)?;
+        Some(rebound)
+    }
+}
+
+fn rebind_root_input(input: &mut InputState, old: &[u8], new: Arc<[u8]>) -> Option<()> {
+    let id = SourceId::new(u32::try_from(input.next_source_identity).ok()?);
+    let source = input.levels.iter_mut().find_map(|level| match level {
+        crate::input::InputLevel::Source(source) => Some(source),
+        crate::input::InputLevel::Tokens(_) => None,
+    })?;
+    if source.cursor.backing.bytes.as_ref() != old {
+        return None;
+    }
+    let backing = source.cursor.backing.rebind_generated(id, new).ok()?;
+    input.next_source_identity += 1;
+    input.registered_sources.push(backing.clone());
+    source.cursor.backing = backing;
+    if let Some(line) = &mut source.cursor.line {
+        line.physical.source = id;
+    }
+    Some(())
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

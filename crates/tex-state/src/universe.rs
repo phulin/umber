@@ -2309,6 +2309,20 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_canonical_paragraph_region(
+        &mut self,
+        record: crate::CanonicalParagraphHistoryRecord,
+    ) {
+        self.pure_memo.record_canonical_paragraph_region(record);
+    }
+
+    #[doc(hidden)]
+    pub fn record_canonical_paragraph_lookup(&mut self, hit: bool, commands: usize) {
+        self.pure_memo
+            .record_canonical_paragraph_lookup(hit, commands);
+    }
+
+    #[doc(hidden)]
     pub fn record_pure_paragraph_line_hit(&mut self) {
         self.pure_memo.record_paragraph_line_hit();
     }
@@ -7132,8 +7146,7 @@ impl Universe {
                 u32::from(TokParam::PAR_SHAPE_INTERNAL.raw()),
             );
             let effective = self.stores.effective_restored_env_word(cell);
-            restored_tok_param_tokens(self, effective)
-                .is_none_or(<[Token]>::is_empty)
+            restored_tok_param_tokens(self, effective).is_none_or(<[Token]>::is_empty)
         } else {
             false
         };

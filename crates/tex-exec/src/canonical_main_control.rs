@@ -624,11 +624,29 @@ impl CanonicalParagraphRegion {
     pub const fn provenance_bounds(&self) -> (&ProvenanceStats, &ProvenanceStats) {
         (&self.starting_provenance, &self.ending_provenance)
     }
+
+    /// Rehomes a region proven wholly before an edited root interval.
+    /// Regions intersecting or following the edit are filtered out because
+    /// their physical cursor/provenance mapping belongs to the old revision.
+    #[must_use]
+    pub fn rehome_unchanged_root_prefix(
+        &self,
+        old: &[u8],
+        new: std::sync::Arc<[u8]>,
+        unchanged_end: usize,
+    ) -> Option<Self> {
+        let mut rebound = self.clone();
+        rebound.input = self
+            .input
+            .rebind_unchanged_root_prefix(old, new, unchanged_end)?;
+        Some(rebound)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 struct CanonicalParagraphRecorder {
     pending: bool,
+    lookup_attempted: bool,
     next_identity: u64,
     starting_universe: Option<tex_state::Snapshot>,
     starting_vertical_len: usize,
@@ -646,6 +664,7 @@ impl CanonicalParagraphRecorder {
             return;
         }
         command.begin_paragraph_input_transaction();
+        self.lookup_attempted = false;
         self.starting_universe = Some(stores.snapshot_with_exact_identity());
         self.starting_vertical_len = modes.list(0).map_or(0, |list| list.nodes().len());
         self.starting_page_len = stores.current_page_nodes().len();
@@ -690,7 +709,7 @@ impl CanonicalParagraphRecorder {
             .to_vec()
             .into();
         self.next_identity = self.next_identity.wrapping_add(1);
-        self.finished.push(CanonicalParagraphRegion {
+        let region = CanonicalParagraphRegion {
             identity: self.next_identity,
             input,
             starting_universe: self
@@ -706,7 +725,23 @@ impl CanonicalParagraphRecorder {
                 .take()
                 .expect("pending paragraph owns its provenance bound"),
             ending_provenance: stores.provenance_stats(),
+        };
+        let coverage = region.input.coverage();
+        stores.record_canonical_paragraph_region(tex_state::CanonicalParagraphHistoryRecord {
+            identity: region.identity,
+            root_start: coverage.root_start(),
+            root_end: coverage.root_end(),
+            delivered_commands: coverage.delivered_commands(),
+            retained_bytes: region.finished_lines.as_ref().map_or(0, |_| {
+                std::mem::size_of::<tex_state::survivor::RetainedNodeList>()
+            }),
         });
+        if !region.effects.is_empty() {
+            stores.record_pure_paragraph_barriers(&[
+                tex_state::ParagraphBarrierReason::UntrackedWorldAccess,
+            ]);
+        }
+        self.finished.push(region);
     }
 }
 
@@ -1752,6 +1787,9 @@ impl CanonicalMainControl {
         {
             return false;
         }
+        if std::mem::replace(&mut self.paragraph_recorder.lookup_attempted, true) {
+            return false;
+        }
         let current = stores.snapshot_with_exact_identity();
         let Some(index) = self
             .paragraph_recorder
@@ -1759,6 +1797,7 @@ impl CanonicalMainControl {
             .iter()
             .position(|region| current.exact_future_state_matches(&region.starting_universe))
         else {
+            stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         };
         let input = self.paragraph_recorder.replay[index].input.clone();
@@ -1767,9 +1806,12 @@ impl CanonicalMainControl {
             .replay_paragraph_input_transaction(&input)
             .is_err()
         {
+            stores.record_canonical_paragraph_lookup(false, 0);
             return false;
         }
         let region = self.paragraph_recorder.replay.remove(index);
+        stores
+            .record_canonical_paragraph_lookup(true, region.input.coverage().delivered_commands());
         self.command.abandon_paragraph_input_transaction();
         self.paragraph_recorder.pending = false;
         self.paragraph_recorder.starting_universe = None;

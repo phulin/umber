@@ -189,8 +189,7 @@ impl Env {
             // level-one value even when the mutable overlay's undo word is
             // zero, and §283 must trace that restored value through §252.
             trace_eligible: cell.bank() != BankTag::TokParam
-                || cell.index()
-                    != u32::from(super::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
+                || cell.index() != u32::from(super::banks::TokParam::PAR_SHAPE_INTERNAL.raw())
                 || format_word.is_some(),
         }
     }

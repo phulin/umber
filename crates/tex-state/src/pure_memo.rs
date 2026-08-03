@@ -198,6 +198,20 @@ pub struct ParagraphOpportunityStats {
     pub published: ParagraphOpportunityMetric,
 }
 
+/// Handle-free accepted-history record for a canonical command paragraph.
+///
+/// The executable replay payload remains owned by `tex-exec`; this state-side
+/// record is the authoritative ordered publication and telemetry substrate
+/// carried between editor generations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanonicalParagraphHistoryRecord {
+    pub identity: u64,
+    pub root_start: Option<usize>,
+    pub root_end: Option<usize>,
+    pub delivered_commands: usize,
+    pub retained_bytes: usize,
+}
+
 impl ParagraphOpportunityStats {
     #[must_use]
     pub fn saturating_since(self, earlier: Self) -> Self {
@@ -712,6 +726,8 @@ pub struct PureMemoRuntime {
     recorded_paragraph_observations: Vec<ObservedDependency>,
     reuse_prior_paragraphs: bool,
     preserve_prior_paragraphs: bool,
+    prior_canonical_paragraphs: Vec<CanonicalParagraphHistoryRecord>,
+    recorded_canonical_paragraphs: Vec<CanonicalParagraphHistoryRecord>,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
@@ -1061,6 +1077,55 @@ impl PureMemoRuntime {
             .saturating_add(mutations as u64);
     }
 
+    pub(crate) fn record_canonical_paragraph_region(
+        &mut self,
+        record: CanonicalParagraphHistoryRecord,
+    ) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        cache.stats.paragraph_eligible_regions =
+            cache.stats.paragraph_eligible_regions.saturating_add(1);
+        cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
+        cache.stats.paragraph.inserts = cache.stats.paragraph.inserts.saturating_add(1);
+        cache.stats.paragraph_opportunities.published.regions = cache
+            .stats
+            .paragraph_opportunities
+            .published
+            .regions
+            .saturating_add(1);
+        cache.stats.paragraph_opportunities.published.bytes = cache
+            .stats
+            .paragraph_opportunities
+            .published
+            .bytes
+            .saturating_add(record.retained_bytes as u64);
+        self.recorded_canonical_paragraphs.push(record);
+    }
+
+    pub(crate) fn record_canonical_paragraph_lookup(&mut self, hit: bool, commands: usize) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
+        cache.stats.paragraph.lookups = cache.stats.paragraph.lookups.saturating_add(1);
+        if hit {
+            cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
+            cache.stats.paragraph.hits = cache.stats.paragraph.hits.saturating_add(1);
+            cache.stats.paragraph_commands_skipped = cache
+                .stats
+                .paragraph_commands_skipped
+                .saturating_add(commands as u64);
+        } else {
+            cache.stats.paragraph.key_misses = cache.stats.paragraph.key_misses.saturating_add(1);
+        }
+    }
+
+    #[must_use]
+    pub fn accepted_canonical_paragraphs(&self) -> &[CanonicalParagraphHistoryRecord] {
+        &self.prior_canonical_paragraphs
+    }
+
     pub(crate) fn record_paragraph_line_hit(&mut self) {
         let Some(cache) = &mut self.cache else {
             return;
@@ -1266,6 +1331,7 @@ impl PureMemoRuntime {
     pub fn begin_paragraph_history(&mut self, reuse_prior: bool) {
         self.recorded_paragraphs.clear();
         self.recorded_paragraph_observations.clear();
+        self.recorded_canonical_paragraphs.clear();
         self.reuse_prior_paragraphs = reuse_prior;
         self.preserve_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;
@@ -1290,6 +1356,7 @@ impl PureMemoRuntime {
         if self.preserve_prior_paragraphs {
             self.recorded_paragraphs.clear();
             self.recorded_paragraph_observations.clear();
+            self.recorded_canonical_paragraphs.clear();
             self.preserve_prior_paragraphs = false;
             self.prior_paragraph_cursor = 0;
             self.prior_paragraph_input_cursors.clear();
@@ -1309,6 +1376,7 @@ impl PureMemoRuntime {
             }
         }
         self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
+        self.prior_canonical_paragraphs = std::mem::take(&mut self.recorded_canonical_paragraphs);
         self.prior_paragraph_starts.clear();
         self.prior_paragraph_input_starts.clear();
         for (index, region) in self.prior_paragraphs.iter().enumerate() {
@@ -1334,6 +1402,7 @@ impl PureMemoRuntime {
     pub fn discard_paragraph_history(&mut self) {
         self.recorded_paragraphs.clear();
         self.recorded_paragraph_observations.clear();
+        self.recorded_canonical_paragraphs.clear();
         self.preserve_prior_paragraphs = false;
         self.reuse_prior_paragraphs = false;
         self.prior_paragraph_cursor = 0;

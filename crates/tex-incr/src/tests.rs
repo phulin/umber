@@ -4619,7 +4619,9 @@ fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
         RevisionCandidateResult::AwaitingResources(CanonicalResourceNeed::Input { ref name, .. })
             if name == "child.tex"
     ));
-    inputs.files.insert("child".to_owned(), "\\relax".to_owned());
+    inputs
+        .files
+        .insert("child".to_owned(), "\\relax".to_owned());
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(

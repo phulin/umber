@@ -3446,10 +3446,7 @@ fn showlists_marks_a_page_held_during_an_output_routine() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.push_current_page_node(Node::Penalty(0));
     stores.set_output_routine_active(true);
-    let stores = run_canonical_tex82_with_universe(
-        stores,
-        "\\nonstopmode\\showlists",
-    );
+    let stores = run_canonical_tex82_with_universe(stores, "\\nonstopmode\\showlists");
     let log = terminal_effect_text(&stores);
     assert!(
         log.contains("### current page: (held over for next output)\n\\penalty 0"),
@@ -3484,9 +3481,7 @@ fn macro_parameter_in_vertical_mode_does_not_build_recent_rule() {
 
 #[test]
 fn outer_paragraph_retains_zero_parskip_after_existing_material() {
-    let stores = run_canonical_tex82(
-        "\\vsize=100pt \\parskip=0pt \\hrule \\noindent\\vrule\\par",
-    );
+    let stores = run_canonical_tex82("\\vsize=100pt \\parskip=0pt \\hrule \\noindent\\vrule\\par");
 
     let page = stores.current_page_nodes();
     assert!(page.windows(2).any(|nodes| {
@@ -3506,9 +3501,8 @@ fn outer_paragraph_retains_zero_parskip_after_existing_material() {
 
 #[test]
 fn vertical_unhbox_of_void_box_still_builds_indented_empty_line() {
-    let stores = run_canonical_tex82(
-        "\\vsize=100pt \\parskip=0pt \\hrule \\vskip12pt \\unhbox0 \\par",
-    );
+    let stores =
+        run_canonical_tex82("\\vsize=100pt \\parskip=0pt \\hrule \\vskip12pt \\unhbox0 \\par");
 
     assert!(stores.current_page_nodes().iter().any(|node| {
         matches!(
@@ -3896,9 +3890,8 @@ fn vertical_list_preserves_structured_mark_penalty_and_material_order() {
 
 #[test]
 fn explicit_hbox_migrates_vadjust_material_to_enclosing_vlist() {
-    let (stores, _) = run_canonical_tex82_current_list(
-        "\\setbox0=\\vbox{\\hbox{\\vadjust{\\penalty123}}}",
-    );
+    let (stores, _) =
+        run_canonical_tex82_current_list("\\setbox0=\\vbox{\\hbox{\\vadjust{\\penalty123}}}");
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::VList(vbox)) = stores.nodes(root).first() else {
@@ -3946,9 +3939,8 @@ fn nested_hbox_retains_vadjust_through_incompatible_unhbox() {
 
 #[test]
 fn empty_negative_width_hbox_does_not_gain_an_overfull_rule() {
-    let (stores, _) = run_canonical_tex82_current_list(
-        "\\overfullrule=5pt \\setbox0=\\hbox to -10pt{}",
-    );
+    let (stores, _) =
+        run_canonical_tex82_current_list("\\overfullrule=5pt \\setbox0=\\hbox to -10pt{}");
 
     let root = stores.box_reg(0).expect("box0");
     let Some(tex_state::node_arena::NodeRef::HList(hbox)) = stores.nodes(root).first() else {

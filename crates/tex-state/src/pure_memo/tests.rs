@@ -1,4 +1,32 @@
 use super::*;
+
+#[test]
+fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
+    let mut runtime = PureMemoRuntime::default();
+    runtime.enable(PureMemoConfig::default());
+    runtime.begin_paragraph_history(false);
+    let record = CanonicalParagraphHistoryRecord {
+        identity: 7,
+        root_start: Some(10),
+        root_end: Some(20),
+        delivered_commands: 3,
+        retained_bytes: 64,
+    };
+    runtime.record_canonical_paragraph_region(record);
+    runtime.record_canonical_paragraph_lookup(false, 0);
+    runtime.record_canonical_paragraph_lookup(true, 3);
+    assert!(runtime.accepted_canonical_paragraphs().is_empty());
+    runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
+    assert_eq!(runtime.accepted_canonical_paragraphs(), &[record]);
+    let stats = runtime.stats();
+    assert_eq!(stats.paragraph_inserts, 1);
+    assert_eq!(stats.paragraph_lookups, 2);
+    assert_eq!(stats.paragraph_hits, 1);
+    assert_eq!(stats.paragraph.key_misses, 1);
+    assert_eq!(stats.paragraph_commands_skipped, 3);
+    assert_eq!(stats.paragraph_opportunities.published.regions, 1);
+    assert_eq!(stats.paragraph_opportunities.published.bytes, 64);
+}
 use crate::{ChangedAt, DependencyBank, DependencyValue};
 
 fn observation_region(ordinal: u32) -> RecordedParagraphRegion {

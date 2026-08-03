@@ -319,7 +319,9 @@ fn paragraph_input_recording_rolls_back_with_command_snapshot() {
         level: 7,
         position: 11,
     }));
-    state.next_source_character().expect("recorded source advances");
+    state
+        .next_source_character()
+        .expect("recorded source advances");
 
     state
         .rollback(snapshot)

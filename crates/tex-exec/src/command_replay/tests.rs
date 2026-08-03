@@ -13810,11 +13810,7 @@ The following discretionary sublist has been deleted:
 fn canonical_discretionary_prunes_forbidden_suffix_in_every_part() {
     // TeX82 §1121 applies the same admissibility check to pre-break,
     // post-break, and no-break replacement lists.
-    for parts in [
-        ("\\hss", "", ""),
-        ("", "\\hss", ""),
-        ("", "", "\\hss"),
-    ] {
+    for parts in [("\\hss", "", ""), ("", "\\hss", ""), ("", "", "\\hss")] {
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut control = CanonicalMainControl::tex82_initex(&mut universe);
         register_cmr10_font(&mut control, &mut universe);

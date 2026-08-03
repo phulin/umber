@@ -2896,6 +2896,33 @@ fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
 }
 
 #[test]
+fn canonical_paragraph_rehome_filters_the_edited_root_region() {
+    let old = b"alpha\\par beta\\par\\end";
+    let new: std::sync::Arc<[u8]> = std::sync::Arc::from(&b"alpha\\par gamma\\par\\end"[..]);
+    let edit_start = old
+        .windows(4)
+        .position(|window| window == b"beta")
+        .expect("second paragraph");
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, old);
+    run_to_end(&mut control, &mut stores);
+    let regions = control.take_finished_paragraph_regions();
+    assert_eq!(regions.len(), 2);
+
+    assert!(
+        regions[0]
+            .rehome_unchanged_root_prefix(old, std::sync::Arc::clone(&new), edit_start)
+            .is_some()
+    );
+    assert!(
+        regions[1]
+            .rehome_unchanged_root_prefix(old, new, edit_start)
+            .is_none()
+    );
+}
+
+#[test]
 fn vertical_only_canonical_run_publishes_no_paragraph_region() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

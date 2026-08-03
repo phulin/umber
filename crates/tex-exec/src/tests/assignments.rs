@@ -45,7 +45,10 @@ fn macro_recovery_stops_at_tex82s_global_hundred_error_limit() {
         }
     };
 
-    assert_eq!(error.as_fatal(), Some(tex_command::FatalError::TooManyErrors));
+    assert_eq!(
+        error.as_fatal(),
+        Some(tex_command::FatalError::TooManyErrors)
+    );
     assert_eq!(stores.count(0), 0, "fatal exit skips the later assignment");
 }
 
@@ -254,9 +257,8 @@ fn setbox_missing_box_is_recoverable_and_replays_the_rejected_command() {
 
 #[test]
 fn setbox_skips_relax_before_the_box_command() {
-    let stores = super::core::run_canonical_tex82(
-        "\\setbox0=\\relax\\relax\\hbox{A}\\count0=7 \\end",
-    );
+    let stores =
+        super::core::run_canonical_tex82("\\setbox0=\\relax\\relax\\hbox{A}\\count0=7 \\end");
 
     assert!(stores.box_reg(0).is_some());
     assert_eq!(stores.count(0), 7);
@@ -328,9 +330,8 @@ fn mathchardef_meaning_restores_and_replays_with_identical_state_hash() {
 
 #[test]
 fn token_register_assignments_scan_balanced_text_and_copy_variables() {
-    let stores = super::core::run_canonical_tex82(
-        "\\toks0={a{b}c}\\toksdef\\T=1 \\T=\\toks0 \\end",
-    );
+    let stores =
+        super::core::run_canonical_tex82("\\toks0={a{b}c}\\toksdef\\T=1 \\T=\\toks0 \\end");
 
     assert_eq!(stores.tokens(stores.toks(0)), stores.tokens(stores.toks(1)));
     assert_eq!(stores.tokens(stores.toks(0)).len(), 5);
@@ -384,9 +385,7 @@ fn noexpand_in_edef_preserves_a_token_register_assignment() {
 
 #[test]
 fn token_register_runaway_closes_before_outer_macro_and_replays_it() {
-    let stores = super::core::run_canonical_tex82(
-        "\\outer\\def\\a{}\\toks0={x\\a\\count0=7\\end",
-    );
+    let stores = super::core::run_canonical_tex82("\\outer\\def\\a{}\\toks0={x\\a\\count0=7\\end");
 
     assert_eq!(
         stores.tokens(stores.toks(0)),
@@ -494,9 +493,8 @@ fn ordinary_glue_parameters_recover_mu_units_as_pt() {
 
 #[test]
 fn arithmetic_overflow_reports_tex_error_text() {
-    let stores = super::core::run_canonical_tex82(
-        "\\count0=2147483647 \\advance\\count0 by 1 \\end",
-    );
+    let stores =
+        super::core::run_canonical_tex82("\\count0=2147483647 \\advance\\count0 by 1 \\end");
 
     assert_eq!(stores.count(0), i32::MAX);
     assert!(terminal_effect_text(&stores).contains("Arithmetic overflow"));

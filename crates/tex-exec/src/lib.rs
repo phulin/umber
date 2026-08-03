@@ -43,8 +43,7 @@ pub use assignments::{
 pub use canonical_main_control::{
     CanonicalAdvanceOutcome, CanonicalAdvanceReadiness, CanonicalAdvanceTelemetry,
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
-    CanonicalParagraphRegion,
-    CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
+    CanonicalParagraphRegion, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
 };
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,

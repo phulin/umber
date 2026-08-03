@@ -877,9 +877,7 @@ fn v_template_macros_expand_when_the_cell_finishes() {
 
 #[test]
 fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
-    let stores = run_boxed_alignment_source(
-        "\\halign{#&#\\cr \\futurelet\\x\\missing&a\\cr}",
-    );
+    let stores = run_boxed_alignment_source("\\halign{#&#\\cr \\futurelet\\x\\missing&a\\cr}");
     let rows = vlist_rows(&stores, box_zero_vlist(&stores));
     let cells = row_cells(&stores, rows[0]);
 
@@ -898,7 +896,10 @@ fn futurelet_undefined_recovery_stays_inside_alignment_cell_driver() {
         .find("\\missing")
         .expect("the undefined command should appear in the context display");
     assert!(diagnostic < context, "{text}");
-    assert!(!text.contains("Misplaced alignment tab character &"), "{text}");
+    assert!(
+        !text.contains("Misplaced alignment tab character &"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1464,7 +1465,11 @@ fn let_aliased_frozen_endv_finishes_cell_through_do_endv() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(cell_text(&stores, row_cells(&stores, rows[0])[0]), "x");
-    assert_eq!(stores.count(0), 37, "execution continued after the alignment");
+    assert_eq!(
+        stores.count(0),
+        37,
+        "execution continued after the alignment"
+    );
 }
 
 #[test]

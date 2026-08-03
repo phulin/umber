@@ -91,6 +91,7 @@ pub use observation::{
     RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
     parameter_mutation_key_for_dialect,
 };
+pub use paragraph::{ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction};
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,
     AlignmentIdentity, AlignmentLifecycleError, AlignmentPreamble, AlignmentRequest,
@@ -121,13 +122,9 @@ pub use scanners::{
     ScannedMathCharacter, ScannedMathDelimiter, ScannedMathFamily, ScannedMathFraction,
     ScannedMathMuMaterial, ScannedMathScript, ScannedPackingSpec, ScannedRegisterDefinition,
     ScannedRuleSpec, ScannedScalar, ScannedSetBoxAssignment, ScannedSetBoxPath,
-    ScannedTokenRegisterAssignment,
-    ScannedVSplit, StructuredProvenance, WriteStreamSelector,
+    ScannedTokenRegisterAssignment, ScannedVSplit, StructuredProvenance, WriteStreamSelector,
 };
 pub use snapshot::{CommandStateSnapshot, CommandSummary, CommandSummaryError};
-pub use paragraph::{
-    ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction,
-};
 pub use state::{
     CommandReplayDelivery, CommandReplayEpisode, CommandRuntime, CommandSemanticDiagnostic,
     CommandState, RunawayPrelude, UnknownRegisteredSource,
