@@ -271,7 +271,19 @@ impl FragmentTable {
 pub struct FragmentStore {
     fragments: FragmentTable,
     sources: Arc<HashMap<FragmentId, FragmentSource>>,
+    root_coordinates: Option<RootCoordinateMap>,
     append_lineage: u64,
+}
+
+#[derive(Clone, Debug)]
+struct RootCoordinateMap {
+    logical_path: Arc<str>,
+    byte_len: u64,
+    content: ContentHash,
+    pieces: Arc<[Piece]>,
+    doc_starts: Arc<[u64]>,
+    registrations: Arc<Vec<RegisteredSource>>,
+    backing: Option<Arc<[u8]>>,
 }
 
 impl Clone for FragmentStore {
@@ -279,6 +291,7 @@ impl Clone for FragmentStore {
         Self {
             fragments: self.fragments.clone(),
             sources: Arc::clone(&self.sources),
+            root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
         }
     }
@@ -289,6 +302,7 @@ impl Default for FragmentStore {
         Self {
             fragments: FragmentTable::default(),
             sources: Arc::new(HashMap::new()),
+            root_coordinates: None,
             append_lineage: next_fragment_lineage(),
         }
     }
@@ -455,8 +469,49 @@ impl FragmentStore {
         Self {
             fragments: self.fragments.clone(),
             sources: Arc::new(HashMap::new()),
+            root_coordinates: self.root_coordinates.clone(),
             append_lineage: next_fragment_lineage(),
         }
+    }
+
+    pub(crate) fn metadata_snapshot_for_layout(&self, layout: &EditorLayout) -> Self {
+        let mut snapshot = self.metadata_snapshot();
+        let mut bytes = Vec::with_capacity(usize::try_from(layout.byte_len).unwrap_or(0));
+        for piece in layout.pieces.iter() {
+            let source = self
+                .bytes(piece.fragment())
+                .expect("validated editor layout has live accepted backing");
+            bytes.extend_from_slice(&source[piece.start() as usize..piece.end() as usize]);
+        }
+        snapshot.root_coordinates = Some(RootCoordinateMap {
+            logical_path: Arc::clone(&layout.path),
+            byte_len: layout.byte_len,
+            content: ContentHash::from_bytes(&bytes),
+            pieces: Arc::clone(&layout.pieces),
+            doc_starts: Arc::clone(&layout.doc_starts),
+            registrations: Arc::new(Vec::new()),
+            backing: None,
+        });
+        snapshot
+    }
+
+    pub(crate) fn bind_generated_root_registration(
+        &mut self,
+        registration: RegisteredSource,
+        source: &crate::source_map::GeneratedSource,
+    ) {
+        let Some(root) = self.root_coordinates.as_mut() else {
+            return;
+        };
+        if registration.byte_len() != root.byte_len
+            || source.hash() != root.content
+            || source.logical_path() != Some(root.logical_path.as_ref())
+            || root.registrations.contains(&registration)
+        {
+            return;
+        }
+        Arc::make_mut(&mut root.registrations).push(registration);
+        root.backing = Some(source.backing());
     }
 
     /// Measurement-only access to the exact immutable view installed in an
@@ -555,7 +610,13 @@ impl FragmentStore {
     }
 
     pub(crate) fn direct_root_span_id(&self, origin: crate::token::OriginId) -> Option<RootSpanId> {
-        let span = direct_fragment_span(origin, self)?;
+        let crate::token::OriginEncoding::DirectSource(position) = origin.decode() else {
+            return None;
+        };
+        if let Some(span) = self.root_span_for_registered_position(position) {
+            return Some(span);
+        }
+        let span = self.span_for_direct(position)?;
         let (fragment_id, fragment) = self.fragment_at(span.lo())?;
         if span.hi().raw() > fragment.anchor() {
             return None;
@@ -568,6 +629,38 @@ impl FragmentStore {
             .map_or_else(|| ContentHash::from_bytes(&[]), ContentHash::from_bytes);
         Some(RootSpanId {
             piece: PieceId(fragment_id),
+            start,
+            end,
+            content,
+        })
+    }
+
+    fn root_span_for_registered_position(&self, position: SourcePos) -> Option<RootSpanId> {
+        let root = self.root_coordinates.as_ref()?;
+        let registration = root.registrations.iter().find(|registration| {
+            registration.start() <= position
+                && registration
+                    .start()
+                    .raw()
+                    .checked_add(registration.byte_len())
+                    .is_some_and(|end| position.raw() < end)
+        })?;
+        let offset = position.raw().checked_sub(registration.start().raw())?;
+        let piece_index = root
+            .doc_starts
+            .partition_point(|&start| start <= offset)
+            .checked_sub(1)?;
+        let piece = root.pieces.get(piece_index)?;
+        let piece_offset = u32::try_from(offset.checked_sub(root.doc_starts[piece_index])?).ok()?;
+        let start = piece.start().checked_add(piece_offset)?;
+        let end = start.checked_add(1)?;
+        if end > piece.end() {
+            return None;
+        }
+        let offset = usize::try_from(offset).ok()?;
+        let content = ContentHash::from_bytes(root.backing.as_deref()?.get(offset..offset + 1)?);
+        Some(RootSpanId {
+            piece: piece.id(),
             start,
             end,
             content,

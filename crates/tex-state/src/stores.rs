@@ -1373,8 +1373,21 @@ impl Stores {
         descriptor: SourceDescriptor,
         line_starts: std::sync::Arc<[usize]>,
     ) -> Result<SourcePos, SourceMapError> {
-        self.source_map
-            .register_with_line_starts(source, descriptor, line_starts)
+        let generated = match &descriptor {
+            SourceDescriptor::Generated(generated) => Some(generated.clone()),
+            SourceDescriptor::World { .. } => None,
+        };
+        let byte_len = descriptor.byte_len();
+        let start = self
+            .source_map
+            .register_with_line_starts(source, descriptor, line_starts)?;
+        if let Some(generated) = generated {
+            self.source_fragments.bind_generated_root_registration(
+                crate::source_map::RegisteredSource::new(start, byte_len),
+                &generated,
+            );
+        }
+        Ok(start)
     }
 
     pub(crate) fn existing_source_registration(

@@ -166,6 +166,10 @@ impl GeneratedSource {
         &self.bytes
     }
 
+    pub(crate) fn backing(&self) -> Arc<[u8]> {
+        Arc::clone(&self.bytes)
+    }
+
     #[must_use]
     pub const fn hash(&self) -> ContentHash {
         self.hash

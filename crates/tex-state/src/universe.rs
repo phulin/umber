@@ -3402,7 +3402,7 @@ impl Universe {
     ) -> Result<(), crate::EditorLayoutError> {
         layout.validate_store(fragments)?;
         self.stores
-            .install_source_fragments(fragments.metadata_snapshot());
+            .install_source_fragments(fragments.metadata_snapshot_for_layout(layout));
         Ok(())
     }
 

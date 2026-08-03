@@ -2,7 +2,7 @@ use std::mem;
 
 use super::*;
 use crate::input::SourceId;
-use crate::source_map::{SourceDescriptor, SourceMap};
+use crate::source_map::{GeneratedSource, SourceDescriptor, SourceMap};
 
 fn append(
     store: &mut FragmentStore,
@@ -75,6 +75,39 @@ fn fragment_and_engine_regions_are_disjoint_and_monotonic() {
     assert!(fragments.fragment_at(engine).is_none());
     assert!(source_map.region_for_position(first_span.lo()).is_none());
     assert!(source_map.region_for_position(last_span.lo()).is_none());
+}
+
+#[test]
+fn registered_editor_root_coordinates_resolve_to_piece_identity() {
+    let mut fragments = FragmentStore::new();
+    let (left, _) = append(&mut fragments, b"left", 1);
+    let (right, _) = append(&mut fragments, b"right", 2);
+    let layout = EditorLayout::new(
+        "root.tex",
+        LayoutGeneration::new(2),
+        vec![Piece::new(left, 0, 4), Piece::new(right, 0, 5)],
+        &fragments,
+    )
+    .expect("split editor layout");
+    let mut installed = fragments.metadata_snapshot_for_layout(&layout);
+    let wrong = GeneratedSource::named("root.tex", Arc::from(&b"leftWRONG"[..]));
+    let registration = RegisteredSource::new(SourcePos::from_raw_for_store(10_000), 9);
+    installed.bind_generated_root_registration(registration, &wrong);
+    let origin = registration
+        .direct_origin(5, 6)
+        .expect("direct source origin");
+    assert_eq!(
+        installed.direct_root_span_id(origin),
+        None,
+        "equal-length foreign backing must not acquire editor ownership"
+    );
+
+    let root = GeneratedSource::named("root.tex", Arc::from(&b"leftright"[..]));
+    installed.bind_generated_root_registration(registration, &root);
+    let expected = fragments
+        .root_span_id(&Piece::new(right, 0, 5), 1..2)
+        .expect("right piece span");
+    assert_eq!(installed.direct_root_span_id(origin), Some(expected));
 }
 
 #[test]
