@@ -27,6 +27,12 @@ fn template() -> Universe {
     universe
 }
 
+fn canonical_template_without_preinstalled_primitives() -> Universe {
+    let mut universe = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
+    universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    universe
+}
+
 fn install_pdf_paragraph_test_parameters(universe: &mut Universe) {
     for (name, meaning) in [
         (
@@ -4599,7 +4605,7 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
 #[test]
 fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
     let mut session = Session::start(
-        template(),
+        canonical_template_without_preinstalled_primitives(),
         "staged-canonical-input",
         RevisionId::new(1),
         "\\input child \\end",
@@ -4634,6 +4640,39 @@ fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
     session
         .accept_cold_candidate(candidate)
         .expect("completed retry accepts");
+}
+
+#[test]
+fn canonical_initex_session_installs_everybox_hooks_for_its_profile() {
+    let mut session = Session::start(
+        canonical_template_without_preinstalled_primitives(),
+        "canonical-initex-hooks",
+        RevisionId::new(1),
+        "\\unless\\iffalse\\message{ETEX=1}\\fi\\everyhbox{\\message{HOOKS=1}}\\setbox0=\\hbox{X}\\end",
+        usize::MAX,
+    )
+    .expect("session starts");
+    session.set_command_profile(tex_command::CommandProfile::ETEX26, true);
+    let mut candidate = session.start_cold_candidate().expect("cold candidate");
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut StagedCanonicalHost::default(),
+                &Cancellation::new()
+            )
+            .expect("canonical INITEX session completes"),
+        RevisionCandidateResult::Complete
+    ));
+    let accepted = session
+        .accept_cold_candidate(candidate)
+        .expect("completed candidate accepts");
+
+    assert!(accepted.effects.iter().any(|effect| {
+        matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. } if text.contains("HOOKS=1"))
+    }));
+    assert!(accepted.effects.iter().any(|effect| {
+        matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. } if text.contains("ETEX=1"))
+    }));
 }
 
 struct DecliningStagedCanonicalHost<'a>(StagedCanonicalHost<'a>);

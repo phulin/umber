@@ -48,6 +48,23 @@ fn canonical_candidate_control(
     root_framing: SourceFramingPolicy,
     root_framing_name: Option<&str>,
 ) -> Result<CanonicalMainControl, SessionError> {
+    if initex {
+        // `prepared_initex` deliberately owns only command-local state. The
+        // composed Session is therefore the authoritative owner of the shared
+        // primitive meanings, just like `CanonicalMainControl::tex82_initex`.
+        tex_command::install_tex82_expandable_primitives(universe);
+        tex_exec::install_unexpandable_primitives(universe);
+        if matches!(
+            profile.dialect(),
+            tex_command::CommandDialect::Etex26 | tex_command::CommandDialect::Pdftex14027
+        ) {
+            tex_command::install_etex_expandable_primitives(universe);
+            tex_exec::install_etex_unexpandable_primitives(universe);
+        }
+        if profile.dialect() == tex_command::CommandDialect::Pdftex14027 {
+            tex_command::install_pdftex_expandable_primitives(universe);
+        }
+    }
     let mut control = if initex {
         CanonicalMainControl::prepared_initex(profile)
     } else {
