@@ -1007,6 +1007,13 @@ impl EditorLayout {
         Some((line, column))
     }
 
+    /// Materializes the accepted-layout line cache for a rendered-source
+    /// query, including queries whose origin ultimately resolves as foreign.
+    #[doc(hidden)]
+    pub fn prepare_line_index(&self, fragments: &FragmentStore) {
+        let _ = self.line_column(fragments, 0);
+    }
+
     fn build_line_starts(&self, fragments: &FragmentStore) -> Arc<[u64]> {
         #[cfg(test)]
         self.line_index_builds.fetch_add(1, Ordering::Relaxed);

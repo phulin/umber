@@ -2152,6 +2152,7 @@ impl Session {
                 accepted: self.revision,
             }));
         }
+        self.layout.prepare_line_index(&self.fragments);
         match self.rendered_source_origin(page, event, unit)? {
             Some(LayoutResolvedOrigin::Current {
                 path,
@@ -2319,6 +2320,9 @@ impl Session {
         edit: Edit,
         host: &mut dyn CanonicalResourceHost,
     ) -> Result<PendingRevision, SessionError> {
+        // Query caches are revision-attempt ephemera. A failed candidate keeps
+        // accepted semantic state but must not keep maps lowered before it.
+        self.clear_render_maps();
         let mut candidate = self.start_advance_candidate(next_revision, edit)?;
         drive_synchronous_candidate(&mut candidate, host)?;
         self.finish_advance_candidate(candidate)
