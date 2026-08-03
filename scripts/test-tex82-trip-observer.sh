@@ -11,6 +11,22 @@ texmfcnf="${source_root}/src/texk/web2c/triptrap"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 oracle_bin="${target_dir}/tex82-oracle/bin"
+geometry_only=0
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --geometry-only) geometry_only=1 ;;
+    --help|-h)
+      printf '%s\n' 'usage: scripts/test-tex82-trip-observer.sh [--geometry-only]'
+      exit 0
+      ;;
+    *)
+      printf 'test-tex82-trip-observer: unknown option: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 [[ -f "${trip_root}/trip.tex" && -f "${trip_root}/trip.tfm" &&
   -f "${trip_root}/tripos.tex" ]] || {
@@ -27,6 +43,7 @@ run_phase() {
   local executable="$1" directory="$2" prefix="$3"
   cp "${trip_root}/trip.tex" "${trip_root}/trip.tfm" \
     "${trip_root}/tripos.tex" "$directory/"
+  chmod u+w "$directory/tripos.tex"
   (
     cd "$directory"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -47,6 +64,7 @@ run_full_initex() {
   local directory="$1"
   cp "${trip_root}/trip.tex" "${trip_root}/trip.tfm" \
     "${trip_root}/tripos.tex" "$directory/"
+  chmod u+w "$directory/tripos.tex"
   (
     cd "$directory"
     env -i PATH=/usr/bin:/bin LC_ALL=C LANGUAGE=C \
@@ -129,9 +147,67 @@ project_root_session() {
   } >"$output"
 }
 
+publish_artifact() {
+  local source="$1" destination="$2" staged
+  staged="$(mktemp "${destination}.XXXXXX")"
+  cp "$source" "$staged"
+  chmod 0444 "$staged"
+  mv "$staged" "$destination"
+}
+
+validate_and_publish_geometry() {
+  local phase artifact_root event_count expected_events
+  for phase in initex trip; do
+    project_geometry \
+      "$work_root/geometry-a/geometry-${phase}-events.jsonl" \
+      "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
+    project_geometry \
+      "$work_root/geometry-b/geometry-${phase}-events.jsonl" \
+      "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
+    cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
+      "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
+    grep -Fq '"event":"geometry"' \
+      "$work_root/geometry-a/geometry-${phase}-projected.jsonl" || {
+        printf 'TeX82 TRIP %s geometry stream is empty\n' "$phase" >&2
+        exit 1
+      }
+    event_count="$(grep -Fc '"event":"geometry"' \
+      "$work_root/geometry-a/geometry-${phase}-projected.jsonl")"
+    case "$phase" in
+      initex) expected_events=8 ;;
+      trip) expected_events=432 ;;
+    esac
+    [[ "$event_count" -eq "$expected_events" ]] || {
+      printf 'TeX82 TRIP %s geometry stream has %s events, expected %s\n' \
+        "$phase" "$event_count" "$expected_events" >&2
+      exit 1
+    }
+    cmp "$work_root/geometry-a/geometry-${phase}-projected.jsonl" \
+      "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
+  done
+
+  artifact_root="${target_dir}/trip-oracles/trip"
+  mkdir -p "$artifact_root"
+  publish_artifact "$work_root/geometry-a/geometry-initex-projected.jsonl" \
+    "$artifact_root/initex-geometry.jsonl"
+  publish_artifact "$work_root/geometry-a/geometry-trip-projected.jsonl" \
+    "$artifact_root/format-loaded-geometry.jsonl"
+  publish_artifact "${target_dir}/tex82-oracle/build-record.txt" \
+    "$artifact_root/oracle-build-record.txt"
+}
+
 mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
   "$work_root/geometry-a" "$work_root/geometry-b" \
   "$work_root/full-initex-a" "$work_root/full-initex-b"
+if [[ "$geometry_only" -eq 1 ]]; then
+  run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
+    "$work_root/geometry-a" geometry
+  run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
+    "$work_root/geometry-b" geometry
+  validate_and_publish_geometry
+  printf 'TeX82 bounded TRIP geometry observer passed\n'
+  exit 0
+fi
 run_phase "${oracle_bin}/umber-tex82-oracle" "$work_root/clean" clean
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-a" profile
 run_phase "${oracle_bin}/umber-tex82-oracle-trip-profile" "$work_root/profile-b" profile
@@ -175,30 +251,12 @@ for profile in profile-a profile-b; do
 done
 cmp "$work_root/profile-a/profile-initex-events.jsonl" "$work_root/profile-b/profile-initex-events.jsonl"
 cmp "$work_root/profile-a/profile-trip-events.jsonl" "$work_root/profile-b/profile-trip-events.jsonl"
-for phase in initex trip; do
-  project_geometry \
-    "$work_root/geometry-a/geometry-${phase}-events.jsonl" \
-    "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
-  project_geometry \
-    "$work_root/geometry-b/geometry-${phase}-events.jsonl" \
-    "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
-  cargo run -q -p tex-oracle --bin tex-oracle-validate -- \
-    "$work_root/geometry-a/geometry-${phase}-projected.jsonl"
-  grep -Fq '"event":"geometry"' \
-    "$work_root/geometry-a/geometry-${phase}-projected.jsonl" || {
-      printf 'TeX82 TRIP %s geometry stream is empty\n' "$phase" >&2
-      exit 1
-    }
-  cmp "$work_root/geometry-a/geometry-${phase}-projected.jsonl" \
-    "$work_root/geometry-b/geometry-${phase}-projected.jsonl"
-done
+validate_and_publish_geometry
 
 artifact_root="${target_dir}/trip-oracles/trip"
 mkdir -p "$artifact_root"
 cp "$work_root/full-initex-a/root-session.jsonl" "$artifact_root/initex-command.jsonl"
 cp "$work_root/profile-a/profile-trip-events.jsonl" "$artifact_root/format-loaded-command.jsonl"
-cp "$work_root/geometry-a/geometry-initex-projected.jsonl" "$artifact_root/initex-geometry.jsonl"
-cp "$work_root/geometry-a/geometry-trip-projected.jsonl" "$artifact_root/format-loaded-geometry.jsonl"
 cp "$work_root/clean/clean-initex-terminal.txt" "$artifact_root/initex-terminal.txt"
 cp "$work_root/clean/clean-initex.log" "$artifact_root/initex.log"
 cp "$work_root/clean/clean-trip-terminal.txt" "$artifact_root/format-loaded-terminal.txt"

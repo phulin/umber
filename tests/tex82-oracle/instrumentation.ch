@@ -107,9 +107,20 @@ begin write(umber_trace_file,'{"sequence":',umber_trace_sequence:1,
 end;
 
 procedure umber_trace_geometry_location;
+var k:integer;
+@!source_name:str_number;
 begin
 write(umber_trace_file,',"location":{"source":');
-if name>17 then umber_trace_string(name)
+source_name:=0;
+if (state<>0) and (name>17) then source_name:=name;
+k:=input_ptr;
+while (source_name=0) and (k>0) do
+  begin decr(k);
+  if (input_stack[k].state_field<>0) and
+    (input_stack[k].name_field>17) then
+    source_name:=input_stack[k].name_field;
+  end;
+if source_name<>0 then umber_trace_string(source_name)
 else if job_name<>0 then umber_trace_string(job_name)
 else write(umber_trace_file,'"terminal"');
 write(umber_trace_file,',"line":',line:1,'}');

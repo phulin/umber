@@ -81,7 +81,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
   profile runs only the focused microfixture and pins schema-v3 hpack, vpack,
   and shipout records.
 - `test-tex82-trip-observer.sh`: offline two-phase clean and bounded-profile
-  TeX82 TRIP comparison, schema validation, and profile repeatability gate.
+  TeX82 TRIP comparison, schema validation, and profile repeatability gate;
+  `--geometry-only` prepares deterministic schema-v3 reference geometry
+  without running Umber conformance.
 - `test-etex26-trip-observer.sh`: offline two-phase clean, schema-v1 command,
   and schema-v2 geometry e-TeX 2.6 e-TRIP oracle generation and repeatability
   check.
