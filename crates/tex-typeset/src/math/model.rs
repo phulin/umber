@@ -337,7 +337,17 @@ impl MathLayoutBuilder {
     }
 
     pub(crate) fn hpack(&mut self, list: FrozenHList) -> MathBox {
-        let boxed = MathBox {
+        let boxed = self.structural_hbox(list);
+        // TeX82 §651's `hpack` has one canonical return seam. Appendix G
+        // reaches it for every structural clean/sub-mlist box, not only for
+        // source boxes that arrived already packaged. Retain the finalized
+        // dimensions here so execution can publish every such transition.
+        self.observe_completed_pack(&boxed);
+        boxed
+    }
+
+    pub(crate) fn structural_hbox(&self, list: FrozenHList) -> MathBox {
+        MathBox {
             width: list.width,
             height: list.height,
             depth: list.depth,
@@ -348,13 +358,7 @@ impl MathLayoutBuilder {
             glue_set: GlueSetRatio::from_raw(0),
             glue_sign: Sign::Normal,
             glue_order: Order::Normal,
-        };
-        // TeX82 §651's `hpack` has one canonical return seam. Appendix G
-        // reaches it for every structural clean/sub-mlist box, not only for
-        // source boxes that arrived already packaged. Retain the finalized
-        // dimensions here so execution can publish every such transition.
-        self.observe_completed_pack(&boxed);
-        boxed
+        }
     }
 
     pub(crate) fn vpack(&mut self, list: FrozenHList) -> MathBox {

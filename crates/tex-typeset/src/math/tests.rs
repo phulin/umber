@@ -1007,6 +1007,17 @@ fn rebox_observes_each_tex82_packaging_call() {
         ],
         "§715 naturally hpacks the vertical box before the exact-width hpack"
     );
+
+    let (layout, _) = rebox::test_rebox(&universe, &params, sc(0), sc(18), false, true);
+    assert_eq!(
+        layout
+            .pack_observations()
+            .iter()
+            .map(|packed| (packed.axis, packed.width))
+            .collect::<Vec<_>>(),
+        vec![(BoxAxis::Horizontal, sc(0)), (BoxAxis::Horizontal, sc(18)),],
+        "zero-width vertical reuse has only its source and exact-width completions"
+    );
 }
 
 #[test]

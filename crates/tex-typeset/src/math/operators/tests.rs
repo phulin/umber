@@ -105,7 +105,7 @@ fn displayed_limits_use_shared_rebox_completion() {
 
     let layout = mlist_to_hlist(&stores, input, Style::TEXT, false, &params);
     let packs = layout.pack_observations();
-    assert_eq!(packs.len(), 3, "{packs:#?}");
+    assert_eq!(packs.len(), 4, "{packs:#?}");
     assert_eq!(packs.last().expect("exact rebox completion").width, sc(14));
 }
 

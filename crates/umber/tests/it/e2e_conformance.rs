@@ -2401,6 +2401,50 @@ fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
 }
 
 #[test]
+fn trip_loaded_final_operator_has_one_zero_before_rebox() {
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..440].join("\n")).into_bytes());
+    let (_, observer) = run_loaded_trip_source_observed(source);
+    let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let geometry = observer
+        .geometry
+        .canonical_json_lines(oracle)
+        .expect("focused geometry stream");
+    let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
+    let hpacks = stream
+        .events
+        .iter()
+        .filter_map(|event| match event.semantic {
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            }) => Some((width_sp, height_sp, depth_sp)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let natural = (64_881, 0, 0);
+    let exact = (64_881, 1_284_506, 0);
+
+    assert!(
+        hpacks
+            .windows(3)
+            .any(|packs| packs == [(0, 0, 0), natural, exact])
+    );
+    assert!(
+        !hpacks
+            .windows(4)
+            .any(|packs| packs == [(0, 0, 0), (0, 0, 0), natural, exact])
+    );
+}
+
+#[test]
 fn trip_loaded_radical_overbar_uses_normal_kerns() {
     // The full loaded stream is necessary: skipping its pre-format prefix
     // does not reproduce the showbox9 list reached through TRIP lines 438--440.
