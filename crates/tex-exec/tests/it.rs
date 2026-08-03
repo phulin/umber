@@ -1336,7 +1336,7 @@ fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_
         "canonical main control must have one aggregate rollback implementation"
     );
     assert_eq!(
-        driver.matches("stores.rollback(").count(),
+        driver.matches("stores.rollback_for_local_retry(").count(),
         1,
         "no family may introduce a separate Universe rollback path"
     );

@@ -3151,6 +3151,23 @@ fn rollback_rejects_dropped_effect_snapshot_before_mutating_stores() {
 }
 
 #[test]
+fn local_retry_reuses_only_an_identical_provenance_allocation_sequence() {
+    let mut universe = Universe::new();
+    let provenance_before = universe.provenance_stats();
+    let snapshot = universe.snapshot();
+    let first = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+
+    universe.rollback_for_local_retry(&snapshot);
+    assert_eq!(universe.provenance_stats(), provenance_before);
+    let retried = universe.source_origin(crate::input::SourceId::new(7), 70, 8, 9);
+    assert_eq!(retried, first);
+
+    universe.rollback_for_local_retry(&snapshot);
+    let divergent = universe.source_origin(crate::input::SourceId::new(8), 80, 9, 10);
+    assert_ne!(divergent, first);
+}
+
+#[test]
 fn rollback_restores_page_builder_state_and_hash() {
     let mut universe = Universe::new();
     let base_hash = universe.testing_state_hash();

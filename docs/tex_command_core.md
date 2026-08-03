@@ -2638,16 +2638,17 @@ history shares sealed chunks and resolves editor fragments against the current
 layout lazily. Deleted fragments resolve as deleted, never as a different live
 position.
 
-Packed arena origin keys are process-global, monotonic diagnostic identities.
-Rollback truncates their records but deliberately does not reuse their keys:
-an `OriginId` retained by a detached error can therefore never alias a
-different record after retry. Restoring a retained aggregate snapshot
-preserves every origin and record committed before its watermark exactly;
-allocations replayed after that watermark receive fresh ids whose record graph
-is structurally equivalent and whose macro-parent edges name the fresh
-replayed invocation. This diagnostic identity difference is excluded from all
-semantic equality listed below. Repeated failed retries retain no live records
-and reuse bounded arena capacity.
+Packed arena origin keys are process-global diagnostic identities. Ordinary
+rollback truncates records and retires their keys. A local atomic-step retry
+leases the discarded registration and record sequences: it reuses a key only
+when replay reaches the same allocation with the exactly equal source backing
+and origin record, and abandons the remaining lease at the first divergence.
+Thus redelivery of one rolled-back command retains diagnostic identity while a
+detached `OriginId` can never alias different provenance. Restoring a retained
+aggregate snapshot preserves every origin and record committed before its
+watermark exactly. This diagnostic identity is excluded from all semantic
+equality listed below. Repeated failed retries retain no live records and reuse
+bounded arena capacity.
 
 ### 26.6 Semantic independence
 

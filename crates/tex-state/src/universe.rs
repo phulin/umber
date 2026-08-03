@@ -2895,6 +2895,26 @@ impl Universe {
             .truncate(snapshot.geometry_observations_len);
     }
 
+    /// Rolls the whole timeline back for an immediate retry of the same
+    /// bounded operation, preserving only verified provenance allocation
+    /// identities from the discarded attempt.
+    pub fn rollback_for_local_retry(&mut self, snapshot: &Snapshot) {
+        self.assert_valid_snapshot(snapshot);
+        self.world.assert_snapshot_retained(&snapshot.world);
+        self.stores.rollback_for_retry(&snapshot.store);
+        self.world.rollback(&snapshot.world);
+        self.input_summary = snapshot.input_summary.clone();
+        self.interaction_mode = snapshot.interaction_mode;
+        self.page = snapshot.page.clone();
+        self.pdf.rollback(snapshot.pdf.clone());
+        self.state_hash_base = snapshot.state_hash_base.clone();
+        self.state_hash_projection_cache = snapshot.state_hash_projection_cache.clone();
+        self.dependencies
+            .restore_tracker(&snapshot.dependency_tracker);
+        self.geometry_observations
+            .truncate(snapshot.geometry_observations_len);
+    }
+
     fn rollback_generation_fork(&mut self, snapshot: &Snapshot) {
         self.assert_valid_snapshot(snapshot);
         self.world.assert_snapshot_retained(&snapshot.world);

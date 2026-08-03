@@ -1058,6 +1058,7 @@ pub(crate) struct ProvenanceStore {
     record_keys: OriginKeyRuns,
     next_record_key: u32,
     record_key_lease_end: u32,
+    retry_records: Vec<ArchivedOriginRecord>,
     record_limit: usize,
     list_span_limit: usize,
     list_entry_limit: usize,
@@ -1073,6 +1074,7 @@ impl Clone for ProvenanceStore {
             record_keys: self.record_keys.clone(),
             next_record_key: 0,
             record_key_lease_end: 0,
+            retry_records: Vec::new(),
             record_limit: self.record_limit,
             list_span_limit: self.list_span_limit,
             list_entry_limit: self.list_entry_limit,
@@ -1092,6 +1094,7 @@ impl ProvenanceStore {
             record_keys: OriginKeyRuns::default(),
             next_record_key: 0,
             record_key_lease_end: 0,
+            retry_records: Vec::new(),
             record_limit: DEFAULT_ORIGIN_RECORD_LIMIT,
             list_span_limit: DEFAULT_ORIGIN_LIST_SPAN_LIMIT,
             list_entry_limit: DEFAULT_ORIGIN_LIST_ENTRY_LIMIT,
@@ -1122,8 +1125,21 @@ impl ProvenanceStore {
                 _ => OriginId::UNKNOWN,
             };
         }
-        let Some(key) = self.next_packed_arena_origin() else {
-            return OriginId::UNKNOWN;
+        let key = if self
+            .retry_records
+            .last()
+            .is_some_and(|(_, expected)| *expected == record)
+        {
+            self.retry_records
+                .pop()
+                .expect("matching retry record is present")
+                .0
+        } else {
+            self.retry_records.clear();
+            let Some(key) = self.next_packed_arena_origin() else {
+                return OriginId::UNKNOWN;
+            };
+            key
         };
         let slot = u32::try_from(self.records.len())
             .expect("global origin key capacity bounds provenance record slots");
@@ -1404,6 +1420,33 @@ impl ProvenanceStore {
 
     /// Truncates to a previously-taken aggregate snapshot watermark.
     pub(crate) fn truncate_to(&mut self, mark: ProvenanceStoreMark) {
+        self.retry_records.clear();
+        self.truncate_to_inner(mark);
+    }
+
+    /// Rolls back records while leasing the exact discarded allocation
+    /// sequence to the immediately retried atomic operation.
+    pub(crate) fn truncate_to_for_retry(&mut self, mark: ProvenanceStoreMark) {
+        self.retry_records = (mark.records as usize..self.records.len())
+            .filter_map(|slot| self.records.get_slot(slot).map(|record| (slot, record)))
+            .map(|(slot, record)| {
+                let key = self
+                    .record_keys
+                    .runs
+                    .iter()
+                    .find_map(|run| {
+                        let offset = u32::try_from(slot).ok()?.checked_sub(run.first_slot)?;
+                        (offset < run.len).then(|| run.first_key + offset)
+                    })
+                    .expect("live provenance slot has a packed key");
+                (key, record)
+            })
+            .rev()
+            .collect();
+        self.truncate_to_inner(mark);
+    }
+
+    fn truncate_to_inner(&mut self, mark: ProvenanceStoreMark) {
         let records = mark.records as usize;
         let spans = mark.spans as usize;
         let origins = mark.origins as usize;

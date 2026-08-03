@@ -524,7 +524,7 @@ impl CanonicalStepSnapshot {
         // may contain OriginIds allocated from that owner. No intermediate
         // state with a restored command and a newer provenance timeline is
         // observable outside this method.
-        stores.rollback(&self.universe);
+        stores.rollback_for_local_retry(&self.universe);
         control
             .command
             .rollback(self.command)

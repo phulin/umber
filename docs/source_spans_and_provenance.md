@@ -512,11 +512,14 @@ Canonical executor operations pair their `CommandState` snapshot with this
 aggregate watermark in one private rollback value. Rollback removes all
 invocation records created by a failed macro scan or a resource-suspended
 nested expansion at the same time that it restores macro activations and
-shared argument ranges. Keys for removed arena records remain retired rather
-than being reused, so a detached stale `OriginId` cannot alias a retry record.
-A retained aggregate checkpoint, by contrast, restores the identical committed
-origin prefix and records. Retried allocations after that prefix receive fresh
-ids with the same source relationships and fresh parent links.
+shared argument ranges. Ordinary rollback retires keys for removed arena
+records. A local atomic-step retry leases the discarded source registrations
+and origin records in allocation order, reusing an identity only while the
+replayed registration or record is exactly equal; the first divergence
+abandons the lease and returns to fresh process-global keys. Thus identical
+command redelivery has stable diagnostic identity without letting a detached
+stale `OriginId` alias different provenance. A retained aggregate checkpoint,
+by contrast, restores the identical committed origin prefix and records.
 
 ## 9. Capacity and format constraints
 

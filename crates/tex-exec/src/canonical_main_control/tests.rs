@@ -7400,7 +7400,6 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
 }
 
 #[test]
-#[ignore = "umber2-9oof"]
 fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);

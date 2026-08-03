@@ -2750,6 +2750,14 @@ impl Stores {
 
     /// Rolls all stores back to `snapshot` as one atomic tuple.
     pub(crate) fn rollback(&mut self, snapshot: &StoreSnapshot) {
+        self.rollback_inner(snapshot, false);
+    }
+
+    pub(crate) fn rollback_for_retry(&mut self, snapshot: &StoreSnapshot) {
+        self.rollback_inner(snapshot, true);
+    }
+
+    fn rollback_inner(&mut self, snapshot: &StoreSnapshot, retry: bool) {
         self.assert_valid_snapshot(snapshot);
         let _ = self.engine_usage_statistics();
         self.release_survivor_pins_to(snapshot.survivor_pin_mark);
@@ -2758,8 +2766,15 @@ impl Stores {
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
         self.tokens.truncate_to(snapshot.token_mark);
-        self.provenance.truncate_to(snapshot.provenance_mark);
-        self.source_map.truncate_to(snapshot.source_map_mark);
+        if retry {
+            self.provenance
+                .truncate_to_for_retry(snapshot.provenance_mark);
+            self.source_map
+                .truncate_to_for_retry(snapshot.source_map_mark);
+        } else {
+            self.provenance.truncate_to(snapshot.provenance_mark);
+            self.source_map.truncate_to(snapshot.source_map_mark);
+        }
         self.macros.truncate_to(snapshot.macro_mark);
         self.glue.truncate_to(snapshot.glue_mark);
         self.fonts.truncate_to(snapshot.font_mark);
