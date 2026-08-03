@@ -23,7 +23,8 @@ use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 use tex_state::token_store::TokenListBuilder;
 use tex_state::{
     AlignmentScannerPhase, ContentHash, EditorLayout, ExpansionState, FileContent, FragmentStore,
-    InputRecordId, MacroReplaySite, RootSpanId, TracedExpansionToken, WorldError,
+    InputRecordId, LiteralSpanPolicy, MacroReplaySite, RootSpanId, TracedExpansionToken,
+    WorldError,
 };
 #[cfg(feature = "profiling")]
 use tex_state::{ProfilingTimer, World};
@@ -1345,17 +1346,6 @@ impl DecodedTracedToken {
     }
 }
 
-/// Which immutable macro-replay characters a direct span consumer accepts.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum LiteralSpanPolicy {
-    /// Characters that are inert to an expanded replacement scanner.
-    /// Group and parameter catcodes remain seams because that scanner must
-    /// update its own brace/parameter state for them.
-    ExpandedReplacement,
-    /// Ordinary text characters accepted by horizontal main control.
-    HorizontalText,
-}
-
 /// Feature-gated attribution counters and wall-clock timers for token-list
 /// expansion delivery.
 ///
@@ -1449,35 +1439,6 @@ impl ExpansionStats {
             0.0
         } else {
             self.source_text_tokens as f64 / self.source_text_spans as f64
-        }
-    }
-}
-
-impl LiteralSpanPolicy {
-    #[inline(always)]
-    fn accepts(self, token: Token) -> bool {
-        match (self, token) {
-            (
-                Self::ExpandedReplacement,
-                Token::Char {
-                    cat:
-                        Catcode::BeginGroup | Catcode::EndGroup | Catcode::Parameter | Catcode::Active,
-                    ..
-                },
-            ) => false,
-            (Self::ExpandedReplacement, Token::Char { .. }) => true,
-            (
-                Self::HorizontalText,
-                Token::Char {
-                    cat: Catcode::Letter | Catcode::Other | Catcode::Space,
-                    ..
-                },
-            ) => true,
-            (
-                Self::ExpandedReplacement | Self::HorizontalText,
-                Token::Cs(_) | Token::Param(_) | Token::Frozen(_),
-            )
-            | (Self::HorizontalText, Token::Char { .. }) => false,
         }
     }
 }

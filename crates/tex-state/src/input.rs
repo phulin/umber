@@ -19,6 +19,50 @@ pub enum AlignmentScannerPhase {
     BetweenEntries,
 }
 
+/// Which immutable replay characters a direct span consumer accepts.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum LiteralSpanPolicy {
+    /// Characters inert to an expanded replacement scanner.
+    ExpandedReplacement,
+    /// Ordinary text characters accepted by horizontal main control.
+    HorizontalText,
+}
+
+impl LiteralSpanPolicy {
+    #[must_use]
+    pub const fn accepts(self, token: Token) -> bool {
+        match (self, token) {
+            (
+                Self::ExpandedReplacement,
+                Token::Char {
+                    cat:
+                        crate::token::Catcode::BeginGroup
+                        | crate::token::Catcode::EndGroup
+                        | crate::token::Catcode::Parameter
+                        | crate::token::Catcode::Active,
+                    ..
+                },
+            ) => false,
+            (Self::ExpandedReplacement, Token::Char { .. }) => true,
+            (
+                Self::HorizontalText,
+                Token::Char {
+                    cat:
+                        crate::token::Catcode::Letter
+                        | crate::token::Catcode::Other
+                        | crate::token::Catcode::Space,
+                    ..
+                },
+            ) => true,
+            (
+                Self::ExpandedReplacement | Self::HorizontalText,
+                Token::Cs(_) | Token::Param(_) | Token::Frozen(_),
+            )
+            | (Self::HorizontalText, Token::Char { .. }) => false,
+        }
+    }
+}
+
 impl AlignmentScannerPhase {
     /// Returns TeX's sentinel `align_state` value for this scanner phase.
     #[must_use]

@@ -58,6 +58,8 @@ fn macro_arguments_stay_on_the_state_owner() {
                     && !source.contains("use tex_lex::{InputStack, MacroArguments}")
                     && !source.contains("tex_lex::MacroReplaySite")
                     && !source.contains("tex_lex::TracedExpansionToken")
+                    && !source.contains("tex_lex::LiteralSpanPolicy")
+                    && !source.contains("LexError, LiteralSpanPolicy")
                     && !source.contains("MacroReplaySite, TokenListReplayKind")
                     && !source.contains("TokenListReplayKind, TracedExpansionToken"),
                 "{} must consume immutable replay payloads from tex-state",
@@ -70,4 +72,5 @@ fn macro_arguments_stay_on_the_state_owner() {
     assert!(!lexer.contains("pub struct MacroArguments"));
     assert!(!lexer.contains("pub struct MacroReplaySite"));
     assert!(!lexer.contains("pub struct TracedExpansionToken"));
+    assert!(!lexer.contains("pub enum LiteralSpanPolicy"));
 }

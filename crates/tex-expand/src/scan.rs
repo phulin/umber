@@ -7,7 +7,8 @@
 
 use std::fmt;
 
-use tex_lex::{InputStack, LexError, LiteralSpanPolicy};
+use tex_lex::{InputStack, LexError};
+use tex_state::LiteralSpanPolicy;
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags};
