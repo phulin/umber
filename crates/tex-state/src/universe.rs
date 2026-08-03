@@ -828,6 +828,26 @@ impl Snapshot {
             && self.exact_state_identity == other.exact_state_identity
     }
 
+    /// Compares detached output/effect slices captured by two snapshots.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn output_segment_matches(
+        &self,
+        effect_range: std::ops::Range<usize>,
+        artifact_range: std::ops::Range<usize>,
+        other: &Self,
+        other_effect_range: std::ops::Range<usize>,
+        other_artifact_range: std::ops::Range<usize>,
+    ) -> bool {
+        self.world.output_segment_matches(
+            effect_range,
+            artifact_range,
+            &other.world,
+            other_effect_range,
+            other_artifact_range,
+        )
+    }
+
     /// Returns whether the optional composed canonical projection was captured.
     #[doc(hidden)]
     #[must_use]

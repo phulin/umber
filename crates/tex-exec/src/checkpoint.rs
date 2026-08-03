@@ -390,6 +390,28 @@ impl EngineCheckpoint {
         self.effect_prefix
     }
 
+    /// Compares the detached output/effect segment ending at two checkpoints.
+    /// Future-state identity deliberately excludes these append-only logs, so
+    /// convergence must validate the newly published segment separately.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn output_segment_matches(
+        &self,
+        self_effect_start: usize,
+        self_artifact_start: usize,
+        other: &Self,
+        other_effect_start: usize,
+        other_artifact_start: usize,
+    ) -> bool {
+        self.universe.output_segment_matches(
+            self_effect_start..self.effect_prefix,
+            self_artifact_start..self.artifact_prefix,
+            &other.universe,
+            other_effect_start..other.effect_prefix,
+            other_artifact_start..other.artifact_prefix,
+        )
+    }
+
     #[must_use]
     pub const fn root_anchor(&self) -> usize {
         self.root_anchor

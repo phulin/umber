@@ -1612,7 +1612,9 @@ pub struct WorldSnapshot {
     input_identities: IdentityMark,
     input_dependencies: Arc<BTreeMap<Arc<Path>, InputDependency>>,
     shell_escape_len: usize,
+    artifact_base: usize,
     artifact_commit_len: usize,
+    artifact_commits: Arc<Vec<ContentHash>>,
     commit_mode: WorldCommitMode,
     /// tex.web §54's `open_parens`: a step that printed `(name` and is then
     /// abandoned must take the count back with the print, or §1335 would
@@ -1627,6 +1629,39 @@ pub struct WorldSnapshot {
     /// would count the same report once per attempt. §82's hundredth-error
     /// transition reads this count, so the two have to move together.
     error_channel: crate::print::ErrorChannel,
+}
+
+impl WorldSnapshot {
+    pub(crate) fn output_segment_matches(
+        &self,
+        effect_range: std::ops::Range<usize>,
+        artifact_range: std::ops::Range<usize>,
+        other: &Self,
+        other_effect_range: std::ops::Range<usize>,
+        other_artifact_range: std::ops::Range<usize>,
+    ) -> bool {
+        let Some(self_effect_base) = usize::try_from(self.effect_base.raw()).ok() else {
+            return false;
+        };
+        let Some(other_effect_base) = usize::try_from(other.effect_base.raw()).ok() else {
+            return false;
+        };
+        self.effects.get(
+            effect_range.start.saturating_sub(self_effect_base)
+                ..effect_range.end.saturating_sub(self_effect_base),
+        ) == other.effects.get(
+            other_effect_range.start.saturating_sub(other_effect_base)
+                ..other_effect_range.end.saturating_sub(other_effect_base),
+        ) && self.artifact_commits.get(
+            artifact_range.start.saturating_sub(self.artifact_base)
+                ..artifact_range.end.saturating_sub(self.artifact_base),
+        ) == other.artifact_commits.get(
+            other_artifact_range
+                .start
+                .saturating_sub(other.artifact_base)
+                ..other_artifact_range.end.saturating_sub(other.artifact_base),
+        )
+    }
 }
 
 /// Cursor into World-owned state for semantic convergence hashing.
@@ -3704,7 +3739,9 @@ impl World {
             input_identities: self.input_identities.watermark(),
             input_dependencies: self.input_dependencies.clone(),
             shell_escape_len: self.shell_escapes.len(),
+            artifact_base: self.artifact_base,
             artifact_commit_len: self.artifact_pos(),
+            artifact_commits: Arc::clone(&self.artifact_commits),
             commit_mode: self.commit_mode,
             file_framing: self.file_framing,
             error_channel: self.error_channel.clone(),

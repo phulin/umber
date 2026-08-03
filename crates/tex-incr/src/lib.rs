@@ -3200,6 +3200,10 @@ struct ResumeSink {
     same_history_hash_mismatches: usize,
     trace_validation_latency: Duration,
     allow_convergence: bool,
+    compared_actual_effect_prefix: usize,
+    compared_actual_artifact_prefix: usize,
+    compared_old_effect_prefix: usize,
+    compared_old_artifact_prefix: usize,
 }
 
 impl ResumeSink {
@@ -3239,6 +3243,10 @@ impl ResumeSink {
             same_history_hash_mismatches: 0,
             trace_validation_latency: Duration::ZERO,
             allow_convergence,
+            compared_actual_effect_prefix: old[restart].effect_prefix,
+            compared_actual_artifact_prefix: old[restart].artifact_prefix,
+            compared_old_effect_prefix: old[restart].effect_prefix,
+            compared_old_artifact_prefix: old[restart].artifact_prefix,
         }
     }
 
@@ -3281,9 +3289,21 @@ impl CheckpointSink for ResumeSink {
         self.next_expected += 1;
         self.same_history_attempts += 1;
         let validation_started = Timer::start();
-        let exact_match = actual
-            .checkpoint()
-            .exact_future_state_matches(expected_record.checkpoint());
+        let output_matches = actual.checkpoint().output_segment_matches(
+            self.compared_actual_effect_prefix,
+            self.compared_actual_artifact_prefix,
+            expected_record.checkpoint(),
+            self.compared_old_effect_prefix,
+            self.compared_old_artifact_prefix,
+        );
+        self.compared_actual_effect_prefix = actual.effect_prefix;
+        self.compared_actual_artifact_prefix = actual.artifact_prefix;
+        self.compared_old_effect_prefix = expected_record.effect_prefix;
+        self.compared_old_artifact_prefix = expected_record.artifact_prefix;
+        let exact_match = output_matches
+            && actual
+                .checkpoint()
+                .exact_future_state_matches(expected_record.checkpoint());
         self.trace_validation_latency = self
             .trace_validation_latency
             .saturating_add(validation_started.elapsed());
