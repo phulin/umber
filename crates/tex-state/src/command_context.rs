@@ -33,10 +33,7 @@ pub struct CommandContext<'a> {
 
 impl CommandContext<'_> {
     fn observe_dependency(&mut self, key: DependencyKey) {
-        self.universe.track_dependency(key);
-        if let Some(value) = self.universe.semantic_dependency_value(key) {
-            self.universe.record_dependency(key, value);
-        }
+        self.universe.observe_semantic_dependency(key);
     }
 
     /// Reads an integer parameter for diagnostic rendering outside semantic
@@ -648,7 +645,11 @@ impl CommandContext<'_> {
 
     /// Classifies a box register without exposing node-store ownership.
     #[must_use]
-    pub fn box_kind(&self, index: u16) -> Option<CommandBoxKind> {
+    pub fn box_kind(&mut self, index: u16) -> Option<CommandBoxKind> {
+        self.observe_dependency(DependencyKey::Cell {
+            bank: DependencyBank::Box,
+            index: u32::from(index),
+        });
         let list = self.universe.box_reg(index)?;
         match self.universe.nodes(list).first()? {
             crate::node_arena::NodeRef::HList(_) => Some(CommandBoxKind::Horizontal),

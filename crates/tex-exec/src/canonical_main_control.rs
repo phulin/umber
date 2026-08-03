@@ -5249,6 +5249,10 @@ fn set_canonical_math_char(
     modes: &mut ModeNest,
     command: &mut CommandMachine<'_>,
 ) -> Result<(), ExecError> {
+    stores.observe_semantic_dependency(tex_state::DependencyKey::Code {
+        table: tex_state::DependencyCodeTable::Mathcode,
+        scalar: ch.into(),
+    });
     let code = stores.mathcode(ch);
     if code >= 0x8000 {
         let mut processor = command.processor(stores);
@@ -15430,6 +15434,10 @@ fn apply_scanned_step(
                         report_improper_setbox(context, stores)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+                        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                            bank: tex_state::DependencyBank::Box,
+                            index: u32::from(index),
+                        });
                         let id = if copy {
                             stores.box_reg(index)
                         } else {
@@ -15494,6 +15502,10 @@ fn apply_scanned_step(
             copy,
             ships_out,
         } => {
+            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                bank: tex_state::DependencyBank::Box,
+                index: u32::from(index),
+            });
             let id = if copy {
                 stores.box_reg(index)
             } else {
@@ -15508,6 +15520,10 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Unbox { primitive, index } => {
+            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                bank: tex_state::DependencyBank::Box,
+                index: u32::from(index),
+            });
             crate::canonical_box_runtime::execute_scanned_unbox(
                 primitive,
                 index,
@@ -17337,6 +17353,10 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
+            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+                bank: tex_state::DependencyBank::Box,
+                index: u32::from(index),
+            });
             let id = if copy {
                 stores.box_reg(index)
             } else {

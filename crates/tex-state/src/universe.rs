@@ -1919,6 +1919,16 @@ impl Universe {
         self.dependencies.track(key)
     }
 
+    /// Records one typed state read using its allocation-independent semantic
+    /// value. Reads before a paragraph region opens remain staged by the
+    /// dependency runtime and are claimed by the next canonical paragraph.
+    pub fn observe_semantic_dependency(&mut self, key: DependencyKey) {
+        self.track_dependency(key);
+        if let Some(value) = self.semantic_dependency_value(key) {
+            self.record_dependency(key, value);
+        }
+    }
+
     /// Returns the current changed-at stamp for validation.
     #[must_use]
     pub fn dependency_changed_at(&self, key: DependencyKey) -> ChangedAt {

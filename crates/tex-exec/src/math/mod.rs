@@ -47,13 +47,17 @@ impl MathFontFailure {
     }
 }
 
-pub(super) fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
+pub(super) fn math_font_failure(stores: &mut Universe) -> Option<MathFontFailure> {
     const SIZES: [MathFontSize; 3] = [
         MathFontSize::Text,
         MathFontSize::Script,
         MathFontSize::ScriptScript,
     ];
     if SIZES.into_iter().any(|size| {
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::MathFamilyFont,
+            index: u32::from(size.index()) * 16 + 2,
+        });
         let font = stores.math_family_font(size, 2);
         stores.classic_math_parameter_count(font) < 22
             && !matches!(
@@ -64,6 +68,10 @@ pub(super) fn math_font_failure(stores: &Universe) -> Option<MathFontFailure> {
         return Some(MathFontFailure::Symbol);
     }
     if SIZES.into_iter().any(|size| {
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::MathFamilyFont,
+            index: u32::from(size.index()) * 16 + 3,
+        });
         let font = stores.math_family_font(size, 3);
         stores.classic_math_parameter_count(font) < 13
             && !matches!(
@@ -89,7 +97,7 @@ pub(crate) fn reject_invalid_math_fonts(
 }
 
 #[cfg(any())]
-pub(crate) fn testing_math_font_failure(stores: &Universe) -> Option<&'static str> {
+pub(crate) fn testing_math_font_failure(stores: &mut Universe) -> Option<&'static str> {
     math_font_failure(stores).map(|failure| match failure {
         MathFontFailure::Symbol => "symbol",
         MathFontFailure::Extension => "extension",
