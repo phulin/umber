@@ -136,7 +136,10 @@ fn operator_nucleus(
                 // TeX82 §749 still reaches the common operator-centering
                 // step after `fetch` reports a nonexistent math character.
                 // The resulting empty hbox therefore carries the axis shift.
-                let mut missing = ctx.layout.hpack(ctx.layout.empty());
+                // TeX82 §749's failed fetch resets the nucleus field to
+                // empty before clean_box; §720 therefore returns its already-
+                // clean null box without packaging it.
+                let mut missing = ctx.layout.null_hbox();
                 let axis = ctx.params.for_size(ctx.style.size()).symbols.axis_height;
                 missing.shift = neg(axis);
                 return missing;
@@ -164,6 +167,9 @@ fn operator_nucleus(
             // `hpack(q,natural)`. Both direct classic boxes and OpenType
             // display variants replace that call in this kernel, so publish
             // the completion after either selection path.
+            ctx.layout.observe_completed_pack(&boxed);
+            // The direct operator shortcut replaces both the temporary
+            // one-noad §724 dimensions pack and §720's clean-box pack.
             ctx.layout.observe_completed_pack(&boxed);
             *delta = selected_delta;
             if !matches!(effective_limits, LimitType::Limits)

@@ -214,6 +214,10 @@ pub(super) fn make_math_accent(
             script_delta,
         );
         accentee = ctx.layout.hpack(base);
+        // TeX82 §733 swaps the scripts into a temporary one-noad mlist.
+        // Its §724 dimensions check and §720's enclosing clean-box pack have
+        // equal dimensions; this direct construction replaces both calls.
+        ctx.layout.observe_completed_pack(&accentee);
         delta = add(delta, sub(accentee.height, accentee_height));
         accentee_height = accentee.height;
         scripts_handled = true;

@@ -2460,6 +2460,76 @@ fn trip_loaded_final_operator_has_one_zero_before_rebox() {
 }
 
 #[test]
+fn trip_loaded_hairy_display_preserves_appendix_g_pack_order() {
+    // TRIP line 285 exercises TeX82 §§720, 724, 733, and 749 together. Keep
+    // the repeated package calls in their canonical order; equal dimensions
+    // are distinct completed operations, not deduplication candidates.
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..285].join("\n")).into_bytes());
+    let (_, observer) = run_loaded_trip_source_observed(source);
+    let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let geometry = observer
+        .geometry
+        .canonical_json_lines(oracle)
+        .expect("focused geometry stream");
+    let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
+    let hpacks = stream
+        .events
+        .iter()
+        .filter_map(|event| match event.semantic {
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            }) => Some((width_sp, height_sp, depth_sp)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(hpacks.windows(5).any(|packs| {
+        packs
+            == [
+                (0, 0, 0),
+                (0, 0, 0),
+                (392_561, 1_120_666, 275_251),
+                (392_561, 1_120_666, 275_251),
+                (392_561, 1_120_666, 275_251),
+            ]
+    }));
+    assert!(hpacks.windows(12).any(|packs| {
+        packs
+            == [
+                (196_608, 524_288, 131_072),
+                (196_608, 524_288, 131_072),
+                (131_072, 0, 0),
+                (131_072, 0, 0),
+                (196_608, 786_432, 0),
+                (196_608, 0, 0),
+                (196_608, 1_835_008, 0),
+                (524_288, 0, 0),
+                (524_288, 0, 0),
+                (524_288, 458_752, 0),
+                (131_072, 0, 0),
+                (131_072, 0, 0),
+            ]
+    }));
+    assert!(hpacks.windows(3).any(|packs| {
+        packs
+            == [
+                (393_216, 1_048_576, 262_145),
+                (393_216, 1_048_576, 262_145),
+                (0, 458_752, 0),
+            ]
+    }));
+}
+
+#[test]
 fn trip_loaded_radical_overbar_uses_normal_kerns() {
     // The full loaded stream is necessary: skipping its pre-format prefix
     // does not reproduce the showbox9 list reached through TRIP lines 438--440.

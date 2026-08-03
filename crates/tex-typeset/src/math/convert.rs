@@ -775,7 +775,13 @@ pub(crate) fn clean_box(
                 ctx.layout.observe_completed_pack(&boxed);
                 boxed
             } else {
-                ctx.layout.hpack(ctx.layout.empty())
+                // `fetch` empties the temporary noad's field, but its §724
+                // dimensions check and §720's common `hpack(q,natural)` both
+                // still complete with the same null dimensions.
+                let boxed = ctx.layout.null_hbox();
+                ctx.layout.observe_completed_pack(&boxed);
+                ctx.layout.observe_completed_pack(&boxed);
+                boxed
             }
         }
         MathField::SubBox(list) => {

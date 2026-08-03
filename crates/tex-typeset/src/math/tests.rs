@@ -1081,6 +1081,40 @@ fn clean_math_character_observes_both_tex82_hpack_completions() {
 }
 
 #[test]
+fn clean_missing_math_character_observes_both_zero_completions() {
+    // TeX82 §§720 and 724: fetch empties the temporary noad's missing
+    // character, but both its dimensions pack and clean_box's pack still run.
+    let universe = setup_universe();
+    let params = MathParams::read(&universe);
+    let mut ctx = Context {
+        state: &universe,
+        params: &params,
+        style: Style::TEXT,
+        mu: sc(0),
+        layout: MathLayoutBuilder::new(),
+        converted: Default::default(),
+        source_lists: Default::default(),
+        conversion_events: Default::default(),
+        recovered: Default::default(),
+    };
+    let missing = MathChar {
+        family: 15,
+        character: '\u{10ffff}',
+        origin: tex_state::token::OriginId::UNKNOWN,
+    };
+
+    let boxed = clean_box(&mut ctx, &MathField::MathChar(missing), Style::TEXT);
+    let zero = MathPackObservation {
+        axis: BoxAxis::Horizontal,
+        width: sc(0),
+        height: sc(0),
+        depth: sc(0),
+    };
+    let layout = ctx.layout.finish(boxed.list);
+    assert_eq!(layout.pack_observations(), &[zero, zero]);
+}
+
+#[test]
 fn clean_box_physically_removes_only_a_trailing_italic_kern_after_packing() {
     // TeX82 §720: the simplification recognizes exactly character+kern,
     // retains hpack's width, and unlinks the kern from the box's owned list.
@@ -2091,7 +2125,7 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
 }
 
 #[test]
-fn missing_math_accent_still_publishes_clean_nucleus_pack() {
+fn missing_math_accent_with_empty_nucleus_has_only_dimensions_pack() {
     let mut universe = setup_universe();
     let noad = MathNoad::new(
         NoadKind::Accent {
@@ -2114,7 +2148,9 @@ fn missing_math_accent_still_publishes_clean_nucleus_pack() {
         depth: sc(0),
     };
 
-    assert_eq!(layout.pack_observations(), &[empty_pack, empty_pack]);
+    // TeX82 §720's empty nucleus is already a clean null box, so only §724's
+    // enclosing noad dimensions pack remains observable here.
+    assert_eq!(layout.pack_observations(), &[empty_pack]);
 }
 
 #[test]

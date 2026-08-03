@@ -4,10 +4,10 @@ use crate::math::{MathLayoutReader, MathParams, Style, mlist_to_hlist};
 use tex_state::math::{FractionThickness, MathFontSize, MathFraction};
 
 #[test]
-fn character_operator_observes_clean_box_hpack() {
-    // TeX82 §749 calls clean_box for a character operator nucleus, and
-    // §720 packages that character with hpack(q,natural). The completed
-    // operator then reaches §724's independent check_dimensions pack.
+fn character_operator_observes_temporary_clean_and_dimensions_packs() {
+    // TeX82 §749 calls clean_box for a character operator nucleus. Its
+    // temporary noad crosses §724 before §720 packages the result, and the
+    // completed operator then reaches the enclosing §724 dimensions pack.
     let mut stores = setup_universe();
     let input = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Operator(LimitType::NoLimits),
@@ -23,6 +23,12 @@ fn character_operator_observes_clean_box_hpack() {
     assert_eq!(
         layout.pack_observations(),
         &[
+            super::super::MathPackObservation {
+                axis: super::super::BoxAxis::Horizontal,
+                width: operator.width,
+                height: operator.height,
+                depth: operator.depth,
+            },
             super::super::MathPackObservation {
                 axis: super::super::BoxAxis::Horizontal,
                 width: operator.width,
@@ -65,6 +71,11 @@ fn missing_character_operator_still_centers_its_empty_box() {
         (sc(0), sc(0), sc(0))
     );
     assert_eq!(boxed.shift, expected);
+    assert_eq!(
+        layout.pack_observations().len(),
+        1,
+        "failed §749 fetch reaches only the enclosing §724 dimensions pack"
+    );
 
     let ordinary = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
