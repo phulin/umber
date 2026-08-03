@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use tex_command::{CommandProfile, RegisteredSourceKind, SourceRegistration};
+use tex_command::{
+    CommandDeliveryBoundary, CommandObservation, CommandObserver, CommandProfile, InputReason,
+    InputTransition, RegisteredSourceKind, SourceRegistration,
+};
 use tex_exec::{
     CanonicalMainControl, CanonicalParagraphRegion, EngineBoundary, ExecutionBudgetCounters,
     MainControlStep,
@@ -71,6 +74,32 @@ fn run_to_end_observed(control: &mut CanonicalMainControl, stores: &mut Universe
     }
 }
 
+#[derive(Debug, Default)]
+struct ObservationRecorder(Vec<CommandObservation>);
+
+impl CommandObserver for ObservationRecorder {
+    fn committed(&mut self, observation: CommandObservation) {
+        self.0.push(observation);
+    }
+}
+
+fn collect_to_end(
+    control: &mut CanonicalMainControl,
+    stores: &mut Universe,
+) -> ObservationRecorder {
+    let mut observations = ObservationRecorder::default();
+    loop {
+        match control
+            .step_with_observer(stores, &mut observations)
+            .expect("canonical program executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    observations
+}
+
 #[test]
 fn one_token_everydisplay_traces_its_named_context_before_final_token_execution() {
     // TeX82 §§323 and 1145: begin_token_list(every_display,
@@ -122,6 +151,78 @@ fn exhausted_ordinary_token_replay_does_not_gain_a_named_hook_trace() {
     assert!(!terminal.contains("everydisplay->"), "{terminal}");
     assert_eq!(stores.count(7), 23);
     assert_eq!(control.command_mut().input_level_count(), 0);
+}
+
+#[test]
+fn output_token_list_push_precedes_its_scanner_owned_opening_brace() {
+    // TeX82/pdfTeX §§1025/323: `begin_token_list(output_routine,
+    // output_text)` publishes the named input level before `scan_left_brace`
+    // consumes the routine's opening brace.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\maxdeadcycles=1\output={\dimen0=1pt}
+           \topskip=0pt\setbox0=\vbox to1pt{}\copy0\penalty-10000\end",
+    );
+
+    let observations = collect_to_end(&mut control, &mut stores);
+    let (push, output_level) = observations
+        .0
+        .iter()
+        .enumerate()
+        .find_map(|(index, observation)| match observation {
+            CommandObservation::Input(record)
+                if record.transition == InputTransition::Push
+                    && record.reason == InputReason::OutputRoutine =>
+            {
+                Some((index, record.level))
+            }
+            _ => None,
+        })
+        .expect("the output token list is published");
+    let opening_brace = observations
+        .0
+        .iter()
+        .enumerate()
+        .find_map(|(index, observation)| match observation {
+            CommandObservation::Command(record)
+                if record.boundary == CommandDeliveryBoundary::Raw
+                    && record.command == "left_brace"
+                    && record.provenance.input_level == output_level =>
+            {
+                Some(index)
+            }
+            _ => None,
+        })
+        .expect("the output scanner consumes its opening brace");
+    assert!(
+        push < opening_brace,
+        "the §323 publication precedes the §1025 brace: {:?}",
+        observations.0
+    );
+}
+
+#[test]
+fn default_page_output_publishes_no_output_token_list_push() {
+    // TeX82 §§1023--1025: the default output path ships box 255 without
+    // entering `output_text`; only a selected non-null \output routine owns
+    // the named token-list publication.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(
+        &mut control,
+        br"\topskip=0pt\setbox0=\vbox to1pt{}\copy0\penalty-10000\end",
+    );
+
+    let observations = collect_to_end(&mut control, &mut stores);
+    assert!(!observations.0.iter().any(|observation| matches!(
+        observation,
+        CommandObservation::Input(record)
+            if record.transition == InputTransition::Push
+                && record.reason == InputReason::OutputRoutine
+    )));
 }
 
 fn editor_layout_for(bytes: &[u8]) -> (tex_state::FragmentStore, tex_state::EditorLayout) {

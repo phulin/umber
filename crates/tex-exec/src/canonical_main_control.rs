@@ -185,7 +185,10 @@ pub struct CanonicalMainControl {
     /// exhausted; complete TeX jobs retain §360's interactive `*` loop.
     stop_at_end_of_input: bool,
     /// Observations produced by `fire_pending_page_output` after the current
-    /// step's own records. Drained by every step, observed or not.
+    /// step's own records. Drained by every step, observed or not. TeX82
+    /// §§1025/323's named `output_text` push is drained into this buffer
+    /// while the output episode is opened, before the following step can
+    /// deliver the routine's scanner-owned opening brace.
     page_output_observations: Vec<CommandObservation>,
     /// The commit buffer for the operation in flight, occupied exactly while
     /// an observed operation is running.
@@ -3254,9 +3257,24 @@ impl CanonicalMainControl {
                     let opened = processor.begin_selected_output_routine();
                     let opened = opened.map_err(command_error);
                     if enclosing.is_some() {
-                        let deferred =
+                        let mut deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
                                 .unwrap_or_default();
+                        // TeX82 §1025 calls `begin_token_list(output_routine,
+                        // output_text)` before `scan_left_brace`, and §323
+                        // publishes the named push inside that call. The
+                        // physical replay push above is observed immediately,
+                        // while its named publication is queued in command
+                        // state until the processor borrow ends. Drain it into
+                        // the same page-output episode now: leaving it for the
+                        // ordinary next-step tail lets that step's raw opening
+                        // brace overtake the push.
+                        deferred.0.extend(
+                            self.command
+                                .publish_named_token_list_pushes(&mut stores.command_context())
+                                .into_iter()
+                                .map(CommandObservation::Input),
+                        );
                         self.page_output_observations.extend(deferred.0);
                     }
                     opened?;
