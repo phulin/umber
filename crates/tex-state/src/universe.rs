@@ -2317,6 +2317,15 @@ impl Universe {
     }
 
     #[doc(hidden)]
+    pub fn record_carried_canonical_paragraph_region(
+        &mut self,
+        record: crate::CanonicalParagraphHistoryRecord,
+    ) {
+        self.pure_memo
+            .record_carried_canonical_paragraph_region(record);
+    }
+
+    #[doc(hidden)]
     pub fn record_canonical_paragraph_lookup(&mut self, hit: bool, commands: usize) {
         self.pure_memo
             .record_canonical_paragraph_lookup(hit, commands);

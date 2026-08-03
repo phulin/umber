@@ -203,13 +203,23 @@ pub struct ParagraphOpportunityStats {
 /// The executable replay payload remains owned by `tex-exec`; this state-side
 /// record is the authoritative ordered publication and telemetry substrate
 /// carried between editor generations.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct CanonicalParagraphHistoryRecord {
     pub identity: u64,
     pub root_start: Option<usize>,
     pub root_end: Option<usize>,
     pub delivered_commands: usize,
     pub retained_bytes: usize,
+    /// Exact semantic reads captured while canonical main control owned the
+    /// paragraph. These remain detached across accepted generations.
+    pub dependencies: Arc<[ObservedDependency]>,
+    /// Entry-class and setter-observed replay preconditions.
+    pub mutation_entry_in_group: bool,
+    pub mutations: Arc<[PureParagraphMutation]>,
+    /// Accepted retained output and its rollback-coupled provenance bounds.
+    pub finished_lines: Option<RetainedNodeList>,
+    pub starting_provenance: crate::provenance::ProvenanceStats,
+    pub ending_provenance: crate::provenance::ProvenanceStats,
 }
 
 impl ParagraphOpportunityStats {
@@ -1098,6 +1108,28 @@ impl PureMemoRuntime {
             .stats
             .paragraph_opportunities
             .published
+            .bytes
+            .saturating_add(record.retained_bytes as u64);
+        self.recorded_canonical_paragraphs.push(record);
+    }
+
+    pub(crate) fn record_carried_canonical_paragraph_region(
+        &mut self,
+        record: CanonicalParagraphHistoryRecord,
+    ) {
+        let Some(cache) = &mut self.cache else {
+            return;
+        };
+        cache.stats.paragraph_opportunities.carried_forward.regions = cache
+            .stats
+            .paragraph_opportunities
+            .carried_forward
+            .regions
+            .saturating_add(1);
+        cache.stats.paragraph_opportunities.carried_forward.bytes = cache
+            .stats
+            .paragraph_opportunities
+            .carried_forward
             .bytes
             .saturating_add(record.retained_bytes as u64);
         self.recorded_canonical_paragraphs.push(record);

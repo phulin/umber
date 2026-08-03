@@ -2918,6 +2918,72 @@ fn canonical_paragraph_publishes_command_owned_input_region() {
 }
 
 #[test]
+fn canonical_paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, b"alpha \\count0=7 beta\\par\\end");
+    run_to_end(&mut control, &mut stores);
+    let region = control
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("canonical paragraph");
+    let (starting_provenance, ending_provenance) = region.provenance_bounds();
+    let expected_bounds = (*starting_provenance, *ending_provenance);
+
+    let resolver = stores.paragraph_origin_resolver();
+    let mut memo = stores.take_pure_memo_runtime();
+    memo.accept_paragraph_history(resolver);
+    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    assert_eq!(accepted.dependencies.as_ref(), region.dependencies.as_ref());
+    assert_eq!(accepted.mutations.as_ref(), region.mutations.as_ref());
+    assert!(accepted.finished_lines.is_some());
+    assert_eq!(
+        (accepted.starting_provenance, accepted.ending_provenance),
+        expected_bounds
+    );
+}
+
+#[test]
+fn canonical_carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
+    let old = b"alpha beta\\par\\end";
+    let prefix = b"% shifted\n";
+    let mut revised = prefix.to_vec();
+    revised.extend_from_slice(old);
+    let revised: std::sync::Arc<[u8]> = revised.into();
+    let mut cold_stores = Universe::new_with_plain_catcodes();
+    cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    register_source(&mut cold, old);
+    run_to_end(&mut cold, &mut cold_stores);
+    let region = cold
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("cold paragraph")
+        .rehome_edited_root(old, std::sync::Arc::clone(&revised), 0..0)
+        .expect("unchanged suffix rehomes");
+    let expected_start = region.input().coverage().root_start();
+    let expected_provenance = *region.provenance_bounds().1;
+
+    let mut replay_stores = Universe::new_with_plain_catcodes();
+    replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    register_source(&mut replay, &revised);
+    replay.install_paragraph_replay_regions([region]);
+    run_to_end(&mut replay, &mut replay_stores);
+    let resolver = replay_stores.paragraph_origin_resolver();
+    let mut memo = replay_stores.take_pure_memo_runtime();
+    memo.accept_paragraph_history(resolver);
+    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    assert_eq!(accepted.root_start, expected_start);
+    assert_eq!(accepted.ending_provenance, expected_provenance);
+    assert_eq!(
+        memo.stats().paragraph_opportunities.carried_forward.regions,
+        1
+    );
+}
+
+#[test]
 fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
     let source = b"alpha beta\\par\\end";
     let mut cold_stores = Universe::new_with_plain_catcodes();

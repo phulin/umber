@@ -588,6 +588,25 @@ pub struct CanonicalParagraphRegion {
 }
 
 impl CanonicalParagraphRegion {
+    fn history_record(&self) -> tex_state::CanonicalParagraphHistoryRecord {
+        let coverage = self.input.coverage();
+        tex_state::CanonicalParagraphHistoryRecord {
+            identity: self.identity,
+            root_start: coverage.root_start(),
+            root_end: coverage.root_end(),
+            delivered_commands: coverage.delivered_commands(),
+            retained_bytes: self.finished_lines.as_ref().map_or(0, |_| {
+                std::mem::size_of::<tex_state::survivor::RetainedNodeList>()
+            }),
+            dependencies: std::sync::Arc::clone(&self.dependencies),
+            mutation_entry_in_group: self.mutation_entry_in_group,
+            mutations: std::sync::Arc::clone(&self.mutations),
+            finished_lines: self.finished_lines.clone(),
+            starting_provenance: self.starting_provenance,
+            ending_provenance: self.ending_provenance,
+        }
+    }
+
     #[must_use]
     pub const fn identity(&self) -> u64 {
         self.identity
@@ -763,16 +782,7 @@ impl CanonicalParagraphRecorder {
             mutation_entry_in_group: mutation_summary.entry_in_group,
             mutations: mutation_summary.mutations.into(),
         };
-        let coverage = region.input.coverage();
-        stores.record_canonical_paragraph_region(tex_state::CanonicalParagraphHistoryRecord {
-            identity: region.identity,
-            root_start: coverage.root_start(),
-            root_end: coverage.root_end(),
-            delivered_commands: coverage.delivered_commands(),
-            retained_bytes: region.finished_lines.as_ref().map_or(0, |_| {
-                std::mem::size_of::<tex_state::survivor::RetainedNodeList>()
-            }),
-        });
+        stores.record_canonical_paragraph_region(region.history_record());
         if !region.effects.is_empty() {
             stores.record_pure_paragraph_barriers(&[
                 tex_state::ParagraphBarrierReason::UntrackedWorldAccess,
@@ -1860,6 +1870,7 @@ impl CanonicalMainControl {
         self.paragraph_recorder.starting_universe = None;
         self.paragraph_recorder.starting_provenance = None;
         crate::paragraph_memo::replay_canonical_mutations(stores, &region.mutations);
+        stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
         self.paragraph_recorder.next_identity =

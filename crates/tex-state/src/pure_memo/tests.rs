@@ -11,13 +11,22 @@ fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
         root_end: Some(20),
         delivered_commands: 3,
         retained_bytes: 64,
+        dependencies: Arc::from([]),
+        mutation_entry_in_group: false,
+        mutations: Arc::from([]),
+        finished_lines: None,
+        starting_provenance: crate::provenance::ProvenanceStats::default(),
+        ending_provenance: crate::provenance::ProvenanceStats::default(),
     };
-    runtime.record_canonical_paragraph_region(record);
+    runtime.record_canonical_paragraph_region(record.clone());
     runtime.record_canonical_paragraph_lookup(false, 0);
     runtime.record_canonical_paragraph_lookup(true, 3);
     assert!(runtime.accepted_canonical_paragraphs().is_empty());
     runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
-    assert_eq!(runtime.accepted_canonical_paragraphs(), &[record]);
+    assert_eq!(
+        runtime.accepted_canonical_paragraphs()[0].identity,
+        record.identity
+    );
     let stats = runtime.stats();
     assert_eq!(stats.paragraph_inserts, 1);
     assert_eq!(stats.paragraph_lookups, 2);
