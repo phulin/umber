@@ -47,7 +47,7 @@ pub enum ExecError {
     },
     Expand(ExpandError),
     Lex(LexError),
-    NeedResource(tex_expand::ResourceNeed),
+    NeedResource(crate::ResourceNeed),
     ScanToks(ScanToksError),
     ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
@@ -920,7 +920,7 @@ impl From<tex_state::print::JumpOut> for ExecError {
 impl From<ExpandError> for ExecError {
     fn from(value: ExpandError) -> Self {
         match value {
-            ExpandError::NeedResource(need) => Self::NeedResource(need),
+            ExpandError::NeedResource(need) => Self::NeedResource(need.into()),
             value => Self::Expand(value),
         }
     }

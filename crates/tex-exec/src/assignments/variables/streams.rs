@@ -39,7 +39,7 @@ pub(in crate::assignments) fn execute_stream_command(
                 tex_expand::ResourceLookup::Available(content) => Some(content),
                 tex_expand::ResourceLookup::Unavailable => None,
                 tex_expand::ResourceLookup::NeedResource(need) => {
-                    return Err(ExecError::NeedResource(need));
+                    return Err(ExecError::NeedResource(need.into()));
                 }
             };
             match resolved {

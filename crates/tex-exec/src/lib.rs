@@ -50,13 +50,16 @@ pub use checkpoint::{
     EditorRestoreError, EngineBoundary, EngineCheckpoint, EngineRestoreError, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage, dispatch_delivered_token};
+pub(crate) use dispatch::{
+    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
+};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use executor::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionContext, ExecutionLifecycle,
     ExecutionProgress, ExecutionRun, ExecutionServices, ExecutionState, ExecutionStep,
     ExecutionStepResult, ExecutionTelemetry, Executor, FontResolver, FontSource, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfImageResolver, PendingInterrupt, ResourceLookup,
-    ResourceResult, ResourceSite, ResourceSuspension,
+    ResourceNeed, ResourceResult, ResourceSite, ResourceSuspension,
 };
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
@@ -69,11 +72,6 @@ pub use mode::{
 pub use retained_resource::{
     CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
     CanonicalResourceWorld, canonical_font_resource_path,
-};
-pub use tex_expand::ResourceNeed;
-
-pub(crate) use dispatch::{
-    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
 };
 
 #[cfg(test)]

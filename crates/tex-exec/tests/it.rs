@@ -53,10 +53,12 @@ fn executor_resource_results_stay_on_the_execution_owner() {
         fs::read_to_string(source_root.join("lib.rs")).expect("read public surface");
 
     assert!(executor.contains("pub enum ResourceLookup<T>"));
+    assert!(executor.contains("pub struct ResourceNeed"));
     for (source_name, source) in [("executor", executor), ("public surface", public_surface)] {
         for forbidden in [
             "tex_expand::ResourceLookup",
             "tex_expand::ResourceResult",
+            "pub use tex_expand::ResourceNeed",
             "pub use tex_expand::{ResourceLookup",
         ] {
             assert!(

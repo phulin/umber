@@ -27,7 +27,7 @@ use crate::{DispatchAction, ExecError, ExecutionStats, ModeNest, assignments};
 pub enum ResourceLookup<T> {
     Available(T),
     Unavailable,
-    NeedResource(tex_expand::ResourceNeed),
+    NeedResource(ResourceNeed),
 }
 
 impl<T> ResourceLookup<T> {
@@ -44,6 +44,30 @@ impl<T> ResourceLookup<T> {
 /// Fatal host failures remain errors; absence and suspension are typed
 /// executor outcomes.
 pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
+
+/// Stable identity of one executor-owned resolver call within an execution attempt.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ResourceNeed {
+    request_index: u64,
+}
+
+impl ResourceNeed {
+    #[must_use]
+    pub const fn new(request_index: u64) -> Self {
+        Self { request_index }
+    }
+
+    #[must_use]
+    pub const fn request_index(self) -> u64 {
+        self.request_index
+    }
+}
+
+impl From<tex_expand::ResourceNeed> for ResourceNeed {
+    fn from(value: tex_expand::ResourceNeed) -> Self {
+        Self::new(value.request_index())
+    }
+}
 
 fn report_recoverable_expansion_diagnostics(
     input: &InputStack,
@@ -530,7 +554,7 @@ pub enum ResourceSite {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceSuspension {
-    pub requests: Vec<tex_expand::ResourceNeed>,
+    pub requests: Vec<ResourceNeed>,
     pub site: ResourceSite,
     pub serial: u64,
     pub blocked_step: ExecutionStep,
@@ -1757,13 +1781,13 @@ impl ExecutionRun {
     }
 }
 
-fn resource_need(error: &ExecError) -> Option<tex_expand::ResourceNeed> {
+fn resource_need(error: &ExecError) -> Option<ResourceNeed> {
     match error {
         ExecError::NeedResource(need) => Some(*need),
         ExecError::Captured { error, .. } => resource_need(error),
-        ExecError::Expand(error) => error.resource_need(),
-        ExecError::ScanToks(error) => error.resource_need(),
-        ExecError::ScanGlue(error) => error.resource_need(),
+        ExecError::Expand(error) => error.resource_need().map(Into::into),
+        ExecError::ScanToks(error) => error.resource_need().map(Into::into),
+        ExecError::ScanGlue(error) => error.resource_need().map(Into::into),
         _ => None,
     }
 }
