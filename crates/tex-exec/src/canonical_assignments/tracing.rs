@@ -8,7 +8,8 @@
 //! those four WEB routines are the *only* place a scoped eqtb cell is
 //! written, hooking them covers every register and parameter family at once.
 //!
-//! Umber has no single low-level writer with that reach: [`super::variables`]
+//! Umber has no single low-level writer with that reach: the legacy assignment
+//! front
 //! centralizes the scalar register/parameter families in
 //! `execute_assignment_to_target`, and code-table writes centralize
 //! similarly in `execute_code_table_assignment`, so this module is called

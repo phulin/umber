@@ -53,6 +53,7 @@ use tex_state::{
 };
 use tex_typeset::PackSpec;
 
+use crate::canonical_assignments::tracing as assignment_tracing;
 use crate::mode::{AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec};
 use crate::vertical::is_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
@@ -13218,7 +13219,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_count(index, value);
             }
-            crate::assignments::tracing::trace_int_register(stores, index, global, old, value);
+            assignment_tracing::trace_int_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Dimen {
@@ -13232,7 +13233,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_dimen(index, value);
             }
-            crate::assignments::tracing::trace_dimen_register(stores, index, global, old, value);
+            assignment_tracing::trace_dimen_register(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BoxDimensionAssignment {
@@ -13269,7 +13270,7 @@ fn apply_scanned_step(
             } else if !redundant {
                 stores.set_skip(index, value);
             }
-            crate::assignments::tracing::trace_glue_register(
+            assignment_tracing::trace_glue_register(
                 stores,
                 index,
                 global,
@@ -13291,7 +13292,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_muskip(index, value);
             }
-            crate::assignments::tracing::trace_muglue_register(
+            assignment_tracing::trace_muglue_register(
                 stores,
                 index,
                 global,
@@ -13730,7 +13731,7 @@ fn apply_scanned_step(
             // `\globaldefs`-adjusted scope bit as TeX82 §1214/§1248.
             let old = stores.penalty_array(kind);
             stores.set_penalty_array(kind, &values, global);
-            crate::assignments::tracing::trace_penalty_array(stores, kind, global, &old, &values);
+            assignment_tracing::trace_penalty_array(stores, kind, global, &old, &values);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Toks {
@@ -13745,7 +13746,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, new) {
                 stores.set_toks(index, new);
             }
-            crate::assignments::tracing::trace_toks_register(stores, index, global, old, new);
+            assignment_tracing::trace_toks_register(stores, index, global, old, new);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::IntParam {
@@ -13761,14 +13762,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_int_param(parameter, value);
             }
-            crate::assignments::tracing::trace_int_param(
-                stores,
-                index,
-                tracing_before,
-                global,
-                old,
-                value,
-            );
+            assignment_tracing::trace_int_param(stores, index, tracing_before, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DimenParam {
@@ -13783,7 +13777,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, value) {
                 stores.set_dimen_param(parameter, value);
             }
-            crate::assignments::tracing::trace_dimen_param(stores, index, global, old, value);
+            assignment_tracing::trace_dimen_param(stores, index, global, old, value);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TokParam {
@@ -13799,7 +13793,7 @@ fn apply_scanned_step(
             } else if !etex_redundant_local_word_assignment(stores, old, new) {
                 stores.set_tok_param(parameter, new);
             }
-            crate::assignments::tracing::trace_tok_param(stores, index, global, old, new);
+            assignment_tracing::trace_tok_param(stores, index, global, old, new);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::GlueParam {
@@ -13822,9 +13816,7 @@ fn apply_scanned_step(
             } else {
                 old
             };
-            crate::assignments::tracing::trace_glue_param(
-                stores, index, global, old, new, !redundant,
-            );
+            assignment_tracing::trace_glue_param(stores, index, global, old, new, !redundant);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PdfFontCode {
@@ -13905,7 +13897,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_catcode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores,
                         "catcode",
                         character,
@@ -13925,7 +13917,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_lccode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores,
                         "lccode",
                         character,
@@ -13942,7 +13934,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_uccode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores,
                         "uccode",
                         character,
@@ -13965,7 +13957,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_sfcode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores,
                         "sfcode",
                         character,
@@ -13988,7 +13980,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_mathcode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores,
                         "mathcode",
                         character,
@@ -14011,7 +14003,7 @@ fn apply_scanned_step(
                     } else if !etex_redundant_local_word_assignment(stores, old, value) {
                         stores.set_delcode(character, value);
                     }
-                    crate::assignments::tracing::trace_code(
+                    assignment_tracing::trace_code(
                         stores, "delcode", character, global, old, value,
                     );
                 }
@@ -14221,7 +14213,7 @@ fn apply_scanned_step(
                     // [17.687-750] traces the same pre/post eqtb write as a
                     // `\def`, immediately after collection and before the
                     // next command is fetched.
-                    crate::assignments::tracing::trace_meaning_write(
+                    assignment_tracing::trace_meaning_write(
                         stores,
                         Token::Cs(target),
                         true,
@@ -14747,13 +14739,13 @@ fn apply_scanned_step(
             // assignment; `global` here already folds in `\gdef`/`\xdef`'s
             // own forced-global chr_code (see the scan arm above), and
             // `global` already is the final effective bit.
-            crate::assignments::tracing::trace_meaning_write(
+            assignment_tracing::trace_meaning_write(
                 stores,
                 Token::Cs(target),
                 // TeX82's `\def` family always allocates a fresh definition,
                 // so real TeX never reports "reassigning" here even for a
                 // byte-identical redefinition -- see
-                // `crate::assignments::tracing::trace_meaning_write`'s docs.
+                // `assignment_tracing::trace_meaning_write`'s docs.
                 true,
                 global,
                 |stores| {
@@ -14783,7 +14775,7 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::MathCharDef => Meaning::MathCharGiven(value as u16),
                 _ => unreachable!("character-definition step carries only §1224 primitives"),
             };
-            crate::assignments::tracing::trace_completed_provisional_meaning_write(
+            assignment_tracing::trace_completed_provisional_meaning_write(
                 stores,
                 Token::Cs(target),
                 provisional_old,
@@ -14792,7 +14784,7 @@ fn apply_scanned_step(
             );
             let changed =
                 !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
-            crate::assignments::tracing::trace_meaning_write(
+            assignment_tracing::trace_meaning_write(
                 stores,
                 Token::Cs(target),
                 changed,
@@ -14822,7 +14814,7 @@ fn apply_scanned_step(
                 UnexpandablePrimitive::ToksDef => Meaning::ToksRegister(index),
                 _ => unreachable!("register-definition step carries only §1224 primitives"),
             };
-            crate::assignments::tracing::trace_completed_provisional_meaning_write(
+            assignment_tracing::trace_completed_provisional_meaning_write(
                 stores,
                 Token::Cs(target),
                 provisional_old,
@@ -14830,7 +14822,7 @@ fn apply_scanned_step(
                 global,
             );
             let changed = stores.meaning(target) != meaning;
-            crate::assignments::tracing::trace_meaning_write(
+            assignment_tracing::trace_meaning_write(
                 stores,
                 Token::Cs(target),
                 changed,
@@ -14898,7 +14890,7 @@ fn apply_scanned_step(
             // nonzero `\globaldefs`.
             let changed =
                 !etex_redundant_local_word_assignment(stores, stores.meaning(target), meaning);
-            crate::assignments::tracing::trace_meaning_write(
+            assignment_tracing::trace_meaning_write(
                 stores,
                 Token::Cs(target),
                 changed,
@@ -16632,7 +16624,7 @@ fn apply_arithmetic(
             } else {
                 stores.set_count(index, value);
             }
-            crate::assignments::tracing::trace_int_register(stores, index, global, old, value);
+            assignment_tracing::trace_int_register(stores, index, global, old, value);
         }
         (ArithmeticTarget::IntegerParameter(index), ArithmeticOperand::Integer(rhs)) => {
             let parameter = IntParam::new(index);
@@ -16644,14 +16636,7 @@ fn apply_arithmetic(
             } else {
                 stores.set_int_param(parameter, value);
             }
-            crate::assignments::tracing::trace_int_param(
-                stores,
-                index,
-                tracing_before,
-                global,
-                old,
-                value,
-            );
+            assignment_tracing::trace_int_param(stores, index, tracing_before, global, old, value);
         }
         (ArithmeticTarget::DimensionRegister(index), operand) => {
             let old = stores.dimen(index);
@@ -16661,7 +16646,7 @@ fn apply_arithmetic(
             } else {
                 stores.set_dimen(index, value);
             }
-            crate::assignments::tracing::trace_dimen_register(stores, index, global, old, value);
+            assignment_tracing::trace_dimen_register(stores, index, global, old, value);
         }
         (ArithmeticTarget::DimensionParameter(index), operand) => {
             let parameter = DimenParam::new(index);
@@ -16672,7 +16657,7 @@ fn apply_arithmetic(
             } else {
                 stores.set_dimen_param(parameter, value);
             }
-            crate::assignments::tracing::trace_dimen_param(stores, index, global, old, value);
+            assignment_tracing::trace_dimen_param(stores, index, global, old, value);
         }
         (ArithmeticTarget::GlueRegister { index, mu }, operand) => {
             let old_id = if mu {
@@ -16694,7 +16679,7 @@ fn apply_arithmetic(
                 stores.set_skip(index, value);
             }
             if mu {
-                crate::assignments::tracing::trace_muglue_register(
+                assignment_tracing::trace_muglue_register(
                     stores,
                     index,
                     global,
@@ -16703,7 +16688,7 @@ fn apply_arithmetic(
                     old_id != GlueId::ZERO || value != GlueId::ZERO,
                 );
             } else {
-                crate::assignments::tracing::trace_glue_register(
+                assignment_tracing::trace_glue_register(
                     stores,
                     index,
                     global,
@@ -16723,7 +16708,7 @@ fn apply_arithmetic(
             } else {
                 stores.set_glue_param(parameter, value);
             }
-            crate::assignments::tracing::trace_glue_param(
+            assignment_tracing::trace_glue_param(
                 stores,
                 index,
                 global,
@@ -17152,7 +17137,7 @@ fn commit_set_box_target(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
 ) {
-    crate::assignments::tracing::trace_box_write(
+    assignment_tracing::trace_box_write(
         stores,
         target.index,
         target.global,

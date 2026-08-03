@@ -1,33 +1,11 @@
 use super::*;
-use tex_state::ids::FontId;
-use tex_state::page::{PageDimension, PageInteger};
 mod streams;
-mod variable_access;
 
+use crate::canonical_assignments::*;
 pub(super) use streams::{
     execute_immediate_stream_command, execute_immediate_write, execute_pdf_graphics, execute_read,
     execute_special, execute_stream_command, execute_write, openout_target,
 };
-use variable_access::*;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Variable {
-    IntRegister(u16),
-    DimenRegister(u16),
-    GlueRegister(u16),
-    MuGlueRegister(u16),
-    ToksRegister(u16),
-    IntParam(u16),
-    DimenParam(u16),
-    GlueParam(u16),
-    MuGlueParam(u16),
-    TokParam(u16),
-    PageDimension(PageDimension),
-    PageInteger(PageInteger),
-    FontDimen(FontId, u32),
-    FontHyphenChar(FontId),
-    FontSkewChar(FontId),
-}
 
 pub(super) fn execute_variable_assignment(
     primitive: UnexpandablePrimitive,

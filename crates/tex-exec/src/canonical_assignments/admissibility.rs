@@ -169,7 +169,7 @@ const fn admissibility(primitive: UnexpandablePrimitive) -> Admissibility {
     }
 }
 
-pub(super) const fn is_assignment_primitive(primitive: UnexpandablePrimitive) -> bool {
+pub(crate) const fn is_assignment_primitive(primitive: UnexpandablePrimitive) -> bool {
     admissibility(primitive).assignment
 }
 

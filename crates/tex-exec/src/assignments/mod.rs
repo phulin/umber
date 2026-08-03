@@ -10,7 +10,7 @@ use tex_expand::{
 };
 use tex_lex::{InputStack, LexError};
 use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
-use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::env::banks::{GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{GlueId, TokenListId};
 use tex_state::interner::Symbol;
@@ -32,7 +32,6 @@ use crate::{
 };
 use crate::{Mode, ModeNest};
 
-mod admissibility;
 mod arithmetic;
 mod boxes;
 pub(super) mod fonts;
@@ -42,10 +41,8 @@ mod macros;
 mod paragraph;
 mod pdf_actions;
 mod pdf_fonts;
-mod primitives;
 mod scanning;
 mod shipout;
-pub(crate) mod tracing;
 #[cfg(test)]
 pub(crate) use hmode::test_fix_hyphen_language;
 #[cfg(test)]
@@ -69,8 +66,13 @@ pub fn retry_unavailable_stream_open(
 #[cfg(test)]
 mod tests;
 
-use admissibility::is_assignment_primitive;
-pub(crate) use admissibility::math_allows_mode_independent_primitive;
+pub(crate) use crate::canonical_assignments::math_allows_mode_independent_primitive;
+use crate::canonical_assignments::tracing;
+use crate::canonical_assignments::*;
+pub use crate::canonical_assignments::{
+    install_etex_unexpandable_primitives, install_unexpandable_primitives,
+    register_etex_unexpandable_primitives, register_unexpandable_primitives,
+};
 use arithmetic::*;
 pub(crate) use boxes::append_box_node_to_current_list;
 pub(crate) use boxes::execute_delete_last;
@@ -131,10 +133,6 @@ pub(crate) use paragraph::{
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
 pub(crate) use pdf_fonts::{GlyphToUnicodeParse, parse_glyph_to_unicode};
-pub use primitives::{
-    install_etex_unexpandable_primitives, install_unexpandable_primitives,
-    register_etex_unexpandable_primitives, register_unexpandable_primitives,
-};
 use scanning::*;
 pub(crate) use scanning::{
     is_assignment_target_meaning, next_non_space_traced_x, next_non_space_x, scan_glue_id,

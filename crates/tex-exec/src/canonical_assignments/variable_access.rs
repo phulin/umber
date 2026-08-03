@@ -1,6 +1,10 @@
-use super::*;
+use super::Variable;
+use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
+use tex_state::ids::{FontId, GlueId};
+use tex_state::scaled::Scaled;
 
-pub(super) fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
+pub(crate) fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
     match target {
         Variable::IntRegister(index) => stores.count(index),
         Variable::IntParam(index) => stores.int_param(IntParam::new(index)),
@@ -11,7 +15,7 @@ pub(super) fn read_int_variable(stores: &Universe, target: Variable) -> i32 {
     }
 }
 
-pub(super) fn write_int_variable(
+pub(crate) fn write_int_variable(
     stores: &mut Universe,
     target: Variable,
     index: u16,
@@ -26,7 +30,7 @@ pub(super) fn write_int_variable(
     }
 }
 
-pub(super) fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled {
+pub(crate) fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled {
     match target {
         Variable::DimenRegister(index) => stores.dimen(index),
         Variable::DimenParam(index) => stores.dimen_param(DimenParam::new(index)),
@@ -36,7 +40,7 @@ pub(super) fn read_dimen_variable(stores: &Universe, target: Variable) -> Scaled
     }
 }
 
-pub(super) fn write_dimen_variable(
+pub(crate) fn write_dimen_variable(
     stores: &mut Universe,
     target: Variable,
     index: u16,
@@ -51,7 +55,7 @@ pub(super) fn write_dimen_variable(
     }
 }
 
-pub(super) fn read_glue_variable(stores: &Universe, target: Variable) -> GlueId {
+pub(crate) fn read_glue_variable(stores: &Universe, target: Variable) -> GlueId {
     match target {
         Variable::GlueRegister(index) => stores.skip(index),
         Variable::GlueParam(index) => stores.glue_param(GlueParam::new(index)),
@@ -60,7 +64,7 @@ pub(super) fn read_glue_variable(stores: &Universe, target: Variable) -> GlueId 
     }
 }
 
-pub(super) fn write_glue_variable(
+pub(crate) fn write_glue_variable(
     stores: &mut Universe,
     target: Variable,
     index: u16,
@@ -75,7 +79,7 @@ pub(super) fn write_glue_variable(
     }
 }
 
-pub(super) fn write_font_int_variable(
+pub(crate) fn write_font_int_variable(
     stores: &mut Universe,
     target: Variable,
     font: FontId,
@@ -88,7 +92,7 @@ pub(super) fn write_font_int_variable(
     }
 }
 
-pub(super) fn set_int_register(stores: &mut Universe, index: u16, value: i32, global: bool) {
+pub(crate) fn set_int_register(stores: &mut Universe, index: u16, value: i32, global: bool) {
     if global {
         stores.set_count_global(index, value);
     } else {
@@ -96,7 +100,7 @@ pub(super) fn set_int_register(stores: &mut Universe, index: u16, value: i32, gl
     }
 }
 
-pub(super) fn set_dimen_register(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
+pub(crate) fn set_dimen_register(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
     if global {
         stores.set_dimen_global(index, value);
     } else {
@@ -104,7 +108,7 @@ pub(super) fn set_dimen_register(stores: &mut Universe, index: u16, value: Scale
     }
 }
 
-pub(super) fn set_glue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
+pub(crate) fn set_glue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     if global {
         stores.set_skip_global(index, value);
     } else {
@@ -112,7 +116,7 @@ pub(super) fn set_glue_register(stores: &mut Universe, index: u16, value: GlueId
     }
 }
 
-pub(super) fn set_muglue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
+pub(crate) fn set_muglue_register(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     if global {
         stores.set_muskip_global(index, value);
     } else {
@@ -120,7 +124,7 @@ pub(super) fn set_muglue_register(stores: &mut Universe, index: u16, value: Glue
     }
 }
 
-pub(super) fn set_toks_register(
+pub(crate) fn set_toks_register(
     stores: &mut Universe,
     index: u16,
     value: tex_state::ids::TokenListId,
@@ -133,7 +137,7 @@ pub(super) fn set_toks_register(
     }
 }
 
-pub(super) fn set_int_param(stores: &mut Universe, index: u16, value: i32, global: bool) {
+pub(crate) fn set_int_param(stores: &mut Universe, index: u16, value: i32, global: bool) {
     let param = IntParam::new(index);
     if global {
         stores.set_int_param_global(param, value);
@@ -142,7 +146,7 @@ pub(super) fn set_int_param(stores: &mut Universe, index: u16, value: i32, globa
     }
 }
 
-pub(super) fn set_dimen_param(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
+pub(crate) fn set_dimen_param(stores: &mut Universe, index: u16, value: Scaled, global: bool) {
     let param = DimenParam::new(index);
     if global {
         stores.set_dimen_param_global(param, value);
@@ -151,7 +155,7 @@ pub(super) fn set_dimen_param(stores: &mut Universe, index: u16, value: Scaled, 
     }
 }
 
-pub(super) fn set_glue_param(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
+pub(crate) fn set_glue_param(stores: &mut Universe, index: u16, value: GlueId, global: bool) {
     let param = GlueParam::new(index);
     if global {
         stores.set_glue_param_global(param, value);
@@ -160,7 +164,7 @@ pub(super) fn set_glue_param(stores: &mut Universe, index: u16, value: GlueId, g
     }
 }
 
-pub(super) fn set_tok_param(
+pub(crate) fn set_tok_param(
     stores: &mut Universe,
     index: u16,
     value: tex_state::ids::TokenListId,

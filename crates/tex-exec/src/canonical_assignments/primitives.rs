@@ -1,6 +1,8 @@
-use super::*;
+use tex_state::Universe;
+use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::macro_store::MacroMeaning;
 use tex_state::meaning::InternalInteger;
+use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::page::{PageDimension, PageInteger};
 
 /// Installs TeX82's unexpandable primitive table.

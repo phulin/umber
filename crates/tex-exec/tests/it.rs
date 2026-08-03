@@ -177,6 +177,58 @@ fn legacy_diagnostics_has_no_canonical_command_control_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_assignment_family_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner_root = source_root.join("canonical_assignments");
+    for path in production_rust_sources(&owner_root) {
+        let source = fs::read_to_string(&path).expect("read canonical assignment source");
+        for forbidden in [
+            "tex_expand",
+            "tex_lex",
+            "InputStack",
+            "ExecutionContext",
+            "crate::executor",
+            "crate::assignments",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must not reference legacy boundary `{forbidden}`",
+                path.strip_prefix(&source_root)
+                    .expect("canonical assignment source below root")
+                    .display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_assignment_owner_has_only_declared_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("canonical_assignments") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "canonical_main_control.rs"
+                            | "assignments/mod.rs"
+                            | "assignments/variables.rs"
+                            | "canonical_assignments/mod.rs"
+                    )
+                ),
+                "{} must not bypass the canonical assignment owner",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_paragraph_memo_has_no_legacy_dependencies() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let source = fs::read_to_string(source_root.join("canonical_paragraph_memo.rs"))

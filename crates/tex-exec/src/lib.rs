@@ -8,6 +8,7 @@
 
 mod align;
 mod assignments;
+mod canonical_assignments;
 mod canonical_diagnostics;
 mod canonical_main_control;
 mod canonical_page_output;
