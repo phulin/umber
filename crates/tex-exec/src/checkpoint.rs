@@ -15,8 +15,8 @@ use crate::{ExecError, ModeNest, ModeNestSummary};
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 5 adds the canonical command-machine boundary summary.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 5;
+/// Version 6 makes canonical and retired input continuations disjoint.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 6;
 
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -35,10 +35,7 @@ pub struct EngineCheckpoint {
     schema_version: u32,
     boundary: EngineBoundary,
     universe: Snapshot,
-    // This is the authoritative continuation for canonical sessions.  The
-    // legacy input summary remains only for the pre-cutover executor path.
-    command: Option<CommandSummary>,
-    input: InputSummary,
+    continuation: CheckpointContinuation,
     modes: ModeNestSummary,
     state_hash: u64,
     root_anchor: usize,
@@ -46,6 +43,15 @@ pub struct EngineCheckpoint {
     effect_prefix: usize,
     artifact_prefix: usize,
     budget_counters: crate::ExecutionBudgetCounters,
+}
+
+/// The command machine and retired executor have different continuation
+/// owners. Keeping the variants disjoint prevents canonical publication from
+/// smuggling an empty legacy input summary through the checkpoint contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CheckpointContinuation {
+    Canonical(Box<CommandSummary>),
+    LegacyInput(InputSummary),
 }
 
 /// Revision roots and their precomputed content identities for checkpoint
@@ -109,10 +115,7 @@ impl EngineCheckpoint {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
-            command: Some(command),
-            // Canonical command input is owned by CommandSummary, never by
-            // tex-lex's legacy InputSummary.
-            input: InputSummary::default(),
+            continuation: CheckpointContinuation::Canonical(Box::new(command)),
             modes,
             state_hash,
             root_anchor,
@@ -152,16 +155,14 @@ impl EngineCheckpoint {
         self.budget_counters
     }
 
-    #[must_use]
-    pub const fn input_summary(&self) -> &InputSummary {
-        &self.input
-    }
-
     /// Returns the validated canonical continuation, when this checkpoint was
     /// published by the canonical command machine.
     #[must_use]
-    pub const fn command_summary(&self) -> Option<&CommandSummary> {
-        self.command.as_ref()
+    pub fn command_summary(&self) -> Option<&CommandSummary> {
+        match &self.continuation {
+            CheckpointContinuation::Canonical(summary) => Some(summary.as_ref()),
+            CheckpointContinuation::LegacyInput(_) => None,
+        }
     }
 
     /// Restores the canonical state roots.  Preparation validates the command
@@ -173,10 +174,10 @@ impl EngineCheckpoint {
         nest: &mut ModeNest,
         universe: &mut Universe,
     ) -> Result<(), CanonicalCheckpointRestoreError> {
-        let summary = self
-            .command
-            .clone()
-            .ok_or(CanonicalCheckpointRestoreError::MissingCommandSummary)?;
+        let CheckpointContinuation::Canonical(summary) = &self.continuation else {
+            return Err(CanonicalCheckpointRestoreError::MissingCommandSummary);
+        };
+        let summary = summary.as_ref().clone();
         let mut restored_command = command.clone();
         restored_command
             .restore_summary(summary)
@@ -217,12 +218,11 @@ impl EngineCheckpoint {
         let fork_latency = fork_started.elapsed();
         let mut rebound = self.clone();
         rebound.universe = universe.snapshot();
-        let command = rebound
-            .command
-            .as_mut()
-            .ok_or(EditorRestoreError::Canonical(
+        let CheckpointContinuation::Canonical(command) = &mut rebound.continuation else {
+            return Err(EditorRestoreError::Canonical(
                 CanonicalCheckpointRestoreError::MissingCommandSummary,
-            ))?;
+            ));
+        };
         if !command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -252,8 +252,7 @@ impl EngineCheckpoint {
                 .validate_checkpoint_snapshot(&self.universe)
                 .is_ok()
             && self
-                .command
-                .as_ref()
+                .command_summary()
                 .is_some_and(|command| command.root_source_matches(old_source))
     }
 
@@ -285,7 +284,7 @@ impl EngineCheckpoint {
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary
             && self.universe.exact_future_state_matches(&other.universe)
-            && self.command == other.command
+            && self.continuation == other.continuation
             && self.modes == other.modes
     }
 
@@ -477,8 +476,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
-            command: None,
-            input: input_summary,
+            continuation: CheckpointContinuation::LegacyInput(input_summary),
             modes,
             state_hash,
             root_anchor,
@@ -499,6 +497,7 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
 pub enum EngineRestoreError<E> {
     Input(E),
     Mode(ExecError),
+    CanonicalContinuation,
 }
 
 /// Failure to restore a canonical command checkpoint.
@@ -533,6 +532,7 @@ pub enum EditorRestoreError {
     LayoutCursor(tex_lex::LayoutCursorError),
     RootRevisionMismatch,
     Canonical(CanonicalCheckpointRestoreError),
+    CanonicalContinuation,
     ChangedRootPrefix,
     RootRebind(SourceMapError),
     IncludedInputUnavailable(SourceId),
@@ -551,6 +551,9 @@ impl fmt::Display for EditorRestoreError {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
             Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
+            Self::CanonicalContinuation => {
+                f.write_str("canonical checkpoint cannot restore the retired input stack")
+            }
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }
@@ -572,6 +575,9 @@ impl<E: fmt::Display> fmt::Display for EngineRestoreError<E> {
         match self {
             Self::Input(error) => write!(f, "could not reopen checkpoint input: {error}"),
             Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
+            Self::CanonicalContinuation => {
+                f.write_str("canonical checkpoint cannot restore the retired input stack")
+            }
         }
     }
 }
@@ -622,7 +628,10 @@ impl crate::Executor {
         F: FnMut(SourceId, Option<InputRecordId>, &tex_state::SourceFrameSummary) -> Result<T, E>,
         T: InputSource + 'static,
     {
-        let restored_input = InputStack::from_summary(&checkpoint.input, reopen_source)
+        let CheckpointContinuation::LegacyInput(input_summary) = &checkpoint.continuation else {
+            return Err(EngineRestoreError::CanonicalContinuation);
+        };
+        let restored_input = InputStack::from_summary(input_summary, reopen_source)
             .map_err(EngineRestoreError::Input)?;
         let restored_modes =
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EngineRestoreError::Mode)?;
@@ -669,8 +678,11 @@ impl crate::Executor {
         restored_universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
+        let CheckpointContinuation::LegacyInput(input_summary) = &checkpoint.continuation else {
+            return Err(EditorRestoreError::CanonicalContinuation);
+        };
         let (summary, root_source) = restored_universe
-            .rebind_root_editor_layout(&checkpoint.input, source.as_bytes(), checkpoint.root_anchor)
+            .rebind_root_editor_layout(input_summary, source.as_bytes(), checkpoint.root_anchor)
             .map_err(EditorRestoreError::RootRebind)?;
         let restored_modes =
             ModeNest::from_summary(checkpoint.modes.clone()).map_err(EditorRestoreError::Mode)?;

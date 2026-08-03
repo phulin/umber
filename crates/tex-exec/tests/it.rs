@@ -339,6 +339,27 @@ fn engine_checkpoint_cannot_be_forged_by_callers() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
+    let checkpoint = fs::read_to_string(
+        test_support::repository_root().join("crates/tex-exec/src/checkpoint.rs"),
+    )
+    .expect("read checkpoint boundary");
+
+    assert!(checkpoint.contains("enum CheckpointContinuation"));
+    assert!(checkpoint.contains("Canonical(Box<CommandSummary>)"));
+    assert!(checkpoint.contains("LegacyInput(InputSummary)"));
+    assert!(
+        !checkpoint.contains("input: InputSummary,"),
+        "aggregate checkpoints must not always carry a legacy input continuation"
+    );
+    assert!(
+        !checkpoint.contains("input: InputSummary::default()"),
+        "canonical checkpoints must not encode absent legacy input with a sentinel"
+    );
+}
+
+#[test]
 fn scoped_execution_transaction_cannot_escape_public_api() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let dependencies = [CompileFailDependency::path("tex-exec", &manifest_dir)];
