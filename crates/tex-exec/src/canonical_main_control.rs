@@ -2069,9 +2069,9 @@ impl CanonicalMainControl {
                 break;
             }
             if !crate::canonical_paragraph_memo::same_mutation_entry_class(
-                    region.mutation_entry_in_group,
-                    tex_state::ExpansionState::execution_group_depth(stores),
-                ) {
+                region.mutation_entry_in_group,
+                tex_state::ExpansionState::execution_group_depth(stores),
+            ) {
                 rejected = Some((index, false));
                 break;
             }

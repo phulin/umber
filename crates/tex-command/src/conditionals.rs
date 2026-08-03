@@ -8,13 +8,13 @@ use tex_state::env::banks::IntParam;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::token::{OriginId, TracedTokenWord};
 
-use crate::{CommandError, CommandState};
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::processor::CommandProcessor;
 use crate::processor::status::{ConditionId, ScannerStatus, ScannerWarning, SkippingContext};
 use crate::scanners::RestrictedIntegerClass;
+use crate::{CommandError, CommandState};
 
 use crate::observation::{
     CommandObservation, ConditionRecord, DiagnosticRecord, InputReason, InputRecord,
