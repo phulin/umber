@@ -1851,6 +1851,17 @@ pub(crate) fn meaning_text(
                 token_list_text(state, macro_meaning.replacement_text()),
             )
         }
+        Meaning::ExpandablePrimitive(
+            primitive @ (ExpandablePrimitive::TopMark
+            | ExpandablePrimitive::FirstMark
+            | ExpandablePrimitive::BotMark
+            | ExpandablePrimitive::SplitFirstMark
+            | ExpandablePrimitive::SplitBotMark),
+        ) => format!(
+            "{}:{}",
+            meaning_control_sequence_text(state, command, command.meaning()),
+            token_list_text(state, state.page_mark(page_mark(primitive))),
+        ),
         meaning @ (Meaning::ExpandablePrimitive(_) | Meaning::UnexpandablePrimitive(_)) => {
             meaning_control_sequence_text(state, command, meaning)
         }

@@ -3532,6 +3532,73 @@ fn meaning_separates_a_control_word_from_following_letters() {
 }
 
 #[test]
+fn meaning_renders_class_zero_mark_contents_but_not_etex_mark_classes() {
+    // TeX82 §296 appends class-zero mark contents to the five singular mark
+    // meanings. e-TeX change [20.296] excludes the plural class scanners.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let contents = universe.intern_token_list(&letters("mark text"));
+    for (index, (name, primitive, mark)) in [
+        ("topmark", ExpandablePrimitive::TopMark, PageMark::Top),
+        ("firstmark", ExpandablePrimitive::FirstMark, PageMark::First),
+        ("botmark", ExpandablePrimitive::BotMark, PageMark::Bot),
+        (
+            "splitfirstmark",
+            ExpandablePrimitive::SplitFirstMark,
+            PageMark::SplitFirst,
+        ),
+        (
+            "splitbotmark",
+            ExpandablePrimitive::SplitBotMark,
+            PageMark::SplitBot,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        universe.set_page_mark(
+            mark,
+            if index == 0 {
+                TokenListId::EMPTY
+            } else {
+                contents
+            },
+        );
+        let symbol = install_expandable(&mut universe, name, primitive);
+        let command = {
+            let mut state = universe.command_context();
+            CurrentCommand::resolve(
+                traced(Token::Cs(symbol)),
+                crate::command::DeliveryStamp::new(0, 0, 0),
+                None,
+                false,
+                &mut state,
+            )
+        };
+        let suffix = if index == 0 { "" } else { "mark text" };
+        assert_eq!(
+            meaning_text(&universe.command_context(), &command),
+            format!("\\{name}:{suffix}")
+        );
+    }
+
+    let plural = install_expandable(&mut universe, "botmarks", ExpandablePrimitive::BotMarks);
+    let plural = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(plural)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+    assert_eq!(
+        meaning_text(&universe.command_context(), &plural),
+        "\\botmarks"
+    );
+}
+
+#[test]
 fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let empty = universe.intern_token_list(&[]);
@@ -4240,9 +4307,23 @@ fn etex_print_cmd_chr_selector_table_is_exact_for_primitives_registers_and_alias
                 format!("\\{name}"),
                 "selector or alias for {name}",
             );
+            let meaning_suffix = if matches!(
+                meaning,
+                Meaning::ExpandablePrimitive(
+                    ExpandablePrimitive::TopMark
+                        | ExpandablePrimitive::FirstMark
+                        | ExpandablePrimitive::BotMark
+                        | ExpandablePrimitive::SplitFirstMark
+                        | ExpandablePrimitive::SplitBotMark
+                )
+            ) {
+                ":"
+            } else {
+                ""
+            };
             assert_eq!(
                 meaning_text(&universe.command_context(), &command),
-                format!("\\{name}"),
+                format!("\\{name}{meaning_suffix}"),
                 "meaning selector or alias for {name}",
             );
         }

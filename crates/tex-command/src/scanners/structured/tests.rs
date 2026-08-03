@@ -550,6 +550,57 @@ fn show_context_labels_an_exhausted_backup_as_recently_read() {
 }
 
 #[test]
+fn show_moves_singular_mark_contents_to_the_next_line() {
+    // TeX82 §296 calls `print_ln` between a singular mark's colon and its
+    // token list. An empty list still owns the colon and line break.
+    for (contents, expected) in [
+        ("", "> \\botmark=\\botmark:\n"),
+        ("0.", "> \\botmark=\\botmark:\n0."),
+    ] {
+        let mut command = CommandState::default();
+        let mut runtime = CommandRuntime::default();
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let botmark = universe.intern("botmark").symbol();
+        universe.set_meaning(
+            botmark,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMark),
+        );
+        let tokens = universe.intern_token_list(&text_tokens(contents));
+        universe.set_page_mark(tex_state::page::PageMark::Bot, tokens);
+        push(&mut command, [Token::Cs(botmark)]);
+
+        let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+            .scan_show()
+            .expect("show operand scans");
+        assert_eq!(shown.content, expected);
+    }
+}
+
+#[test]
+fn show_does_not_scan_or_render_etex_mark_class_contents() {
+    // e-TeX change [20.296] leaves plural mark enquiries at print_cmd_chr:
+    // `\show\botmarks` neither scans a class number nor appends class zero.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let botmarks = universe.intern("botmarks").symbol();
+    universe.set_meaning(
+        botmarks,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::BotMarks),
+    );
+    let tokens = universe.intern_token_list(&text_tokens("hidden"));
+    universe.set_page_mark_class(tex_state::page::PageMark::Bot, 0, tokens);
+    push(&mut command, [Token::Cs(botmarks)]);
+
+    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_show()
+        .expect("show operand scans");
+    assert_eq!(shown.content, "> \\botmarks=\\botmarks");
+}
+
+#[test]
 fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

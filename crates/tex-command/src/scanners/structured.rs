@@ -2681,10 +2681,22 @@ impl CommandProcessor<'_> {
         command: &crate::CurrentCommand,
     ) -> String {
         let text = meaning_text(state, command);
-        text.split_once("macro:").map_or_else(
-            || text.clone(),
-            |(prefix, rest)| format!("{prefix}macro:\n{rest}"),
-        )
+        let breaks_after_colon = matches!(command.meaning(), Meaning::Macro { .. })
+            || matches!(
+                command.meaning(),
+                Meaning::ExpandablePrimitive(
+                    tex_state::meaning::ExpandablePrimitive::TopMark
+                        | tex_state::meaning::ExpandablePrimitive::FirstMark
+                        | tex_state::meaning::ExpandablePrimitive::BotMark
+                        | tex_state::meaning::ExpandablePrimitive::SplitFirstMark
+                        | tex_state::meaning::ExpandablePrimitive::SplitBotMark
+                )
+            );
+        if breaks_after_colon {
+            text.replacen(':', ":\n", 1)
+        } else {
+            text
+        }
     }
 
     /// TeX82 §46's raw `\\show` operand scan.
