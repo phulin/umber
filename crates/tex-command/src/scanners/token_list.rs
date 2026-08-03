@@ -162,3 +162,6 @@ impl TokenListRightHandSide {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

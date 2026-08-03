@@ -2274,16 +2274,16 @@ fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
                 && record.tokens == [ObservedToken::ControlSequence("observed-macro".into())])
         })
         .expect("direct token-list splice is observed");
-    let expanded_the = direct_events
-        .iter()
-        .position(|event| {
+    assert!(
+        !direct_events.iter().any(|event| {
             matches!(event, CommandObservation::Command(record)
-                if record.boundary == crate::CommandDeliveryBoundary::Expanded
-                    && record.command == "the"
-                    && record.spelling
-                        == ObservedToken::ControlSequence("the-observed".into()))
-        })
-        .expect("direct the command has an expanded delivery");
+            if record.boundary == crate::CommandDeliveryBoundary::Expanded
+                && record.command == "the"
+                && record.spelling
+                    == ObservedToken::ControlSequence("the-observed".into()))
+        }),
+        "the_toks consumes its expandable opener before any expanded delivery"
+    );
     let raw_operand = direct_events
         .iter()
         .position(|event| {
@@ -2294,8 +2294,8 @@ fn tex82_expansion_macros_observes_raw_expanded_and_direct_splice_scan_toks() {
         })
         .expect("the operand has a raw delivery");
     assert!(
-        expanded_the < raw_operand && raw_operand < splice,
-        "the delivery precedes its operand scan and resulting splice"
+        raw_operand < splice,
+        "the operand scan precedes its resulting splice"
     );
     let restore = direct_events
         .iter()
