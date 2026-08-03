@@ -5716,11 +5716,7 @@ fn report_improper_setbox(context: String, stores: &mut Universe) -> Result<(), 
 }
 
 /// TeX82 §1082's `scan_keyword("to")` recovery in `\vsplit`.
-fn report_missing_vsplit_to(
-    command: &CommandState,
-    stores: &mut Universe,
-) -> Result<(), ExecError> {
-    let context = command.output_open_context(&stores.command_context());
+fn report_missing_vsplit_to(context: &str, stores: &mut Universe) -> Result<(), ExecError> {
     crate::error_report::report_error(
         stores,
         "Missing `to' inserted",
@@ -5728,7 +5724,7 @@ fn report_missing_vsplit_to(
             "I'm working on `\\vsplit<box number> to <dimen>';",
             "will look for the <dimen> next.",
         ],
-        context,
+        context.to_owned(),
     )?;
     Ok(())
 }
@@ -15631,13 +15627,14 @@ fn apply_scanned_step(
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
                     ScannedBoxShiftPayload::VSplit(split) => {
-                        if split.missing_to {
-                            report_missing_vsplit_to(command.state, stores)?;
+                        if let Some(context) = &split.missing_to_context {
+                            report_missing_vsplit_to(context, stores)?;
                         }
                         let node = crate::canonical_box_runtime::split_vbox_register(
                             stores,
                             split.index,
                             split.height,
+                            &split.split_context,
                         )?;
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -15656,13 +15653,14 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::VSplit(split) => {
-            if split.missing_to {
-                report_missing_vsplit_to(command.state, stores)?;
+            if let Some(context) = &split.missing_to_context {
+                report_missing_vsplit_to(context, stores)?;
             }
             let node = crate::canonical_box_runtime::split_vbox_register(
                 stores,
                 split.index,
                 split.height,
+                &split.split_context,
             )?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
@@ -17595,13 +17593,14 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::VSplit(split) => {
-            if split.missing_to {
-                report_missing_vsplit_to(command, stores)?;
+            if let Some(context) = &split.missing_to_context {
+                report_missing_vsplit_to(context, stores)?;
             }
             let node = crate::canonical_box_runtime::split_vbox_register(
                 stores,
                 split.index,
                 split.height,
+                &split.split_context,
             )?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)

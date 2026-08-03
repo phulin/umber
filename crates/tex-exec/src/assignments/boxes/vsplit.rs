@@ -29,7 +29,8 @@ pub(super) fn scan_vsplit_node(
         )?;
     }
     let height = scan_scaled(input, stores, execution, context)?;
-    crate::canonical_box_runtime::split_vbox_register(stores, index, height)
+    let error_context = crate::diagnostics::show_context(stores, &input.summary());
+    crate::canonical_box_runtime::split_vbox_register(stores, index, height, &error_context)
 }
 
 #[cfg(any())]

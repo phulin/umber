@@ -34,7 +34,7 @@ fn etex_every_vsplit_replaces_stale_saved_discards() {
         }
 
         assert!(
-            split_vbox_register(&mut stores, index, sp(0))
+            split_vbox_register(&mut stores, index, sp(0), "")
                 .expect("recoverable split")
                 .is_none()
         );
@@ -49,7 +49,7 @@ fn etex_every_vsplit_replaces_stale_saved_discards() {
 fn tex82_vsplit_marks_remainder_and_trivial_case_matrix() {
     let mut stores = crate::test_harness::universe();
     assert!(
-        split_vbox_register(&mut stores, 0, sp(10))
+        split_vbox_register(&mut stores, 0, sp(10), "")
             .expect("void split")
             .is_none()
     );
@@ -68,7 +68,7 @@ fn tex82_vsplit_marks_remainder_and_trivial_case_matrix() {
     }))]);
     stores.set_box_reg(0, hbox);
     assert!(
-        split_vbox_register(&mut stores, 0, sp(10))
+        split_vbox_register(&mut stores, 0, sp(10), "")
             .expect("hbox recovery")
             .is_none()
     );
@@ -130,7 +130,7 @@ fn tex82_vsplit_marks_remainder_and_trivial_case_matrix() {
     }))]);
     stores.set_box_reg(7, source);
 
-    let Node::VList(extracted) = split_vbox_register(&mut stores, 7, sp(10))
+    let Node::VList(extracted) = split_vbox_register(&mut stores, 7, sp(10), "")
         .expect("vsplit succeeds")
         .expect("vsplit returns a box")
     else {

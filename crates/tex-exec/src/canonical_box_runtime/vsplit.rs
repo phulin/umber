@@ -19,6 +19,7 @@ pub(crate) fn split_vbox_register(
     stores: &mut Universe,
     index: u16,
     height: Scaled,
+    error_context: &str,
 ) -> Result<Option<Node>, ExecError> {
     stores.clear_split_discards();
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
@@ -34,7 +35,6 @@ pub(crate) fn split_vbox_register(
     };
     let Node::VList(source_box) = source_node else {
         clear_split_marks(stores);
-        let context = diagnostics::show_context(stores, stores.input_summary());
         let mut report = stores.print_err("");
         report
             .print_esc("vsplit")
@@ -44,7 +44,7 @@ pub(crate) fn split_vbox_register(
                 "The box you are trying to split is an \\hbox.",
                 "I can't split such a box, so I'll leave it alone.",
             ])
-            .context(context);
+            .context(error_context.to_owned());
         report.error().jump_out()?;
         return Ok(None);
     };

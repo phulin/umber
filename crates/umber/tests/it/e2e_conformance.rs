@@ -2220,6 +2220,30 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
 }
 
 #[test]
+fn trip_loaded_vsplit_diagnostics_freeze_canonical_scan_contexts() {
+    let log = run_focused_loaded_trip_through(377);
+    assert!(
+        log.contains(concat!(
+            "! Missing `to' inserted.\n",
+            "<to be read again> \n",
+            "                   0\n",
+            "l.285 ...\\hbox{\\vfill\\vsplit 3 0\n",
+            "                                pt}\n",
+        )),
+        "{log}"
+    );
+    assert!(
+        log.contains(concat!(
+            "! \\vsplit needs a \\vbox.\n",
+            "<to be read again> \n",
+            "                   }\n",
+            "l.285 ...ox{\\vfill\\vsplit 3 0pt}\n",
+        )),
+        "{log}"
+    );
+}
+
+#[test]
 fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
     // Exact TRIP source through lines 419 and 441--442. TeX82 §§1370/1335:
     // the deferred write's ordinary `\if` remains above the older selected

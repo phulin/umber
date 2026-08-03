@@ -220,6 +220,39 @@ fn stale_epoch_global_compaction_regression_replays_cleanly() {
     );
 }
 
+#[test]
+fn vsplit_freezes_each_error_context_at_its_canonical_scan_point() {
+    let mut stores = Universe::new();
+    stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
+    umber::prepare_run_stores(&mut stores);
+
+    let log =
+        umber::run_memory_with_stores(r"\setbox3=\hbox{}\setbox4=\vsplit3 0pt}\end", &mut stores)
+            .expect("recover from both vsplit diagnostics");
+
+    let missing_to = log
+        .find("Missing `to' inserted")
+        .expect("missing-to diagnostic");
+    let wrong_kind = log
+        .find("\\vsplit needs a \\vbox")
+        .expect("wrong-box-kind diagnostic");
+    assert!(
+        missing_to < wrong_kind,
+        "missing `to` must be reported first"
+    );
+
+    let missing_to_context = &log[missing_to..wrong_kind];
+    assert!(
+        missing_to_context.contains("<to be read again> \n                   0"),
+        "missing-to context must stop before the dimension:\n{missing_to_context}"
+    );
+    let wrong_kind_context = &log[wrong_kind..];
+    assert!(
+        wrong_kind_context.contains("<to be read again> \n                   }"),
+        "wrong-box context must stop after the dimension:\n{wrong_kind_context}"
+    );
+}
+
 fn assert_replay_identity(source: &str) {
     let mut stores = Universe::new();
     // These generated programs raise recoverable errors on purpose. tex.web

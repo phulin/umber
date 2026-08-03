@@ -513,11 +513,14 @@ pub struct ScannedBoxRegister {
 ///
 /// The keyword's absence is preserved so replay can issue its diagnostic, but
 /// both the register and dimension have already been consumed canonically.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannedVSplit {
     pub index: u16,
     pub height: Scaled,
-    pub missing_to: bool,
+    /// TeX82 §1082 reports a missing `to` before scanning the dimension.
+    pub missing_to_context: Option<String>,
+    /// Context after `scan_dimen`, used by the source-free box-kind check.
+    pub split_context: String,
 }
 
 /// A completed display diagnostic. Its display-line content and source origin
@@ -2662,12 +2665,15 @@ impl CommandProcessor<'_> {
     /// `scan_eight_bit_int` to `scan_register_num`.
     pub fn scan_vsplit(&mut self) -> Result<ScannedVSplit, CommandError> {
         let index = self.scan_profile_register_index()?;
-        let missing_to = !self.scan_keyword("to")?.value;
+        let missing_to_context = (!self.scan_keyword("to")?.value)
+            .then(|| self.command.output_open_context(&self.state));
         let height = self.scan_dimension()?.value;
+        let split_context = self.command.output_open_context(&self.state);
         Ok(ScannedVSplit {
             index,
             height,
-            missing_to,
+            missing_to_context,
+            split_context,
         })
     }
 
