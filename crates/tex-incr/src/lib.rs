@@ -22,7 +22,7 @@ use tex_exec::{
     ExecutionContext, ExecutionStats, Executor, MainControlStep, canonical_font_resource_path,
 };
 use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
-use tex_lex::{InputSource, InputStack, LayoutCursor, LayoutCursorError, MemoryInput, WorldInput};
+use tex_lex::{InputSource, InputStack, MemoryInput, WorldInput};
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
 use tex_state::token::OriginId;
@@ -3001,10 +3001,8 @@ fn execute_revision(
     input.set_utf8_input_as_bytes(utf8_input_as_bytes);
     universe.install_editor_fragments(fragments, layout)?;
     universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
-    input
-        .install_root_layout_cursor(LayoutCursor::new(layout, fragments)?)
-        .expect("new editor input has a root source");
     let mut executor = Executor::new();
+    executor.install_editor_root_layout(&mut input, layout, fragments)?;
     let mut sink = HistorySink::default();
     let mut context = match image_resolver {
         Some(image_resolver) => ExecutionContext::with_resource_resolvers(
@@ -3252,7 +3250,6 @@ fn execute_advance(
         source,
         fragments,
         layout,
-        LayoutCursor::new(layout, fragments)?,
     )?;
     for (path, bytes) in registered_inputs {
         scratch.world_mut().set_memory_file(path, bytes.clone())?;
@@ -3715,7 +3712,6 @@ pub enum SessionError {
     Fork(GenerationForkError),
     Fragment(tex_state::source_map::SourceMapError),
     Layout(EditorLayoutError),
-    LayoutCursor(LayoutCursorError),
     RenderSource(String),
 }
 
@@ -3766,7 +3762,6 @@ impl fmt::Display for SessionError {
             Self::Fork(error) => write!(f, "incremental generation retarget failed: {error}"),
             Self::Fragment(error) => write!(f, "editor fragment allocation failed: {error}"),
             Self::Layout(error) => write!(f, "editor layout update failed: {error}"),
-            Self::LayoutCursor(error) => write!(f, "editor layout cursor failed: {error}"),
             Self::RenderSource(error) => write!(f, "rendered source query failed: {error}"),
         }
     }
@@ -3840,12 +3835,6 @@ impl From<tex_state::source_map::SourceMapError> for SessionError {
 impl From<EditorLayoutError> for SessionError {
     fn from(value: EditorLayoutError) -> Self {
         Self::Layout(value)
-    }
-}
-
-impl From<LayoutCursorError> for SessionError {
-    fn from(value: LayoutCursorError) -> Self {
-        Self::LayoutCursor(value)
     }
 }
 

@@ -525,6 +525,7 @@ impl std::error::Error for CanonicalCheckpointRestoreError {}
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
+    LayoutCursor(tex_lex::LayoutCursorError),
     RootRevisionMismatch,
     Canonical(CanonicalCheckpointRestoreError),
     ChangedRootPrefix,
@@ -538,6 +539,9 @@ impl fmt::Display for EditorRestoreError {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
             Self::Layout(error) => write!(f, "could not install editor layout: {error}"),
+            Self::LayoutCursor(error) => {
+                write!(f, "could not bind editor layout to root input: {error}")
+            }
             Self::RootRevisionMismatch => {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
@@ -570,6 +574,23 @@ impl<E: fmt::Display> fmt::Display for EngineRestoreError<E> {
 impl<E: std::error::Error + 'static> std::error::Error for EngineRestoreError<E> {}
 
 impl crate::Executor {
+    /// Binds the canonical frozen editor layout to the retired executor's root
+    /// delivery state. The layout remains owned by `tex-state`; callers do not
+    /// construct or retain the lexer-specific cursor projection.
+    pub fn install_editor_root_layout(
+        &mut self,
+        input: &mut InputStack,
+        layout: &tex_state::EditorLayout,
+        fragments: &FragmentStore,
+    ) -> Result<(), EditorRestoreError> {
+        let cursor =
+            LayoutCursor::new(layout, fragments).map_err(EditorRestoreError::LayoutCursor)?;
+        input
+            .install_root_layout_cursor(cursor)
+            .ok_or(EditorRestoreError::RootRevisionMismatch)?;
+        Ok(())
+    }
+
     /// Restores a canonical checkpoint without consulting a host or legacy
     /// input stack.  All fallible reconstruction happens before any live root
     /// is changed, so a profile or mode mismatch is atomic.
@@ -622,7 +643,6 @@ impl crate::Executor {
         source: &str,
         fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
-        layout_cursor: LayoutCursor,
     ) -> Result<Duration, EditorRestoreError> {
         if checkpoint.root_content_hash
             != Some(tex_state::ContentHash::from_bytes(old_source.as_bytes()))
@@ -672,7 +692,9 @@ impl crate::Executor {
             )))
         })?;
         let installed_root = restored_input
-            .install_root_layout_cursor(layout_cursor)
+            .install_root_layout_cursor(
+                LayoutCursor::new(layout, fragments).map_err(EditorRestoreError::LayoutCursor)?,
+            )
             .ok_or(EditorRestoreError::RootRevisionMismatch)?;
         debug_assert_eq!(installed_root, root_source);
         restored_universe.set_root_editor_content_hash(ContentHash::from_bytes(source.as_bytes()));
