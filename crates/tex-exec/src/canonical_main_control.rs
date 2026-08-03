@@ -7099,38 +7099,12 @@ fn prepare_command_trace(
     processor.set_command_trace_mode_prefix(mode_prefix);
 }
 
-fn leader_kind(primitive: UnexpandablePrimitive) -> GlueKind {
-    match primitive {
-        UnexpandablePrimitive::Leaders => GlueKind::Leaders,
-        UnexpandablePrimitive::CLeaders => GlueKind::Cleaders,
-        UnexpandablePrimitive::XLeaders => GlueKind::Xleaders,
-        _ => unreachable!("leader scanner only receives leader primitives"),
-    }
-}
-
-fn payload_from_node(node: Node) -> Option<LeaderPayload> {
-    match node {
-        Node::HList(node) => Some(LeaderPayload::HList(node)),
-        Node::VList(node) => Some(LeaderPayload::VList(node)),
-        Node::Rule {
-            width,
-            height,
-            depth,
-        } => Some(LeaderPayload::Rule {
-            width,
-            height,
-            depth,
-        }),
-        _ => None,
-    }
-}
-
 fn scan_leaders_step(
     processor: &mut CommandProcessor<'_>,
     primitive: UnexpandablePrimitive,
     mode: Mode,
 ) -> Result<ScannedStep, ExecError> {
-    let kind = leader_kind(primitive);
+    let kind = crate::canonical_box_runtime::leader_glue_kind(primitive);
     match processor.scan_leader_payload().map_err(command_error)? {
         ScannedLeaderPayload::Missing => Ok(ScannedStep::MissingLeaderPayload),
         ScannedLeaderPayload::Construction(construction) => {
@@ -15330,17 +15304,14 @@ fn apply_scanned_step(
         } => {
             boxes.pending_leader = None;
             let spec = stores.intern_glue(glue);
-            crate::vertical::append_node_to_current_list(
+            crate::canonical_box_runtime::append_leader_contribution(
                 modes,
                 stores,
-                Node::Glue {
-                    spec,
-                    kind,
-                    leader: Some(payload),
-                },
+                kind,
+                payload,
+                spec,
                 command.fuel,
             )?;
-            crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LeaderRegister {
@@ -15349,30 +15320,18 @@ fn apply_scanned_step(
             copy,
             glue,
         } => {
-            let id = if copy {
-                stores.box_reg(index)
-            } else {
-                stores.take_box_reg_same_level(index)
-            };
-            if copy && let Some(id) = id {
-                stores.pin_survivor(id);
-            }
-            if let Some(payload) = id
-                .and_then(|id| stores.nodes(id).first().map(|node| node.to_owned()))
-                .and_then(payload_from_node)
+            if let Some(payload) =
+                crate::canonical_box_runtime::take_register_payload(stores, index, copy)
             {
                 let spec = stores.intern_glue(glue);
-                crate::vertical::append_node_to_current_list(
+                crate::canonical_box_runtime::append_leader_contribution(
                     modes,
                     stores,
-                    Node::Glue {
-                        spec,
-                        kind,
-                        leader: Some(payload),
-                    },
+                    kind,
+                    payload,
+                    spec,
                     command.fuel,
                 )?;
-                crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -15973,9 +15932,11 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             if let Some(kind) = box_state.leader_kind {
-                let payload = payload_from_node(node).ok_or(ExecError::MissingToken {
-                    context: "leader box payload",
-                })?;
+                let payload = crate::canonical_box_runtime::payload_from_node(node).ok_or(
+                    ExecError::MissingToken {
+                        context: "leader box payload",
+                    },
+                )?;
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);

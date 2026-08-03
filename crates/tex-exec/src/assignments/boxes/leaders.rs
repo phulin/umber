@@ -1,9 +1,8 @@
 use tex_lex::InputStack;
 use tex_state::Universe;
-use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
-use tex_state::node::{GlueKind, LeaderPayload, Node};
+use tex_state::node::{LeaderPayload, Node};
 use tex_state::token::{Token, TracedTokenWord};
 
 use crate::{ExecError, Mode};
@@ -15,7 +14,7 @@ use super::super::{
 use super::packaging::{kind_for_primitive, scan_box_node};
 use super::vsplit::scan_vsplit_node;
 use crate::canonical_box_runtime::first_box_node;
-use crate::canonical_box_runtime::hmode::infinite_glue;
+use crate::canonical_box_runtime::{infinite_glue_for_skip_primitive, payload_from_node};
 
 pub(super) fn scan_leader_payload(
     input: &mut InputStack,
@@ -137,45 +136,5 @@ fn leader_payload_from_node(
     node: Node,
     context: TracedTokenWord,
 ) -> Result<LeaderPayload, ExecError> {
-    match node {
-        Node::HList(box_node) => Ok(LeaderPayload::HList(box_node)),
-        Node::VList(box_node) => Ok(LeaderPayload::VList(box_node)),
-        Node::Rule {
-            width,
-            height,
-            depth,
-        } => Ok(LeaderPayload::Rule {
-            width,
-            height,
-            depth,
-        }),
-        _ => Err(ExecError::MissingLeaderPayload { context }),
-    }
-}
-
-pub(super) fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
-    match primitive {
-        UnexpandablePrimitive::Leaders => GlueKind::Leaders,
-        UnexpandablePrimitive::CLeaders => GlueKind::Cleaders,
-        UnexpandablePrimitive::XLeaders => GlueKind::Xleaders,
-        _ => unreachable!("caller restricts leader primitives"),
-    }
-}
-
-fn infinite_glue_for_skip_primitive(primitive: UnexpandablePrimitive) -> GlueSpec {
-    match primitive {
-        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
-            infinite_glue(Order::Fil, false, false)
-        }
-        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
-            infinite_glue(Order::Fill, false, false)
-        }
-        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
-            infinite_glue(Order::Fil, false, true)
-        }
-        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
-            infinite_glue(Order::Fil, true, false)
-        }
-        _ => unreachable!("caller restricts fill glue primitives"),
-    }
+    payload_from_node(node).ok_or(ExecError::MissingLeaderPayload { context })
 }

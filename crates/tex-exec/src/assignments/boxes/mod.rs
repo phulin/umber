@@ -23,7 +23,7 @@ use crate::canonical_box_runtime::{
     append_box_node_to_current_list, append_box_register, apply_box_shift_delta,
     execute_scanned_saved_vertical_discards, execute_scanned_unbox, first_box_node, take_last_box,
 };
-use leaders::{leader_glue_kind, scan_leader_glue, scan_leader_payload};
+use leaders::{scan_leader_glue, scan_leader_payload};
 pub(super) use packaging::scan_box_value_node;
 use packaging::{
     BoxScanContext, ScannedBoxValue, kind_for_primitive, scan_box_node, scan_box_value,
@@ -376,17 +376,14 @@ pub(super) fn execute_leaders(
         }
         Err(error) => return Err(error),
     };
-    append_node_to_current_list(
+    crate::canonical_box_runtime::append_leader_contribution(
         nest,
         stores,
-        Node::Glue {
-            spec,
-            kind: leader_glue_kind(primitive),
-            leader: Some(leader),
-        },
+        crate::canonical_box_runtime::leader_glue_kind(primitive),
+        leader,
+        spec,
         execution.command_fuel(),
     )?;
-    build_page_if_outer_vertical(nest, stores)?;
     Ok(())
 }
 

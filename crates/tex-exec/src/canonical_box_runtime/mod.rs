@@ -5,6 +5,7 @@
 //! remain private to the legacy assignment front.
 
 pub(crate) mod hmode;
+mod leaders;
 mod material;
 mod packaging;
 mod vsplit;
@@ -21,6 +22,10 @@ pub(crate) use hmode::{
     append_canonical_space_with_fuel, append_italic_correction_with_fuel, append_whatsit,
     commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
     flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
+};
+pub(crate) use leaders::{
+    append_leader_contribution, infinite_glue_for_skip_primitive, leader_glue_kind,
+    payload_from_node, take_register_payload,
 };
 pub(crate) use material::{
     append_box_node_to_current_list, append_box_register, apply_box_shift_delta,

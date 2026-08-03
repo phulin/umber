@@ -264,6 +264,7 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
                             | "canonical_main_control.rs"
                             | "canonical_box_runtime/mod.rs"
                             | "canonical_box_runtime/hmode.rs"
+                            | "canonical_box_runtime/leaders.rs"
                             | "canonical_box_runtime/material.rs"
                             | "canonical_box_runtime/packaging.rs"
                             | "canonical_box_runtime/vsplit.rs"
@@ -465,6 +466,56 @@ fn canonical_box_material_physically_owns_post_scan_mutations() {
             "legacy scanner still owns `{implementation}`"
         );
     }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_leaders_physically_own_payload_and_contribution_runtime() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_box_runtime/leaders.rs"))
+        .expect("read canonical leader owner");
+    let legacy = fs::read_to_string(source_root.join("assignments/boxes/leaders.rs"))
+        .expect("read legacy leader scanner");
+
+    for forbidden in [
+        "assignments",
+        "legacy",
+        "executor",
+        "ExecutionContext",
+        "InputStack",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical leader owner references `{forbidden}`"
+        );
+    }
+    for implementation in [
+        "fn payload_from_node(",
+        "fn leader_glue_kind(",
+        "fn infinite_glue_for_skip_primitive(",
+        "fn take_register_payload(",
+        "fn append_leader_contribution(",
+    ] {
+        assert!(
+            owner.contains(implementation),
+            "canonical owner lacks `{implementation}`"
+        );
+    }
+    for retired in [
+        "fn leader_glue_kind(",
+        "fn infinite_glue_for_skip_primitive(",
+    ] {
+        assert!(
+            !legacy.contains(retired),
+            "legacy scanner still owns `{retired}`"
+        );
+    }
+    assert!(
+        legacy.contains("payload_from_node(node)"),
+        "legacy scanner must adapt payload errors"
+    );
 }
 
 #[test]
