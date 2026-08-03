@@ -266,19 +266,26 @@ fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
             },
             MathField::MathChar(math_char('A')),
         )),
-        Node::MathNoad(operator),
+        Node::MathNoad(operator.clone()),
     ]);
     let params = MathParams::read(&universe);
     let formula = mlist_to_hlist(&universe, input, Style::DISPLAY, false, &params);
+    // Observe the operator in isolation: packs from the preceding scripted,
+    // fraction, and accent noads are intentionally interleaved in the full
+    // formula, so their count is not an operator-selection contract.
+    let isolated_operator_input = universe.freeze_node_list(&[Node::MathNoad(operator)]);
+    let isolated_operator = mlist_to_hlist(
+        &universe,
+        isolated_operator_input,
+        Style::DISPLAY,
+        false,
+        &params,
+    );
     assert_eq!(
-        *formula
+        isolated_operator
             .pack_observations()
-            .iter()
-            .find(|pack| {
-                pack.width == Scaled::from_raw(728_760)
-                    && pack.height == Scaled::from_raw(602_276)
-                    && pack.depth == Scaled::from_raw(266_076)
-            })
+            .first()
+            .copied()
             .expect("selected display operator pack"),
         MathPackObservation {
             axis: BoxAxis::Horizontal,
