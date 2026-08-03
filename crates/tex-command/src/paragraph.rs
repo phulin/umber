@@ -233,15 +233,101 @@ fn set_input_level_identity(
     }
 }
 
+fn parameter_front_identities(
+    recorded: &crate::macro_call::ParameterState,
+    live: &crate::macro_call::ParameterState,
+    mut definitions_equal: impl FnMut(
+        tex_state::ids::MacroDefinitionId,
+        tex_state::ids::MacroDefinitionId,
+    ) -> bool,
+) -> Option<
+    Vec<(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )>,
+> {
+    if recorded.activations.len() != live.activations.len() {
+        return None;
+    }
+    recorded
+        .activations
+        .iter()
+        .zip(&live.activations)
+        .map(|(recorded, live)| {
+            (recorded.name == live.name
+                && definitions_equal(recorded.definition, live.definition)
+                && crate::macro_call::macro_arguments_semantic_eq(
+                    &recorded.arguments,
+                    &live.arguments,
+                ))
+            .then_some((recorded.identity, live.identity))
+        })
+        .collect()
+}
+
+fn rebase_activation_identity(
+    identity: crate::macro_call::MacroActivationId,
+    recorded_next: u64,
+    live_next: u64,
+    front: &[(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )],
+) -> Option<crate::macro_call::MacroActivationId> {
+    front
+        .iter()
+        .find_map(|(recorded, live)| (*recorded == identity).then_some(*live))
+        .or_else(|| {
+            (identity.0 >= recorded_next).then(|| {
+                identity
+                    .0
+                    .checked_sub(recorded_next)?
+                    .checked_add(live_next)
+                    .map(crate::macro_call::MacroActivationId)
+            })?
+        })
+}
+
+fn rebase_token_behavior_activation(
+    level: &mut crate::input::InputLevel,
+    recorded_next: u64,
+    live_next: u64,
+    front: &[(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )],
+) -> Option<()> {
+    let crate::input::InputLevel::Tokens(tokens) = level else {
+        return Some(());
+    };
+    let crate::input::TokenBehavior::MacroBody(identity) = &mut tokens.behavior else {
+        return Some(());
+    };
+    *identity = rebase_activation_identity(*identity, recorded_next, live_next, front)?;
+    Some(())
+}
+
 fn adopt_live_front_origins(
     recorded: &mut InputState,
     live: &InputState,
+    recorded_activation_next: u64,
+    live_activation_next: u64,
+    activation_front: &[(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )],
 ) -> Option<Vec<(crate::input::InputLevelId, crate::input::InputLevelId)>> {
     if recorded.levels.len() != live.levels.len() {
         return None;
     }
     let mut identities = Vec::with_capacity(recorded.levels.len());
     for (recorded, live) in recorded.levels.iter_mut().zip(&live.levels) {
+        rebase_token_behavior_activation(
+            recorded,
+            recorded_activation_next,
+            live_activation_next,
+            activation_front,
+        )?;
         let recorded_identity = input_level_identity(recorded);
         let live_identity = input_level_identity(live);
         match (&mut *recorded, live) {
@@ -250,9 +336,35 @@ fn adopt_live_front_origins(
                 crate::input::InputLevel::Tokens(live),
             ) => match (&mut recorded.payload, &live.payload) {
                 (
+                    crate::input::TokenPayload::Stored {
+                        tokens: recorded_tokens,
+                        origins: recorded_origins,
+                    },
+                    crate::input::TokenPayload::Stored {
+                        tokens: live_tokens,
+                        origins: live_origins,
+                    },
+                ) if recorded_tokens == live_tokens => *recorded_origins = *live_origins,
+                (
+                    crate::input::TokenPayload::Transient(recorded),
+                    crate::input::TokenPayload::Transient(live),
+                ) => recorded.adopt_matching_origins(live)?,
+                (
                     crate::input::TokenPayload::BackedUp(recorded),
                     crate::input::TokenPayload::BackedUp(live),
                 ) => recorded.adopt_matching_origins(live)?,
+                (
+                    crate::input::TokenPayload::ArgumentRange {
+                        buffer: recorded_buffer,
+                        range: recorded_range,
+                    },
+                    crate::input::TokenPayload::ArgumentRange {
+                        buffer: live_buffer,
+                        range: live_range,
+                    },
+                ) if recorded_range == live_range => {
+                    recorded_buffer.adopt_matching_origins(live_buffer)?;
+                }
                 (recorded, live) if recorded == live => {}
                 _ => return None,
             },
@@ -271,6 +383,12 @@ fn rebase_ending_input_identities(
     recorded_next: u64,
     live_next: u64,
     front: &[(crate::input::InputLevelId, crate::input::InputLevelId)],
+    recorded_activation_next: u64,
+    live_activation_next: u64,
+    activation_front: &[(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )],
 ) -> Option<()> {
     for level in &mut ending.levels {
         let old = input_level_identity(level);
@@ -286,9 +404,46 @@ fn rebase_ending_input_identities(
                 })?
             })?;
         set_input_level_identity(level, rebound);
+        rebase_token_behavior_activation(
+            level,
+            recorded_activation_next,
+            live_activation_next,
+            activation_front,
+        )?;
     }
     ending.next_level_identity = ending
         .next_level_identity
+        .checked_sub(recorded_next)?
+        .checked_add(live_next)?;
+    Some(())
+}
+
+fn rebase_ending_parameters(
+    ending: &mut crate::macro_call::ParameterState,
+    recorded_next: u64,
+    live_next: u64,
+    front: &[(
+        crate::macro_call::MacroActivationId,
+        crate::macro_call::MacroActivationId,
+    )],
+    live_starting: &crate::macro_call::ParameterState,
+) -> Option<()> {
+    for activation in &mut ending.activations {
+        let old = activation.identity;
+        activation.identity = rebase_activation_identity(old, recorded_next, live_next, front)?;
+        if let Some((_, live_identity)) = front.iter().find(|(recorded, _)| *recorded == old) {
+            let live = live_starting
+                .activations
+                .iter()
+                .find(|candidate| candidate.identity == *live_identity)?;
+            activation.name = live.name;
+            activation.definition = live.definition;
+            activation.arguments = live.arguments.clone();
+            activation.invocation = live.invocation;
+        }
+    }
+    ending.next_activation_identity = ending
+        .next_activation_identity
         .checked_sub(recorded_next)?
         .checked_add(live_next)?;
     Some(())
@@ -351,17 +506,41 @@ impl crate::CommandState {
         &mut self,
         transaction: &ParagraphInputTransaction,
     ) -> Result<(), ParagraphInputReplayError> {
+        self.replay_paragraph_input_transaction_with(transaction, |left, right| left == right)
+    }
+
+    /// Replays after comparing allocation-backed macro definitions through
+    /// their owning semantic store boundary.
+    pub fn replay_paragraph_input_transaction_with(
+        &mut self,
+        transaction: &ParagraphInputTransaction,
+        definitions_equal: impl FnMut(
+            tex_state::ids::MacroDefinitionId,
+            tex_state::ids::MacroDefinitionId,
+        ) -> bool,
+    ) -> Result<(), ParagraphInputReplayError> {
         let mut starting_input = transaction.starting_input.clone();
         let recorded_next = starting_input.next_level_identity;
         let live_next = self.input.next_level_identity;
-        let Some(front_identities) = adopt_live_front_origins(&mut starting_input, &self.input)
-        else {
+        let recorded_activation_next = transaction.starting_parameters.next_activation_identity;
+        let live_activation_next = self.parameters.next_activation_identity;
+        let Some(activation_front) = parameter_front_identities(
+            &transaction.starting_parameters,
+            &self.parameters,
+            definitions_equal,
+        ) else {
+            return Err(ParagraphInputReplayError::StartingInputMismatch);
+        };
+        let Some(front_identities) = adopt_live_front_origins(
+            &mut starting_input,
+            &self.input,
+            recorded_activation_next,
+            live_activation_next,
+            &activation_front,
+        ) else {
             return Err(ParagraphInputReplayError::StartingInputMismatch);
         };
         if self.input != starting_input {
-            return Err(ParagraphInputReplayError::StartingInputMismatch);
-        }
-        if self.parameters != transaction.starting_parameters {
             return Err(ParagraphInputReplayError::StartingInputMismatch);
         }
         let mut ending_input = transaction.ending_input.clone();
@@ -370,10 +549,22 @@ impl crate::CommandState {
             recorded_next,
             live_next,
             &front_identities,
+            recorded_activation_next,
+            live_activation_next,
+            &activation_front,
+        )
+        .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
+        let mut ending_parameters = transaction.ending_parameters.clone();
+        rebase_ending_parameters(
+            &mut ending_parameters,
+            recorded_activation_next,
+            live_activation_next,
+            &activation_front,
+            &self.parameters,
         )
         .ok_or(ParagraphInputReplayError::StartingInputMismatch)?;
         self.input = ending_input;
-        self.parameters = transaction.ending_parameters.clone();
+        self.parameters = ending_parameters;
         Ok(())
     }
 

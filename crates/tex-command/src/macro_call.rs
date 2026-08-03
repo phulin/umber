@@ -194,6 +194,16 @@ impl ParameterState {
     }
 }
 
+pub(crate) fn macro_arguments_semantic_eq(left: &MacroArguments, right: &MacroArguments) -> bool {
+    left.ranges == right.ranges && left.arguments_tokens().eq(right.arguments_tokens())
+}
+
+impl MacroArguments {
+    fn arguments_tokens(&self) -> impl Iterator<Item = Option<Token>> + '_ {
+        self.buffer.words().iter().map(|word| word.token())
+    }
+}
+
 impl CommandProcessor<'_> {
     /// TeX82 §323's diagnostic for a named token-list parameter installed by
     /// `begin_token_list`. Unlike ordinary macro calls, these lists trace only

@@ -136,6 +136,20 @@ impl SharedTokenBuffer {
     pub(crate) fn words(&self) -> &[TracedTokenWord] {
         &self.0
     }
+
+    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
+        if self.0.len() != live.0.len()
+            || self
+                .0
+                .iter()
+                .zip(live.0.iter())
+                .any(|(recorded, live)| recorded.token() != live.token())
+        {
+            return None;
+        }
+        self.0 = Arc::clone(&live.0);
+        Some(())
+    }
 }
 
 /// Shared ownership of commands restored by `back_input` or scanner replay.

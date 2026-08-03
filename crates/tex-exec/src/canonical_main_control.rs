@@ -2006,7 +2006,11 @@ impl CanonicalMainControl {
         for (index, region) in self.paragraph_recorder.replay.iter().enumerate() {
             let mut input_probe = self.command.clone();
             if input_probe
-                .replay_paragraph_input_transaction(&region.input)
+                .replay_paragraph_input_transaction_with(&region.input, |left, right| {
+                    stores
+                        .macro_definition(left)
+                        .semantic_eq(stores.macro_definition(right))
+                })
                 .is_err()
             {
                 continue;
@@ -2043,7 +2047,11 @@ impl CanonicalMainControl {
         let input = self.paragraph_recorder.replay[index].input.clone();
         if self
             .command
-            .replay_paragraph_input_transaction(&input)
+            .replay_paragraph_input_transaction_with(&input, |left, right| {
+                stores
+                    .macro_definition(left)
+                    .semantic_eq(stores.macro_definition(right))
+            })
             .is_err()
         {
             stores.record_canonical_paragraph_lookup(false, 0);
