@@ -1,4 +1,4 @@
-//! Recorder-driven paragraph front-end eligibility and transitional detached reuse.
+//! Retired recorder-driven paragraph eligibility and detached reuse front.
 
 use tex_lex::InputStack;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};

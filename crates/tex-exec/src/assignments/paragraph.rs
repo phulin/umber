@@ -17,8 +17,8 @@ use tex_typeset::linebreak::{
 
 use super::boxes::hpack_owned_with_overfull_rule;
 use super::*;
+use crate::legacy_paragraph_memo::ParagraphMemoConsumer;
 use crate::mode::ParagraphParams;
-use crate::paragraph_memo::ParagraphMemoConsumer;
 use crate::vertical::{
     append_migrated_contribution, append_node_to_current_list, append_vertical_contribution,
     build_page_if_outer_vertical,
@@ -322,7 +322,7 @@ fn end_paragraph_with_memo(
     flush_pending_hchars_with_fuel(nest, stores, execution.command_fuel())?;
     if nest.current_mode() != Mode::Horizontal || nest.current_list().is_empty() {
         {
-            let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
+            let mut memo = crate::legacy_paragraph_memo::ExecutorParagraphMemoConsumer::new(
                 input,
                 execution,
                 crate::executor::ParagraphContinuation::End,
@@ -332,7 +332,7 @@ fn end_paragraph_with_memo(
         return end_paragraph_with_fuel(nest, stores, execution.command_fuel());
     }
     {
-        let mut memo = crate::paragraph_memo::ExecutorParagraphMemoConsumer::new(
+        let mut memo = crate::legacy_paragraph_memo::ExecutorParagraphMemoConsumer::new(
             input,
             execution,
             crate::executor::ParagraphContinuation::End,
@@ -353,7 +353,7 @@ fn end_paragraph_with_memo(
         None,
         execution.command_fuel(),
     )?;
-    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+    let mut memo = crate::legacy_paragraph_memo::PendingParagraphMemoConsumer::new(execution);
     memo.publish_finished_lines(
         stores,
         &result.finished_nodes,
@@ -397,7 +397,7 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
             None,
             execution.command_fuel(),
         )?;
-        let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+        let mut memo = crate::legacy_paragraph_memo::PendingParagraphMemoConsumer::new(execution);
         memo.publish_finished_lines(
             stores,
             &result.finished_nodes,
@@ -467,7 +467,7 @@ pub(crate) fn interrupt_paragraph_for_display(
         None,
         execution.command_fuel(),
     )?;
-    let mut memo = crate::paragraph_memo::PendingParagraphMemoConsumer::new(execution);
+    let mut memo = crate::legacy_paragraph_memo::PendingParagraphMemoConsumer::new(execution);
     memo.publish_finished_lines(
         stores,
         &result.finished_nodes,
@@ -496,7 +496,7 @@ pub(crate) fn interrupt_canonical_paragraph_for_display(
             line_count: 0,
         });
     }
-    let mut memo = crate::paragraph_memo::NoParagraphMemoConsumer;
+    let mut memo = crate::legacy_paragraph_memo::NoParagraphMemoConsumer;
     break_current_paragraph(
         nest,
         stores,
@@ -547,7 +547,7 @@ fn break_current_paragraph(
     stores: &mut Universe,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
-    mut memo: Option<&mut dyn crate::paragraph_memo::ParagraphMemoConsumer>,
+    mut memo: Option<&mut dyn crate::legacy_paragraph_memo::ParagraphMemoConsumer>,
     error_context: Option<String>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {

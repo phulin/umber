@@ -199,7 +199,7 @@ pub(crate) fn enter_math(
         assignments::flush_pending_hchars(nest, stores, execution.command_fuel())?;
     }
     if display {
-        crate::paragraph_memo::publish_prepared_hlist(
+        crate::legacy_paragraph_memo::publish_prepared_hlist(
             input,
             stores,
             execution,

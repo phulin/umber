@@ -92,7 +92,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/node_dump.rs`: TeX-style node-list dumping used by diagnostic output.
 - `src/pack_report.rs`: TeX82 selector-aware overfull and underfull box diagnostics.
 - `src/pack_report/tests.rs`: interaction-mode channel and ordering coverage for packed-box diagnostics.
-- `src/paragraph_memo.rs`: retired `Executor` paragraph recording and reuse front, including InputStack transition validation, ExecutionContext caches, accepted-history hlist/line mounts, break-graph observation, barrier classification, and telemetry; source-free validation, replay, and provenance recipes live in `canonical_paragraph_memo.rs`.
+- `src/legacy_paragraph_memo.rs`: retired `Executor` paragraph recording and reuse front, including InputStack transition validation, ExecutionContext caches, accepted-history hlist/line mounts, break-graph observation, barrier classification, and telemetry; source-free validation, replay, and provenance recipes live in `canonical_paragraph_memo.rs`.
 - `src/raw_delivery.rs`: single retired lexer bridge for compatibility scanners
   that still require one unexpanded semantic token; canonical execution
   receives command delivery from `tex-command`.

@@ -239,7 +239,7 @@ fn canonical_paragraph_memo_has_no_legacy_dependencies() {
         "InputStack",
         "ExecutionContext",
         "crate::executor",
-        "paragraph_memo::",
+        "legacy_paragraph_memo",
     ] {
         assert!(
             !source.contains(forbidden),
@@ -265,15 +265,40 @@ fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
             "canonical command control must call canonical paragraph helper `{helper}`"
         );
     }
-    for retired in [
-        "crate::paragraph_memo::validate_canonical",
-        "crate::paragraph_memo::same_mutation_entry_class",
-        "crate::paragraph_memo::replay_canonical",
-    ] {
+    for retired in ["crate::legacy_paragraph_memo"] {
         assert!(
             !canonical.contains(retired),
             "canonical command control must bypass retired paragraph front `{retired}`"
         );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_command_control_has_no_legacy_paragraph_front_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("legacy_paragraph_memo"));
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("legacy_paragraph_memo") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "executor.rs"
+                            | "assignments/paragraph.rs"
+                            | "math/legacy_front.rs"
+                    )
+                ),
+                "{} must not call the retired paragraph recording front",
+                relative.display()
+            );
+        }
     }
 }
 
@@ -317,7 +342,7 @@ fn canonical_command_control_has_no_legacy_math_front_callers() {
             assert!(
                 matches!(
                     relative.to_str(),
-                    Some("legacy_dispatch.rs" | "paragraph_memo.rs" | "assignments/mod.rs")
+                    Some("legacy_dispatch.rs" | "legacy_paragraph_memo.rs" | "assignments/mod.rs")
                 ),
                 "{} must not call the retired math front",
                 relative.display()

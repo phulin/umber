@@ -2019,7 +2019,7 @@ where
                 );
                 if execution.cold_paragraph_recording.is_some() {
                     let before_artifacts = stores.world().artifact_commits().len();
-                    if crate::paragraph_memo::try_reuse_aligned_paragraph(
+                    if crate::legacy_paragraph_memo::try_reuse_aligned_paragraph(
                         starting_span,
                         starting_root_span,
                         starting_input_identity,

@@ -27,13 +27,13 @@ mod legacy_dispatch;
 #[cfg(test)]
 mod legacy_editor_restart;
 mod legacy_output;
+mod legacy_paragraph_memo;
 mod math;
 mod mode;
 mod node_dump;
 mod pack_report;
 mod packing_params;
 mod page_builder;
-mod paragraph_memo;
 mod raw_delivery;
 mod retained_resource;
 mod session_api;
