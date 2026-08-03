@@ -10,7 +10,6 @@ publish = false
 criterion = "0.5"
 tex-command = { path = "../../crates/tex-command" }
 tex-exec = { path = "../../crates/tex-exec" }
-tex-lex = { path = "../../crates/tex-lex" }
 tex-state = { path = "../../crates/tex-state", features = ["testing"] }
 umber-fetch = { path = "../../crates/umber-fetch" }
 

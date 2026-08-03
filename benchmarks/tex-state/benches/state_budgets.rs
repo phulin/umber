@@ -4,10 +4,10 @@ use criterion::{
     BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 use tex_command::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+    CommandDialect, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
+    CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
     install_tex82_expandable_primitives,
 };
-use tex_lex::{InputStack, LayoutCursor, MemoryInput};
 use tex_state::ProvenanceResolver;
 use tex_state::SourceId;
 use tex_state::glue::Order;
@@ -845,14 +845,14 @@ fn provenance_source_lexing(c: &mut Criterion) {
         group.throughput(Throughput::Elements(token_count as u64));
         group.bench_with_input(BenchmarkId::new("traced", name), &input, |b, input| {
             b.iter_batched(
-                || {
-                    (
-                        source_universe(needs_control_sequences),
-                        InputStack::new(MemoryInput::new(input.clone())),
-                    )
-                },
-                |(mut stores, mut input)| {
-                    black_box(drain_traced_source_timed(&mut stores, &mut input));
+                || canonical_source_case(input.clone(), needs_control_sequences),
+                |(mut stores, mut command, mut runtime, mut capabilities)| {
+                    black_box(drain_traced_source_timed(
+                        &mut stores,
+                        &mut command,
+                        &mut runtime,
+                        &mut capabilities,
+                    ));
                 },
                 BatchSize::SmallInput,
             );
@@ -894,13 +894,18 @@ fn edit_stable_source_coordinates(c: &mut Criterion) {
     let mut group = c.benchmark_group("edit_stable_source_coordinates");
     let resolver = ProvenanceResolver::new(&universe);
 
-    let (fragments, layout, _, _) = edit_stable_layout_case(4_096);
+    let (fragments, pieces) = edit_stable_piece_case(4_096);
     group.throughput(Throughput::Elements(4_096));
-    group.bench_function("layout_cursor_build_4096_pieces", |b| {
+    group.bench_function("layout_build_4096_pieces", |b| {
         b.iter(|| {
             black_box(
-                LayoutCursor::new(black_box(&layout), black_box(&fragments))
-                    .expect("line-aligned benchmark layout"),
+                EditorLayout::new(
+                    "<benchmark>",
+                    LayoutGeneration::new(1),
+                    black_box(pieces.clone()),
+                    black_box(&fragments),
+                )
+                .expect("benchmark layout is valid"),
             );
         });
     });
@@ -945,14 +950,10 @@ fn edit_stable_source_coordinates(c: &mut Criterion) {
 fn edit_stable_layout_case(
     piece_count: usize,
 ) -> (FragmentStore, EditorLayout, OriginId, OriginId) {
-    let bytes = format!("d\n{}", "x\n".repeat(piece_count));
-    let mut fragments = FragmentStore::new();
-    let (fragment, registration) = fragments
-        .append(Arc::from(bytes.as_bytes()), 1)
-        .expect("benchmark fragment fits logical position space");
-    let pieces = (0..piece_count)
-        .map(|index| Piece::new(fragment, (index * 2 + 2) as u32, (index * 2 + 4) as u32))
-        .collect();
+    let (fragments, pieces) = edit_stable_piece_case(piece_count);
+    let registration = fragments
+        .registration(pieces[0].fragment())
+        .expect("benchmark fragment remains registered");
     let layout = EditorLayout::new("<benchmark>", LayoutGeneration::new(1), pieces, &fragments)
         .expect("benchmark layout is valid");
     let offset = ((piece_count - 1) * 2 + 2) as u64;
@@ -963,6 +964,18 @@ fn edit_stable_layout_case(
         .direct_origin(0, 1)
         .expect("deleted benchmark origin is directly encodable");
     (fragments, layout, origin, deleted_origin)
+}
+
+fn edit_stable_piece_case(piece_count: usize) -> (FragmentStore, Vec<Piece>) {
+    let bytes = format!("d\n{}", "x\n".repeat(piece_count));
+    let mut fragments = FragmentStore::new();
+    let (fragment, _) = fragments
+        .append(Arc::from(bytes.as_bytes()), 1)
+        .expect("benchmark fragment fits logical position space");
+    let pieces = (0..piece_count)
+        .map(|index| Piece::new(fragment, (index * 2 + 2) as u32, (index * 2 + 4) as u32))
+        .collect();
+    (fragments, pieces)
 }
 
 fn provenance_expansion(c: &mut Criterion) {
@@ -1115,17 +1128,22 @@ fn source_workloads() -> Vec<(&'static str, String, bool)> {
 
 fn drain_traced_source(
     stores: &mut Universe,
-    input: &mut InputStack,
+    command: &mut CommandState,
+    runtime: &mut CommandRuntime,
+    capabilities: &mut CommandHostCapabilities,
 ) -> (usize, usize, ProvenanceStats, ProvenanceStats) {
     let baseline = stores.provenance_stats();
     let mut count = 0;
     let mut direct = 0;
-    while let Some(token) = input
-        .next_traced_token(stores)
-        .expect("source lexing should succeed")
-    {
+    let mut processor = CommandProcessor::new(
+        command,
+        runtime,
+        stores.command_context(),
+        CommandHostContext::new(capabilities),
+    );
+    while let Some(token) = processor.get_token().expect("source lexing should succeed") {
         count += 1;
-        direct += usize::from(token.origin().is_direct_source());
+        direct += usize::from(token.source_range().is_some());
         black_box(token);
     }
     let final_stats = stores.provenance_stats();
@@ -1137,12 +1155,20 @@ fn drain_traced_source(
     )
 }
 
-fn drain_traced_source_timed(stores: &mut Universe, input: &mut InputStack) -> usize {
+fn drain_traced_source_timed(
+    stores: &mut Universe,
+    command: &mut CommandState,
+    runtime: &mut CommandRuntime,
+    capabilities: &mut CommandHostCapabilities,
+) -> usize {
+    let mut processor = CommandProcessor::new(
+        command,
+        runtime,
+        stores.command_context(),
+        CommandHostContext::new(capabilities),
+    );
     let mut count = 0;
-    while let Some(token) = input
-        .next_traced_token(stores)
-        .expect("source lexing should succeed")
-    {
+    while let Some(token) = processor.get_token().expect("source lexing should succeed") {
         black_box(token);
         count += 1;
     }
@@ -1150,20 +1176,26 @@ fn drain_traced_source_timed(stores: &mut Universe, input: &mut InputStack) -> u
 }
 
 fn diagnostic_case(input: String) -> (Universe, tex_state::token::OriginId) {
-    let mut stores = source_universe(false);
-    let mut stack = InputStack::new(MemoryInput::new(input));
-    let token = stack
-        .next_traced_token(&mut stores)
-        .expect("diagnostic source should lex")
-        .expect("diagnostic source should contain a token");
+    let (mut stores, mut command, mut runtime, mut capabilities) =
+        canonical_source_case(input, false);
+    let token = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        stores.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    )
+    .get_token()
+    .expect("diagnostic source should lex")
+    .expect("diagnostic source should contain a token");
     (stores, token.origin())
 }
 
 fn print_provenance_report() {
     for (name, text, needs_control_sequences) in source_workloads() {
         let mut stores = source_universe(needs_control_sequences);
-        let mut input = InputStack::new(MemoryInput::new(text));
-        let (tokens, direct, live, peak) = drain_traced_source(&mut stores, &mut input);
+        let (mut command, mut runtime, mut capabilities) = canonical_source_command(text);
+        let (tokens, direct, live, peak) =
+            drain_traced_source(&mut stores, &mut command, &mut runtime, &mut capabilities);
         eprintln!(
             "provenance-report {name}: tokens={tokens} direct={direct} records={} spans={} entries={} regions={} backings={} live_bytes={} retained_bytes={} peak_live_bytes={} peak_retained_bytes={} cache_bytes=0",
             live.origin_records(),
@@ -1194,17 +1226,43 @@ fn print_provenance_report() {
 }
 
 fn source_heavy_token_count(input: &str) -> usize {
-    let stores = source_universe(input.contains('\\'));
-    let mut stack = InputStack::new(MemoryInput::new(input.to_owned()));
-    let mut count = 0;
-    while stack
-        .next_token_readonly(&stores)
-        .expect("source lexing should succeed")
-        .is_some()
-    {
-        count += 1;
-    }
-    count
+    let (mut stores, mut command, mut runtime, mut capabilities) =
+        canonical_source_case(input.to_owned(), input.contains('\\'));
+    drain_traced_source_timed(&mut stores, &mut command, &mut runtime, &mut capabilities)
+}
+
+type CanonicalSourceCase = (
+    Universe,
+    CommandState,
+    CommandRuntime,
+    CommandHostCapabilities,
+);
+
+fn canonical_source_case(input: String, needs_control_sequences: bool) -> CanonicalSourceCase {
+    let stores = source_universe(needs_control_sequences);
+    let (command, runtime, capabilities) = canonical_source_command(input);
+    (stores, command, runtime, capabilities)
+}
+
+fn canonical_source_command(
+    input: String,
+) -> (CommandState, CommandRuntime, CommandHostCapabilities) {
+    let profile = CommandProfile::unicode_extended(CommandDialect::Pdftex14027);
+    let mut command = CommandState::new(profile);
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            input.into_bytes(),
+        ))
+        .expect("benchmark source registers");
+    command
+        .open_registered_source(source)
+        .expect("benchmark source opens");
+    (
+        command,
+        CommandRuntime::default(),
+        CommandHostCapabilities::default(),
+    )
 }
 
 fn source_universe(needs_control_sequences: bool) -> Universe {
