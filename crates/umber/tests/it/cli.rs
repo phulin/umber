@@ -1451,6 +1451,28 @@ fn legacy_input_resolvers_use_state_owned_resource_results() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn profiling_feature_forwards_only_to_the_axis_owner() {
+    let manifest =
+        std::fs::read_to_string(test_support::repository_root().join("crates/umber/Cargo.toml"))
+            .expect("read Umber manifest");
+    assert!(
+        manifest.contains("profiling = [\"tex-state/profiling\"]"),
+        "Umber profiling must forward only to the tex-state axis owner"
+    );
+    for retired in [
+        "tex-exec/profiling",
+        "tex-expand/profiling",
+        "tex-lex/profiling",
+    ] {
+        assert!(
+            !manifest.contains(retired),
+            "Umber profiling must not forward through legacy dependency {retired}"
+        );
+    }
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");

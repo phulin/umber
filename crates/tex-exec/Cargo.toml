@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-profiling = ["tex-expand/profiling", "tex-lex/profiling"]
+profiling = ["tex-state/profiling"]
 
 [dependencies]
 ahash.workspace = true

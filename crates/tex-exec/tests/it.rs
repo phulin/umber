@@ -546,3 +546,17 @@ fn expansion_read_transactions_stay_on_the_state_owner() {
         }
     }
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn profiling_feature_forwards_only_to_the_axis_owner() {
+    let manifest =
+        fs::read_to_string(test_support::repository_root().join("crates/tex-exec/Cargo.toml"))
+            .expect("read tex-exec manifest");
+    assert!(
+        manifest.contains("profiling = [\"tex-state/profiling\"]"),
+        "tex-exec profiling must forward only to the tex-state axis owner"
+    );
+    assert!(!manifest.contains("tex-expand/profiling"));
+    assert!(!manifest.contains("tex-lex/profiling"));
+}
