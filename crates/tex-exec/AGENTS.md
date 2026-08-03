@@ -53,7 +53,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/variables/streams.rs`: `\openin`, `\read`, `\openout`, `\write`, and stream whatsit execution.
 - `src/checkpoint.rs`: executor-owned named boundary sessions plus opaque aggregate checkpoint restore over `Universe`, live input, and the rooted mode nest.
 - `src/align/`: alignment machinery split between canonical and retired fronts. `canonical_execution.rs`, `packaging.rs`, `support.rs`, `transitions.rs`, and `widths/` are source-free completion, unset-node, state-access, lifecycle, and width-resolution owners. `legacy_front.rs` owns the retired aggregate InputStack transaction; `legacy_execution.rs`, `preamble.rs`, `template.rs`, and `noalign.rs` own Executor row/cell execution and scanning. Focused tests remain under the corresponding historical `execution/`, `preamble/`, `widths/`, and `noalign/` test directories.
-- `src/dispatch.rs`: main-control token dispatch, group exits, token replay, and execution statistics.
+- `src/dispatch.rs`: source-free canonical dispatch result, execution statistics, and prepared-page contract shared by canonical command control and the compatibility front.
 - `src/error.rs`: execution error enum, conversions, and display text. Its
   `Fatal` variant is TeX82 §81's non-local `goto end_of_TEX`: it propagates by
   `?` through every frame exactly as `jump_out` cuts across every active
@@ -76,6 +76,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   direct lifecycle tests live in `src/job_output/tests.rs`.
 - `src/legacy_output.rs`: retired `Executor` input-stack fronts for page fire-up and `\output` token-list replay; it delegates all input-free page state to `canonical_page_output.rs` and has no canonical command-control caller.
 - `src/legacy_diagnostics.rs`: retired `Executor` scanners for `\show`, `\showthe`, `\showtokens`, `\showifs`, message, case-change, and ignore-spaces primitives; source-free rendering delegates to `canonical_diagnostics.rs`.
+- `src/legacy_dispatch.rs`: retired `InputStack`/`ExecutionContext` main-control token dispatch, group exits, token replay, and unsupported-command routing; source-free result types live in `dispatch.rs`.
 - `src/legacy_editor_restart.rs`: isolated retired `InputStack` reconstruction
   used only by the synchronous incremental compatibility path; canonical editor
   sessions restore through command-owned checkpoints.

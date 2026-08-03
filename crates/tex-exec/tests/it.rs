@@ -317,7 +317,7 @@ fn canonical_command_control_has_no_legacy_math_front_callers() {
             assert!(
                 matches!(
                     relative.to_str(),
-                    Some("dispatch.rs" | "paragraph_memo.rs" | "assignments/mod.rs")
+                    Some("legacy_dispatch.rs" | "paragraph_memo.rs" | "assignments/mod.rs")
                 ),
                 "{} must not call the retired math front",
                 relative.display()
@@ -374,9 +374,61 @@ fn canonical_command_control_has_no_legacy_alignment_callers() {
             assert!(
                 matches!(
                     relative.to_str(),
-                    Some("dispatch.rs" | "assignments/mod.rs" | "math/legacy_front.rs")
+                    Some("legacy_dispatch.rs" | "assignments/mod.rs" | "math/legacy_front.rs")
                 ),
                 "{} must not call the retired alignment front",
+                relative.display()
+            );
+        }
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_dispatch_contract_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let source = fs::read_to_string(source_root.join("dispatch.rs"))
+        .expect("read canonical dispatch contract");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_dispatch",
+        "assignments",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "canonical dispatch contract must not reference legacy boundary `{forbidden}`"
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_command_control_has_no_legacy_dispatch_callers() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("legacy_dispatch"));
+
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        if source.contains("legacy_dispatch") {
+            let relative = path.strip_prefix(&source_root).expect("source below root");
+            assert!(
+                matches!(
+                    relative.to_str(),
+                    Some(
+                        "lib.rs"
+                            | "legacy_dispatch.rs"
+                            | "executor.rs"
+                            | "align/legacy_execution.rs"
+                            | "assignments/hmode.rs"
+                    )
+                ),
+                "{} must not call the retired dispatch front",
                 relative.display()
             );
         }

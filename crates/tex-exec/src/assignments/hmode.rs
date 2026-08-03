@@ -15,7 +15,7 @@ use super::paragraph::{
     end_paragraph_with_fuel, ensure_horizontal_for_character, normal_paragraph,
 };
 use super::*;
-use crate::dispatch::dispatch_delivered_token_with_context;
+use crate::legacy_dispatch::dispatch_delivered_token_with_context;
 use crate::mode::{PendingHRun, PendingHRunChar};
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};

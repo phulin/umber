@@ -16,9 +16,9 @@ use super::support::{
 };
 use super::{FinishedAlignment, append_finished_alignment};
 use crate::assignments::flush_pending_hchars;
-use crate::dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
 use crate::error_report::{back_tokens, report_input_error};
 use crate::executor::sync_engine_state;
+use crate::legacy_dispatch::{dispatch_delivered_token_with_context, insert_traced_tokens};
 use crate::mode::{AlignState, AlignmentKind};
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,

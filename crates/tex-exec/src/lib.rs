@@ -23,6 +23,7 @@ mod host_api;
 mod job;
 mod job_output;
 mod legacy_diagnostics;
+mod legacy_dispatch;
 #[cfg(test)]
 mod legacy_editor_restart;
 mod legacy_output;
@@ -60,10 +61,7 @@ pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
     EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
 };
-pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage, dispatch_delivered_token};
-pub(crate) use dispatch::{
-    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
-};
+pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use executor::{
     ExecutionContext, ExecutionLifecycle, ExecutionProgress, ExecutionRun, ExecutionServices,
@@ -77,6 +75,10 @@ pub use host_api::{
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
     PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
+};
+pub use legacy_dispatch::dispatch_delivered_token;
+pub(crate) use legacy_dispatch::{
+    insert_traced_tokens, leave_group, leave_group_with_origin, push_tokens, push_traced_tokens,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
