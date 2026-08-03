@@ -3794,7 +3794,7 @@ impl CanonicalMainControl {
     }
 
     fn enter_canonical_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let paragraph = crate::assignments::interrupt_canonical_paragraph_for_display(
+        let paragraph = crate::canonical_paragraph_end::interrupt_canonical_paragraph_for_display(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -12709,7 +12709,9 @@ fn capture_replay_alignment_cell(
     // otherwise the paragraph is mistaken for the cell, leaving the actual
     // cell and row levels on the mode nest after `fin_align`.
     if active.kind == AlignmentKind::VAlign {
-        crate::assignments::end_canonical_paragraph_without_source(modes, stores, fuel)?;
+        crate::canonical_paragraph_end::end_canonical_paragraph_without_source(
+            modes, stores, fuel,
+        )?;
     }
 
     // Canonical alignment packaging still defers that paragraph's lowering,
@@ -15614,7 +15616,7 @@ fn apply_scanned_step(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
-            crate::assignments::end_canonical_paragraph_with_fuel(
+            crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
                 modes,
                 stores,
                 command.state,
@@ -15826,7 +15828,7 @@ fn apply_scanned_step(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
-                crate::assignments::end_canonical_paragraph_with_fuel(
+                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -16249,7 +16251,7 @@ fn apply_scanned_step(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
-            crate::assignments::end_canonical_paragraph_with_fuel(
+            crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
                 modes,
                 stores,
                 command.state,
@@ -16343,7 +16345,7 @@ fn apply_scanned_step(
                 crate::assignments::normal_paragraph(modes, stores);
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
-                crate::assignments::end_canonical_paragraph_with_fuel(
+                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -17347,7 +17349,7 @@ fn apply_scanned_rule(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
-                crate::assignments::end_canonical_paragraph_with_fuel(
+                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -17658,7 +17660,7 @@ fn finish_insert_or_adjust_group(
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(&stores.command_context());
-    crate::assignments::end_canonical_paragraph_with_fuel(
+    crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
         modes,
         stores,
         command.state,

@@ -22,7 +22,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/legacy_arithmetic.rs`: retired expansion-driven arithmetic
   operand scanning plus checked arithmetic helpers for `\advance`, `\multiply`,
   and `\divide`.
-- `src/assignments/canonical_paragraph_end.rs`: typed source-free canonical paragraph completion and display-interruption transaction; legacy memo/history publication adapts after the shared materialization result.
+- `src/canonical_paragraph_end.rs`: typed source-free canonical paragraph completion and display-interruption transaction.
+- `src/canonical_paragraph_end/runtime.rs`: physical paragraph break, line materialization, packing, migration, contribution, diagnostics, and pretolerance-memo kernel.
+- `src/canonical_paragraph_end/hyphenation.rs`: source-free paragraph hyphenation, physical discretionary projection, and pattern/exception application.
 - `src/canonical_assignments/`: source-free canonical assignment identity,
   primitive registration/naming, admissibility, typed variable writes, and
   tracing.
@@ -46,20 +48,20 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/legacy_macros.rs`: retired macro-definition scanner plus
   `\aftergroup` and `\afterassignment` execution fronts.
 - `src/assignments/mod.rs`: assignment dispatcher, prefix handling, group commands, and shared scan helpers.
-- `src/assignments/paragraph.rs`: paragraph start/end, parshape, line breaking, indentation, prevdepth logic, and the optional detached pretolerance-plan experiment.
+- `src/assignments/paragraph.rs`: retired paragraph scanner, start/reuse adapters, parshape, indentation, and prevdepth logic; break/materialization delegates to typed canonical paragraph results.
 - `src/assignments/pdf_fonts.rs`: pdfTeX map, font-attribute, and forced-character action scanning into host-neutral state.
 - `src/assignments/pdf_actions.rs`: shared pdfTeX action scanner for catalog, link, and outline consumers.
 - `src/assignments/legacy_scan.rs`: retired assignment classification and
   expansion-driven operand scanners for variables and definitions.
 - `src/assignments/shipout.rs`: legacy `\shipout` scanner adapter plus shared transaction, commit, publication orchestration, and finalized effect-free artifact reuse; canonical callers enter through `canonical_shipout.rs`.
 - `src/assignments/shipout/tests.rs`: direct TeX82 huge-page dimension-boundary, deletion-path, and maximum-legal-page tests.
-- `src/assignments/shipout/direct.rs`: fused fresh-page artifact and DVI
+- `src/canonical_shipout/direct.rs`: fused fresh-page artifact and DVI
   emission over compact state node lists, borrowing only fuel-free expansion
   and output policy from its caller.
-- `src/assignments/shipout/direct/tests.rs`: positioned-traversal fast-path classification tests for direct shipout.
-- `src/assignments/shipout/direct/normalize.rs`: mutable pre-emission normalization for effects, math substitutions, and direction permutations.
-- `src/assignments/shipout/direct/materialize.rs`: localized owned-node replay support for repeated DVI leader payloads.
-- `src/assignments/shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
+- `src/canonical_shipout/direct/tests.rs`: positioned-traversal fast-path classification tests for direct shipout.
+- `src/canonical_shipout/direct/normalize.rs`: mutable pre-emission normalization for effects, math substitutions, and direction permutations.
+- `src/canonical_shipout/direct/materialize.rs`: localized owned-node replay support for repeated DVI leader payloads.
+- `src/canonical_shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
 - `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.

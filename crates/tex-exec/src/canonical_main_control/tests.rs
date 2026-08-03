@@ -3629,7 +3629,7 @@ fn canonical_unrecorded_display_interruption_keeps_dependency_phases_balanced() 
         .push(Mode::Horizontal)
         .expect("enter unrecorded canonical paragraph");
 
-    let interrupted = crate::assignments::interrupt_canonical_paragraph_for_display(
+    let interrupted = crate::canonical_paragraph_end::interrupt_canonical_paragraph_for_display(
         &mut control.modes,
         &mut stores,
         control.fuel.fuel_mut(),

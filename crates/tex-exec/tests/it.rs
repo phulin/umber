@@ -634,8 +634,14 @@ fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_paragraph_end_closure_has_no_legacy_dependencies() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
-    let owner = fs::read_to_string(source_root.join("assignments/canonical_paragraph_end.rs"))
-        .expect("read canonical paragraph-end owner");
+    let owner = [
+        "canonical_paragraph_end.rs",
+        "canonical_paragraph_end/runtime.rs",
+        "canonical_paragraph_end/hyphenation.rs",
+    ]
+    .into_iter()
+    .map(|path| fs::read_to_string(source_root.join(path)).expect("read paragraph-end closure"))
+    .collect::<String>();
     for forbidden in [
         "tex_expand",
         "tex_lex",
@@ -651,32 +657,29 @@ fn canonical_paragraph_end_closure_has_no_legacy_dependencies() {
         );
     }
 
-    let paragraph = fs::read_to_string(source_root.join("assignments/paragraph.rs"))
-        .expect("read paragraph materialization owner");
-    let kernel = paragraph
-        .split_once("pub(super) fn break_current_paragraph(")
-        .and_then(|(_, tail)| tail.split_once("/// Whether §663"))
-        .map(|(kernel, _)| kernel)
-        .expect("find canonical paragraph materialization kernel");
-    for forbidden in [
-        "tex_expand",
-        "tex_lex",
-        "InputStack",
-        "ExecutionContext",
-        "crate::executor",
-        "legacy_",
-        "ParagraphMemoConsumer",
+    assert!(owner.contains("LineMaterializer::new"));
+    assert!(owner.contains("hpack_owned_with_overfull_rule"));
+    assert!(owner.contains("append_vertical_contribution"));
+
+    let legacy_front = fs::read_to_string(source_root.join("assignments/paragraph.rs"))
+        .expect("read legacy paragraph adapter");
+    for moved in [
+        "LineMaterializer::new",
+        "fn break_hlist_with_trace",
+        "fn materialize_pdf_line",
+        "fn extract_migrating_material",
     ] {
         assert!(
-            !kernel.contains(forbidden),
-            "canonical paragraph materialization kernel must not reference `{forbidden}`"
+            !legacy_front.contains(moved),
+            "legacy paragraph front regained physical kernel `{moved}`"
         );
     }
 
     let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
         .expect("read canonical command control");
     assert!(!canonical.contains("assignments::end_paragraph_with_fuel"));
-    assert!(canonical.contains("assignments::end_canonical_paragraph_without_source"));
+    assert!(canonical.contains("canonical_paragraph_end::end_canonical_paragraph_without_source"));
+    assert!(!canonical.contains("assignments::end_canonical_paragraph"));
 }
 
 #[test]

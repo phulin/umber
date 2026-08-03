@@ -33,7 +33,6 @@ use crate::{
 use crate::{Mode, ModeNest};
 
 mod boxes;
-mod canonical_paragraph_end;
 pub(super) mod fonts;
 mod hmode;
 mod hyphenation;
@@ -48,9 +47,9 @@ pub(crate) mod shipout;
 #[cfg(test)]
 pub(crate) use crate::canonical_box_runtime::hmode::test_fix_hyphen_language;
 #[cfg(test)]
-pub(crate) use hyphenation::test_language_context;
+pub(crate) use crate::canonical_paragraph_end::test_discretionary_diagnostics_differ;
 #[cfg(test)]
-pub(crate) use paragraph::test_discretionary_diagnostics_differ;
+pub(crate) use crate::canonical_paragraph_end::test_language_context;
 #[cfg(test)]
 pub(crate) use shipout::test_stage_shipout_artifact;
 mod tokens;
@@ -75,32 +74,43 @@ pub(crate) use crate::canonical_box_runtime::hmode::{
     commit_current_list, fixed_infinite_glue, flush_pending_hchars, flush_pending_hchars_with_fuel,
     norm_min, try_append_character, try_append_tfm_character_span,
 };
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::apply_line_expansion as test_apply_line_expansion;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::break_hlist as test_break_hlist;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_apply_pdf_line_dimensions;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_automatic_discretionary;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_hyphenated_hlist;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_hyphenated_hlist_owned;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_hyphenated_word_text;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_materialize_pdf_line;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_physical_post_break_span;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_physical_pre_break_projection;
+#[cfg(test)]
+pub(crate) use crate::canonical_paragraph_end::test_pretolerance_memo_key;
+pub(crate) use crate::canonical_paragraph_end::{
+    ParagraphBreakResult, display_line_dimensions, normal_paragraph,
+};
+pub(crate) use crate::canonical_paragraph_end::{
+    apply_scanned_hyphenation_exceptions, apply_scanned_patterns,
+};
 pub(crate) use boxes::scan_math_box;
 pub(crate) use boxes::scan_setbox_target;
 use boxes::*;
 pub(crate) use boxes::{scan_box_group, scan_pack_spec};
-pub(crate) use canonical_paragraph_end::{
-    end_canonical_paragraph_with_fuel, end_canonical_paragraph_without_source,
-    interrupt_canonical_paragraph_for_display,
-};
 use fonts::*;
 pub(crate) use hmode::append_given_char;
 pub(crate) use hmode::scan_rule_node;
 use hmode::*;
-#[cfg(test)]
-pub(crate) use hyphenation::hyphenated_hlist as test_hyphenated_hlist_owned;
-#[cfg(test)]
-pub(crate) use hyphenation::test_automatic_discretionary;
-#[cfg(test)]
-pub(crate) use hyphenation::test_hyphenated_word as test_hyphenated_hlist;
-#[cfg(test)]
-pub(crate) use hyphenation::test_hyphenated_word_text;
-#[cfg(test)]
-pub(crate) use hyphenation::test_physical_post_break_span;
-#[cfg(test)]
-pub(crate) use hyphenation::test_physical_pre_break_projection;
 use hyphenation::*;
-pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned_patterns};
 use legacy_arithmetic::*;
 use legacy_macros::*;
 use legacy_scan::*;
@@ -109,22 +119,10 @@ pub(crate) use legacy_scan::{
     scan_i32, scan_optional_keyword_x, scan_scaled,
 };
 use legacy_variables::*;
-#[cfg(test)]
-pub(crate) use paragraph::apply_line_expansion as test_apply_line_expansion;
-#[cfg(test)]
-pub(crate) use paragraph::break_hlist as test_break_hlist;
-pub use paragraph::cached_pretolerance_plan;
-#[cfg(test)]
-pub(crate) use paragraph::test_apply_pdf_line_dimensions;
-#[cfg(test)]
-pub(crate) use paragraph::test_materialize_pdf_line;
-#[cfg(test)]
-pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    ParagraphBreakResult, display_line_dimensions, end_paragraph_with_fuel,
-    ensure_horizontal_for_character, indent_in_hmode, interrupt_paragraph_for_display,
-    make_indent_box, normal_paragraph, start_canonical_paragraph,
+    end_paragraph_with_fuel, ensure_horizontal_for_character, indent_in_hmode,
+    interrupt_paragraph_for_display, make_indent_box, start_canonical_paragraph,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;

@@ -3,8 +3,31 @@
 use tex_state::Universe;
 use tex_typeset::linebreak::WidowPenaltySelector;
 
-use super::paragraph::{ParagraphBreakResult, break_current_paragraph, normal_paragraph};
-use super::{commit_current_list, flush_pending_hchars_with_fuel};
+mod hyphenation;
+mod runtime;
+
+pub(crate) use hyphenation::{
+    apply_hyphenation_exceptions, apply_patterns, apply_scanned_hyphenation_exceptions,
+    apply_scanned_patterns, parse_pattern_word, pattern_capacity_error, report_apply_diagnostics,
+};
+#[cfg(test)]
+pub(crate) use hyphenation::{
+    hyphenated_hlist as test_hyphenated_hlist_owned, test_automatic_discretionary,
+    test_hyphenated_word, test_hyphenated_word as test_hyphenated_hlist, test_hyphenated_word_text,
+    test_language_context, test_physical_post_break_span, test_physical_pre_break_projection,
+};
+
+pub use runtime::cached_pretolerance_plan;
+pub(crate) use runtime::{
+    ParagraphBreakResult, break_current_paragraph, display_line_dimensions, normal_paragraph,
+};
+#[cfg(test)]
+pub(crate) use runtime::{
+    apply_line_expansion, break_hlist, test_apply_pdf_line_dimensions,
+    test_discretionary_diagnostics_differ, test_materialize_pdf_line, test_pretolerance_memo_key,
+};
+
+use crate::canonical_box_runtime::{commit_current_list, flush_pending_hchars_with_fuel};
 use crate::vertical::build_page_if_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 

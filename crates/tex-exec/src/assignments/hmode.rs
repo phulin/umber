@@ -9,11 +9,10 @@ use tex_state::token::{Catcode, Token};
 use tex_state::{ExpansionState, Universe};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
-use super::paragraph::{
-    end_paragraph_with_fuel, ensure_horizontal_for_character, normal_paragraph,
-};
+use super::paragraph::{end_paragraph_with_fuel, ensure_horizontal_for_character};
 use super::*;
 use crate::canonical_box_runtime::hmode::*;
+use crate::canonical_paragraph_end::normal_paragraph;
 use crate::legacy_dispatch::dispatch_delivered_token_with_context;
 use crate::packing_params::vpack;
 use crate::vertical::{append_vertical_contribution, build_page_if_outer_vertical};

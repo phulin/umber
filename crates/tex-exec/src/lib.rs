@@ -13,6 +13,7 @@ mod canonical_box_runtime;
 mod canonical_diagnostics;
 mod canonical_main_control;
 mod canonical_page_output;
+mod canonical_paragraph_end;
 mod canonical_paragraph_memo;
 mod canonical_shipout;
 mod checkpoint;
@@ -50,7 +51,6 @@ use canonical_diagnostics as diagnostics;
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 
-pub use assignments::cached_pretolerance_plan;
 pub use canonical_assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
@@ -60,6 +60,7 @@ pub use canonical_main_control::{
     CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
     CanonicalParagraphRegion, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
 };
+pub use canonical_paragraph_end::cached_pretolerance_plan;
 pub use checkpoint::{
     CanonicalCheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION,
     EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
