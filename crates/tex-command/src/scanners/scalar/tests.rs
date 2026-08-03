@@ -5868,6 +5868,60 @@ fn scanner_recoveries_emit_tex82_error_reports_without_changing_values() {
 }
 
 #[test]
+fn integer_overflow_reports_before_scanning_the_optional_space() {
+    // TeX82 §445 reports on the first overflowing digit, while that digit
+    // is current and before the scanner fetches the following token. This is
+    // observable in §§313 and 318: the optional space belongs on the unread
+    // context line, even though the completed integer scan later consumes it.
+    use crate::{RegisteredSourceKind, SourceRegistration};
+    use tex_state::meaning::UnexpandablePrimitive as P;
+    use tex_state::print::ErrorContextWidths;
+
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            std::sync::Arc::<[u8]>::from(b"\\penalty-2147483648 % see?".as_slice()),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    universe.set_error_context_widths(
+        ErrorContextWidths::new(64, 32)
+            .and_then(|widths| widths.with_max_print_line(72))
+            .expect("TRIP context widths are valid"),
+    );
+    let penalty = universe.intern("penalty").symbol();
+    universe.set_meaning(penalty, Meaning::UnexpandablePrimitive(P::Penalty));
+    let mut runtime = CommandRuntime::default();
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = CommandProcessor::new(
+            &mut command,
+            &mut runtime,
+            universe.command_context(),
+            CommandHostContext::new(&mut capabilities),
+        );
+        assert!(processor.get_x_token().expect("penalty delivers").is_some());
+        assert_eq!(
+            processor.scan_integer().expect("overflow recovers").value,
+            -i32::MAX
+        );
+    }
+
+    let diagnostics = diagnostic_text(&universe);
+    assert!(
+        diagnostics.contains(
+            "! Number too big.\nl.1 \\penalty-2147483648\n                        % see?"
+        ),
+        "the error cursor remains immediately after the overflowing digit: {diagnostics}"
+    );
+}
+
+#[test]
 fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
     fn scan(
         profile: CommandProfile,

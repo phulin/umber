@@ -1228,7 +1228,15 @@ impl CommandProcessor<'_> {
                         Some(next) => value = next,
                         None => {
                             value = i32::MAX;
-                            overflowed = true;
+                            // TeX82 §445 calls `error` as soon as the first
+                            // overflowing digit has been fetched, before the
+                            // following digit or optional space advances
+                            // `loc`. Later digits remain consumed, but do not
+                            // repeat the report (`OK_so_far:=false`).
+                            if !overflowed {
+                                self.number_too_big_error()?;
+                                overflowed = true;
+                            }
                         }
                     }
                 }
@@ -1248,9 +1256,6 @@ impl CommandProcessor<'_> {
                     break;
                 }
             }
-        }
-        if overflowed {
-            self.number_too_big_error()?;
         }
         Ok((value, vacuous))
     }
