@@ -1059,6 +1059,15 @@ fn render_node(node: &umber::RenderNode) -> Result<JsValue, JsValue> {
     match &node.value {
         umber::RenderNodeValue::Box(value) => {
             set(&object, "kind", &JsValue::from_str("box"))?;
+            set(&object, "boxId", &JsValue::from_f64(f64::from(value.id)))?;
+            set(
+                &object,
+                "boxKind",
+                &JsValue::from_str(match value.kind {
+                    umber::BoxKind::Horizontal => "hbox",
+                    umber::BoxKind::Vertical => "vbox",
+                }),
+            )?;
             geometry(&object, value.x, value.y, value.width, value.height)?;
             scaled(&object, "baselineSp", value.baseline)?;
         }
@@ -1078,6 +1087,42 @@ fn render_node(node: &umber::RenderNode) -> Result<JsValue, JsValue> {
                 "fontSizeSp",
                 &JsValue::from_f64(f64::from(value.font.at_size_raw)),
             )?;
+            let positions = Array::new();
+            let exact_positions = value.positions.len() == value.units.len()
+                && value.text.chars().count() == value.units.len();
+            for position in if exact_positions {
+                value.positions.as_slice()
+            } else {
+                std::slice::from_ref(&value.x)
+            } {
+                positions.push(&JsValue::from_f64(f64::from(position.raw())));
+            }
+            set(&object, "positionsSp", &positions)?;
+            set(
+                &object,
+                "direction",
+                &JsValue::from_str(match value.direction {
+                    umber::RenderDirection::LeftToRight => "ltr",
+                    umber::RenderDirection::RightToLeft => "rtl",
+                }),
+            )?;
+            if let Some(script) = value.script {
+                set(
+                    &object,
+                    "script",
+                    &JsValue::from_str(&String::from_utf8_lossy(&script)),
+                )?;
+            }
+            optional_string(&object, "language", value.language.as_deref())?;
+            settings(&object, "features", &value.features)?;
+            settings(&object, "variations", &value.variations)?;
+            if let Some(line) = value.accessibility_line {
+                set(
+                    &object,
+                    "accessibilityLine",
+                    &JsValue::from_f64(f64::from(line)),
+                )?;
+            }
             optional_string(&object, "color", value.color.as_deref())?;
             optional_string(&object, "link", value.link.as_deref())?;
         }
@@ -1086,23 +1131,92 @@ fn render_node(node: &umber::RenderNode) -> Result<JsValue, JsValue> {
             scaled(&object, "xSp", value.x)?;
             scaled(&object, "ySp", value.y)?;
             set(&object, "class", &JsValue::from_str(&value.class))?;
+            set(
+                &object,
+                "payloadHex",
+                &JsValue::from_str(&hex(&value.payload)),
+            )?;
+            let (action, action_value) = match &value.action {
+                umber::RenderSpecialAction::ColorPush(value) => {
+                    ("color-push", Some(value.as_str()))
+                }
+                umber::RenderSpecialAction::ColorPop => ("color-pop", None),
+                umber::RenderSpecialAction::LinkStart(value) => {
+                    ("link-start", Some(value.as_str()))
+                }
+                umber::RenderSpecialAction::LinkEnd => ("link-end", None),
+                umber::RenderSpecialAction::Destination(value) => {
+                    ("destination", Some(value.as_str()))
+                }
+                umber::RenderSpecialAction::Inert => ("inert", None),
+            };
+            set(&object, "action", &JsValue::from_str(action))?;
+            optional_string(&object, "actionValue", action_value)?;
         }
         umber::RenderNodeValue::MathStart(value) => {
             set(&object, "kind", &JsValue::from_str("math-start"))?;
+            set(&object, "mathId", &JsValue::from_f64(f64::from(value.id)))?;
             scaled(&object, "xSp", value.x)?;
             scaled(&object, "baselineSp", value.baseline)?;
             scaled(&object, "widthSp", value.width)?;
             scaled(&object, "heightSp", value.height)?;
+            scaled(&object, "depthSp", value.depth)?;
         }
         umber::RenderNodeValue::MathGlyph(value) => {
+            let glyph = value.glyph;
             set(&object, "kind", &JsValue::from_str("math-glyph"))?;
-            scaled(&object, "xSp", value.x)?;
-            scaled(&object, "baselineSp", value.baseline)?;
+            scaled(&object, "xSp", glyph.x)?;
+            scaled(&object, "baselineSp", glyph.baseline)?;
+            scaled(&object, "widthSp", glyph.width)?;
+            scaled(&object, "heightSp", glyph.height)?;
+            scaled(&object, "depthSp", glyph.depth)?;
             set(
                 &object,
                 "glyphId",
-                &JsValue::from_f64(f64::from(value.glyph_id)),
+                &JsValue::from_f64(f64::from(glyph.glyph_id)),
             )?;
+            set(&object, "ssty", &JsValue::from_f64(f64::from(glyph.ssty)))?;
+            set(
+                &object,
+                "fontInstance",
+                &JsValue::from_str(&hex(&glyph.font_instance.bytes())),
+            )?;
+            match &value.drawing {
+                umber::RenderMathDrawing::Text {
+                    scalar,
+                    family,
+                    font_size_raw,
+                    variations,
+                } => {
+                    set(&object, "drawing", &JsValue::from_str("text"))?;
+                    set(&object, "text", &JsValue::from_str(&scalar.to_string()))?;
+                    set(&object, "family", &JsValue::from_str(family))?;
+                    set(
+                        &object,
+                        "fontSizeSp",
+                        &JsValue::from_f64(f64::from(*font_size_raw)),
+                    )?;
+                    settings(&object, "variations", variations)?;
+                }
+                umber::RenderMathDrawing::Outline {
+                    path,
+                    units_per_em,
+                    font_size_raw,
+                } => {
+                    set(&object, "drawing", &JsValue::from_str("outline"))?;
+                    set(&object, "path", &JsValue::from_str(path))?;
+                    set(
+                        &object,
+                        "unitsPerEm",
+                        &JsValue::from_f64(f64::from(*units_per_em)),
+                    )?;
+                    set(
+                        &object,
+                        "fontSizeSp",
+                        &JsValue::from_f64(f64::from(*font_size_raw)),
+                    )?;
+                }
+            }
         }
         umber::RenderNodeValue::MathRule(value) => {
             set(&object, "kind", &JsValue::from_str("math-rule"))?;
@@ -1185,6 +1299,29 @@ fn optional_string(object: &Object, name: &str, value: Option<&str>) -> Result<(
         set(object, name, &JsValue::from_str(value))?;
     }
     Ok(())
+}
+
+fn settings<T: Copy + Into<i64>>(
+    object: &Object,
+    name: &str,
+    values: &[([u8; 4], T)],
+) -> Result<(), JsValue> {
+    let array = Array::new();
+    for (tag, setting) in values {
+        let value = Object::new();
+        set(
+            &value,
+            "tag",
+            &JsValue::from_str(&String::from_utf8_lossy(tag)),
+        )?;
+        set(
+            &value,
+            "value",
+            &JsValue::from_f64((*setting).into() as f64),
+        )?;
+        array.push(&value);
+    }
+    set(object, name, &array)
 }
 
 fn hex(bytes: &[u8]) -> String {

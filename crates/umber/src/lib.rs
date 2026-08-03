@@ -95,10 +95,11 @@ pub use tex_fonts::{
 };
 pub use tex_incr::{RenderedOutputId, ReuseMetrics, RevisionId, SameHistoryStop};
 pub use tex_out::html::incremental::{
-    PatchEnvelope, PatchOp, RenderDigest, RenderDirection, RenderKey, RenderNode, RenderNodeValue,
-    RenderPage, RenderPageHeader, RenderResource, RenderRevision, RenderRule, RenderSessionId,
-    RenderSpecial, RenderSpecialAction, RenderText,
+    PatchEnvelope, PatchOp, RenderBox, RenderDigest, RenderDirection, RenderKey, RenderMathDrawing,
+    RenderMathGlyph, RenderNode, RenderNodeValue, RenderPage, RenderPageHeader, RenderResource,
+    RenderRevision, RenderRule, RenderSessionId, RenderSpecial, RenderSpecialAction, RenderText,
 };
+pub use tex_out::positioned::BoxKind;
 pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutcome};
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::RenderUpdate;

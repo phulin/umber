@@ -94,6 +94,16 @@ impl PatchEnvelope {
         hash.update(self.patch.target_revision.to_le_bytes());
         hash.update(self.patch.before_digest.as_bytes());
         hash.update(self.patch.after_digest.as_bytes());
+        fingerprint_optional_string(&mut hash, self.patch.title.as_deref());
+        fingerprint_optional_string(&mut hash, self.patch.language.as_deref());
+        for resource in &self.patch.resource_additions {
+            hash.update(resource.identity);
+            fingerprint_string(&mut hash, &resource.family);
+            fingerprint_string(&mut hash, &resource.provenance);
+        }
+        for identity in &self.patch.resource_releases {
+            hash.update(identity);
+        }
         for operation in &self.patch.operations {
             fingerprint_operation(&mut hash, operation);
         }
@@ -265,9 +275,16 @@ fn count_node_strings(counts: &mut PatchCounts, node: &super::RenderNode) {
         }
         RenderNodeValue::Rule(rule) => add_string(counts, rule.color.as_deref()),
         RenderNodeValue::Special(special) => add_string(counts, Some(&special.class)),
+        RenderNodeValue::MathGlyph(glyph) => match &glyph.drawing {
+            super::RenderMathDrawing::Text { family, .. } => {
+                add_string(counts, Some(family));
+            }
+            super::RenderMathDrawing::Outline { path, .. } => {
+                add_string(counts, Some(path));
+            }
+        },
         RenderNodeValue::Box(_)
         | RenderNodeValue::MathStart(_)
-        | RenderNodeValue::MathGlyph(_)
         | RenderNodeValue::MathRule(_)
         | RenderNodeValue::MathEnd => {}
     }
@@ -318,6 +335,10 @@ fn validate_strings(patch: &PatchPlan, max: usize) -> Result<(), PatchProtocolEr
                     strings.extend(rule.color.iter().map(String::as_str));
                 }
                 RenderNodeValue::Special(special) => strings.push(&special.class),
+                RenderNodeValue::MathGlyph(glyph) => match &glyph.drawing {
+                    super::RenderMathDrawing::Text { family, .. } => strings.push(family),
+                    super::RenderMathDrawing::Outline { path, .. } => strings.push(path),
+                },
                 _ => {}
             }
         }
@@ -383,4 +404,19 @@ fn fingerprint_operation(hash: &mut Sha256, operation: &PatchOp) {
             hash.update(node.digest.as_bytes());
         }
     }
+}
+
+fn fingerprint_optional_string(hash: &mut Sha256, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash.update([1]);
+            fingerprint_string(hash, value);
+        }
+        None => hash.update([0]),
+    }
+}
+
+fn fingerprint_string(hash: &mut Sha256, value: &str) {
+    hash.update((value.len() as u64).to_le_bytes());
+    hash.update(value.as_bytes());
 }

@@ -195,6 +195,7 @@ if (isWorkerRealm) {
 					break;
 				case "editor-stabilize":
 					result = await editor.stabilize(undefined, progress);
+					result = { ...result, renderUpdate: editor.renderUpdate };
 					break;
 				case "editor-apply-patch":
 					editor.applyPatch(event.data.patch);

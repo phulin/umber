@@ -108,6 +108,8 @@ function page(pageKey, ordinal, nodeKey, text) {
 		ordinal,
 		widthSp: 1_000,
 		heightSp: 2_000,
+		originXSp: 0,
+		originYSp: 0,
 		mag: 1_000,
 		nodes: [
 			{
@@ -118,6 +120,10 @@ function page(pageKey, ordinal, nodeKey, text) {
 				text,
 				family: `umber-font-${"a".repeat(24)}`,
 				fontSizeSp: 655_360,
+				positionsSp: [10],
+				features: [],
+				variations: [],
+				direction: "ltr",
 			},
 		],
 	};
@@ -174,6 +180,87 @@ test("valid patch preserves untouched DOM identity, focus, scroll, and mounted r
 	assert.equal(mount.metrics.updated, 1);
 });
 
+test("typed nodes project complete page, text, rule, special, and math geometry", async () => {
+	const document = new FakeDocument();
+	const root = new FakeNode(document, "main");
+	const mount = new HtmlPatchMount(root, { document });
+	const value = snapshot();
+	value.pages = [
+		{
+			...value.pages[0],
+			originXSp: 30,
+			originYSp: 40,
+			nodes: [
+				{
+					key: key("2"),
+					kind: "box",
+					boxId: 7,
+					boxKind: "hbox",
+					xSp: 1,
+					ySp: 2,
+					widthSp: 3,
+					heightSp: 4,
+					baselineSp: 5,
+				},
+				{
+					key: key("3"),
+					kind: "rule",
+					xSp: 6,
+					ySp: 7,
+					widthSp: 8,
+					heightSp: 9,
+					color: "#aabbcc",
+				},
+				{
+					key: key("4"),
+					kind: "special",
+					xSp: 10,
+					ySp: 11,
+					class: "dvi",
+					payloadHex: "00ff",
+					action: "inert",
+				},
+				{ ...page(key("1"), 1, key("5"), "text").nodes[0] },
+				{
+					key: key("6"),
+					kind: "math-glyph",
+					xSp: 12,
+					baselineSp: 13,
+					widthSp: 14,
+					heightSp: 15,
+					depthSp: 2,
+					glyphId: 16,
+					ssty: 1,
+					fontInstance: digest("d"),
+					drawing: "text",
+					text: "x",
+					family: `umber-font-${"a".repeat(24)}`,
+					fontSizeSp: 655_360,
+					variations: [],
+				},
+			],
+		},
+	];
+	await mount.mountSnapshot(value);
+	const pageElement = mount.nodeForKey(key("1"));
+	assert.equal(pageElement.style.position, "relative");
+	assert.notEqual(pageElement.children[0].style.left, "0px");
+	assert.equal(mount.nodeForKey(key("2")).className, "umber-box");
+	assert.equal(mount.nodeForKey(key("3")).style.background, "currentColor");
+	assert.equal(
+		mount.nodeForKey(key("4")).attributes.get("data-umber-special-hex"),
+		"00ff",
+	);
+	assert.match(
+		mount.nodeForKey(key("5")).children[1].attributes.get("x"),
+		/px$/u,
+	);
+	assert.equal(
+		mount.nodeForKey(key("6")).children[0].children[0].textContent,
+		"x",
+	);
+});
+
 test("page removal derives descendants from the validated base model", async () => {
 	const document = new FakeDocument();
 	const root = new FakeNode(document, "main");
@@ -198,6 +285,30 @@ test("page removal derives descendants from the validated base model", async () 
 	assert.equal(mount.nodeForKey(key("2")), null);
 	assert.equal(mount.nodeForKey(key("3")), retainedPage);
 	assert.equal(root.children.length, 1);
+});
+
+test("forward page moves use post-removal target indexes", async () => {
+	const document = new FakeDocument();
+	const root = new FakeNode(document, "main");
+	const mount = new HtmlPatchMount(root, { document });
+	await mount.mountSnapshot(snapshot());
+	const first = mount.nodeForKey(key("1"));
+	const second = mount.nodeForKey(key("3"));
+	await mount.applyPatch({
+		kind: "patch",
+		schemaVersion: 1,
+		sessionId: key("a"),
+		baseRevision: 1,
+		targetRevision: 2,
+		beforeDigest: digest("b"),
+		afterDigest: digest("c"),
+		resourceAdditions: [],
+		resourceReleases: [],
+		operations: [{ kind: "move-page", key: key("1"), index: 1 }],
+	});
+	assert.deepEqual(root.children, [second, first]);
+	assert.equal(mount.nodeForKey(key("1")), first);
+	assert.equal(mount.nodeForKey(key("3")), second);
 });
 
 test("invalid and hostile patches perform no mutation and request recovery", async () => {
@@ -227,6 +338,10 @@ test("invalid and hostile patches perform no mutation and request recovery", asy
 					text: "x",
 					family: `umber-font-${"a".repeat(24)}`,
 					fontSizeSp: 655_360,
+					positionsSp: [0],
+					features: [],
+					variations: [],
+					direction: "ltr",
 					link: "javascript:alert(1)",
 				},
 			},
@@ -240,6 +355,59 @@ test("invalid and hostile patches perform no mutation and request recovery", asy
 	assert.equal(mount.revision, 1);
 	assert.equal(mount.nodeForKey(key("2")), identity);
 	assert.equal(root.replaceCount, 1);
+
+	const unknownRelease = {
+		...invalid,
+		operations: [],
+		resourceReleases: [digest("e")],
+	};
+	await assert.rejects(
+		mount.applyPatch(unknownRelease),
+		(error) =>
+			error instanceof HtmlPatchError && error.code === "unknown-resource",
+	);
+	assert.equal(
+		root.replaceCount,
+		1,
+		"release failure occurred before publication",
+	);
+});
+
+test("publication exceptions restore the validated base tree before resync", async () => {
+	const document = new FakeDocument();
+	const root = new FakeNode(document, "main");
+	const mount = new HtmlPatchMount(root, { document });
+	await mount.mountSnapshot(snapshot());
+	mount.nodeForKey(key("2")).replaceWith = () => {
+		throw new Error("injected DOM failure");
+	};
+	const patch = {
+		kind: "patch",
+		schemaVersion: 1,
+		sessionId: key("a"),
+		baseRevision: 1,
+		targetRevision: 2,
+		beforeDigest: digest("b"),
+		afterDigest: digest("c"),
+		resourceAdditions: [],
+		resourceReleases: [],
+		operations: [
+			{
+				kind: "update-node",
+				page: key("1"),
+				node: { ...snapshot().pages[0].nodes[0], text: "candidate" },
+			},
+		],
+	};
+
+	await assert.rejects(
+		mount.applyPatch(patch),
+		(error) => error instanceof HtmlPatchError && error.code === "apply-failed",
+	);
+	assert.equal(mount.revision, 1);
+	assert.equal(mount.needsResync, true);
+	assert.equal(root.children.length, 2);
+	assert.equal(mount.nodeForKey(key("2")).children[1].textContent, "one");
 });
 
 test("resource leases deduplicate, reject conflicts, and reclaim after acknowledgement", async () => {

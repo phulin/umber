@@ -1456,6 +1456,46 @@ fn rendered_queries_track_length_changes_before_a_reused_page() {
     remint_and_assert_deleted_rendered_query(fixture);
 }
 
+#[wasm_bindgen_test]
+fn retained_html_updates_cross_the_wasm_boundary_as_typed_snapshots_and_patches() {
+    let original = "\\font\\tenrm=cmr10\\relax\\shipout\\hbox{A}\\end";
+    let mut session = initial_rendered_query_session(original);
+    let snapshot = session.render_update().expect("initial render update");
+    assert_eq!(string_field(&snapshot, "kind"), "snapshot");
+    assert_eq!(field(&snapshot, "revision").as_f64(), Some(1.0));
+    let digest = string_field(&snapshot, "digest");
+    let pages = Array::from(&field(&snapshot, "pages"));
+    let nodes = Array::from(&field(&pages.get(0), "nodes"));
+    let text = (0..nodes.length())
+        .map(|index| nodes.get(index))
+        .find(|node| string_field(node, "kind") == "text")
+        .expect("typed text node");
+    assert!(field(&text, "positionsSp").is_instance_of::<Array>());
+    assert_eq!(string_field(&text, "direction"), "ltr");
+    assert!(string_field(&text, "family").starts_with("umber-font-"));
+    session
+        .acknowledge_render_update(1, &digest)
+        .expect("snapshot acknowledgement");
+
+    let hash = session
+        .accepted_content_hash()
+        .expect("content hash")
+        .expect("accepted revision");
+    let insert = original.len() - "\\end".len();
+    let patch = source_patch(2, 1, &hash, insert, insert, "% unchanged output\n");
+    session
+        .apply_patch(patch.unchecked_ref::<JsSourcePatch>())
+        .expect("source patch");
+    assert_eq!(
+        string_field(session.advance().expect("second compile").as_ref(), "kind"),
+        "complete"
+    );
+    let update = session.render_update().expect("patch render update");
+    assert_eq!(string_field(&update, "kind"), "patch");
+    assert_eq!(field(&update, "baseRevision").as_f64(), Some(1.0));
+    assert_eq!(field(&update, "targetRevision").as_f64(), Some(2.0));
+}
+
 struct RenderedQueryFixture {
     session: CompilerSession,
     revision_three: String,

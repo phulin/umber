@@ -24,8 +24,8 @@ pub use protocol::{
 
 use super::{
     HtmlError, HtmlFontAssets, HtmlFontKey, HtmlOptions, InterpretedSpecial, ResolvedFont,
-    SpecialState, accessible_line, interpret_special, map_text, validate_font,
-    write_positioned_html,
+    SpecialState, accessible_line, interpret_special, map_text, outline_path, selected_glyph,
+    validate_font, write_positioned_html,
 };
 use crate::positioned::{
     BoxKind, PositionedEvent, PositionedLimits, PositionedPage, TextUnit, lower_page_with_limits,
@@ -184,7 +184,7 @@ pub enum RenderNodeValue {
     Text(Box<RenderText>),
     Special(RenderSpecial),
     MathStart(MathStart),
-    MathGlyph(MathGlyph),
+    MathGlyph(Box<RenderMathGlyph>),
     MathRule(MathRule),
     MathEnd,
 }
@@ -233,6 +233,27 @@ pub struct RenderText {
 pub enum RenderDirection {
     LeftToRight,
     RightToLeft,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RenderMathGlyph {
+    pub glyph: MathGlyph,
+    pub drawing: RenderMathDrawing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RenderMathDrawing {
+    Text {
+        scalar: char,
+        family: String,
+        font_size_raw: i32,
+        variations: Vec<([u8; 4], i32)>,
+    },
+    Outline {
+        path: String,
+        units_per_em: u16,
+        font_size_raw: i32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -579,10 +600,63 @@ fn render_page(
             values.push(value);
         }
     }
+    let math_fonts = page
+        .fonts
+        .iter()
+        .filter_map(|artifact| {
+            let opentype = artifact.opentype.as_ref()?;
+            fonts
+                .get(&HtmlFontKey::from(artifact))
+                .map(|font| (opentype.instance_identity, (font, opentype)))
+        })
+        .collect::<BTreeMap<_, _>>();
     for event in &page.math_events {
         values.push(match event {
             MathOutputEvent::Start(value) => RenderNodeValue::MathStart(*value),
-            MathOutputEvent::Glyph(value) => RenderNodeValue::MathGlyph(*value),
+            MathOutputEvent::Glyph(value) => {
+                let (font, opentype) = math_fonts
+                    .get(&value.font_instance)
+                    .copied()
+                    .ok_or(HtmlError::MissingMathFontInstance)?;
+                let drawing = match value.selection {
+                    crate::MathGlyphSelection::Cmap { scalar } => {
+                        let scalar =
+                            char::from_u32(scalar).ok_or(HtmlError::MathGlyphMismatch {
+                                glyph_id: value.glyph_id,
+                            })?;
+                        if selected_glyph(font, opentype, scalar, value.ssty)
+                            != Some(value.glyph_id)
+                        {
+                            return Err(HtmlError::MathGlyphMismatch {
+                                glyph_id: value.glyph_id,
+                            });
+                        }
+                        RenderMathDrawing::Text {
+                            scalar,
+                            family: font.family.clone(),
+                            font_size_raw: font.web.key.at_size_raw,
+                            variations: opentype
+                                .variation
+                                .coordinates()
+                                .iter()
+                                .map(|coordinate| (coordinate.tag.bytes(), coordinate.value))
+                                .collect(),
+                        }
+                    }
+                    crate::MathGlyphSelection::OutlineFallback => {
+                        let (path, units_per_em) = outline_path(font, opentype, value.glyph_id)?;
+                        RenderMathDrawing::Outline {
+                            path,
+                            units_per_em,
+                            font_size_raw: font.web.key.at_size_raw,
+                        }
+                    }
+                };
+                RenderNodeValue::MathGlyph(Box::new(RenderMathGlyph {
+                    glyph: *value,
+                    drawing,
+                }))
+            }
             MathOutputEvent::Rule(value) => RenderNodeValue::MathRule(*value),
             MathOutputEvent::End => RenderNodeValue::MathEnd,
         });

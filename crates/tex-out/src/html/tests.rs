@@ -899,6 +899,12 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
         envelope.canonical_fingerprint(),
         envelope.clone().canonical_fingerprint()
     );
+    let mut metadata_change = envelope.patch.clone();
+    metadata_change.title = Some("changed title".to_owned());
+    assert_ne!(
+        envelope.canonical_fingerprint(),
+        PatchEnvelope::new(metadata_change).canonical_fingerprint()
+    );
     assert_eq!(
         validate_delivery(&base, &envelope, ProtocolLimits::default()),
         PatchDelivery::Applied(target.clone())
@@ -914,7 +920,7 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
         validate_delivery(&base, &wrong_counts, ProtocolLimits::default()),
         PatchDelivery::ResyncRequired(PatchProtocolError::DeclaredCountsMismatch)
     );
-    let mut wrong_version = envelope;
+    let mut wrong_version = envelope.clone();
     wrong_version.schema_version += 1;
     assert_eq!(
         validate_delivery(&base, &wrong_version, ProtocolLimits::default()),
@@ -922,6 +928,26 @@ fn patch_envelope_preflights_counts_hashes_versions_and_duplicate_delivery() {
             PATCH_SCHEMA_VERSION + 1
         ))
     );
+
+    let mut dropped = PatchEnvelope::new(envelope.patch.clone());
+    dropped.patch.operations.clear();
+    dropped = PatchEnvelope::new(dropped.patch);
+    assert!(matches!(
+        validate_delivery(&base, &dropped, ProtocolLimits::default()),
+        PatchDelivery::ResyncRequired(PatchProtocolError::Apply(
+            PatchApplyError::TargetDigestMismatch
+        ))
+    ));
+
+    let mut corrupted = envelope.patch;
+    corrupted.after_digest = base.digest;
+    let corrupted = PatchEnvelope::new(corrupted);
+    assert!(matches!(
+        validate_delivery(&base, &corrupted, ProtocolLimits::default()),
+        PatchDelivery::ResyncRequired(PatchProtocolError::Apply(
+            PatchApplyError::TargetDigestMismatch
+        ))
+    ));
 }
 
 #[test]

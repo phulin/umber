@@ -83,7 +83,14 @@ export class HtmlPatchMount {
 		const releases = (this.#state?.resources ?? [])
 			.map((resource) => resource.identity)
 			.filter((identity) => !retained.has(identity));
-		const lease = await this.#resources.stage(state.resources);
+		const retainedIdentities = state.resources.map(
+			(resource) => resource.identity,
+		);
+		const lease = await this.#resources.stage(
+			state.resources,
+			releases,
+			retainedIdentities,
+		);
 		const nodes = new Map();
 		const pageContent = new Map();
 		const fragment = this.#document.createDocumentFragment();
@@ -93,10 +100,7 @@ export class HtmlPatchMount {
 				fragment.append(built);
 			}
 			this.#root.replaceChildren(fragment);
-			await lease.commit(
-				releases,
-				state.resources.map((resource) => resource.identity),
-			);
+			await lease.commit(releases, retainedIdentities);
 		} catch (error) {
 			await lease.rollback();
 			throw new HtmlPatchError(
@@ -140,7 +144,15 @@ export class HtmlPatchMount {
 			this.#metrics.resyncs += 1;
 			throw error;
 		}
-		const lease = await this.#resources.stage(patch.resourceAdditions ?? []);
+		const retainedIdentities = candidate.resources.map(
+			(resource) => resource.identity,
+		);
+		const releases = patch.resourceReleases ?? [];
+		const lease = await this.#resources.stage(
+			patch.resourceAdditions ?? [],
+			releases,
+			retainedIdentities,
+		);
 		let staged;
 		try {
 			staged = stageInsertions(
@@ -157,12 +169,10 @@ export class HtmlPatchMount {
 		try {
 			for (const operation of patch.operations) this.#apply(operation, staged);
 			restoreUserState(preserved, this.#nodes, this.#root);
-			await lease.commit(
-				patch.resourceReleases ?? [],
-				candidate.resources.map((resource) => resource.identity),
-			);
+			await lease.commit(releases, retainedIdentities);
 		} catch (error) {
 			await lease.rollback();
+			this.#restoreValidatedState();
 			this.#needsResync = true;
 			this.#metrics.resyncs += 1;
 			throw new HtmlPatchError("apply-failed", "patch publication failed", {
@@ -205,6 +215,18 @@ export class HtmlPatchMount {
 	#assertLive() {
 		if (this.#disposed)
 			throw new HtmlPatchError("disposed", "HTML patch mount is disposed");
+	}
+
+	#restoreValidatedState() {
+		const nodes = new Map();
+		const pageContent = new Map();
+		const fragment = this.#document.createDocumentFragment();
+		for (const page of this.#state.pages) {
+			fragment.append(buildPage(this.#document, page, nodes, pageContent));
+		}
+		this.#root.replaceChildren(fragment);
+		this.#nodes = nodes;
+		this.#pageContent = pageContent;
 	}
 
 	#apply(operation, staged) {
@@ -262,7 +284,11 @@ export class HtmlPatchMount {
 				break;
 			}
 			case "update-page":
-				updatePage(required(this.#nodes, operation.page.key), operation.page);
+				updatePage(
+					required(this.#nodes, operation.page.key),
+					operation.page,
+					required(this.#pageContent, operation.page.key),
+				);
 				this.#metrics.updated += 1;
 				break;
 			case "update-node": {
@@ -313,9 +339,10 @@ export class HtmlResourceRegistry {
 		});
 	}
 
-	async stage(additions) {
+	async stage(additions, releases = [], retained = []) {
 		if (this.#disposed)
 			throw new HtmlPatchError("disposed", "resource registry is disposed");
+		validateReleaseSet(this.#entries, releases, retained);
 		let projected = this.metrics.bytes;
 		const staged = new Map();
 		for (const resource of additions) {
@@ -376,35 +403,19 @@ export class HtmlResourceRegistry {
 						"resource-lease",
 						"resource lease already settled",
 					);
-				const live = new Set(retained);
-				const uniqueReleases = new Set(releases);
-				if (uniqueReleases.size !== releases.length) {
-					throw new HtmlPatchError(
-						"duplicate-release",
-						"resource released more than once",
-					);
-				}
-				for (const identity of releases) {
-					if (live.has(identity)) {
-						throw new HtmlPatchError(
-							"live-resource-release",
-							"cannot release a live resource",
-						);
-					}
-					if (!this.#entries.has(identity)) {
-						throw new HtmlPatchError(
-							"unknown-resource",
-							"cannot release an unknown resource",
-						);
-					}
-				}
+				validateReleaseSet(this.#entries, releases, retained);
 				settled = true;
-				for (const entry of staged.values()) {
-					this.#entries.set(entry.identity, entry);
-					if (entry.face) this.#document?.fonts?.add(entry.face);
-				}
-				for (const identity of releases) {
-					this.#remove(identity);
+				const installed = [];
+				try {
+					for (const entry of staged.values()) {
+						this.#entries.set(entry.identity, entry);
+						if (entry.face) this.#document?.fonts?.add(entry.face);
+						installed.push(entry.identity);
+					}
+					for (const identity of releases) this.#remove(identity);
+				} catch (error) {
+					for (const identity of installed.reverse()) this.#remove(identity);
+					throw error;
 				}
 			},
 			rollback: async () => {
@@ -428,6 +439,31 @@ export class HtmlResourceRegistry {
 			);
 		if (entry.face) this.#document?.fonts?.delete(entry.face);
 		this.#entries.delete(identity);
+	}
+}
+
+function validateReleaseSet(entries, releases, retained) {
+	const live = new Set(retained);
+	const uniqueReleases = new Set(releases);
+	if (uniqueReleases.size !== releases.length) {
+		throw new HtmlPatchError(
+			"duplicate-release",
+			"resource released more than once",
+		);
+	}
+	for (const identity of releases) {
+		if (live.has(identity)) {
+			throw new HtmlPatchError(
+				"live-resource-release",
+				"cannot release a live resource",
+			);
+		}
+		if (!entries.has(identity)) {
+			throw new HtmlPatchError(
+				"unknown-resource",
+				"cannot release an unknown resource",
+			);
+		}
 	}
 }
 
@@ -566,9 +602,11 @@ function buildPage(document, page, nodes, pageContent, staged = nodes) {
 	const section = document.createElementNS(HTML_NS, "section");
 	section.className = "umber-page";
 	section.tabIndex = -1;
+	section.setAttribute("role", "group");
+	section.setAttribute("aria-label", `Page ${page.ordinal}`);
 	const content = document.createElementNS(HTML_NS, "div");
 	content.className = "umber-page-content";
-	updatePage(section, page);
+	updatePage(section, page, content);
 	for (const node of page.nodes) {
 		const element = buildNode(document, node, page.mag);
 		content.append(element);
@@ -584,20 +622,86 @@ function buildPage(document, page, nodes, pageContent, staged = nodes) {
 function buildNode(document, node, mag) {
 	let element;
 	switch (node.kind) {
-		case "box":
+		case "box": {
+			element = document.createElementNS(HTML_NS, "div");
+			element.className = "umber-box";
+			element.setAttribute("aria-hidden", "true");
+			element.style.pointerEvents = "none";
+			element.setAttribute("data-umber-box-id", exactUnsigned(node.boxId));
+			if (node.boxKind !== "hbox" && node.boxKind !== "vbox") fail("box-kind");
+			element.setAttribute("data-umber-box-kind", node.boxKind);
+			positionGeometry(element, node, mag);
+			break;
+		}
 		case "rule":
 			element = document.createElementNS(HTML_NS, "div");
+			element.className = "umber-rule";
+			element.setAttribute("aria-hidden", "true");
+			positionGeometry(element, node, mag);
+			element.style.background = "currentColor";
+			applyColor(element, node.color);
 			break;
-		case "special":
+		case "special": {
 			element = document.createElementNS(HTML_NS, "span");
+			element.className = "umber-special";
+			element.setAttribute("aria-hidden", "true");
+			element.style.position = "absolute";
+			element.style.left = cssPx(node.xSp, mag);
+			element.style.top = cssPx(node.ySp, mag);
+			element.setAttribute("data-umber-special-class", node.class);
+			if (!/^(?:[0-9a-f]{2})*$/u.test(node.payloadHex)) fail("special-payload");
+			element.setAttribute("data-umber-special-hex", node.payloadHex);
+			if (node.action === "destination") {
+				if (!safeDestination(node.actionValue)) fail("special-destination");
+				element.id = node.actionValue;
+			}
+			element.setAttribute(
+				"data-umber-special-policy",
+				node.action === "inert" ? "inert" : "applied",
+			);
 			break;
+		}
 		case "text": {
 			element = document.createElementNS(SVG_NS, "svg");
+			element.className = "umber-run";
+			element.setAttribute("role", "text");
+			element.style.position = "absolute";
+			element.style.left = "0";
+			element.style.top = "0";
+			element.style.width = "0";
+			element.style.height = "0";
+			element.style.overflow = "visible";
+			const baseline = document.createElementNS(SVG_NS, "rect");
+			baseline.className = "umber-baseline";
+			baseline.setAttribute("x", cssPx(node.xSp, mag));
+			baseline.setAttribute("y", cssPx(node.baselineSp, mag));
+			baseline.setAttribute("width", "1");
+			baseline.setAttribute("height", "1");
+			baseline.setAttribute("fill", "transparent");
+			element.append(baseline);
 			const text = document.createElementNS(SVG_NS, "text");
+			text.className = "umber-run-text";
+			text.style.fill = "currentColor";
+			text.style.whiteSpace = "pre";
 			text.textContent = boundedString(node.text, DEFAULT_LIMITS);
 			if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family)) fail("font-family");
 			text.style.fontFamily = node.family;
 			text.style.fontSize = cssPx(node.fontSizeSp, mag);
+			text.style.fontFeatureSettings = settingStyle(node.features, false);
+			text.style.fontVariationSettings = settingStyle(node.variations, true);
+			applyColor(element, node.color);
+			if (node.direction !== "ltr" && node.direction !== "rtl")
+				fail("direction");
+			text.setAttribute("direction", node.direction);
+			if (node.language !== undefined) text.setAttribute("lang", node.language);
+			if (!Array.isArray(node.positionsSp)) fail("positions");
+			text.setAttribute(
+				"x",
+				(node.positionsSp.length > 0 ? node.positionsSp : [node.xSp])
+					.map((position) => cssPx(position, mag))
+					.join(" "),
+			);
+			text.setAttribute("y", cssPx(node.baselineSp, mag));
 			if (node.link !== undefined && node.link !== null) {
 				if (!safeLink(node.link)) fail("unsafe-link");
 				const anchor = document.createElementNS(SVG_NS, "a");
@@ -611,10 +715,71 @@ function buildNode(document, node, mag) {
 			break;
 		}
 		case "math-start":
-		case "math-glyph":
-		case "math-rule":
+			element = document.createElementNS(SVG_NS, "svg");
+			element.className = "umber-math";
+			element.setAttribute("aria-hidden", "true");
+			zeroSizedSvg(element);
+			break;
+		case "math-glyph": {
+			element = document.createElementNS(SVG_NS, "svg");
+			element.className = "umber-math";
+			element.setAttribute("aria-hidden", "true");
+			zeroSizedSvg(element);
+			const glyph = document.createElementNS(SVG_NS, "g");
+			glyph.className = "umber-math-glyph";
+			glyph.setAttribute("data-umber-glyph-id", exactUnsigned(node.glyphId));
+			glyph.setAttribute("data-umber-font-instance", node.fontInstance);
+			glyph.setAttribute("data-umber-ssty", exactUnsigned(node.ssty));
+			if (node.drawing === "text") {
+				const text = document.createElementNS(SVG_NS, "text");
+				text.className = "umber-math-text";
+				text.style.fill = "currentColor";
+				text.textContent = node.text;
+				text.setAttribute("x", cssPx(node.xSp, mag));
+				text.setAttribute("y", cssPx(node.baselineSp, mag));
+				if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family))
+					fail("font-family");
+				text.style.fontFamily = node.family;
+				text.style.fontSize = cssPx(node.fontSizeSp, mag);
+				text.style.fontFeatureSettings = `'ssty' ${exactUnsigned(node.ssty)}`;
+				text.style.fontVariationSettings = settingStyle(node.variations, true);
+				glyph.append(text);
+			} else if (node.drawing === "outline") {
+				if (!/^[MLQCZ0-9.,+\-\s]+$/u.test(node.path)) fail("outline-path");
+				const path = document.createElementNS(SVG_NS, "path");
+				path.className = "umber-math-outline";
+				path.style.fill = "currentColor";
+				path.setAttribute("d", node.path);
+				const scale = cssScale(node.fontSizeSp, mag, node.unitsPerEm);
+				path.setAttribute(
+					"transform",
+					`translate(${cssNumber(node.xSp, mag)} ${cssNumber(node.baselineSp, mag)}) scale(${scale} ${-scale})`,
+				);
+				glyph.append(path);
+			} else {
+				fail("math-drawing");
+			}
+			element.append(glyph);
+			break;
+		}
+		case "math-rule": {
+			element = document.createElementNS(SVG_NS, "svg");
+			element.className = "umber-math";
+			element.setAttribute("aria-hidden", "true");
+			zeroSizedSvg(element);
+			const rule = document.createElementNS(SVG_NS, "rect");
+			rule.className = "umber-math-rule";
+			rule.style.fill = "currentColor";
+			rule.setAttribute("x", cssPx(node.xSp, mag));
+			rule.setAttribute("y", cssPx(node.ySp, mag));
+			rule.setAttribute("width", cssPx(node.widthSp, mag));
+			rule.setAttribute("height", cssPx(node.heightSp, mag));
+			element.append(rule);
+			break;
+		}
 		case "math-end":
-			element = document.createElementNS(SVG_NS, "g");
+			element = document.createElementNS(HTML_NS, "span");
+			element.hidden = true;
 			break;
 		default:
 			fail("unknown-node-kind");
@@ -625,13 +790,59 @@ function buildNode(document, node, mag) {
 	return element;
 }
 
-function updatePage(element, page) {
+function updatePage(element, page, content) {
 	element.setAttribute("data-umber-key", page.key);
 	element.setAttribute("data-umber-page", String(page.ordinal));
+	element.setAttribute("aria-label", `Page ${page.ordinal}`);
 	element.setAttribute("data-umber-width-sp", exactInteger(page.widthSp));
 	element.setAttribute("data-umber-height-sp", exactInteger(page.heightSp));
 	element.style.width = cssPx(page.widthSp, page.mag);
 	element.style.height = cssPx(page.heightSp, page.mag);
+	element.style.position = "relative";
+	if (content) {
+		content.style.position = "absolute";
+		content.style.left = cssPx(page.originXSp, page.mag);
+		content.style.top = cssPx(page.originYSp, page.mag);
+		content.style.width = "0";
+		content.style.height = "0";
+		content.style.overflow = "visible";
+	}
+}
+
+function positionGeometry(element, node, mag) {
+	element.style.position = "absolute";
+	element.style.left = cssPx(node.xSp, mag);
+	element.style.top = cssPx(node.ySp, mag);
+	element.style.width = cssPx(node.widthSp, mag);
+	element.style.height = cssPx(node.heightSp, mag);
+}
+
+function zeroSizedSvg(element) {
+	element.style.position = "absolute";
+	element.style.left = "0";
+	element.style.top = "0";
+	element.style.width = "0";
+	element.style.height = "0";
+	element.style.overflow = "visible";
+}
+
+function applyColor(element, color) {
+	if (color === undefined || color === null) return;
+	if (!safeColor(color)) fail("color");
+	element.style.color = color;
+}
+
+function settingStyle(settings, signed) {
+	if (!Array.isArray(settings)) fail("font-settings");
+	return settings
+		.map((setting) => {
+			if (!/^[A-Za-z0-9 ]{4}$/u.test(setting?.tag)) fail("font-setting-tag");
+			const value = signed
+				? exactInteger(setting.value)
+				: exactUnsigned(setting.value);
+			return `'${setting.tag}' ${value}`;
+		})
+		.join(",");
 }
 
 function setGeometry(element, node) {
@@ -657,6 +868,17 @@ function validateIdentity(value) {
 function validatePage(page, keys, limits) {
 	if (!KEY.test(page?.key) || keys.has(page.key)) fail("duplicate-key");
 	keys.add(page.key);
+	for (const value of [
+		page.ordinal,
+		page.widthSp,
+		page.heightSp,
+		page.originXSp,
+		page.originYSp,
+		page.mag,
+	]) {
+		exactInteger(value);
+	}
+	if (page.mag <= 0) fail("magnification");
 	if (!Array.isArray(page.nodes)) fail("nodes");
 	for (const node of page.nodes) {
 		if (!KEY.test(node?.key) || keys.has(node.key)) fail("duplicate-key");
@@ -681,7 +903,12 @@ function validatePage(page, keys, limits) {
 		if (node.kind === "text") {
 			if (!/^umber-font-[0-9a-f]{24}$/u.test(node.family)) fail("font-family");
 			exactInteger(node.fontSizeSp);
+			if (!Array.isArray(node.positionsSp)) fail("positions");
+			for (const position of node.positionsSp) exactInteger(position);
+			settingStyle(node.features, false);
+			settingStyle(node.variations, true);
 		}
+		if (node.color !== undefined && !safeColor(node.color)) fail("color");
 		if (node.link !== undefined && node.link !== null && !safeLink(node.link))
 			fail("unsafe-link");
 	}
@@ -801,6 +1028,7 @@ function resolveDomAddress(address, nodes) {
 }
 
 function insertAt(parent, node, index) {
+	if (node.parentNode === parent) node.remove();
 	const before = parent.children?.[index] ?? null;
 	parent.insertBefore(node, before);
 }
@@ -892,10 +1120,52 @@ function exactInteger(value) {
 	return String(value);
 }
 
+function exactUnsigned(value) {
+	if (!Number.isSafeInteger(value) || value < 0 || value > 4_294_967_295)
+		fail("unsigned-integer");
+	return String(value);
+}
+
 function cssPx(sp, mag) {
 	exactInteger(sp);
 	if (!Number.isSafeInteger(mag) || mag <= 0) fail("magnification");
 	return `${(sp * mag * 48) / (65_536 * 5 * 7_227)}px`;
+}
+
+function cssNumber(sp, mag) {
+	exactInteger(sp);
+	if (!Number.isSafeInteger(mag) || mag <= 0) fail("magnification");
+	return (sp * mag * 48) / (65_536 * 5 * 7_227);
+}
+
+function cssScale(sp, mag, unitsPerEm) {
+	if (!Number.isSafeInteger(unitsPerEm) || unitsPerEm <= 0)
+		fail("units-per-em");
+	return cssNumber(sp, mag) / unitsPerEm;
+}
+
+function safeColor(value) {
+	return (
+		[
+			"black",
+			"red",
+			"green",
+			"blue",
+			"cyan",
+			"magenta",
+			"yellow",
+			"gray",
+		].includes(value) || /^#[0-9a-f]{6}$/u.test(value)
+	);
+}
+
+function safeDestination(value) {
+	return (
+		typeof value === "string" &&
+		value.startsWith("umber-dest-") &&
+		value.length <= 139 &&
+		/^umber-dest-[A-Za-z0-9_.:-]+$/u.test(value)
+	);
 }
 
 async function verifySha256(identity, bytes) {

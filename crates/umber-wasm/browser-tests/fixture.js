@@ -381,6 +381,10 @@ async function verifyIncrementalDomPatch() {
 		text,
 		family: `umber-font-${"b".repeat(24)}`,
 		fontSizeSp: 655_360,
+		positionsSp: [0],
+		features: [],
+		variations: [],
+		direction: "ltr",
 	});
 	const page = (key, ordinal, child) => ({
 		key,

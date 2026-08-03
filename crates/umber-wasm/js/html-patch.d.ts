@@ -30,13 +30,44 @@ export interface HtmlRenderNode {
 	readonly widthSp?: number;
 	readonly heightSp?: number;
 	readonly baselineSp?: number;
+	readonly depthSp?: number;
 	readonly text?: string;
 	readonly family?: string;
 	readonly fontSizeSp?: number;
+	readonly positionsSp?: readonly number[];
+	readonly direction?: "ltr" | "rtl";
+	readonly script?: string;
+	readonly language?: string;
+	readonly features?: readonly {
+		readonly tag: string;
+		readonly value: number;
+	}[];
+	readonly variations?: readonly {
+		readonly tag: string;
+		readonly value: number;
+	}[];
+	readonly accessibilityLine?: number;
+	readonly boxId?: number;
+	readonly boxKind?: "hbox" | "vbox";
 	readonly glyphId?: number;
+	readonly ssty?: number;
+	readonly fontInstance?: string;
+	readonly drawing?: "text" | "outline";
+	readonly path?: string;
+	readonly unitsPerEm?: number;
+	readonly mathId?: number;
 	readonly color?: string;
 	readonly link?: string;
 	readonly class?: string;
+	readonly payloadHex?: string;
+	readonly action?:
+		| "color-push"
+		| "color-pop"
+		| "link-start"
+		| "link-end"
+		| "destination"
+		| "inert";
+	readonly actionValue?: string;
 }
 
 export interface HtmlRenderPage {

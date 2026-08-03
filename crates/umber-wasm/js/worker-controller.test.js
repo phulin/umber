@@ -217,6 +217,7 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 		kind: "stable",
 		passes: 2,
 		stabilizationRequired: false,
+		renderUpdate: { kind: "patch", targetRevision: 2 },
 	};
 	const Worker = fakeWorker((worker, message) => {
 		const response =
@@ -254,6 +255,7 @@ test("retained worker editor preserves lifecycle and binary output", async () =>
 	assert.equal(editor.status.kind, "provisional");
 	const final = await editor.stabilize();
 	assert.equal(final.kind, "stable");
+	assert.equal(final.renderUpdate.kind, "patch");
 	assert.equal(editor.status.passes, 2);
 	assert.equal(
 		(await editor.acknowledgeRenderUpdate(1, "a".repeat(64))).kind,

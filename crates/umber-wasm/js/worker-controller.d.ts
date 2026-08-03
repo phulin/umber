@@ -50,10 +50,11 @@ export class EditorWorkerFacade {
 		  })
 		| EditorCancellationResult
 	>;
-	stabilize(
-		onProgress?: EditorProgressCallback,
-	): Promise<
-		Extract<EditorAttemptResult, { kind: "stable" }> | EditorCancellationResult
+	stabilize(onProgress?: EditorProgressCallback): Promise<
+		| (Extract<EditorAttemptResult, { kind: "stable" }> & {
+				renderUpdate: HtmlRenderUpdate | null;
+		  })
+		| EditorCancellationResult
 	>;
 	applyPatch(
 		patch: SourcePatch,

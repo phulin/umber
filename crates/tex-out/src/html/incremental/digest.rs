@@ -2,9 +2,9 @@ use sha2::{Digest as _, Sha256};
 use tex_arith::Scaled;
 
 use super::{
-    HtmlFontKey, MathGlyph, MathStart, PositionedPage, RENDER_SCHEMA_VERSION, RenderDigest,
-    RenderDirection, RenderKey, RenderNode, RenderNodeValue, RenderPage, RenderResource,
-    RenderSpecialAction, TextUnit,
+    HtmlFontKey, MathStart, PositionedPage, RENDER_SCHEMA_VERSION, RenderDigest, RenderDirection,
+    RenderKey, RenderMathDrawing, RenderMathGlyph, RenderNode, RenderNodeValue, RenderPage,
+    RenderResource, RenderSpecialAction, TextUnit,
 };
 use crate::MathGlyphSelection;
 use crate::positioned::BoxKind;
@@ -159,8 +159,8 @@ pub(super) fn node_value_digest(value: &RenderNodeValue, matching: bool) -> Rend
         }
         RenderNodeValue::MathGlyph(value) => {
             hash.u8(6);
-            hash.bytes(&value.font_instance.bytes());
-            hash.u16(value.glyph_id);
+            hash.bytes(&value.glyph.font_instance.bytes());
+            hash.u16(value.glyph.glyph_id);
             if !matching {
                 encode_math_glyph(&mut hash, value);
             }
@@ -215,22 +215,51 @@ fn encode_math_start(hash: &mut CanonicalHash, value: &MathStart) {
     hash.scaled(value.depth);
 }
 
-fn encode_math_glyph(hash: &mut CanonicalHash, value: &MathGlyph) {
-    hash.bytes(&value.font_instance.bytes());
-    hash.u16(value.glyph_id);
-    match value.selection {
+fn encode_math_glyph(hash: &mut CanonicalHash, value: &RenderMathGlyph) {
+    let glyph = value.glyph;
+    hash.bytes(&glyph.font_instance.bytes());
+    hash.u16(glyph.glyph_id);
+    match glyph.selection {
         MathGlyphSelection::Cmap { scalar } => {
             hash.u8(0);
             hash.u32(scalar);
         }
         MathGlyphSelection::OutlineFallback => hash.u8(1),
     }
-    hash.u8(value.ssty);
-    hash.scaled(value.x);
-    hash.scaled(value.baseline);
-    hash.scaled(value.width);
-    hash.scaled(value.height);
-    hash.scaled(value.depth);
+    hash.u8(glyph.ssty);
+    hash.scaled(glyph.x);
+    hash.scaled(glyph.baseline);
+    hash.scaled(glyph.width);
+    hash.scaled(glyph.height);
+    hash.scaled(glyph.depth);
+    match &value.drawing {
+        RenderMathDrawing::Text {
+            scalar,
+            family,
+            font_size_raw,
+            variations,
+        } => {
+            hash.u8(0);
+            hash.u32(*scalar as u32);
+            hash.string(family);
+            hash.i32(*font_size_raw);
+            hash.u64(variations.len() as u64);
+            for (tag, setting) in variations {
+                hash.bytes(tag);
+                hash.i32(*setting);
+            }
+        }
+        RenderMathDrawing::Outline {
+            path,
+            units_per_em,
+            font_size_raw,
+        } => {
+            hash.u8(1);
+            hash.string(path);
+            hash.u16(*units_per_em);
+            hash.i32(*font_size_raw);
+        }
+    }
 }
 
 fn encode_geometry(hash: &mut CanonicalHash, x: Scaled, y: Scaled, width: Scaled, height: Scaled) {
