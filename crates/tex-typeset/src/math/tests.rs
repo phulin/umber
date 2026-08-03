@@ -2050,6 +2050,33 @@ fn math_accent_uses_skewchar_kern_and_larger_accent() {
 }
 
 #[test]
+fn missing_math_accent_still_publishes_clean_nucleus_pack() {
+    let mut universe = setup_universe();
+    let noad = MathNoad::new(
+        NoadKind::Accent {
+            accent: MathChar {
+                family: 13,
+                character: 'X',
+                origin: tex_state::token::OriginId::UNKNOWN,
+            },
+        },
+        MathField::Empty,
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(noad)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+    let empty_pack = MathPackObservation {
+        axis: BoxAxis::Horizontal,
+        width: sc(0),
+        height: sc(0),
+        depth: sc(0),
+    };
+
+    assert_eq!(layout.pack_observations(), &[empty_pack, empty_pack]);
+}
+
+#[test]
 fn nested_math_accent_preserves_the_inner_vertical_box() {
     let mut universe = setup_universe();
     let inner = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(

@@ -2504,6 +2504,48 @@ fn trip_loaded_hairy_display_publishes_both_clean_character_packs() {
     }));
 }
 
+#[test]
+fn trip_loaded_missing_accent_publishes_clean_nucleus_pack() {
+    let trip: Arc<[u8]> = Arc::from(
+        test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
+    );
+    let text = std::str::from_utf8(&trip).expect("TRIP source is UTF-8");
+    let lines = text.lines().collect::<Vec<_>>();
+    let source: Arc<[u8]> =
+        Arc::from(format!("{}\n\\end\n", lines[92..396].join("\n")).into_bytes());
+    let (_, observer) = run_loaded_trip_source_observed(source);
+    let oracle = b"{\"schema\":2,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
+    let geometry = observer
+        .geometry
+        .canonical_json_lines(oracle)
+        .expect("focused geometry stream");
+    let stream = ObservationStream::from_canonical_json_lines(&geometry).expect("geometry stream");
+    let hpacks = stream
+        .events
+        .iter()
+        .filter_map(|event| match event.semantic {
+            tex_oracle::Event::Geometry(tex_oracle::GeometryEvent::Hpack {
+                width_sp,
+                height_sp,
+                depth_sp,
+                ..
+            }) => Some((width_sp, height_sp, depth_sp)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(hpacks.windows(5).any(|packs| {
+        packs
+            == [
+                (26_214, 0, 0),
+                (0, 0, 0),
+                (0, 0, 0),
+                (0, 0, 0),
+                (6_553_600, 0, 0),
+            ]
+    }));
+}
+
 fn run_loaded_trip_source(source: Arc<[u8]>) -> String {
     run_loaded_trip_source_observed(source).0
 }

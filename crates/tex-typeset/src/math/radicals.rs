@@ -153,6 +153,11 @@ pub(super) fn make_math_accent(
     accent: MathChar,
 ) -> AccentResult {
     // AppG rule 12
+    // TeX cleans the nucleus before fetching the accent character. Preserve
+    // that §720 package completion even when a missing accent glyph aborts
+    // the remainder of rule 12.
+    let style = ctx.style.cramped_style();
+    let mut accentee = clean_box(ctx, &noad.nucleus, style);
     let Some(fetched) = fetch(ctx, accent, ctx.style) else {
         return AccentResult {
             hlist: ctx.layout.empty(),
@@ -171,8 +176,6 @@ pub(super) fn make_math_accent(
         }
         _ => None,
     };
-    let style = ctx.style.cramped_style();
-    let mut accentee = clean_box(ctx, &noad.nucleus, style);
     let accentee_width = accentee.width;
     let mut accentee_height = accentee.height;
 
