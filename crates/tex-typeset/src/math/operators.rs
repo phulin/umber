@@ -69,6 +69,11 @@ pub(super) fn make_ord(
         };
         set_current_nucleus(nodes, index, MathField::MathTextChar(current));
         let Some(fetched) = fetch(ctx, current, ctx.style) else {
+            // TeX82 §§722/751: `fetch` diagnoses an unavailable character
+            // and sets the current nucleus to `empty`.  Leaving the text-char
+            // rewrite live makes ordinary translation fetch and diagnose the
+            // same field a second time before advancing to its neighbor.
+            set_current_nucleus(nodes, index, MathField::Empty);
             return;
         };
         let Some(command) = ctx.state.lig_kern_command(

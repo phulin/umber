@@ -1766,6 +1766,33 @@ fn undefined_math_family_prints_control_and_high_bytes_canonically() {
     assert!(!output.contains("character È"), "{output:?}");
 }
 
+/// TeX82 §§722/751: rule 14's ligature probe empties an unavailable first
+/// nucleus, so the ordinary translation pass diagnoses each adjacent field
+/// exactly once and continues to the next character.
+#[test]
+fn adjacent_undefined_math_family_fields_are_diagnosed_once_in_source_order() {
+    let source = r#"\font\symbol=cmsy10 \font\extension=cmex10
+        \textfont2=\symbol \scriptfont2=\symbol \scriptscriptfont2=\symbol
+        \textfont3=\extension \scriptfont3=\extension \scriptscriptfont3=\extension
+        $\scriptscriptstyle{\fam13 A9}$\end"#;
+    let (stores, _) =
+        run_canonical_math_recovery(stores_with_fonts(), CommandProfile::TEX82, source, true);
+    let output = terminal_effect_text(&stores);
+    let a = "\\scriptscriptfont 13 is undefined (character A)";
+    let nine = "\\scriptscriptfont 13 is undefined (character 9)";
+
+    assert_eq!(output.matches(a).count(), 2, "terminal and log: {output:?}");
+    assert_eq!(
+        output.matches(nine).count(),
+        2,
+        "terminal and log: {output:?}"
+    );
+    assert!(
+        output.find(a) < output.find(nine),
+        "diagnostic source order was {output:?}"
+    );
+}
+
 /// TeX82 §§703, 720--723 process an outer noad in its current style before
 /// recursively cleaning its script fields.  Bottom-up implementation of that
 /// recursion must preserve the resulting text, script, scriptscript diagnostic
