@@ -2247,6 +2247,21 @@ fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     assert!(!log.contains(".....\\kern 12.3"), "{log}");
 }
 
+#[test]
+fn trip_loaded_final_math_italic_correction_uses_a_normal_kern() {
+    // The final math construction through TRIP line 440 ends in an ordinary
+    // math character with a 1pt italic correction. TeX82 §§719/720 create
+    // that correction with `new_kern`, whose §135 subtype is normal; §184
+    // consequently prints no explicit-subtype space after `\kern`.
+    let log = run_focused_loaded_trip_through(440);
+    let expected = "..\\ip A\n..\\kern1.0\n..\\mathoff, surrounded 1.1";
+    assert!(log.contains(expected), "final math italic correction:\n{log}");
+    assert!(
+        !log.contains("..\\ip A\n..\\kern 1.0\n..\\mathoff"),
+        "{log}"
+    );
+}
+
 fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let trip: Arc<[u8]> = Arc::from(fs::read(root.join("third_party/trip/trip.tex")).unwrap());
