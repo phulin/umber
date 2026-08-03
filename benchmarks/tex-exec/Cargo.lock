@@ -932,7 +932,6 @@ dependencies = [
  "tex-exec",
  "tex-fonts",
  "tex-incr",
- "tex-lex",
  "tex-out",
  "tex-state",
  "tex-typeset",

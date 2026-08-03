@@ -1,10 +1,10 @@
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use tex_exec::Executor;
-use tex_lex::{InputStack, MemoryInput};
+use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::math::{MathField, MathListNode, MathNoad, NoadClass, NoadKind};
-use tex_state::node::{BoxNode, BoxNodeFields, Node, Sign};
+use tex_state::node::{BoxLr, BoxNode, BoxNodeFields, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 const NODE_COUNT: usize = 1_024;
@@ -21,16 +21,17 @@ fn shipout(c: &mut Criterion) {
     group.finish();
 }
 
-fn ordinary_shipout() -> (Universe, InputStack) {
+fn ordinary_shipout() -> (Universe, CanonicalMainControl) {
     let mut stores = prepared_universe();
     let nodes = (0..NODE_COUNT)
         .map(|index| Node::Penalty(index as i32))
         .collect::<Vec<_>>();
     install_box(&mut stores, &nodes);
-    (stores, shipout_input())
+    let control = shipout_input(&mut stores);
+    (stores, control)
 }
 
-fn deferred_math_shipout() -> (Universe, InputStack) {
+fn deferred_math_shipout() -> (Universe, CanonicalMainControl) {
     let mut stores = prepared_universe();
     let content = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -42,14 +43,12 @@ fn deferred_math_shipout() -> (Universe, InputStack) {
     };
     let nodes = vec![Node::MathList(list); NODE_COUNT];
     install_box(&mut stores, &nodes);
-    (stores, shipout_input())
+    let control = shipout_input(&mut stores);
+    (stores, control)
 }
 
 fn prepared_universe() -> Universe {
-    let mut stores = Universe::new();
-    tex_command::install_tex82_expandable_primitives(&mut stores);
-    tex_exec::install_unexpandable_primitives(&mut stores);
-    stores
+    Universe::new()
 }
 
 fn install_box(stores: &mut Universe, nodes: &[Node]) {
@@ -59,7 +58,7 @@ fn install_box(stores: &mut Universe, nodes: &[Node]) {
         height: Scaled::from_raw(0),
         depth: Scaled::from_raw(0),
         shift: Scaled::from_raw(0),
-        display: false,
+        box_lr: BoxLr::Normal,
         glue_set: GlueSetRatio::ZERO,
         glue_sign: Sign::Normal,
         glue_order: Order::Normal,
@@ -69,15 +68,28 @@ fn install_box(stores: &mut Universe, nodes: &[Node]) {
     stores.set_box_reg(0, root_list);
 }
 
-fn shipout_input() -> InputStack {
-    InputStack::new(MemoryInput::new("\\shipout\\box0\\end"))
+fn shipout_input(stores: &mut Universe) -> CanonicalMainControl {
+    let mut control = CanonicalMainControl::tex82_initex(stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\shipout\\box0\\end".to_vec(),
+        ))
+        .expect("benchmark source registers");
+    control
 }
 
-fn run_shipout((mut stores, mut input): (Universe, InputStack)) {
-    let stats = Executor::new()
-        .run(&mut input, &mut stores)
-        .expect("benchmark shipout succeeds");
-    black_box(stats.shipped_artifacts);
+fn run_shipout((mut stores, mut control): (Universe, CanonicalMainControl)) {
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("benchmark shipout succeeds")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+    black_box(stores.world().artifact_commits().len());
     black_box(stores);
 }
 
