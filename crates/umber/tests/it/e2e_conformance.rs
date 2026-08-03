@@ -2411,6 +2411,18 @@ fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
 }
 
 #[test]
+fn trip_loaded_runaway_definition_pseudoprints_nonstandard_match_marker() {
+    let log = run_focused_loaded_trip_through(364);
+    let runaway = log.rfind("Runaway definition?").expect("line-364 runaway");
+    let report = &log[runaway..];
+    assert!(
+        report.contains("^^C1->\\d ^^C1\\d \\l {##2}\\l ^^C1\\par"),
+        "{report}"
+    );
+    assert!(!report.contains('\u{3}'), "{report:?}");
+}
+
+#[test]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated

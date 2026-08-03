@@ -2258,6 +2258,37 @@ impl CommandProcessor<'_> {
     }
 
     pub(crate) fn set_runaway_partial(&mut self, tokens: &[TracedTokenWord]) {
+        // TeX82 §262 carries `match_chr` from each match token into later
+        // out-parameter rendering. The compact representation stores a
+        // nonstandard match character immediately before its slot token.
+        let mut raw = String::new();
+        let mut match_marker = '#';
+        let mut index = 0;
+        while index < tokens.len() {
+            let token = tokens[index].semantic_token();
+            if let Token::Char {
+                ch,
+                cat: Catcode::Parameter,
+            } = token
+                && let Some(Token::Param(slot)) =
+                    tokens.get(index + 1).map(|word| word.semantic_token())
+            {
+                match_marker = ch;
+                raw.push(ch);
+                raw.push(char::from(b'0' + slot));
+                index += 2;
+                continue;
+            }
+            if let Token::Param(slot) = token {
+                raw.push(match_marker);
+                raw.push(char::from(b'0' + slot));
+            } else {
+                raw.push_str(&super::expand::token_list_token_text(&self.state, token));
+            }
+            index += 1;
+        }
+        let mut rendered = String::new();
+        self.state.append_selector_string_text(&raw, &mut rendered);
         let Some(crate::CommandSemanticDiagnostic::Recoverable {
             runaway: Some(runaway),
             ..
@@ -2265,15 +2296,7 @@ impl CommandProcessor<'_> {
         else {
             return;
         };
-        runaway.partial.clear();
-        for token in tokens {
-            runaway
-                .partial
-                .push_str(&super::expand::token_list_token_text(
-                    &self.state,
-                    token.semantic_token(),
-                ));
-        }
+        runaway.partial = rendered;
     }
 
     fn observe_outer_validity_diagnostic(&mut self, status: &ScannerStatus, at_eof: bool) {
