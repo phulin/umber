@@ -3873,6 +3873,11 @@ impl CanonicalMainControl {
     }
 
     fn scan_canonical_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
+        // TeX82 §§1185/1194's `fin_mlist` has already popped the display
+        // level. Publish that live nest before §1197's nested expansion
+        // episode: capabilities were last sampled at the start of the outer
+        // main-control step, when the current mode was still display math.
+        self.refresh_host_capabilities(stores);
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
         let mut machine = self.command_machine();

@@ -1773,9 +1773,33 @@ mod tests {
         .into_owned();
         assert!(
             output.contains("{math shift character $}\n! Math formula deleted:")
-                && output.contains("{internal vertical mode: \\ifvmode}\n{false}"),
+                && output.contains("{internal vertical mode: \\ifvmode}\n{true}"),
             "{output}"
         );
+    }
+
+    #[test]
+    fn display_end_probe_mode_conditionals_share_the_restored_mode() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        crate::prepare_run_stores(&mut stores);
+        crate::run_memory_with_stores(
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode\\else\\errmessage{ifvmode stale}\\fi\\ifhmode\\errmessage{ifhmode stale}\\fi\\ifmmode\\errmessage{ifmmode stale}\\fi$}\\hss\\end",
+            &mut stores,
+        )
+        .expect("run completes");
+        let output = String::from_utf8_lossy(
+            stores
+                .world()
+                .memory_log_output()
+                .expect("memory-backed log"),
+        );
+        assert!(
+            output.contains("{internal vertical mode: \\ifvmode}\n{true}")
+                && output.contains("{\\ifhmode}\n{false}")
+                && output.contains("{\\ifmmode}\n{false}"),
+            "{output}"
+        );
+        assert!(!output.contains("stale"), "{output}");
     }
 
     #[test]
