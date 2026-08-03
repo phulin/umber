@@ -195,6 +195,75 @@ fn restore_tracing_preserves_save_stack_order_for_extended_register_banks() {
     );
 }
 
+#[test]
+fn restore_tracing_interleaves_code_tables_with_eqtb_in_save_stack_order() {
+    // TeX82 §§252/283: code-table entries and ordinary eqtb entries occupy
+    // one save stack, so `unsave` reports them in one strict LIFO sequence.
+    fn traced_universe() -> Universe {
+        let mut universe = Universe::new();
+        universe.set_int_param(IntParam::TRACING_RESTORES, 1);
+        universe.set_int_param(IntParam::TRACING_ONLINE, 1);
+        universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'\\'));
+        universe
+    }
+
+    fn restore_output(universe: &Universe) -> String {
+        universe
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|effect| match effect {
+                EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let mut interleaved = traced_universe();
+    interleaved.enter_group();
+    interleaved.set_count(1, 11);
+    interleaved.set_catcode('J', Catcode::Active);
+    interleaved.set_catcode('j', Catcode::Active);
+    interleaved.set_count(2, 22);
+    let _ = interleaved.leave_group();
+    assert_eq!(interleaved.count(1), 0);
+    assert_eq!(interleaved.count(2), 0);
+    assert_eq!(interleaved.catcode('J'), Catcode::Letter);
+    assert_eq!(interleaved.catcode('j'), Catcode::Letter);
+    let output = restore_output(&interleaved);
+    let count2 = output
+        .find("{restoring \\count2=0}")
+        .expect("count2 restore");
+    let cat_j = output
+        .find("{restoring \\catcode106=11}")
+        .expect("lowercase j catcode restore");
+    let cat_upper_j = output
+        .find("{restoring \\catcode74=11}")
+        .expect("uppercase J catcode restore");
+    let count1 = output
+        .find("{restoring \\count1=0}")
+        .expect("count1 restore");
+    assert!(count2 < cat_j && cat_j < cat_upper_j && cat_upper_j < count1);
+
+    // Negative control: without intervening code-table saves, ordinary eqtb
+    // restoration remains the same LIFO sequence.
+    let mut ordinary = traced_universe();
+    ordinary.enter_group();
+    ordinary.set_count(1, 11);
+    ordinary.set_count(2, 22);
+    let _ = ordinary.leave_group();
+    let output = restore_output(&ordinary);
+    assert!(
+        output
+            .find("{restoring \\count2=0}")
+            .expect("negative-control count2 restore")
+            < output
+                .find("{restoring \\count1=0}")
+                .expect("negative-control count1 restore")
+    );
+    assert!(!output.contains("catcode"));
+}
+
 fn assert_parshape_restore_trace(mut universe: Universe) {
     universe.set_int_param(IntParam::TRACING_RESTORES, 1);
     universe.set_int_param(IntParam::TRACING_ONLINE, 1);

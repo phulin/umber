@@ -158,6 +158,7 @@ struct CodeTableKey {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CodeTableRestoreRecord {
+    pub(crate) save_position: usize,
     pub(crate) kind: CodeTableKind,
     pub(crate) ch: char,
     pub(crate) value: i64,
@@ -404,11 +405,18 @@ impl CodeTables {
         self.catcodes.get(ch)
     }
 
+    // Kept as an intentionally private boundary exercised by compile-fail tests.
+    #[allow(dead_code)]
     pub(crate) fn set_catcode(&mut self, ch: char, value: Catcode) {
+        self.set_catcode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_catcode_at(&mut self, save_position: usize, ch: char, value: Catcode) {
         self.record_local(
             CodeTableKind::Catcode,
             ch,
             i64::from(self.catcodes.get(ch) as u8),
+            save_position,
         );
         self.catcodes.set(ch, value);
     }
@@ -424,9 +432,19 @@ impl CodeTables {
         self.lccodes.get(ch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_lccode(&mut self, ch: char, value: LcCode) {
+        self.set_lccode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_lccode_at(&mut self, save_position: usize, ch: char, value: LcCode) {
         assert_unicode_code(value, "lccode");
-        self.record_local(CodeTableKind::Lccode, ch, i64::from(self.lccodes.get(ch)));
+        self.record_local(
+            CodeTableKind::Lccode,
+            ch,
+            i64::from(self.lccodes.get(ch)),
+            save_position,
+        );
         self.lccodes.set(ch, value);
     }
 
@@ -442,9 +460,19 @@ impl CodeTables {
         self.uccodes.get(ch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_uccode(&mut self, ch: char, value: UcCode) {
+        self.set_uccode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_uccode_at(&mut self, save_position: usize, ch: char, value: UcCode) {
         assert_unicode_code(value, "uccode");
-        self.record_local(CodeTableKind::Uccode, ch, i64::from(self.uccodes.get(ch)));
+        self.record_local(
+            CodeTableKind::Uccode,
+            ch,
+            i64::from(self.uccodes.get(ch)),
+            save_position,
+        );
         self.uccodes.set(ch, value);
     }
 
@@ -460,8 +488,18 @@ impl CodeTables {
         self.sfcodes.get(ch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_sfcode(&mut self, ch: char, value: SfCode) {
-        self.record_local(CodeTableKind::Sfcode, ch, i64::from(self.sfcodes.get(ch)));
+        self.set_sfcode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_sfcode_at(&mut self, save_position: usize, ch: char, value: SfCode) {
+        self.record_local(
+            CodeTableKind::Sfcode,
+            ch,
+            i64::from(self.sfcodes.get(ch)),
+            save_position,
+        );
         self.sfcodes.set(ch, value);
     }
 
@@ -476,11 +514,17 @@ impl CodeTables {
         self.mathcodes.get(ch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_mathcode(&mut self, ch: char, value: MathCode) {
+        self.set_mathcode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_mathcode_at(&mut self, save_position: usize, ch: char, value: MathCode) {
         self.record_local(
             CodeTableKind::Mathcode,
             ch,
             i64::from(self.mathcodes.get(ch)),
+            save_position,
         );
         self.mathcodes.set(ch, value);
     }
@@ -496,8 +540,18 @@ impl CodeTables {
         self.delcodes.get(ch)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn set_delcode(&mut self, ch: char, value: DelCode) {
-        self.record_local(CodeTableKind::Delcode, ch, i64::from(self.delcodes.get(ch)));
+        self.set_delcode_at(0, ch, value);
+    }
+
+    pub(crate) fn set_delcode_at(&mut self, save_position: usize, ch: char, value: DelCode) {
+        self.record_local(
+            CodeTableKind::Delcode,
+            ch,
+            i64::from(self.delcodes.get(ch)),
+            save_position,
+        );
         self.delcodes.set(ch, value);
     }
 
@@ -513,13 +567,14 @@ impl CodeTables {
         }
     }
 
-    fn record_local(&mut self, kind: CodeTableKind, ch: char, old: i64) {
+    fn record_local(&mut self, kind: CodeTableKind, ch: char, old: i64, save_position: usize) {
         let Some(frame) = Arc::make_mut(&mut self.group_roots).last_mut() else {
             return;
         };
         let key = CodeTableKey { kind, ch };
         if frame.local_runs.insert(key) {
             frame.saved.push(CodeTableRestoreRecord {
+                save_position,
                 kind,
                 ch,
                 value: old,

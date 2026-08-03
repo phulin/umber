@@ -276,7 +276,6 @@ impl Env {
 
     /// Returns the current journal end position.
     #[must_use]
-    #[cfg(test)]
     pub(crate) fn journal_pos(&self) -> crate::journal::JournalPos {
         self.journal.pos()
     }

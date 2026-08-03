@@ -505,7 +505,8 @@ impl Stores {
     }
 
     pub fn set_catcode(&mut self, ch: char, value: Catcode) {
-        self.code_tables.set_catcode(ch, value);
+        self.code_tables
+            .set_catcode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_catcode_global(&mut self, ch: char, value: Catcode) {
@@ -518,7 +519,8 @@ impl Stores {
     }
 
     pub fn set_lccode(&mut self, ch: char, value: LcCode) {
-        self.code_tables.set_lccode(ch, value);
+        self.code_tables
+            .set_lccode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_lccode_global(&mut self, ch: char, value: LcCode) {
@@ -531,7 +533,8 @@ impl Stores {
     }
 
     pub fn set_uccode(&mut self, ch: char, value: UcCode) {
-        self.code_tables.set_uccode(ch, value);
+        self.code_tables
+            .set_uccode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_uccode_global(&mut self, ch: char, value: UcCode) {
@@ -544,7 +547,8 @@ impl Stores {
     }
 
     pub fn set_sfcode(&mut self, ch: char, value: SfCode) {
-        self.code_tables.set_sfcode(ch, value);
+        self.code_tables
+            .set_sfcode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_sfcode_global(&mut self, ch: char, value: SfCode) {
@@ -557,7 +561,8 @@ impl Stores {
     }
 
     pub fn set_mathcode(&mut self, ch: char, value: MathCode) {
-        self.code_tables.set_mathcode(ch, value);
+        self.code_tables
+            .set_mathcode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_mathcode_global(&mut self, ch: char, value: MathCode) {
@@ -570,7 +575,8 @@ impl Stores {
     }
 
     pub fn set_delcode(&mut self, ch: char, value: DelCode) {
-        self.code_tables.set_delcode(ch, value);
+        self.code_tables
+            .set_delcode_at(self.env.journal_pos().raw() as usize, ch, value);
     }
 
     pub fn set_delcode_global(&mut self, ch: char, value: DelCode) {

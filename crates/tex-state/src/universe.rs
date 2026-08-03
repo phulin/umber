@@ -5815,8 +5815,7 @@ impl Universe {
             self.stores.leave_group_observing_dependencies();
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
-        self.trace_restores(&restores);
-        self.trace_code_restores(&code_restores);
+        self.trace_interleaved_restores(&restores, &code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
         }
@@ -5836,8 +5835,7 @@ impl Universe {
             .leave_group_with_kind_observing_dependencies(expected)?;
         self.retarget_hash_base_after_group_compaction();
         self.mark_group_exit_dependencies(&changed_cells, code_before, code_after);
-        self.trace_restores(&restores);
-        self.trace_code_restores(&code_restores);
+        self.trace_interleaved_restores(&restores, &code_restores);
         if let Some((kind, level, entered_line)) = trace_context {
             self.trace_group_leave(kind, level, entered_line);
         }
@@ -6124,6 +6122,28 @@ impl Universe {
                 .print(&value)
                 .print_char('}');
             diagnostic.end(false);
+        }
+    }
+
+    fn trace_interleaved_restores(
+        &mut self,
+        env: &[crate::env::group::RestoreRecord],
+        code: &[crate::code_tables::CodeTableRestoreRecord],
+    ) {
+        // TeX82 §283 pops one save stack. Code tables use structural roots,
+        // but their diagnostics must retain their position among eqtb saves.
+        let (mut env_index, mut code_index) = (0, 0);
+        while env_index < env.len() || code_index < code.len() {
+            let take_env = code_index == code.len()
+                || (env_index < env.len()
+                    && env[env_index].save_position() >= code[code_index].save_position);
+            if take_env {
+                self.trace_restores(&env[env_index..=env_index]);
+                env_index += 1;
+            } else {
+                self.trace_code_restores(&code[code_index..=code_index]);
+                code_index += 1;
+            }
         }
     }
 

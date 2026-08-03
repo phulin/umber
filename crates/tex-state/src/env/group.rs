@@ -11,6 +11,7 @@ pub(crate) type ChangedCells = SmallVec<[crate::cell::CellId; 8]>;
 /// One TeX82 §283 save-stack diagnostic observed while unsaving a group.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreRecord {
+    save_position: usize,
     cell: CellId,
     old: u64,
     trace_eligible: bool,
@@ -22,9 +23,10 @@ pub struct RestoreRecord {
 }
 
 impl RestoreRecord {
-    fn restoring(env: &Env, cell: CellId, old: u64) -> Self {
+    fn restoring(env: &Env, save_position: usize, cell: CellId, old: u64) -> Self {
         let restored = env.restored_semantic_word(cell, old);
         Self {
+            save_position,
             cell,
             old: restored.word,
             trace_eligible: restored.trace_eligible,
@@ -36,9 +38,10 @@ impl RestoreRecord {
         }
     }
 
-    fn retaining(env: &Env, cell: CellId) -> Self {
+    fn retaining(env: &Env, save_position: usize, cell: CellId) -> Self {
         let restored = env.restored_semantic_word(cell, env.semantic_word(cell));
         Self {
+            save_position,
             cell,
             old: restored.word,
             trace_eligible: restored.trace_eligible,
@@ -50,8 +53,14 @@ impl RestoreRecord {
         }
     }
 
-    fn restoring_box(env: &Env, index: u16, old: crate::env::box_bank::BoxSlot) -> Self {
+    fn restoring_box(
+        env: &Env,
+        save_position: usize,
+        index: u16,
+        old: crate::env::box_bank::BoxSlot,
+    ) -> Self {
         Self {
+            save_position,
             cell: CellId::new(BankTag::Box, u32::from(index)),
             old: old.value(),
             trace_eligible: true,
@@ -66,6 +75,10 @@ impl RestoreRecord {
     #[must_use]
     pub const fn cell(&self) -> CellId {
         self.cell
+    }
+
+    pub(crate) const fn save_position(&self) -> usize {
+        self.save_position
     }
 
     #[must_use]
@@ -649,12 +662,17 @@ impl Env {
                     meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                     self.restore_raw(rec.cell(), rec.old());
                     if traced_local_entries.contains(&index) {
-                        restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
+                        restores.push(RestoreRecord::restoring(self, index, rec.cell(), rec.old()));
                     }
                 } else if let Entry::BoxUndo(id) = self.journal.entry(index) {
                     let rec = self.journal.box_undo(id);
                     self.boxes.restore(rec.index(), rec.old());
-                    restores.push(RestoreRecord::restoring_box(self, rec.index(), rec.old()));
+                    restores.push(RestoreRecord::restoring_box(
+                        self,
+                        index,
+                        rec.index(),
+                        rec.old(),
+                    ));
                 }
             }
             self.journal.truncate_to(marker_pos);
@@ -734,10 +752,15 @@ impl Env {
                         meaning_changed |= rec.cell().bank() == BankTag::Meaning;
                         self.restore_raw(rec.cell(), rec.old());
                         if traced_local_entries.contains(&index) {
-                            restores.push(RestoreRecord::restoring(self, rec.cell(), rec.old()));
+                            restores.push(RestoreRecord::restoring(
+                                self,
+                                index,
+                                rec.cell(),
+                                rec.old(),
+                            ));
                         }
                     } else if traced_local_entries.contains(&index) {
-                        restores.push(RestoreRecord::retaining(self, rec.cell()));
+                        restores.push(RestoreRecord::retaining(self, index, rec.cell()));
                     }
                 }
                 Entry::BoxUndo(id) => {
@@ -756,6 +779,7 @@ impl Env {
                             self.boxes.restore(rec.index(), rec.old());
                             restores.push(RestoreRecord::restoring_box(
                                 self,
+                                index,
                                 rec.index(),
                                 rec.old(),
                             ));
