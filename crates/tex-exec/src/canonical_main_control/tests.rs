@@ -2923,6 +2923,62 @@ fn canonical_paragraph_rehome_filters_the_edited_root_region() {
 }
 
 #[test]
+fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
+    let old = br"alpha
+
+ beta\par\end";
+    let inserted = b"% shifted\n";
+    let mut revised = inserted.to_vec();
+    revised.extend_from_slice(old);
+    let revised: std::sync::Arc<[u8]> = revised.into();
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, old);
+    run_to_end(&mut control, &mut stores);
+    let regions = control.take_finished_paragraph_regions();
+    assert_eq!(regions.len(), 2);
+
+    for region in regions {
+        let old_start = region.input().coverage().root_start().expect("root start");
+        let old_end = region.input().coverage().root_end().expect("root end");
+        let rebound = region
+            .rehome_edited_root(old, std::sync::Arc::clone(&revised), 0..0)
+            .expect("unchanged suffix region rehomes");
+        assert_eq!(
+            rebound.input().coverage().root_start(),
+            Some(old_start + inserted.len())
+        );
+        assert_eq!(
+            rebound.input().coverage().root_end(),
+            Some(old_end + inserted.len())
+        );
+        assert_eq!(rebound.starting_state_hash(), region.starting_state_hash());
+        assert_eq!(rebound.ending_state_hash(), region.ending_state_hash());
+    }
+}
+
+#[test]
+fn canonical_paragraph_rehome_rejects_an_overlapping_edit() {
+    let old = br"alpha beta\par\end";
+    let mut stores = Universe::new_with_plain_catcodes();
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    register_source(&mut control, old);
+    run_to_end(&mut control, &mut stores);
+    let region = control
+        .take_finished_paragraph_regions()
+        .pop()
+        .expect("paragraph region");
+    let start = region.input().coverage().root_start().expect("root start");
+    let new: std::sync::Arc<[u8]> = std::sync::Arc::from(&br"alpha gamma\par\end"[..]);
+
+    assert!(
+        region
+            .rehome_edited_root(old, new, start..start + 5)
+            .is_none()
+    );
+}
+
+#[test]
 fn vertical_only_canonical_run_publishes_no_paragraph_region() {
     let mut stores = Universe::new_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);

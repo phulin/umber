@@ -196,6 +196,23 @@ impl PhysicalLine {
         self
     }
 
+    pub(crate) fn rehome(
+        &mut self,
+        source: SourceId,
+        byte_delta: i64,
+        line_delta: i64,
+    ) -> Option<()> {
+        self.source = source;
+        self.number = self.number.checked_add_signed(line_delta)?;
+        self.content.source = source;
+        self.content.start = self.content.start.checked_add_signed(byte_delta)?;
+        self.content.end = self.content.end.checked_add_signed(byte_delta)?;
+        self.terminator.source = source;
+        self.terminator.start = self.terminator.start.checked_add_signed(byte_delta)?;
+        self.terminator.end = self.terminator.end.checked_add_signed(byte_delta)?;
+        Some(())
+    }
+
     /// One-based physical line number within this registered source.
     #[must_use]
     pub const fn number(self) -> u64 {

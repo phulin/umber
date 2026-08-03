@@ -641,6 +641,21 @@ impl CanonicalParagraphRegion {
             .rebind_unchanged_root_prefix(old, new, unchanged_end)?;
         Some(rebound)
     }
+
+    /// Rehomes a region wholly before or after one edited root interval.
+    /// Semantic snapshots, effects, modes, and retained lines remain shared;
+    /// only command-owned physical input/provenance coordinates are revised.
+    #[must_use]
+    pub fn rehome_edited_root(
+        &self,
+        old: &[u8],
+        new: std::sync::Arc<[u8]>,
+        edited: std::ops::Range<usize>,
+    ) -> Option<Self> {
+        let mut rebound = self.clone();
+        rebound.input = self.input.rebind_edited_root(old, new, edited)?;
+        Some(rebound)
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -94,9 +94,79 @@ impl ParagraphInputTransaction {
         rebind_root_input(&mut rebound.ending_input, old, new)?;
         Some(rebound)
     }
+
+    /// Rebinds a transaction wholly outside one edited root interval.
+    /// Prefix offsets remain fixed; suffix offsets and line numbers translate
+    /// by the exact replacement deltas. Transactions intersecting the edit are
+    /// rejected.
+    #[must_use]
+    pub fn rebind_edited_root(
+        &self,
+        old: &[u8],
+        new: Arc<[u8]>,
+        edited: std::ops::Range<usize>,
+    ) -> Option<Self> {
+        let start = self.coverage.root_start?;
+        let end = self.coverage.root_end?;
+        if edited.start > edited.end || edited.end > old.len() {
+            return None;
+        }
+        let replacement_len = new
+            .len()
+            .checked_sub(old.len() - (edited.end - edited.start))?;
+        let new_suffix = edited.start.checked_add(replacement_len)?;
+        let (byte_delta, line_delta) = if end <= edited.start {
+            if old[..edited.start] != new[..edited.start] {
+                return None;
+            }
+            (0, 0)
+        } else if start >= edited.end {
+            if old[edited.end..] != new[new_suffix..] {
+                return None;
+            }
+            let byte_delta = i64::try_from(new_suffix).ok()? - i64::try_from(edited.end).ok()?;
+            let old_lines = old[edited.start..edited.end]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count();
+            let new_lines = new[edited.start..new_suffix]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count();
+            (
+                byte_delta,
+                i64::try_from(new_lines).ok()? - i64::try_from(old_lines).ok()?,
+            )
+        } else {
+            return None;
+        };
+        let mut rebound = self.clone();
+        let coverage_delta = isize::try_from(byte_delta).ok()?;
+        rebound.coverage.root_start = Some(start.checked_add_signed(coverage_delta)?);
+        rebound.coverage.root_end = Some(end.checked_add_signed(coverage_delta)?);
+        rebind_root_input_with_delta(
+            &mut rebound.starting_input,
+            old,
+            Arc::clone(&new),
+            byte_delta,
+            line_delta,
+        )?;
+        rebind_root_input_with_delta(&mut rebound.ending_input, old, new, byte_delta, line_delta)?;
+        Some(rebound)
+    }
 }
 
 fn rebind_root_input(input: &mut InputState, old: &[u8], new: Arc<[u8]>) -> Option<()> {
+    rebind_root_input_with_delta(input, old, new, 0, 0)
+}
+
+fn rebind_root_input_with_delta(
+    input: &mut InputState,
+    old: &[u8],
+    new: Arc<[u8]>,
+    byte_delta: i64,
+    line_delta: i64,
+) -> Option<()> {
     let id = SourceId::new(u32::try_from(input.next_source_identity).ok()?);
     let source = input.levels.iter_mut().find_map(|level| match level {
         crate::input::InputLevel::Source(source) => Some(source),
@@ -109,8 +179,18 @@ fn rebind_root_input(input: &mut InputState, old: &[u8], new: Arc<[u8]>) -> Opti
     input.next_source_identity += 1;
     input.registered_sources.push(backing.clone());
     source.cursor.backing = backing;
+    source.cursor.next_physical_offset = source
+        .cursor
+        .next_physical_offset
+        .checked_add_signed(byte_delta)?;
+    source.cursor.next_line_number = source
+        .cursor
+        .next_line_number
+        .checked_add_signed(line_delta)?;
     if let Some(line) = &mut source.cursor.line {
-        line.physical.source = id;
+        line.physical.rehome(id, byte_delta, line_delta)?;
+        line.retained_end = line.retained_end.checked_add_signed(byte_delta)?;
+        line.byte_cursor = line.byte_cursor.checked_add_signed(byte_delta)?;
     }
     Some(())
 }
