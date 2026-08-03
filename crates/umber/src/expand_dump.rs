@@ -37,7 +37,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
                 control_sequence,
                 source_provenance,
             } => {
-                let semantic = tex_expand::semantic_token(spelling);
+                let semantic = spelling.semantic_token();
                 if meaning == Meaning::Undefined {
                     return Err(ExpandDumpError::Rendered(render_undefined(
                         path,

@@ -1389,6 +1389,7 @@ fn expand_dump_source_stays_on_the_canonical_session_boundary() {
     let source = include_str!("../../src/expand_dump.rs");
     for forbidden in [
         "tex_exec::Executor",
+        "tex_expand::",
         "tex_lex::InputStack",
         "use umber::{EngineSession",
         "try_execute_assignment",
