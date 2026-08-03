@@ -1275,6 +1275,42 @@ fn showlists_reports_unfinished_math_noad_fields() {
     assert!(log.contains("\\mathchoice"));
 }
 
+#[test]
+fn showlists_reports_adjustments_embedded_in_a_display_math_list() {
+    // TeX82 §§182/692: `show_node_list` retains subsidiary prefixes while
+    // walking a noad, then returns to the enclosing mlist for generic nodes.
+    // In particular, §1099's adjustment wrapper owns its vertical body; the
+    // temporary internal-vmode list used to build that body is not a nest
+    // level visible to the later §218 `\showlists`.
+    let stores = super::core::run_canonical_tex82(
+        r"\nonstopmode\showboxdepth=10\showboxbreadth=100$$A^{\hbox{\kern1pt}}_{B-}\vadjust{\penalty7}\mkern-9mu\the\prevgraf \prevgraf=8 \insert255{\penalty999}\showlists$$\end",
+    );
+    let log = terminal_effect_text(&stores);
+
+    assert!(
+        log.contains(concat!(
+            "### display math mode entered at line 1\n",
+            "\\mathord\n",
+            ".\\fam1 A\n",
+            "^\\hbox(0.0+0.0)x1.0\n",
+            "^.\\kern 1.0\n",
+            "_\\mathord\n",
+            "_.\\fam1 B\n",
+            "_\\mathord\n",
+            "_.\\fam0 -\n",
+            "\\vadjust\n",
+            ".\\penalty 7\n",
+            "\\mkern-9.0mu\n",
+        )),
+        "{log}"
+    );
+    assert!(!log.contains("### internal vertical mode entered"), "{log}");
+    assert!(
+        log.contains("\\insert0, natural size 0.0; split(0.0,0.0); float cost 0\n.\\penalty 999"),
+        "{log}"
+    );
+}
+
 /// TeX82 §1151 allocates each ordinary noad before `scan_math` enters a
 /// braced subsidiary field. Section 218 therefore displays that parent noad,
 /// without a nucleus child, after the nested math level and before the outer
