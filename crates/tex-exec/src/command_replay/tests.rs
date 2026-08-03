@@ -11988,11 +11988,11 @@ fn canonical_display_alignment_discards_a_preceding_formula() {
 }
 
 #[test]
-#[ignore = "umber2-3jl8"]
 fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
     // TeX82 §§283, 812, and 1206–1207 restore the display group's
-    // `par_shape_loc` before retrying `\eqno`; the completed alignment remains
-    // vertical display material.
+    // `par_shape_loc` before retrying `\eqno`; because the one-line shape was
+    // assigned inside that group, §283 restores its outer null value. The
+    // completed alignment remains vertical display material.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut universe);
     register_source(
@@ -12005,7 +12005,7 @@ fn canonical_eqno_after_display_alignment_closes_display_before_retry() {
     assert!(output.contains("Missing $$ inserted"));
     assert!(output.contains("You can't use `\\eqno' in horizontal mode"));
     let parshape_restore = output
-        .find("{restoring \\parshape=1}")
+        .find("{restoring \\parshape=0}")
         .expect("§252 parshape restoration trace");
     let horizontal_eqno = output
         .find("{horizontal mode: \\eqno}")
