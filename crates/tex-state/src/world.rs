@@ -3039,6 +3039,28 @@ impl World {
         }
     }
 
+    /// Replays an already-rendered diagnostic write captured by a retained
+    /// paragraph. Unlike [`Self::write_text`], this does not wrap the payload
+    /// a second time; it restores the exact effect record and the printable
+    /// cursor transition that the original write owned.
+    pub fn replay_paragraph_write(&mut self, record: &EffectRecord) -> bool {
+        match record {
+            EffectRecord::StreamWrite { sink, text } => {
+                self.record_printable_write(*sink, text.clone());
+            }
+            EffectRecord::StreamWriteBytes { sink, bytes } => {
+                self.record_printable_bytes(*sink, bytes.clone());
+            }
+            EffectRecord::StreamOpen { .. }
+            | EffectRecord::StreamClose { .. }
+            | EffectRecord::DeferredWrite { .. }
+            | EffectRecord::Special { .. }
+            | EffectRecord::PdfObjectPlaceholder { .. }
+            | EffectRecord::ShellEscape(_) => return false,
+        }
+        true
+    }
+
     /// Appends a deferred `\write` after the owning `Universe` validates the
     /// token-list capability against its live store timeline.
     pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {

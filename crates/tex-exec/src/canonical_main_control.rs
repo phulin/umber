@@ -867,7 +867,13 @@ impl CanonicalParagraphRecorder {
         if display_active_directions.is_some() {
             barriers.push(tex_state::ParagraphBarrierReason::DisplayMath);
         }
-        if !effects.is_empty() {
+        if effects.iter().any(|effect| {
+            !matches!(
+                effect,
+                tex_state::EffectRecord::StreamWrite { .. }
+                    | tex_state::EffectRecord::StreamWriteBytes { .. }
+            )
+        }) {
             barriers.push(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
         }
         if mutation_summary.unsupported_group_ownership {
@@ -2010,6 +2016,12 @@ impl CanonicalMainControl {
         let _ = stores.finish_paragraph_dependency_region();
         let _ = stores.finish_pure_paragraph_recording();
         crate::canonical_paragraph_memo::replay_mutations(stores, &region.mutations);
+        for effect in region.effects() {
+            assert!(
+                stores.world_mut().replay_paragraph_write(effect),
+                "barrier-free paragraph owns only replayable diagnostic writes"
+            );
+        }
         stores.record_carried_canonical_paragraph_region(region.history_record());
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");

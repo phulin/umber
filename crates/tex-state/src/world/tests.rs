@@ -23,6 +23,26 @@ fn cloned_memory_world_shares_seeded_input_bytes() {
         .expect("cloned input");
     assert!(Arc::ptr_eq(original, cloned));
 }
+
+#[test]
+fn retained_paragraph_replays_only_detached_diagnostic_writes() {
+    let mut source = World::memory();
+    source.write_text(PrintSink::TerminalAndLog, "diagnostic");
+    let write = source.effect_records()[0].clone();
+
+    let mut replay = World::memory();
+    assert!(replay.replay_paragraph_write(&write));
+    assert_eq!(replay.effect_records(), [write]);
+
+    let open = EffectRecord::StreamOpen {
+        slot: StreamSlot::new(1),
+        target: WriteTarget {
+            path: PathBuf::from("unsafe.out"),
+        },
+    };
+    assert!(!replay.replay_paragraph_write(&open));
+    assert_eq!(replay.effect_records().len(), 1);
+}
 use crate::Universe;
 
 #[test]

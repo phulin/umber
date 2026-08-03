@@ -3598,21 +3598,34 @@ fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
 }
 
 #[test]
-fn canonical_paragraph_effects_publish_an_explicit_replay_barrier() {
+fn canonical_paragraph_diagnostic_writes_replay_without_a_world_barrier() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"alpha\\message{visible} beta\\par\\end");
     run_to_end(&mut control, &mut stores);
-    let region = control
+    let mut region = control
         .take_finished_paragraph_regions()
         .pop()
         .expect("paragraph region");
 
     assert!(!region.effects.is_empty());
-    assert_eq!(
-        region.barriers.as_ref(),
-        [tex_state::ParagraphBarrierReason::UntrackedWorldAccess]
+    assert!(region.barriers.is_empty());
+
+    let resolver = stores.paragraph_origin_resolver();
+    region.accept_line_provenance(resolver);
+    let before = stores.world().effect_records().len();
+    let mut replay_stores = Universe::new_with_plain_catcodes();
+    replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
+    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    register_source(&mut replay, b"alpha\\message{visible} beta\\par\\end");
+    replay.install_paragraph_replay_regions([region]);
+    run_to_end(&mut replay, &mut replay_stores);
+
+    assert_eq!(replay_stores.pure_memo_stats().paragraph_hits, 1);
+    assert!(
+        replay_stores.world().effect_records().len() >= before,
+        "replay republishes the paragraph diagnostic effect"
     );
 }
 
