@@ -2,18 +2,19 @@
 
 use std::fmt;
 
+pub use tex_command::{DimensionDiagnostic, InsertedUnit};
 use tex_lex::{InputStack, LexError};
 use tex_state::BoxDimension;
+use tex_state::ExpansionState;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::Order;
 use tex_state::interner::Symbol;
 use tex_state::meaning::{Meaning, UnexpandablePrimitive};
 use tex_state::scaled::{
-    DimensionError, PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction,
-    scale_true_dimension_parts, scaled_from_decimal_parts, xn_over_d,
+    PhysicalUnit, Scaled, nx_plus_y, round_decimal_fraction, scale_true_dimension_parts,
+    scaled_from_decimal_parts, xn_over_d,
 };
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
-use tex_state::{ExpansionState, PrepareMagDiagnostic};
 
 use crate::{
     ExpandError, ExpansionContext, ExpansionMode, ReadBank, ReadDependency, ReadFontField,
@@ -159,71 +160,6 @@ impl ScannedDimen {
                 origin.unwrap_or(OriginId::UNKNOWN),
             ),
             None => self,
-        }
-    }
-}
-
-/// Recoverable diagnostics emitted while still producing TeX's capped value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DimensionDiagnostic {
-    MissingNumber,
-    IllegalUnit { inserted: InsertedUnit },
-    IncompatibleGlueUnits,
-    TooLarge,
-    IllegalMagnification { attempted: i32 },
-    IncompatibleMagnification { attempted: i32, retained: i32 },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InsertedUnit {
-    Pt,
-    Mu,
-}
-
-impl fmt::Display for DimensionDiagnostic {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingNumber => f.write_str("Missing number, treated as zero"),
-            Self::IllegalUnit {
-                inserted: InsertedUnit::Pt,
-            } => f.write_str("Illegal unit of measure (pt inserted)"),
-            Self::IllegalUnit {
-                inserted: InsertedUnit::Mu,
-            } => f.write_str("Illegal unit of measure (mu inserted)"),
-            Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
-            Self::TooLarge => f.write_str("Dimension too large"),
-            Self::IllegalMagnification { .. } => {
-                f.write_str("Illegal magnification has been changed to 1000")
-            }
-            Self::IncompatibleMagnification { attempted, .. } => write!(
-                f,
-                "Incompatible magnification ({attempted}); the previous value will be retained"
-            ),
-        }
-    }
-}
-
-impl From<DimensionError> for DimensionDiagnostic {
-    fn from(value: DimensionError) -> Self {
-        match value {
-            DimensionError::TooLarge => Self::TooLarge,
-        }
-    }
-}
-
-impl From<PrepareMagDiagnostic> for DimensionDiagnostic {
-    fn from(value: PrepareMagDiagnostic) -> Self {
-        match value {
-            PrepareMagDiagnostic::IllegalMagnification { attempted } => {
-                Self::IllegalMagnification { attempted }
-            }
-            PrepareMagDiagnostic::IncompatibleMagnification {
-                attempted,
-                retained,
-            } => Self::IncompatibleMagnification {
-                attempted,
-                retained,
-            },
         }
     }
 }

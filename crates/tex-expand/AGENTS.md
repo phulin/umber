@@ -39,7 +39,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/pdf_random.rs`: pdfTeX-compatible deterministic uniform and normal random deviates.
 - `src/scan.rs`: reusable macro definition token scanning for `\def`/`\edef`-style callers.
 - `src/scan/tests.rs`: unit tests for macro definition token scanning.
-- `src/scan_dimen.rs`: expanded TeX dimension scanning, unit conversion, diagnostics, and internal-dimension reads.
+- `src/scan_dimen.rs`: expanded TeX dimension scanning, unit conversion, and
+  internal-dimension reads; its recovery diagnostic values are compatibility
+  re-exports from the canonical `tex-command` owner.
 - `src/scan_dimen/tests.rs`: unit tests for dimension scanning edge cases.
 - `src/scan_glue.rs`: expanded glue and muglue scanning, including stretch/shrink component parsing.
 - `src/scan_glue/tests.rs`: unit tests for glue and muglue scanner behavior.

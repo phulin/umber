@@ -1,7 +1,76 @@
 //! Private command diagnostics and typed resource needs.
 
 use std::panic::Location;
+use tex_state::PrepareMagDiagnostic;
+use tex_state::scaled::DimensionError;
 use tex_state::token::OriginId;
+
+/// Recoverable diagnostics emitted by a dimension scan that still produces
+/// TeX's capped or substituted value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DimensionDiagnostic {
+    MissingNumber,
+    IllegalUnit { inserted: InsertedUnit },
+    IncompatibleGlueUnits,
+    TooLarge,
+    IllegalMagnification { attempted: i32 },
+    IncompatibleMagnification { attempted: i32, retained: i32 },
+}
+
+/// The unit TeX inserts while recovering an invalid dimension.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InsertedUnit {
+    Pt,
+    Mu,
+}
+
+impl std::fmt::Display for DimensionDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingNumber => f.write_str("Missing number, treated as zero"),
+            Self::IllegalUnit {
+                inserted: InsertedUnit::Pt,
+            } => f.write_str("Illegal unit of measure (pt inserted)"),
+            Self::IllegalUnit {
+                inserted: InsertedUnit::Mu,
+            } => f.write_str("Illegal unit of measure (mu inserted)"),
+            Self::IncompatibleGlueUnits => f.write_str("Incompatible glue units"),
+            Self::TooLarge => f.write_str("Dimension too large"),
+            Self::IllegalMagnification { .. } => {
+                f.write_str("Illegal magnification has been changed to 1000")
+            }
+            Self::IncompatibleMagnification { attempted, .. } => write!(
+                f,
+                "Incompatible magnification ({attempted}); the previous value will be retained"
+            ),
+        }
+    }
+}
+
+impl From<DimensionError> for DimensionDiagnostic {
+    fn from(value: DimensionError) -> Self {
+        match value {
+            DimensionError::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
+impl From<PrepareMagDiagnostic> for DimensionDiagnostic {
+    fn from(value: PrepareMagDiagnostic) -> Self {
+        match value {
+            PrepareMagDiagnostic::IllegalMagnification { attempted } => {
+                Self::IllegalMagnification { attempted }
+            }
+            PrepareMagDiagnostic::IncompatibleMagnification {
+                attempted,
+                retained,
+            } => Self::IncompatibleMagnification {
+                attempted,
+                retained,
+            },
+        }
+    }
+}
 
 /// The Rust call site that raised an [`CommandError::InputInvariant`].
 ///
@@ -151,3 +220,33 @@ impl std::fmt::Display for CommandError {
 }
 
 impl std::error::Error for CommandError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dimension_diagnostic_conversion_and_units_are_canonical_values() {
+        assert_eq!(
+            DimensionDiagnostic::from(DimensionError::TooLarge),
+            DimensionDiagnostic::TooLarge
+        );
+        assert_eq!(
+            DimensionDiagnostic::IllegalUnit {
+                inserted: InsertedUnit::Mu,
+            }
+            .to_string(),
+            "Illegal unit of measure (mu inserted)"
+        );
+        assert_eq!(
+            DimensionDiagnostic::from(PrepareMagDiagnostic::IncompatibleMagnification {
+                attempted: 1200,
+                retained: 1000,
+            }),
+            DimensionDiagnostic::IncompatibleMagnification {
+                attempted: 1200,
+                retained: 1000,
+            }
+        );
+    }
+}

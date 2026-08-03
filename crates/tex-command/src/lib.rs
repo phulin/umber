@@ -63,7 +63,7 @@ mod fixture_replay;
 mod test_harness;
 
 pub use command::{CurrentCommand, DeliveryStamp};
-pub use error::CommandError;
+pub use error::{CommandError, DimensionDiagnostic, InsertedUnit};
 pub use fatal::{FATAL_SEVERITY, FatalError};
 pub use fuel::{
     CommandFuel, CommandFuelLedger, CommandFuelLimitError, DEFAULT_COMMAND_FUEL_LIMIT,

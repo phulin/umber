@@ -2,9 +2,9 @@
 
 use std::fmt::Write as _;
 
+use tex_command::DimensionDiagnostic;
 use tex_expand::{
-    get_x_token_with_context, scan_dimen::DimensionDiagnostic, scan_int::IntegerDiagnostic,
-    scan_the_text_with_context, token_text,
+    get_x_token_with_context, scan_int::IntegerDiagnostic, scan_the_text_with_context, token_text,
 };
 use tex_lex::InputStack;
 use tex_state::env::banks::IntParam;

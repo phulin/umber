@@ -41,7 +41,9 @@ print channel of its own outside the borrowed
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.
 - `src/command.rs`: public opaque, ephemeral current-command representation.
-- `src/error.rs`: private command error and resource-need representation.
+- `src/error.rs`: command error and resource-need representation plus the
+  shared dimension-scanner recovery diagnostic vocabulary consumed by legacy
+  and canonical scanner paths.
 - `src/fuel.rs`: checked finite command-work limits, the constructor-free
   borrow-only `CommandFuel` capability used by leaf operations, and the
   top-level `CommandFuelLedger` session owner shared by every canonical
