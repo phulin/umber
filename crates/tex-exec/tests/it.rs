@@ -259,13 +259,63 @@ fn canonical_box_runtime_has_no_legacy_dependencies_or_callers() {
             assert!(
                 matches!(
                     relative.to_str(),
-                    Some("lib.rs" | "canonical_main_control.rs" | "canonical_box_runtime/mod.rs")
+                    Some(
+                        "lib.rs"
+                            | "canonical_main_control.rs"
+                            | "canonical_box_runtime/mod.rs"
+                            | "canonical_box_runtime/vsplit.rs"
+                            | "assignments/boxes/vsplit.rs"
+                    )
                 ),
                 "{} must not bypass the canonical box runtime owner",
                 relative.display()
             );
         }
     }
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_vsplit_physically_owns_its_source_free_closure() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("canonical_box_runtime/vsplit.rs"))
+        .expect("read canonical vsplit owner");
+    let legacy = fs::read_to_string(source_root.join("assignments/boxes/vsplit.rs"))
+        .expect("read legacy vsplit scanner");
+
+    for forbidden in [
+        "assignments",
+        "legacy",
+        "executor",
+        "ExecutionContext",
+        "InputStack",
+        "tex_expand",
+        "tex_lex",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical vsplit owner references `{forbidden}`"
+        );
+    }
+
+    for implementation in [
+        "fn split_vbox_register(",
+        "fn normalize_split_infinite_shrink(",
+        "fn replace_split_source(",
+        "fn update_split_marks(",
+        "fn clear_split_marks(",
+        "fn vertical_break_error(",
+    ] {
+        assert!(
+            owner.contains(implementation),
+            "canonical owner lacks `{implementation}`"
+        );
+        assert!(
+            !legacy.contains(implementation),
+            "legacy scanner still owns `{implementation}`"
+        );
+    }
+    assert!(legacy.contains("crate::canonical_box_runtime::split_vbox_register"));
 }
 
 #[test]

@@ -80,7 +80,7 @@ pub(crate) use boxes::scan_setbox_target;
 pub(crate) use boxes::split_hpack_migrations;
 use boxes::*;
 pub(crate) use boxes::{apply_box_shift_delta, first_box_node, take_last_box};
-pub(crate) use boxes::{scan_box_group, scan_pack_spec, split_vbox_register};
+pub(crate) use boxes::{scan_box_group, scan_pack_spec};
 pub(crate) use canonical_paragraph_end::{
     end_canonical_paragraph_with_fuel, end_canonical_paragraph_without_source,
     interrupt_canonical_paragraph_for_display,

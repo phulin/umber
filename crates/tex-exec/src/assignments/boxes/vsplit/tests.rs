@@ -1,9 +1,11 @@
 use super::*;
+use crate::canonical_box_runtime::split_vbox_register;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Sign};
 use tex_state::node_arena::NodeRef;
 use tex_state::scaled::GlueSetRatio;
+use tex_state::scaled::Scaled;
 
 fn sp(raw: i32) -> Scaled {
     Scaled::from_raw(raw)
