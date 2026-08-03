@@ -907,6 +907,9 @@ impl CanonicalParagraphRecorder {
         if mutation_summary.unsupported_group_ownership {
             barriers.push(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
         }
+        barriers.extend(stores.take_pure_paragraph_barriers());
+        barriers.sort_unstable();
+        barriers.dedup();
         let region = CanonicalParagraphRegion {
             identity: self.next_identity,
             input,
@@ -936,11 +939,15 @@ impl CanonicalParagraphRecorder {
             barriers: barriers.clone().into(),
             line_provenance: tex_state::ParagraphLineProvenance::Pending,
         };
-        stores.record_canonical_paragraph_region(region.history_record());
+        if !barriers.contains(&tex_state::ParagraphBarrierReason::UnsupportedGroupTransition) {
+            stores.record_canonical_paragraph_region(region.history_record());
+        }
         if !barriers.is_empty() {
             stores.record_pure_paragraph_barriers(&barriers);
         }
-        Arc::make_mut(&mut self.finished).push(region);
+        if !barriers.contains(&tex_state::ParagraphBarrierReason::UnsupportedGroupTransition) {
+            Arc::make_mut(&mut self.finished).push(region);
+        }
     }
 
     /// Discards an in-flight paragraph recording before replacing the whole
@@ -15274,6 +15281,11 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterGroup(token) => {
+            if command.state.paragraph_started_in_macro_frame() {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
+                );
+            }
             stores.push_aftergroup_traced(token);
             Ok(ReplayStep::Continue)
         }
@@ -15446,6 +15458,14 @@ fn apply_scanned_step(
                             bank: tex_state::DependencyBank::Box,
                             index: u32::from(index),
                         });
+                        if !copy
+                            && stores.box_reg(index).is_some()
+                            && !stores.paragraph_box_is_locally_owned(index)
+                        {
+                            stores.mark_pure_paragraph_barrier(
+                                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                            );
+                        }
                         let id = if copy {
                             stores.box_reg(index)
                         } else {
@@ -15514,6 +15534,14 @@ fn apply_scanned_step(
                 bank: tex_state::DependencyBank::Box,
                 index: u32::from(index),
             });
+            if !copy
+                && stores.box_reg(index).is_some()
+                && !stores.paragraph_box_is_locally_owned(index)
+            {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             let id = if copy {
                 stores.box_reg(index)
             } else {
@@ -15532,6 +15560,17 @@ fn apply_scanned_step(
                 bank: tex_state::DependencyBank::Box,
                 index: u32::from(index),
             });
+            if stores.box_reg(index).is_some()
+                && !stores.paragraph_box_is_locally_owned(index)
+                && matches!(
+                    primitive,
+                    UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
+                )
+            {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             crate::canonical_box_runtime::execute_scanned_unbox(
                 primitive,
                 index,
@@ -15963,6 +16002,11 @@ fn apply_scanned_step(
                 stores,
                 command.fuel,
             )?;
+            if command.state.paragraph_started_in_macro_frame() {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
+                );
+            }
             enter_canonical_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
@@ -15972,6 +16016,11 @@ fn apply_scanned_step(
                 stores,
                 command.fuel,
             )?;
+            if command.state.paragraph_started_in_macro_frame() {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
+                );
+            }
             enter_canonical_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
@@ -17365,6 +17414,14 @@ fn apply_box_shift(
                 bank: tex_state::DependencyBank::Box,
                 index: u32::from(index),
             });
+            if !copy
+                && stores.box_reg(index).is_some()
+                && !stores.paragraph_box_is_locally_owned(index)
+            {
+                stores.mark_pure_paragraph_barrier(
+                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
+                );
+            }
             let id = if copy {
                 stores.box_reg(index)
             } else {

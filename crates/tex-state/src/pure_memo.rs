@@ -729,6 +729,9 @@ pub struct PureMemoRuntime {
     page_episodes: bool,
     shipout_episodes: bool,
     paragraph_recording: Option<crate::env::paragraph::ParagraphMutationCheckpoint>,
+    paragraph_recording_barriers: Vec<ParagraphBarrierReason>,
+    paragraph_recording_group_depth: u32,
+    paragraph_local_boxes: HashSet<u16>,
     prior_paragraphs: Vec<RecordedParagraphRegion>,
     /// Stable-source alignment index for the ordered accepted paragraph trace.
     prior_paragraph_starts: HashMap<RootSpanId, usize>,
@@ -1061,10 +1064,37 @@ impl PureMemoRuntime {
     pub(crate) fn begin_paragraph_recording(
         &mut self,
         checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
+        group_depth: u32,
     ) {
         if self.paragraph_front_ends_enabled() {
             self.paragraph_recording = Some(checkpoint);
+            self.paragraph_recording_barriers.clear();
+            self.paragraph_recording_group_depth = group_depth;
+            self.paragraph_local_boxes.clear();
         }
+    }
+
+    pub(crate) fn mark_paragraph_recording_barrier(&mut self, reason: ParagraphBarrierReason) {
+        if self.paragraph_recording.is_some()
+            && !self.paragraph_recording_barriers.contains(&reason)
+        {
+            self.paragraph_recording_barriers.push(reason);
+        }
+    }
+
+    pub(crate) fn record_paragraph_local_box(&mut self, index: u16, group_depth: u32) {
+        if self.paragraph_recording.is_some() && group_depth > self.paragraph_recording_group_depth
+        {
+            self.paragraph_local_boxes.insert(index);
+        }
+    }
+
+    pub(crate) fn paragraph_box_is_locally_owned(&self, index: u16) -> bool {
+        self.paragraph_recording.is_some() && self.paragraph_local_boxes.contains(&index)
+    }
+
+    pub(crate) fn take_paragraph_recording_barriers(&mut self) -> Vec<ParagraphBarrierReason> {
+        std::mem::take(&mut self.paragraph_recording_barriers)
     }
 
     pub(crate) fn finish_paragraph_recording(
@@ -1076,6 +1106,8 @@ impl PureMemoRuntime {
     pub(crate) fn abandon_paragraph_recording(
         &mut self,
     ) -> Option<crate::env::paragraph::ParagraphMutationCheckpoint> {
+        self.paragraph_recording_barriers.clear();
+        self.paragraph_local_boxes.clear();
         self.paragraph_recording.take()
     }
 

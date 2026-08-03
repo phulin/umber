@@ -2436,8 +2436,28 @@ impl Universe {
     pub fn begin_pure_paragraph_recording(&mut self) {
         if self.pure_memo.paragraph_front_ends_enabled() {
             let checkpoint = self.stores.begin_paragraph_mutations();
-            self.pure_memo.begin_paragraph_recording(checkpoint);
+            self.pure_memo.begin_paragraph_recording(
+                checkpoint,
+                crate::ExpansionState::execution_group_depth(self),
+            );
         }
+    }
+
+    /// Marks an effect that cannot be reproduced by paragraph redo while the
+    /// current canonical paragraph recording is active.
+    #[doc(hidden)]
+    pub fn mark_pure_paragraph_barrier(&mut self, reason: crate::ParagraphBarrierReason) {
+        self.pure_memo.mark_paragraph_recording_barrier(reason);
+    }
+
+    #[doc(hidden)]
+    pub fn paragraph_box_is_locally_owned(&self, index: u16) -> bool {
+        self.pure_memo.paragraph_box_is_locally_owned(index)
+    }
+
+    #[doc(hidden)]
+    pub fn take_pure_paragraph_barriers(&mut self) -> Vec<crate::ParagraphBarrierReason> {
+        self.pure_memo.take_paragraph_recording_barriers()
     }
 
     #[doc(hidden)]
@@ -6465,6 +6485,7 @@ impl Universe {
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
+        self.mark_pure_paragraph_barrier(crate::ParagraphBarrierReason::UnsupportedEscapingWrite);
         self.stores.set_dimen(index, value);
         self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
@@ -6475,6 +6496,7 @@ impl Universe {
     }
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
+        self.mark_pure_paragraph_barrier(crate::ParagraphBarrierReason::UnsupportedEscapingWrite);
         self.stores.set_dimen_global(index, value);
         self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
@@ -6525,6 +6547,8 @@ impl Universe {
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
+        self.pure_memo
+            .record_paragraph_local_box(index, crate::ExpansionState::execution_group_depth(self));
         self.stores.set_box_reg(index, value);
         self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }

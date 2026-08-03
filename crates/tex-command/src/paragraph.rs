@@ -572,6 +572,25 @@ impl crate::CommandState {
         self.paragraph_input_transaction.is_some()
     }
 
+    /// Whether the active paragraph entered while a macro activation owned
+    /// its input front. Group-stack effects begun from such a frame cannot be
+    /// reconstructed by an input-only paragraph transition.
+    #[must_use]
+    pub fn paragraph_started_in_macro_frame(&self) -> bool {
+        self.paragraph_input_transaction
+            .as_ref()
+            .is_some_and(|active| {
+                !active.starting_parameters.activations.is_empty()
+                    || active.starting_input.levels.iter().any(|level| {
+                        matches!(
+                            level,
+                            crate::input::InputLevel::Tokens(tokens)
+                                if matches!(tokens.behavior, crate::input::TokenBehavior::MacroBody(_))
+                        )
+                    })
+            })
+    }
+
     pub(crate) fn record_paragraph_observation(&mut self, observation: &CommandObservation) {
         let Some(active) = &mut self.paragraph_input_transaction else {
             return;
