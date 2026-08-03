@@ -276,38 +276,6 @@ pub(crate) fn end_paragraph_with_fuel(
         tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
         None,
-        None,
-        fuel,
-    )?;
-    Ok(())
-}
-
-/// Canonical TeX82 §1096 `end_graf`, retaining the command-owned §82 input
-/// context until stomach-side paragraph diagnostics have completed.
-pub(crate) fn end_canonical_paragraph_with_fuel(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    command: &tex_command::CommandState,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    if nest.current_mode() != Mode::Horizontal {
-        return Ok(());
-    }
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
-    if nest.current_list().is_empty() {
-        let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
-        normal_paragraph(nest, stores);
-        build_page_if_outer_vertical(nest, stores)?;
-        return Ok(());
-    }
-    let context = command.output_open_context(&stores.command_context());
-    let _ = break_current_paragraph(
-        nest,
-        stores,
-        tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
-        true,
-        None,
-        Some(context),
         fuel,
     )?;
     Ok(())
@@ -349,7 +317,6 @@ fn end_paragraph_with_memo(
         stores,
         tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
         true,
-        None,
         None,
         execution.command_fuel(),
     )?;
@@ -393,7 +360,6 @@ pub(crate) fn install_reused_paragraph_hlist_after_start(
             stores,
             tex_typeset::linebreak::WidowPenaltySelector::Ordinary,
             true,
-            None,
             None,
             execution.command_fuel(),
         )?;
@@ -443,6 +409,17 @@ pub(crate) struct ParagraphBreakResult {
     pub(crate) line_count: i32,
 }
 
+impl ParagraphBreakResult {
+    pub(super) const fn empty() -> Self {
+        Self {
+            last_line: None,
+            active_directions: Vec::new(),
+            finished_nodes: Vec::new(),
+            line_count: 0,
+        }
+    }
+}
+
 pub(crate) fn interrupt_paragraph_for_display(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -464,7 +441,6 @@ pub(crate) fn interrupt_paragraph_for_display(
         tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
         false,
         None,
-        None,
         execution.command_fuel(),
     )?;
     let mut memo = crate::legacy_paragraph_memo::PendingParagraphMemoConsumer::new(execution);
@@ -475,37 +451,6 @@ pub(crate) fn interrupt_paragraph_for_display(
         &result.active_directions,
     );
     Ok(result)
-}
-
-/// Canonical main control has no legacy execution context, but display entry
-/// still needs the same stomach-side paragraph interruption.  Memo reuse is
-/// an optimization boundary, not a TeX semantic dependency.
-pub(crate) fn interrupt_canonical_paragraph_for_display(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<ParagraphBreakResult, ExecError> {
-    flush_pending_hchars_with_fuel(nest, stores, fuel)?;
-    stores.begin_paragraph_break_dependency_region();
-    if nest.current_list().is_empty() {
-        let _ = crate::assignments::commit_current_list(nest, stores, fuel)?;
-        return Ok(ParagraphBreakResult {
-            last_line: None,
-            active_directions: Vec::new(),
-            finished_nodes: Vec::new(),
-            line_count: 0,
-        });
-    }
-    let mut memo = crate::legacy_paragraph_memo::NoParagraphMemoConsumer;
-    break_current_paragraph(
-        nest,
-        stores,
-        tex_typeset::linebreak::WidowPenaltySelector::DisplayInterrupted,
-        false,
-        Some(&mut memo),
-        None,
-        fuel,
-    )
 }
 
 pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> LineDimensions {
@@ -542,12 +487,11 @@ pub(crate) fn display_line_dimensions(nest: &ModeNest, stores: &Universe) -> Lin
     line_shape(&params).dimensions(2)
 }
 
-fn break_current_paragraph(
+pub(super) fn break_current_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
     widow_penalty_selector: tex_typeset::linebreak::WidowPenaltySelector,
     reset_paragraph: bool,
-    mut memo: Option<&mut dyn crate::legacy_paragraph_memo::ParagraphMemoConsumer>,
     error_context: Option<String>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
@@ -694,9 +638,6 @@ fn break_current_paragraph(
             .checked_add(line_count)
             .expect("TeX prev_graf overflow"),
     );
-    if let Some(memo) = memo.take() {
-        memo.publish_finished_lines(stores, &finished_nodes, line_count, &active_directions);
-    }
     if reset_paragraph {
         reset_after_par(nest, stores);
     }

@@ -12630,7 +12630,7 @@ fn capture_replay_alignment_cell(
     // otherwise the paragraph is mistaken for the cell, leaving the actual
     // cell and row levels on the mode nest after `fin_align`.
     if active.kind == AlignmentKind::VAlign {
-        crate::assignments::end_paragraph_with_fuel(modes, stores, fuel)?;
+        crate::assignments::end_canonical_paragraph_without_source(modes, stores, fuel)?;
     }
 
     // Canonical alignment packaging still defers that paragraph's lowering,

@@ -307,6 +307,55 @@ fn canonical_paragraph_replay_bypasses_the_legacy_memo_front() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
+fn canonical_paragraph_end_closure_has_no_legacy_dependencies() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let owner = fs::read_to_string(source_root.join("assignments/canonical_paragraph_end.rs"))
+        .expect("read canonical paragraph-end owner");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_",
+        "ParagraphMemoConsumer",
+    ] {
+        assert!(
+            !owner.contains(forbidden),
+            "canonical paragraph-end owner must not reference `{forbidden}`"
+        );
+    }
+
+    let paragraph = fs::read_to_string(source_root.join("assignments/paragraph.rs"))
+        .expect("read paragraph materialization owner");
+    let kernel = paragraph
+        .split_once("pub(super) fn break_current_paragraph(")
+        .and_then(|(_, tail)| tail.split_once("/// Whether §663"))
+        .map(|(kernel, _)| kernel)
+        .expect("find canonical paragraph materialization kernel");
+    for forbidden in [
+        "tex_expand",
+        "tex_lex",
+        "InputStack",
+        "ExecutionContext",
+        "crate::executor",
+        "legacy_",
+        "ParagraphMemoConsumer",
+    ] {
+        assert!(
+            !kernel.contains(forbidden),
+            "canonical paragraph materialization kernel must not reference `{forbidden}`"
+        );
+    }
+
+    let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
+        .expect("read canonical command control");
+    assert!(!canonical.contains("assignments::end_paragraph_with_fuel"));
+    assert!(canonical.contains("assignments::end_canonical_paragraph_without_source"));
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_command_control_has_no_legacy_paragraph_front_callers() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))

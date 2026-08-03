@@ -37,34 +37,6 @@ pub(crate) trait ParagraphMemoConsumer {
     fn abandon(&mut self);
 }
 
-/// Consumer for canonical callers that have no memo recording session.
-/// It deliberately leaves memo optimization inert while retaining exactly the
-/// same paragraph state/effects/artifacts as an unobserved cold run.
-#[derive(Default)]
-pub(crate) struct NoParagraphMemoConsumer;
-
-impl ParagraphMemoConsumer for NoParagraphMemoConsumer {
-    fn prepare_hlist(
-        &mut self,
-        _: &mut Universe,
-        _: &[tex_state::node::Node],
-        _: i32,
-        _: crate::executor::ParagraphContinuation,
-    ) {
-    }
-
-    fn publish_finished_lines(
-        &mut self,
-        _: &mut Universe,
-        _: &[tex_state::node::Node],
-        _: i32,
-        _: &[tex_state::node::Direction],
-    ) {
-    }
-
-    fn abandon(&mut self) {}
-}
-
 /// Compatibility adapter which confines InputStack/ExecutionContext coupling
 /// to the executor-owned recording path.
 pub(crate) struct ExecutorParagraphMemoConsumer<'a, 'input> {

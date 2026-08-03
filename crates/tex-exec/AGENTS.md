@@ -22,6 +22,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/assignments/legacy_arithmetic.rs`: retired expansion-driven arithmetic
   operand scanning plus checked arithmetic helpers for `\advance`, `\multiply`,
   and `\divide`.
+- `src/assignments/canonical_paragraph_end.rs`: typed source-free canonical paragraph completion and display-interruption transaction; legacy memo/history publication adapts after the shared materialization result.
 - `src/canonical_assignments/`: source-free canonical assignment identity,
   primitive registration/naming, admissibility, typed variable writes, and
   tracing.

@@ -33,6 +33,7 @@ use crate::{
 use crate::{Mode, ModeNest};
 
 mod boxes;
+mod canonical_paragraph_end;
 pub(super) mod fonts;
 mod hmode;
 mod hyphenation;
@@ -80,6 +81,10 @@ pub(crate) use boxes::split_hpack_migrations;
 use boxes::*;
 pub(crate) use boxes::{apply_box_shift_delta, first_box_node, take_last_box};
 pub(crate) use boxes::{scan_box_group, scan_pack_spec, split_vbox_register};
+pub(crate) use canonical_paragraph_end::{
+    end_canonical_paragraph_with_fuel, end_canonical_paragraph_without_source,
+    interrupt_canonical_paragraph_for_display,
+};
 use fonts::*;
 pub(crate) use hmode::fixed_infinite_glue;
 pub(crate) use hmode::flush_pending_hchars_with_fuel;
@@ -127,10 +132,9 @@ pub(crate) use paragraph::test_materialize_pdf_line;
 pub(crate) use paragraph::test_pretolerance_memo_key;
 use paragraph::*;
 pub(crate) use paragraph::{
-    ParagraphBreakResult, display_line_dimensions, end_canonical_paragraph_with_fuel,
-    end_paragraph_with_fuel, ensure_horizontal_for_character, indent_in_hmode,
-    interrupt_canonical_paragraph_for_display, interrupt_paragraph_for_display, make_indent_box,
-    normal_paragraph, start_canonical_paragraph,
+    ParagraphBreakResult, display_line_dimensions, end_paragraph_with_fuel,
+    ensure_horizontal_for_character, indent_in_hmode, interrupt_paragraph_for_display,
+    make_indent_box, normal_paragraph, start_canonical_paragraph,
 };
 pub(crate) use paragraph::{install_reused_paragraph_hlist_after_start, start_reused_paragraph};
 use pdf_fonts::*;
