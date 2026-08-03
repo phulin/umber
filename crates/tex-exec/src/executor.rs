@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tex_expand::{InputResolver, ReadRecorder, get_x_token_with_context};
+use tex_expand::{InputResolver, get_x_token_with_context};
 use tex_lex::{InputStack, InputStackSnapshot};
 use tex_out::dvi::DviPagePlan;
 use tex_state::ids::TokenListId;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
-    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, TokenListReplayKind,
-    Universe,
+    FileContent, InputReadState, InputSummary, ParagraphBarrierReason, ReadRecorder,
+    ReadRecorderBatch, TokenListReplayKind, Universe,
 };
 
 use crate::checkpoint::{CheckpointSink, EngineBoundary, EngineSession, NoopCheckpointSink};
@@ -1573,7 +1573,7 @@ impl ExecutionRun {
     fn with_context<T>(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
-        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
+        staged_reads: &mut Vec<ReadRecorderBatch>,
         operation: impl FnOnce(
             &mut ModeNest,
             &mut InputStack,
@@ -1623,7 +1623,7 @@ impl ExecutionRun {
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
         staged: &mut StagedCheckpointSink<'_>,
-        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
+        staged_reads: &mut Vec<ReadRecorderBatch>,
     ) -> Result<(), ExecError> {
         let mut checkpoint_mode_projection = self.checkpoint_mode_projection.take();
         let budget_counters = self.budget_counters;
@@ -1686,7 +1686,7 @@ impl ExecutionRun {
     fn step_finish_end(
         &mut self,
         services: &mut ExecutionServices<'_, '_>,
-        staged_reads: &mut Vec<tex_expand::ReadRecorderBatch>,
+        staged_reads: &mut Vec<ReadRecorderBatch>,
     ) -> Result<(), ExecError> {
         self.with_context(
             services,

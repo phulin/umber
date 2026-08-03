@@ -505,3 +505,44 @@ fn production_alignment_scanner_phases_stay_on_the_state_owner() {
         }
     }
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn expansion_read_transactions_stay_on_the_state_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    let mut pending = vec![source_root];
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(path).expect("read tex-exec production source") {
+            let entry = entry.expect("read tex-exec production source entry");
+            let path = entry.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|name| name == "tests") {
+                    continue;
+                }
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_name().is_none_or(|name| name != "tests.rs")
+            {
+                let source = fs::read_to_string(&path).expect("read production Rust source");
+                for forbidden in [
+                    "tex_expand::ReadRecorder",
+                    "tex_expand::ReadRecorderBatch",
+                    "tex_expand::ReadSetRecorder",
+                ] {
+                    assert!(
+                        !source.contains(forbidden),
+                        "{} must use tex-state's transactional read observation owner, not {forbidden}",
+                        path.display()
+                    );
+                }
+                for import in source.lines().filter(|line| line.contains("tex_expand")) {
+                    assert!(
+                        !import.contains("ReadRecorder"),
+                        "{} must not import state-owned read observation through tex-expand: {import}",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+}

@@ -50,6 +50,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
 - `src/scan_glue/tests.rs`: unit tests for glue and muglue scanner behavior.
 - `src/scan_helpers.rs`: shared expanded-token helpers for spaces, keywords, register indexes, signs, and filler.
 - `src/scan_int.rs`: expanded TeX integer scanning, numeric syntax, diagnostics, and internal-integer reads.
+- `src/lib.rs` retains compatibility re-exports for the state-owned read
+  recorder contract and detached transactional batches; production consumers
+  use `tex-state` directly.
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.

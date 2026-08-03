@@ -122,60 +122,7 @@ pub fn install_pdftex_expandable_primitives(stores: &mut Universe) {
 /// runs install no recorder and skip each event with a predictable conditional
 /// branch; incremental and diagnostic runs may install any implementation
 /// without creating another scanner monomorphization.
-pub trait ReadRecorder {
-    fn record_meaning(&mut self, symbol: Symbol, _meaning: Meaning) {
-        self.record_dependency(ReadDependency::Meaning(symbol.raw()));
-    }
-
-    fn record_dependency(&mut self, _dependency: ReadDependency) {}
-}
-
-enum StagedRecorderRead {
-    Meaning(Symbol, Meaning),
-    Dependency(ReadDependency),
-}
-
-/// Detached read observations produced by one candidate executor operation.
-///
-/// The batch is opaque so only the outer executor transaction can choose
-/// whether to deliver or discard it.
-#[doc(hidden)]
-pub struct ReadRecorderBatch(Vec<StagedRecorderRead>);
-
-impl ReadRecorderBatch {
-    #[doc(hidden)]
-    pub fn deliver(self, recorder: &mut dyn ReadRecorder) {
-        for read in self.0 {
-            match read {
-                StagedRecorderRead::Meaning(symbol, meaning) => {
-                    recorder.record_meaning(symbol, meaning);
-                }
-                StagedRecorderRead::Dependency(dependency) => {
-                    recorder.record_dependency(dependency);
-                }
-            }
-        }
-    }
-}
-
-/// Deterministic concrete recorder for memoization and speculation clients.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ReadSetRecorder {
-    dependencies: std::collections::BTreeSet<ReadDependency>,
-}
-
-impl ReadSetRecorder {
-    #[must_use]
-    pub fn dependencies(&self) -> impl ExactSizeIterator<Item = ReadDependency> + '_ {
-        self.dependencies.iter().copied()
-    }
-}
-
-impl ReadRecorder for ReadSetRecorder {
-    fn record_dependency(&mut self, dependency: ReadDependency) {
-        self.dependencies.insert(dependency);
-    }
-}
+pub use tex_state::{ReadRecorder, ReadRecorderBatch, ReadSetRecorder};
 
 pub(crate) fn record_code_dependency(
     expansion: &mut ExpansionContext<'_>,
@@ -707,7 +654,7 @@ pub struct ExpansionContext<'a> {
     pub job_clock: JobClock,
     input_resolver: Option<&'a mut dyn InputResolver>,
     pub(crate) recorder: Option<&'a mut dyn ReadRecorder>,
-    staged_recorder_reads: Option<Vec<StagedRecorderRead>>,
+    staged_recorder_reads: Option<ReadRecorderBatch>,
     resolution_index: u64,
     meaning_site_cache: Box<[Option<MeaningSiteCacheEntry>; MEANING_SITE_CACHE_LEN]>,
     last_macro_replay_site: Option<MacroReplaySite>,
@@ -1046,14 +993,14 @@ impl<'a> ExpansionContext<'a> {
     #[doc(hidden)]
     pub fn begin_transactional_recording(&mut self) {
         debug_assert!(self.staged_recorder_reads.is_none());
-        self.staged_recorder_reads = Some(Vec::new());
+        self.staged_recorder_reads = Some(ReadRecorderBatch::default());
     }
 
     /// Detaches reads for delivery after the aggregate executor step commits.
     #[doc(hidden)]
     #[must_use]
     pub fn finish_transactional_recording(&mut self) -> ReadRecorderBatch {
-        ReadRecorderBatch(self.staged_recorder_reads.take().unwrap_or_default())
+        self.staged_recorder_reads.take().unwrap_or_default()
     }
 
     /// Discards reads produced by a rolled-back executor step.
@@ -1136,7 +1083,7 @@ impl<'a> ExpansionContext<'a> {
     #[inline(always)]
     fn record_dependency(&mut self, dependency: ReadDependency) {
         if let Some(reads) = &mut self.staged_recorder_reads {
-            reads.push(StagedRecorderRead::Dependency(dependency));
+            reads.stage_dependency(dependency);
         } else if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_dependency(dependency);
         }
@@ -1362,7 +1309,7 @@ impl<'a> ExpansionContext<'a> {
     #[inline(always)]
     pub fn record_meaning(&mut self, symbol: Symbol, meaning: Meaning) {
         if let Some(reads) = &mut self.staged_recorder_reads {
-            reads.push(StagedRecorderRead::Meaning(symbol, meaning));
+            reads.stage_meaning(symbol, meaning);
         } else if let Some(recorder) = self.recorder.as_deref_mut() {
             recorder.record_meaning(symbol, meaning);
         }
