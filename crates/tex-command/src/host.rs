@@ -178,6 +178,7 @@ pub enum LastNodeItem {
 pub struct CommandHostCapabilities {
     input: BTreeMap<String, SourceRegistration>,
     unavailable_input: BTreeSet<String>,
+    unavailable_input_requests: BTreeSet<String>,
     input_probes: BTreeMap<String, FileEnquiryResource>,
     unavailable_input_probes: BTreeSet<String>,
     fonts: BTreeMap<PathBuf, FontResource>,
@@ -197,6 +198,7 @@ impl Default for CommandHostCapabilities {
         Self {
             input: BTreeMap::new(),
             unavailable_input: BTreeSet::new(),
+            unavailable_input_requests: BTreeSet::new(),
             input_probes: BTreeMap::new(),
             unavailable_input_probes: BTreeSet::new(),
             fonts: BTreeMap::new(),
@@ -224,6 +226,7 @@ impl CommandHostCapabilities {
     pub fn register_input(&mut self, name: impl Into<String>, source: SourceRegistration) {
         let name = name.into();
         self.unavailable_input.remove(&name);
+        self.unavailable_input_requests.remove(&name);
         self.input.insert(name, source);
     }
 
@@ -231,6 +234,7 @@ impl CommandHostCapabilities {
     pub fn mark_input_unavailable(&mut self, name: impl Into<String>) {
         let name = name.into();
         let has_area = name.chars().any(|ch| matches!(ch, '/' | '\\' | ':'));
+        self.unavailable_input_requests.insert(name.clone());
         for candidate in input_lookup_candidates(&name, has_area) {
             self.input.remove(&candidate);
             self.unavailable_input.insert(candidate);
@@ -319,7 +323,8 @@ impl CommandHostCapabilities {
     /// Reports an authoritative absence for a non-opening enquiry.
     #[must_use]
     pub fn input_probe_is_unavailable(&self, name: &str) -> bool {
-        self.unavailable_input.contains(name) || self.unavailable_input_probes.contains(name)
+        self.unavailable_input_requests.contains(name)
+            || self.unavailable_input_probes.contains(name)
     }
 
     /// Sets the immutable job name presented by `\jobname` for this command
@@ -536,5 +541,26 @@ mod tests {
         assert!(!capabilities.input_resource_is_unavailable("other.tex"));
         assert!(capabilities.input_probe_is_unavailable("absent.tex"));
         assert!(!capabilities.input_probe_is_unavailable("TeXinputs:absent.tex"));
+        assert!(!capabilities.input_probe_is_unavailable("other.tex"));
+    }
+
+    #[test]
+    fn required_and_probe_unavailability_keep_their_request_namespaces() {
+        let mut capabilities = CommandHostCapabilities::default();
+        capabilities.mark_input_unavailable("inputs/absent.tex");
+        capabilities.mark_input_probe_unavailable("probe.tex");
+
+        // TeX82 §537 input settlement may cover the bounded aliases that the
+        // opening lookup itself would try. An explicit area has no such alias.
+        assert!(capabilities.input_resource_is_unavailable("inputs/absent.tex"));
+        assert!(!capabilities.input_resource_is_unavailable("TeXinputs:inputs/absent.tex"));
+
+        // TeX82 §1275 and pdftex.web §1590 enquire about the exact packed
+        // name. A stronger required answer settles that same name, while a
+        // probe-only answer neither settles an input nor inherits aliases.
+        assert!(capabilities.input_probe_is_unavailable("inputs/absent.tex"));
+        assert!(capabilities.input_probe_is_unavailable("probe.tex"));
+        assert!(!capabilities.input_resource_is_unavailable("probe.tex"));
+        assert!(!capabilities.input_probe_is_unavailable("TeXinputs:probe.tex"));
     }
 }
