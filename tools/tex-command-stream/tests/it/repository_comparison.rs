@@ -21,8 +21,8 @@ fn committed_tex82_command_traces_are_clean() {
         report
             .fixtures
             .iter()
-            .any(|fixture| fixture.name == "tex82/geometry-v2" && fixture.advisory),
-        "the committed schema-v2 geometry projection must be retained as advisory diagnostics: {report}"
+            .any(|fixture| fixture.name == "tex82/geometry-v3" && fixture.advisory),
+        "the committed schema-v3 geometry projection must be retained as advisory diagnostics: {report}"
     );
     assert!(
         report

@@ -41,8 +41,8 @@
       "channels": {
         "events": 77,
         "status": "clean",
-        "terminal": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
-        "log": { "kind": "xfail-diagnostics", "bug": "umber2-alfh.26" },
+        "terminal": { "kind": "file" },
+        "log": { "kind": "file" },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }
       },
