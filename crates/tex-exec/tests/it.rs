@@ -266,6 +266,26 @@ fn executor_resource_results_stay_on_the_execution_owner() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn expansion_resource_lookup_values_stay_on_the_state_owner() {
+    let source_root = test_support::repository_root().join("crates/tex-exec/src");
+    for path in production_rust_sources(&source_root) {
+        let source = fs::read_to_string(&path).expect("read production Rust source");
+        for forbidden in [
+            "tex_expand::ResourceLookup",
+            "tex_expand::ResourceResult",
+            "tex_expand::ResourceNeed",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must use shared state resource values instead of {forbidden}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
 fn command_fuel_can_only_be_owned_by_a_session_ledger() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
     let tex_command_dir = manifest_dir.join("../tex-command");

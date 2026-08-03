@@ -12,7 +12,7 @@ use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{Cancellation, CheckpointSink, EngineCheckpoint, PdfImageRequest, PdfImageResolver};
-use tex_expand::{InputResolver, ResourceLookup, ResourceResult};
+use tex_expand::InputResolver;
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
     SameHistoryStop, Session,
@@ -30,6 +30,7 @@ use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
 use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
+use tex_state::{ResourceLookup, ResourceResult};
 #[cfg(feature = "profiling")]
 use umber::CanonicalExpansionStats;
 use umber::{CanonicalEngineSession, FileSessionResolvers, dvi_from_page_plans};

@@ -33,7 +33,8 @@ Use this crate for behavior that is defined before stomach execution sees an une
   retired crate's internal tests concise, while shipped LaTeX identity and
   installation policy belong exclusively to `tex-command`. Recoverable
   expansion diagnostic queue values are compatibility re-exports from
-  `tex-state`.
+  `tex-state`, as are the generic resource lookup/result/need values used by
+  the legacy input resolver contract.
 - `src/primitives.rs`: implementations for expandable primitive helpers such as `\expandafter`, `\csname`, and `\input` name scanning.
 - `src/pdf_strings.rs`: pdfTeX-compatible expanded byte-string conversion, escaping, hexadecimal decoding, and comparison.
 - `src/pdf_files.rs`: pdfTeX-compatible creation/file dates, virtual file enquiries, byte dumps, and MD5 hashing.

@@ -63,8 +63,8 @@ impl ResourceNeed {
     }
 }
 
-impl From<tex_expand::ResourceNeed> for ResourceNeed {
-    fn from(value: tex_expand::ResourceNeed) -> Self {
+impl From<tex_state::ResourceNeed> for ResourceNeed {
+    fn from(value: tex_state::ResourceNeed) -> Self {
         Self::new(value.request_index())
     }
 }

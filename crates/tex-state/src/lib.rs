@@ -82,6 +82,7 @@ pub mod print;
 pub mod provenance;
 mod provenance_resolver;
 mod pure_memo;
+mod resource;
 pub mod scaled;
 pub mod source_fragments;
 pub mod source_map;
@@ -113,6 +114,7 @@ pub use stores::EngineUsageStatistics;
 pub mod world;
 
 pub use expansion_diagnostic::RecoverableExpansionDiagnostic;
+pub use resource::{ResourceLookup, ResourceNeed, ResourceResult};
 
 pub use command_context::{CommandBoxKind, CommandContext, CommandLineSource};
 pub use dependency::{

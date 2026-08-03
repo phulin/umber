@@ -19,7 +19,7 @@ use tex_state::env::banks::IntParam;
 use tex_state::token::TracedTokenWord;
 use tex_state::{
     CommittedArtifact, ContentHash, EffectPos, EffectRecord, ExpansionContext, FileContent,
-    PrintSink, Universe, WorldCommitMode, WorldError,
+    PrintSink, ResourceLookup, ResourceResult, Universe, WorldCommitMode, WorldError,
 };
 
 mod canonical_session;
@@ -912,20 +912,19 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> tex_expand::ResourceResult<Box<dyn InputSource>> {
+    ) -> ResourceResult<Box<dyn InputSource>> {
         if let Some(output) = self.0.read_restricted_pipe(input, name) {
             return output.map(|text| {
-                tex_expand::ResourceLookup::Available(
-                    Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>,
+                ResourceLookup::Available(
+                    Box::new(tex_lex::WorldInput::generated(text)) as Box<dyn InputSource>
                 )
             });
         }
         Ok(match self.0.read(input, name) {
-            Ok(content) => tex_expand::ResourceLookup::Available(Box::new(
-                tex_lex::WorldInput::from_content(content),
-            )
-                as Box<dyn InputSource>),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
+            Ok(content) => ResourceLookup::Available(Box::new(tex_lex::WorldInput::from_content(
+                content,
+            )) as Box<dyn InputSource>),
+            Err(_) => ResourceLookup::Unavailable,
         })
     }
 
@@ -934,12 +933,12 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> tex_expand::ResourceResult<u64> {
+    ) -> ResourceResult<u64> {
         Ok(match self.0.read(input, name) {
-            Ok(content) => tex_expand::ResourceLookup::Available(
-                u64::try_from(content.bytes().len()).unwrap_or(u64::MAX),
-            ),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
+            Ok(content) => {
+                ResourceLookup::Available(u64::try_from(content.bytes().len()).unwrap_or(u64::MAX))
+            }
+            Err(_) => ResourceLookup::Unavailable,
         })
     }
 
@@ -948,10 +947,10 @@ impl InputResolver for FileInputResolver {
         input: &mut dyn tex_state::InputReadState,
         name: &str,
         _request_index: u64,
-    ) -> tex_expand::ResourceResult<tex_state::FileContent> {
+    ) -> ResourceResult<tex_state::FileContent> {
         Ok(match self.0.read(input, name) {
-            Ok(content) => tex_expand::ResourceLookup::Available(content),
-            Err(_) => tex_expand::ResourceLookup::Unavailable,
+            Ok(content) => ResourceLookup::Available(content),
+            Err(_) => ResourceLookup::Unavailable,
         })
     }
 }

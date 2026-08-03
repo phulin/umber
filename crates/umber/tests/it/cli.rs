@@ -1429,6 +1429,28 @@ fn latex_primitive_registry_stays_on_the_canonical_command_owner() {
 }
 
 #[test]
+fn legacy_input_resolvers_use_state_owned_resource_results() {
+    for (name, source) in [
+        ("library", include_str!("../../src/lib.rs")),
+        (
+            "profiling runner",
+            include_str!("../../src/bin/gentle_profile.rs"),
+        ),
+    ] {
+        for forbidden in [
+            "tex_expand::ResourceLookup",
+            "tex_expand::ResourceResult",
+            "tex_expand::ResourceNeed",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} must not regain {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn expand_dump_expansion_error_renders_primary_source_context() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");
