@@ -1,4 +1,5 @@
-use tex_lex::{InputStack, MacroArguments};
+use tex_lex::InputStack;
+use tex_state::MacroArguments;
 use tex_state::meaning::{ExpandablePrimitive, Meaning};
 use tex_state::page::PageMark;
 use tex_state::provenance::{InsertedOriginKind, SynthesizedOriginKind};

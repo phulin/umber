@@ -1,4 +1,5 @@
-use tex_lex::{InputStack, MacroArguments};
+use tex_lex::InputStack;
+use tex_state::MacroArguments;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, TokenListId};

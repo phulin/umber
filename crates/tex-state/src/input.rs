@@ -119,9 +119,10 @@ impl MacroArguments {
 
     #[must_use]
     pub fn from_parts(
-        tokens: Arc<[TracedTokenWord]>,
+        tokens: impl Into<Arc<[TracedTokenWord]>>,
         slots: [Option<MacroArgumentRange>; MACRO_ARGUMENT_SLOTS],
     ) -> Self {
+        let tokens = tokens.into();
         for range in slots.iter().flatten().copied() {
             assert!(range.start().saturating_add(range.len()) <= tokens.len());
         }

@@ -185,12 +185,7 @@ fn macro_argument_replay_and_snapshots_share_the_matched_buffer() {
     let mut ranges = [None; MACRO_ARGUMENT_SLOTS];
     ranges[0] = Some(MacroArgumentRange::new(0, argument_words.len()));
     let arguments = MacroArguments::from_parts(argument_words, ranges);
-    let shared_arguments = Arc::clone(
-        arguments
-            .tokens
-            .as_ref()
-            .expect("nonempty arguments have shared storage"),
-    );
+    let shared_arguments = Arc::clone(arguments.tokens());
 
     let mut input = InputStack::new(MemoryInput::new(""));
     input.push_macro_body(body, arguments);
@@ -2589,7 +2584,7 @@ fn macro_literal_spans_copy_body_and_argument_provenance_at_matching_offsets() {
     let body_origin = stores.source_origin(tex_state::SourceId::new(1), 10, 1, 1);
     let argument_origin = stores.source_origin(tex_state::SourceId::new(2), 20, 2, 1);
     let body_origins = stores.allocate_origin_list(&[body_origin; 5]);
-    let argument_words = argument_tokens
+    let argument_words: Vec<_> = argument_tokens
         .into_iter()
         .map(|token| TracedTokenWord::pack(token, argument_origin))
         .collect();

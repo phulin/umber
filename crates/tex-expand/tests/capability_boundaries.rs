@@ -41,3 +41,27 @@ fn lexer_input_stack_cannot_resolve_meanings() {
         ],
     );
 }
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side architecture test
+fn macro_arguments_stay_on_the_state_owner() {
+    let root = test_support::repository_root();
+    let expand = root.join("crates/tex-expand/src");
+    for entry in std::fs::read_dir(expand).expect("read expansion source") {
+        let path = entry.expect("read source entry").path();
+        if path.extension().is_some_and(|extension| extension == "rs")
+            && path.file_name().is_none_or(|name| name != "tests.rs")
+        {
+            let source = std::fs::read_to_string(&path).expect("read expansion source file");
+            assert!(
+                !source.contains("tex_lex::MacroArguments")
+                    && !source.contains("use tex_lex::{InputStack, MacroArguments}"),
+                "{} must consume macro arguments from tex-state",
+                path.display()
+            );
+        }
+    }
+    let lexer =
+        std::fs::read_to_string(root.join("crates/tex-lex/src/lib.rs")).expect("read lexer source");
+    assert!(!lexer.contains("pub struct MacroArguments"));
+}

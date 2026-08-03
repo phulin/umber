@@ -13,8 +13,8 @@ use std::path::Path;
 use tex_state::World;
 
 use tex_lex::{
-    InputSource, InputStack, LexError, MacroArguments, MacroReplaySite, TokenListReplayKind,
-    TracedExpansionToken, WorldInput,
+    InputSource, InputStack, LexError, MacroReplaySite, TokenListReplayKind, TracedExpansionToken,
+    WorldInput,
 };
 use tex_state::ids::{OriginListId, TokenListId};
 use tex_state::interner::Symbol;
@@ -28,7 +28,8 @@ pub use tex_state::{
 };
 use tex_state::{
     EngineMode, EngineStateSnapshot, ExpansionState, FileContent, InputReadState, JobClock,
-    MeaningCacheGuard, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN, ParagraphBarrierReason, Universe,
+    MacroArguments, MeaningCacheGuard, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN, ParagraphBarrierReason,
+    Universe,
 };
 
 const MEANING_SITE_CACHE_LEN: usize = 64;

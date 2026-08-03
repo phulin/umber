@@ -58,6 +58,9 @@ Use this crate for behavior that is defined before stomach execution sees an une
   privately constructs its legacy input source.
 - `src/lib.rs` lowers its recursive legacy error tree into the state-owned
   main-control recovery vocabulary before execution handles recoverable cases.
+- Macro argument payloads are immutable `tex-state::MacroArguments`; expansion
+  matches them and the lexer replays them without defining compatibility
+  copies.
 - `src/scan_int/tests.rs`: unit tests for integer scanner behavior.
 - `src/tests.rs`: crate-level tests for expansion dispatch and public expansion behavior.
 - `src/values.rs`: rendering and expansion of value-producing primitives such as `\the`, `\meaning`, and token text.

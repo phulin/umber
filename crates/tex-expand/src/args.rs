@@ -7,13 +7,14 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use tex_lex::{InputStack, LexError, MACRO_ARGUMENT_SLOTS, MacroArguments};
+use tex_lex::{InputStack, LexError};
 use tex_state::ExpansionState;
 use tex_state::MacroArgumentRange;
 use tex_state::macro_store::{MacroMeaning, MacroParameterPattern};
 use tex_state::meaning::{Meaning, MeaningFlags};
 use tex_state::provenance::InsertedOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::{MACRO_ARGUMENT_SLOTS, MacroArguments};
 
 use crate::ExpansionContext;
 
