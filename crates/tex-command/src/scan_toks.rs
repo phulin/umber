@@ -167,7 +167,7 @@ impl CommandProcessor<'_> {
                     .copied()
                     .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
             );
-            self.set_runaway_partial(&partial);
+            self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
         }
         if observe_status {
             self.restore_scanner_status_with_observation(status, prior);
@@ -1205,7 +1205,7 @@ impl CommandProcessor<'_> {
                     help: &["This \\read has unbalanced braces."],
                     context: self.command.output_open_context(&self.state),
                 });
-            self.set_runaway_partial(&partial);
+            self.set_runaway_partial(FILE_ENDED_WITHIN_READ_DIAGNOSTIC, &partial);
             self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         }
         if raw_catcodes {
@@ -1258,7 +1258,7 @@ impl CommandProcessor<'_> {
                     ),
                 ];
                 runaway.extend(tokens.iter().copied());
-                self.set_runaway_partial(&runaway);
+                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &runaway);
             }
             if self.command.alignment.align_state < TEMPLATE_ALIGN_STATE {
                 while self.get_token()?.is_some() {}

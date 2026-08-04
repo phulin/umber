@@ -39,7 +39,7 @@ const INCOMPLETE_CONDITIONAL_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0336;
 
 /// TeX82 §338's `File ended` / `Forbidden control sequence found` while
 /// scanning a definition, use, preamble or text.
-const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
+pub(crate) const RUNAWAY_SCAN_DIAGNOSTIC: u64 = 0x636f_6e64_0000_0338;
 
 /// TeX82 §345's invalid source-character report.
 ///
@@ -2272,7 +2272,7 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    pub(crate) fn set_runaway_partial(&mut self, tokens: &[TracedTokenWord]) {
+    pub(crate) fn set_runaway_partial(&mut self, identity: u64, tokens: &[TracedTokenWord]) {
         // TeX82 §262 carries `match_chr` from each match token into later
         // out-parameter rendering. The compact representation stores a
         // nonstandard match character immediately before its slot token.
@@ -2304,10 +2304,12 @@ impl CommandProcessor<'_> {
         }
         let mut rendered = String::new();
         self.state.append_selector_string_text(&raw, &mut rendered);
-        // TeX82 §306 reads the live list synchronously. A command trace
-        // discovered by the same raw-delivery episode can already be queued
-        // behind the deferred report, so update the newest runaway owner
-        // rather than assuming it is still the queue tail.
+        // TeX82 §306 reads the current scanner's live list synchronously. A
+        // command trace discovered by the same raw-delivery episode can
+        // already be queued behind the deferred report, so update the newest
+        // report owned by this scanner episode rather than assuming it is the
+        // queue tail. In particular, a later scan must not overwrite a
+        // completed §396 runaway-argument pseudoprint still awaiting output.
         let Some(runaway) =
             self.command
                 .semantic_diagnostics
@@ -2315,9 +2317,10 @@ impl CommandProcessor<'_> {
                 .rev()
                 .find_map(|diagnostic| match diagnostic {
                     crate::CommandSemanticDiagnostic::Recoverable {
+                        identity: diagnostic_identity,
                         runaway: Some(runaway),
                         ..
-                    } => Some(runaway),
+                    } if *diagnostic_identity == identity => Some(runaway),
                     _ => None,
                 })
         else {
@@ -4706,6 +4709,71 @@ mod tests {
             }
         }
         assert_eq!(command.expansion.pending_diagnostics, vec![17; 5]);
+    }
+
+    #[test]
+    fn runaway_partial_update_keeps_an_earlier_deferred_report_immutable() {
+        // TeX82 §306 pseudoprints the token list owned by the current scanner
+        // episode. Deferred executor output may leave a completed §396 report
+        // ahead of it, but that older report is not the current scanner's
+        // list and must not acquire the later partial.
+        let mut command = CommandState::default();
+        command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+                runaway: Some(crate::state::RunawayPrelude {
+                    heading: "Runaway argument?",
+                    partial: String::new(),
+                }),
+                message: "older argument report".into(),
+                help: &[],
+                context: String::new(),
+            });
+        command
+            .semantic_diagnostics
+            .push(crate::CommandSemanticDiagnostic::Recoverable {
+                identity: RUNAWAY_SCAN_DIAGNOSTIC,
+                runaway: Some(crate::state::RunawayPrelude {
+                    heading: "Runaway argument?",
+                    partial: String::new(),
+                }),
+                message: "current scanner report".into(),
+                help: &[],
+                context: String::new(),
+            });
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let caution = universe.intern("caution").symbol();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+
+        processor.set_runaway_partial(
+            RUNAWAY_SCAN_DIAGNOSTIC,
+            &[
+                TracedTokenWord::pack(Token::Cs(caution), OriginId::UNKNOWN),
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: 'x',
+                        cat: Catcode::Letter,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+            ],
+        );
+
+        let diagnostics = processor.take_semantic_diagnostics();
+        let partials = diagnostics
+            .iter()
+            .map(|diagnostic| match diagnostic {
+                crate::CommandSemanticDiagnostic::Recoverable {
+                    runaway: Some(runaway),
+                    ..
+                } => runaway.partial.as_str(),
+                _ => panic!("expected runaway reports"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(partials, ["", "\\caution x"]);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 pub(crate) mod alignment;
 pub(crate) mod expand;
 mod next;
+pub(crate) use next::RUNAWAY_SCAN_DIAGNOSTIC;
 mod observe;
 pub(crate) mod status;
 

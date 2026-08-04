@@ -17,7 +17,7 @@ use crate::observation::{
 };
 
 const EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0395;
-const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
+pub(crate) const RUNAWAY_ARGUMENT_DIAGNOSTIC: u64 = 0x6d61_6372_0000_0396;
 
 /// Persistent ownership of live macro-argument activations.
 ///
@@ -658,7 +658,7 @@ impl CommandProcessor<'_> {
                 continue;
             }
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
-                self.set_runaway_partial(&tokens);
+                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &tokens);
                 return Err(CommandError::OuterInMacroArgument);
             }
             self.check_argument_paragraph(&command, flags, &tokens)?;
@@ -715,7 +715,7 @@ impl CommandProcessor<'_> {
             if self.outer_recovered_while_matching && is_paragraph_command(&command) {
                 let mut partial = tokens.clone();
                 partial.extend(prefix.iter().copied());
-                self.set_runaway_partial(&partial);
+                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, &partial);
                 return Err(CommandError::OuterInMacroArgument);
             }
             let token = command.spelling().semantic_token();
@@ -799,7 +799,7 @@ impl CommandProcessor<'_> {
                 // §394 then aborts this match on its inserted frozen `\par`.
                 // That terminator is consumed by the failed expansion, unlike
                 // a user-supplied paragraph which `back_error` must replay.
-                self.set_runaway_partial(partial);
+                self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, partial);
                 return Err(CommandError::ParagraphInMacroArgument);
             }
             // TeX82 §394 reports this through `back_error` while the macro
