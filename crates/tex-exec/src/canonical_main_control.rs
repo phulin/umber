@@ -1062,7 +1062,6 @@ struct CanonicalParagraphRecorder {
     output_episodes: Arc<Vec<PageOutputEpisode>>,
     output_producers: std::collections::VecDeque<(u64, tex_state::StreamBufState, usize, usize)>,
     pending_output_episode_ids: std::collections::VecDeque<u64>,
-    pending_output_owner_prefix: Vec<u64>,
     shipout_observation_floor: usize,
     replacing_output_publication: bool,
     superseded_output_episodes: Vec<SupersededPageOutputEpisode>,
@@ -1079,9 +1078,6 @@ struct CanonicalParagraphRecorder {
 #[allow(clippy::large_enum_variant)]
 enum RetainedOutputEpisodeMatch {
     None,
-    Partial {
-        identity: u64,
-    },
     Complete {
         episode: PageOutputEpisode,
         identity: u64,
@@ -1153,29 +1149,14 @@ impl CanonicalParagraphRecorder {
             .iter()
             .find(|episode| episode.identity == pending)
             .expect("pending output episode identity remains in its immutable table");
-        let mut extended = false;
-        for owner in owners.iter().map(|owner| owner.identity()) {
-            if self.pending_output_owner_prefix.last() != Some(&owner) {
-                self.pending_output_owner_prefix.push(owner);
-                extended = true;
-            }
-        }
-        if !episode
-            .owners
-            .starts_with(&self.pending_output_owner_prefix)
+        if !owners
+            .iter()
+            .map(|owner| owner.identity())
+            .any(|owner| episode.owners.contains(&owner))
         {
-            self.pending_output_owner_prefix.clear();
             return RetainedOutputEpisodeMatch::None;
         }
-        if episode.owners.len() != self.pending_output_owner_prefix.len() {
-            return if extended {
-                RetainedOutputEpisodeMatch::Partial { identity: pending }
-            } else {
-                RetainedOutputEpisodeMatch::None
-            };
-        }
         self.pending_output_episode_ids.pop_front();
-        self.pending_output_owner_prefix.clear();
         RetainedOutputEpisodeMatch::Complete {
             episode: episode.clone(),
             identity: pending,
@@ -2615,12 +2596,17 @@ impl CanonicalMainControl {
         self.install_paragraph_replay_regions(regions);
     }
 
-    /// Whether a later source-aligned paragraph still has an accepted replay
-    /// candidate. Editor convergence must not adopt the enclosing suffix
-    /// before these finer-grained candidates have had their own entry check.
+    /// Whether a later source-aligned paragraph or one of its retained page
+    /// publications still has an accepted replay candidate. Editor
+    /// convergence must not adopt the enclosing suffix before these
+    /// finer-grained candidates and their output receipts are resolved.
     #[must_use]
     pub fn has_pending_paragraph_replay(&self) -> bool {
         !self.paragraph_recorder.replay.is_empty()
+            || !self
+                .paragraph_recorder
+                .pending_output_episode_ids
+                .is_empty()
     }
 
     fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
@@ -3391,6 +3377,8 @@ impl CanonicalMainControl {
         } else if !outer_paragraph_was_active
             && !outer_paragraph_is_active
             && self.paragraph_recorder.pending
+            && self.modes.depth() == 1
+            && self.modes.current_mode() == Mode::Vertical
         {
             self.paragraph_recorder.abandon(&mut self.command, stores);
         }
@@ -4151,13 +4139,10 @@ impl CanonicalMainControl {
             // Universe summary is published only at step boundaries, so the
             // report must receive context from the live command stack.
             let error_context = self.command.output_open_context(&stores.command_context());
-            let fire_up_snapshot = stores.snapshot_with_exact_identity();
             let output_start = stores.world_mut().begin_replayed_output_episode();
             let producer_cursor = stores.world().output_episode_cursor();
             let producer_artifact = stores.world().artifact_pos();
             let producer_effect = stores.world().effect_records().len();
-            let prepared_page_start = self.prepared_dvi_pages.len();
-            let observation_start = self.page_output_observations.len();
             match crate::canonical_page_output::select_pending_page_output(
                 stores,
                 fire_up,
@@ -4173,14 +4158,6 @@ impl CanonicalMainControl {
                         .take_matching_output_episode(&owners);
                     let (episode, retained_active_episode) = match retained {
                         RetainedOutputEpisodeMatch::None => (None, None),
-                        RetainedOutputEpisodeMatch::Partial { .. } => {
-                            stores.rollback(&fire_up_snapshot);
-                            stores.defer_page_fire_up();
-                            Arc::make_mut(&mut self.prepared_dvi_pages)
-                                .truncate(prepared_page_start);
-                            self.page_output_observations.truncate(observation_start);
-                            break;
-                        }
                         RetainedOutputEpisodeMatch::Complete { episode, identity } => {
                             (Some(episode), Some(identity))
                         }
