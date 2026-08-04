@@ -264,7 +264,10 @@ fn dump_node(
             );
         }
         Node::Penalty(value) => {
-            let _ = writeln!(out, "\\penalty {value}");
+            // TeX82 §184 names a penalty node through §63 `print_esc`, so
+            // the header observes the live `\escapechar` value.
+            append_escaped_name(stores, "penalty", out);
+            let _ = writeln!(out, " {value}");
         }
         Node::Char { font, ch, .. } => {
             let _ = writeln!(
@@ -1361,6 +1364,36 @@ mod unset_diagnostic_tests {
                 },
             ),
             "kern2.0\nmkern3.0mu\n"
+        );
+    }
+
+    #[test]
+    fn penalty_headers_use_the_live_escape_character() {
+        // TeX82 §§63/184: the `penalty_node` arm routes its name through
+        // `print_esc`, including suppression for a negative `\escapechar`.
+        let mut stores = Universe::new();
+        let nodes = [Node::Penalty(10_000)];
+        let config = DumpConfig {
+            breadth: 5,
+            depth: 0,
+            profile: CommandProfile::TEX82,
+        };
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        assert_eq!(dump_node_slice(&stores, &nodes, config), "|penalty 10000\n");
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &nodes,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "penalty 10000\n"
         );
     }
 
