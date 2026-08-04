@@ -844,7 +844,10 @@ machinery: `CommandProcessor::scan_balanced_text(true)` (the same fully
 expanded general-text scan already used for `\special`/`\message`) is the
 entire command-side operand, and replay appends a class-0 `Node::Mark`
 directly to whatever list is current -- `any_mode`, and unlike `\insert`,
-never followed by a `build_page` call. The e-TeX numbered `\marks<n>{...}`
+never followed by a `build_page` call. When diagnostics later visit that node,
+TeX82 §200 sends the `mark` header through §63's `print_esc`, so node-list
+rendering observes the live `\escapechar` just like neighboring symbolic node
+headers. The e-TeX numbered `\marks<n>{...}`
 variant is not wired (tracked separately for the e-TeX phase, umber2-johp.9).
 
 TeX82 §1073's box-shift prefixes (`\raise`, `\lower`, `\moveleft`,

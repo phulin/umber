@@ -838,9 +838,13 @@ fn dump_disc(
 
 fn dump_mark(stores: &Universe, class: u16, tokens: TokenListId, out: &mut String) {
     if class == 0 {
-        out.push_str("\\mark{");
+        // TeX82 §200 routes the mark-node name through §63's `print_esc`,
+        // so the header observes the live `\escapechar`.
+        append_escaped_name(stores, "mark", out);
+        out.push('{');
     } else {
-        let _ = write!(out, "\\marks{class}{{");
+        append_escaped_name(stores, "marks", out);
+        let _ = write!(out, "{class}{{");
     }
     for &token in stores.tokens(tokens) {
         out.push_str(&token_text(stores, token));
@@ -1394,6 +1398,40 @@ mod unset_diagnostic_tests {
                 },
             ),
             "penalty 10000\n"
+        );
+    }
+
+    #[test]
+    fn mark_headers_use_the_live_escape_character() {
+        // TeX82 §§63/200: the mark-node arm routes its name through
+        // `print_esc`, including suppression for a negative `\escapechar`.
+        let mut stores = Universe::new();
+        let tokens = stores.intern_token_list(&[Token::Char {
+            ch: 'x',
+            cat: tex_state::token::Catcode::Letter,
+        }]);
+        let nodes = [Node::Mark { class: 0, tokens }];
+        let config = DumpConfig {
+            breadth: 5,
+            depth: 0,
+            profile: CommandProfile::TEX82,
+        };
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        assert_eq!(dump_node_slice(&stores, &nodes, config), "|mark{x}\n");
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &nodes,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "mark{x}\n"
         );
     }
 
