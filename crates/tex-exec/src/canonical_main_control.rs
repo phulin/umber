@@ -2913,15 +2913,14 @@ impl CanonicalMainControl {
             self.fuel.fuel_mut(),
         )?;
         let font = stores.current_font();
-        let hyphen = u8::try_from(stores.font_hyphen_char(font))
-            .ok()
-            .map(char::from)
-            .unwrap_or('-');
-        let pre = stores.freeze_node_list(&[Node::Char {
-            font,
-            ch: hyphen,
-            origin,
-        }]);
+        let pre = match u8::try_from(stores.font_hyphen_char(font)) {
+            Ok(hyphen) => stores.freeze_node_list(&[Node::Char {
+                font,
+                ch: char::from(hyphen),
+                origin,
+            }]),
+            Err(_) => stores.freeze_node_list(&[]),
+        };
         let empty = stores.freeze_node_list(&[]);
         self.modes.current_list_mutation().push(Node::Disc {
             kind: DiscKind::ExplicitHyphen,
@@ -18840,6 +18839,44 @@ fn command_error(error: CommandError) -> ExecError {
 #[cfg(any())]
 #[path = "command_replay/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod discretionary_hyphen_tests {
+    use super::*;
+
+    #[test]
+    fn disabled_hyphen_char_leaves_pre_break_empty() {
+        // TeX82 §1113 inserts the current font's hyphen character only in
+        // 0..256. In particular, -1 disables the visible pre-break.
+        let mut stores = Universe::new_with_plain_catcodes();
+        stores.set_font_hyphen_char(stores.current_font(), -1);
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        control
+            .register_root_source(tex_command::SourceRegistration::new(
+                tex_command::RegisteredSourceKind::Generated,
+                br"\noindent\-\end".to_vec(),
+            ))
+            .expect("register canonical source");
+
+        assert_eq!(
+            control.step(&mut stores).expect("paragraph start"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
+            control.step(&mut stores).expect("explicit hyphen"),
+            MainControlStep::Continue
+        );
+        let Some(Node::Disc {
+            kind: DiscKind::ExplicitHyphen,
+            pre,
+            ..
+        }) = control.modes.current_list().nodes().last()
+        else {
+            panic!("canonical replay appended an explicit discretionary hyphen");
+        };
+        assert!(stores.nodes(*pre).is_empty());
+    }
+}
 
 #[cfg(any())]
 #[path = "canonical_main_control/tests.rs"]

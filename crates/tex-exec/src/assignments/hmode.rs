@@ -165,15 +165,14 @@ pub(super) fn execute_hmode_material(
         UnexpandablePrimitive::DiscretionaryHyphen => {
             flush_pending_hchars(nest, stores, execution.command_fuel())?;
             let font = stores.current_font();
-            let hyphen = u8::try_from(stores.font_hyphen_char(font))
-                .ok()
-                .map(char::from)
-                .unwrap_or('-');
-            let pre = stores.freeze_node_list(&[Node::Char {
-                font,
-                ch: hyphen,
-                origin: context.origin(),
-            }]);
+            let pre = match u8::try_from(stores.font_hyphen_char(font)) {
+                Ok(hyphen) => stores.freeze_node_list(&[Node::Char {
+                    font,
+                    ch: char::from(hyphen),
+                    origin: context.origin(),
+                }]),
+                Err(_) => stores.freeze_node_list(&[]),
+            };
             let empty = stores.freeze_node_list(&[]);
             nest.current_list_mutation().push(Node::Disc {
                 kind: DiscKind::ExplicitHyphen,
