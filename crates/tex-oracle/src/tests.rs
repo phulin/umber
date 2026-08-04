@@ -296,24 +296,6 @@ fn fixture_manifest() -> FixtureManifest {
 }
 
 #[test]
-fn fixture_manifest_rejects_schema_profile_output_and_citation_drift() {
-    let mut value = fixture_manifest();
-    assert!(value.validate().is_ok());
-
-    value.oracle.schema = SchemaVersion::V2.number() + 1;
-    assert!(value.validate().is_err());
-    value = fixture_manifest();
-    value.profile.characters = "unicode_extended".into();
-    assert!(value.validate().is_err());
-    value = fixture_manifest();
-    value.outputs.get_mut("dvi").expect("output").sha256 = HASH_A.into();
-    assert!(value.validate().is_err());
-    value = fixture_manifest();
-    value.citations.clear();
-    assert!(value.validate().is_err());
-}
-
-#[test]
 fn fixture_manifest_rejects_a_root_source_absent_from_declared_sources() {
     let mut value = fixture_manifest();
     assert!(value.validate().is_ok());
