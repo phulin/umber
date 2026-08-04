@@ -1,6 +1,62 @@
 use std::fs;
+use std::sync::Arc;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
+use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_exec::{CanonicalMainControl, MainControlStep};
+use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
+
+#[test]
+fn text_accent_in_math_reports_before_scanning_its_character() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(br"\setbox3=\hbox{x}$\unhcopy3\accent65x$\end".as_slice()),
+        ))
+        .expect("accent source registers");
+
+    loop {
+        match control.step(&mut stores).expect("accent source executes") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    assert!(
+        transcript.contains("Please use \\mathaccent for accents in math mode"),
+        "{transcript:?}"
+    );
+    assert!(
+        transcript.contains("\n<recently read> \\accent \n"),
+        "TeX82 §§82,1110 retain the exhausted command level through the diagnostic: {transcript:?}"
+    );
+    assert!(
+        !transcript.contains("<to be read again> 6"),
+        "§436 must not consume the operand before §1110 reports"
+    );
+}
 
 fn production_rust_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut pending = vec![root.to_path_buf()];

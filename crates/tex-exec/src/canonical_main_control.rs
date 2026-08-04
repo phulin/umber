@@ -3824,11 +3824,14 @@ impl CanonicalMainControl {
                         field,
                     )));
             }
-            CanonicalMathRequest::Accent {
-                character: accent,
-                text_command,
-            } => {
-                if text_command {
+            CanonicalMathRequest::Accent { character } => {
+                let accent = if let Some(accent) = character {
+                    accent
+                } else {
+                    // TeX82 §1110 reports before `math_ac` advances to
+                    // §436's `scan_fifteen_bit_int`. In particular, §82's
+                    // context must still own an exhausted token-list level
+                    // whose last command was the text `\accent`.
                     let context = self.command.output_open_context(&stores.command_context());
                     let mut report =
                         stores.print_err("Please use \\mathaccent for accents in math mode");
@@ -3838,7 +3841,8 @@ impl CanonicalMainControl {
                     ]);
                     report.context(context);
                     report.error().jump_out()?;
-                }
+                    self.command_scan_math_character(stores)?
+                };
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 let accent =
@@ -4595,6 +4599,23 @@ impl CanonicalMainControl {
         );
         let scanned = processor.scan_math_field_episode();
         scanned.map_err(command_error)
+    }
+
+    /// Runs TeX82 §436's `scan_fifteen_bit_int` after an executor-owned
+    /// diagnostic has completed, as required by §1110's text-accent path.
+    fn command_scan_math_character(
+        &mut self,
+        stores: &mut Universe,
+    ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
+        let mut processor = command_processor(
+            &mut self.command,
+            &mut self.runtime,
+            self.fuel.fuel_mut(),
+            &mut self.capabilities,
+            &mut self.operation_observations,
+            stores,
+        );
+        processor.scan_math_character().map_err(command_error)
     }
 
     /// TeX82 §1172/§1174's `scan_left_brace` for one `\mathchoice` branch.

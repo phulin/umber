@@ -908,6 +908,14 @@ not on the primitive, so `math_given` joins `math_char_num` in the same
 §1154/§1155 `set_math_char` path instead of falling through to a loud
 `UnimplementedMeaning`.
 
+Text `\accent` has one additional ordering constraint in math mode. TeX82
+§1110 calls `error` while the delivered `accent` command is still current,
+then continues into §436's `scan_fifteen_bit_int`; `\mathaccent` starts with
+that scan directly. The typed math request therefore leaves the text-accent
+character pending until the executor has rendered §82's context and emitted
+the diagnostic. This keeps an exhausted backup level visible as
+`<recently read> \accent` instead of retiring it while scanning the operand.
+
 The rest of the table is the math-noad, math-style, and math-delimiter
 primitive family that `scan_canonical_math_request` (§5's math-request
 vocabulary above) and the `\left`/`\right`/`\middle` gate otherwise dispatch

@@ -832,8 +832,7 @@ pub enum CanonicalMathRequest {
     Delimiter(ScannedMathDelimiter),
     Radical(ScannedMathDelimiter),
     Accent {
-        character: ScannedMathCharacter,
-        text_command: bool,
+        character: Option<ScannedMathCharacter>,
     },
     MuMaterial(ScannedMathMuMaterial),
     EquationNumber(ScannedEquationNumber),
@@ -1998,9 +1997,14 @@ impl CommandProcessor<'_> {
                 Request::Fraction(self.scan_math_fraction(MathFractionKind::Above, true)?)
             }
             UnexpandablePrimitive::Radical => Request::Radical(self.scan_delimiter(true)?),
-            UnexpandablePrimitive::Accent | UnexpandablePrimitive::MathAccent => Request::Accent {
-                character: self.scan_math_character()?,
-                text_command: primitive == UnexpandablePrimitive::Accent,
+            // TeX82 §1110 diagnoses a text `\accent` before `math_ac`
+            // reaches §436's `scan_fifteen_bit_int`. Keep that operand
+            // pending so §82's `show_context` still sees the input level
+            // that delivered the command. A real `\mathaccent` has no
+            // intervening error and can complete its scalar scan here.
+            UnexpandablePrimitive::Accent => Request::Accent { character: None },
+            UnexpandablePrimitive::MathAccent => Request::Accent {
+                character: Some(self.scan_math_character()?),
             },
             UnexpandablePrimitive::MSkip => Request::MuMaterial(self.scan_math_mu_material(true)?),
             UnexpandablePrimitive::MKern => Request::MuMaterial(self.scan_math_mu_material(false)?),
