@@ -508,6 +508,58 @@ fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
 }
 
 #[test]
+fn file_open_framing_precedes_first_macro_trace_from_that_level() {
+    // TeX82 §537 has printed `(name` before reading the source. In
+    // particular, §368 can hold a macro above a newly opened source, making
+    // §389's invocation trace the first subsequent print boundary.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(
+            SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"\n"[..]))
+                .with_name("child.tex"),
+        )
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut runtime = CommandRuntime::default();
+    let mut universe = Universe::new_with_plain_catcodes();
+    universe.set_int_param(tex_state::env::banks::IntParam::TRACING_MACROS, 1);
+    let traced = universe.intern("stopinput").symbol();
+    let empty = universe.intern_token_list(&[]);
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = CommandProcessor::new(
+        &mut command,
+        &mut runtime,
+        universe.command_context(),
+        CommandHostContext::new(&mut capabilities),
+    );
+
+    processor.trace_macro_invocation(traced, empty, empty);
+
+    let output: String = universe
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            tex_state::EffectRecord::StreamWrite {
+                sink: tex_state::PrintSink::Log | tex_state::PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let open = output.find("(child.tex").expect("input opening is traced");
+    let invocation = output
+        .find("\\stopinput ->")
+        .expect("macro invocation is traced");
+    assert!(
+        open < invocation,
+        "file opening must precede the macro trace: {output}"
+    );
+}
+
+#[test]
 fn undelimited_group_strips_only_its_outer_braces() {
     let (command, arguments) = run_macro(
         b"\\m {a{b}}",
