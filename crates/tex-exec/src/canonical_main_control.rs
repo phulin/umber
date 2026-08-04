@@ -1251,9 +1251,16 @@ impl CanonicalParagraphRecorder {
                 .output_producers
                 .front()
                 .map_or(effect_end, |next| next.3);
-            let effects = stores.world().effect_records()[producer_effect..next_effect]
-                .to_vec()
-                .into();
+            let Some(effects) = stores
+                .world()
+                .effect_records()
+                .get(producer_effect..next_effect)
+                .map(|effects| effects.to_vec().into())
+            else {
+                Arc::make_mut(&mut self.output_episodes)
+                    .retain(|episode| episode.identity != episode_id);
+                continue;
+            };
             let Some(episode) = Arc::make_mut(&mut self.output_episodes)
                 .iter_mut()
                 .find(|episode| episode.identity == episode_id)
