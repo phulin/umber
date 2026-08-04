@@ -2914,11 +2914,24 @@ impl CanonicalMainControl {
         )?;
         let font = stores.current_font();
         let pre = match u8::try_from(stores.font_hyphen_char(font)) {
-            Ok(hyphen) => stores.freeze_node_list(&[Node::Char {
-                font,
-                ch: char::from(hyphen),
-                origin,
-            }]),
+            Ok(hyphen) if stores.font_char_metrics(font, hyphen).is_some() => stores
+                .freeze_node_list(&[Node::Char {
+                    font,
+                    ch: char::from(hyphen),
+                    origin,
+                }]),
+            Ok(hyphen) => {
+                // TeX82 §1113 delegates the in-range hyphen to §581's
+                // `new_character`: an absent glyph warns and leaves the
+                // pre-break list empty.
+                crate::diagnostics::report_missing_character_warning(
+                    stores,
+                    font,
+                    char::from(hyphen),
+                    self.command_profile() == CommandProfile::ETEX26,
+                );
+                stores.freeze_node_list(&[])
+            }
             Err(_) => stores.freeze_node_list(&[]),
         };
         let empty = stores.freeze_node_list(&[]);
@@ -18872,6 +18885,36 @@ mod discretionary_hyphen_tests {
             ..
         }) = control.modes.current_list().nodes().last()
         else {
+            panic!("canonical replay appended an explicit discretionary hyphen");
+        };
+        assert!(stores.nodes(*pre).is_empty());
+    }
+
+    #[test]
+    fn missing_hyphen_glyph_leaves_pre_break_empty() {
+        // TeX82 §§581/1113: an in-range hyphen character is constructed via
+        // `new_character`, which warns and returns null for an absent glyph.
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
+        stores.set_int_param(IntParam::TRACING_ONLINE, 1);
+        stores.set_font_hyphen_char(stores.current_font(), i32::from(b'?'));
+        control
+            .register_root_source(tex_command::SourceRegistration::new(
+                tex_command::RegisteredSourceKind::Generated,
+                br"\noindent\-\end".to_vec(),
+            ))
+            .expect("register canonical source");
+
+        assert_eq!(
+            control.step(&mut stores).expect("paragraph start"),
+            MainControlStep::Continue
+        );
+        assert_eq!(
+            control.step(&mut stores).expect("explicit hyphen"),
+            MainControlStep::Continue
+        );
+        let Some(Node::Disc { pre, .. }) = control.modes.current_list().nodes().last() else {
             panic!("canonical replay appended an explicit discretionary hyphen");
         };
         assert!(stores.nodes(*pre).is_empty());

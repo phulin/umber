@@ -37,6 +37,12 @@ as `\the\count15` without exposing caller input, while the rendered digits are
 still collected into the mark or definition. TRIP page 3 exercises this with
 the numeric marks created by `\everypar`.
 
+TRIP line 436 also exercises both branches of TeX82 §1113's explicit
+discretionary hyphen construction. An out-of-range `\hyphenchar` leaves the
+pre-break list empty without a warning; an in-range character missing from the
+current font goes through §581's `new_character`, emits `char_warning`, and
+still leaves that list empty.
+
 `scripts/fetch-conformance-inputs.sh` fetches official CTAN bytes into
 gitignored `third_party/trip/` and verifies their SHA-256 hashes. The ignored
 `e2e_conformance_trip_canonical` Cargo integration probe reaches its
