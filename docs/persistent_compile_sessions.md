@@ -75,12 +75,13 @@ does the session commit the incremental revision and swap in the VFS
 generation. Dropping either candidate leaves the previously accepted revision,
 root binding, generated files, and output unchanged.
 
-The private revision is an owned `tex_incr::RevisionCandidate`: its executor,
-input stack, rollback roots, speculative checkpoint sink, paragraph history,
-and candidate output remain live across progressing resource responses.
+The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
+main control (including command state and discardable runtime), rollback roots,
+speculative checkpoint sink, paragraph history, and candidate output remain
+live across progressing resource responses.
 Provisioning changes only immutable session resource bindings and increments a
 monotonic response generation. The next `compile_attempt` supplies a fresh VFS
-snapshot-backed resolver to the same candidate; the executor's monotonic
+snapshot-backed resolver to the same candidate; the candidate's monotonic
 suspension serial identifies the active wait, and only the rolled-back step is
 replayed. Earlier committed steps and their generated/effect state are neither
 published nor recomputed.

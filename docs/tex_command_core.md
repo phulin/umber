@@ -22,12 +22,14 @@ structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
-`umber::EngineSession` constructs that command machine at startup and registers
+`umber::CanonicalEngineSession` constructs that command machine at startup and registers
 its retained root plus already-acquired nested `World` resources through typed
 capabilities. A session with a registered root executes its bounded operations
 through `CanonicalMainControl`; resource acquisition, transaction rollback,
-and final effect/artifact commit remain host-owned. The compatibility adapter
-is retained only for callers not yet able to provide immutable root bytes.
+and final effect/artifact commit remain host-owned. Direct, CLI, virtual,
+format-loaded, editor/incremental, and WebAssembly entry points all compose
+this same command-owned transition machine; there is no runtime command-path
+selector.
 
 When main control starts a paragraph from vertical mode, replay makes the
 mode decision at the executor seam but asks the still-live command processor
@@ -3755,46 +3757,32 @@ not the live delivery -- §282's saved tokens, and §372's `\csname`, whose
 `cur_tok:=cur_cs+cs_token_flag` was never delivered at all -- and it derives
 the `align_state` change from the token's own category, exactly as §325 does.
 
-### 33.10 Legacy production dependency audit
+### 33.10 Runtime command-entry audit
 
-The 2026-07-29 audit after the direct canonical session integrations found
-these exact normal-dependency edges:
+The 2026-08-04 cutover audit found one production command transition machine.
+`CanonicalMainControl` explicitly owns `CommandState`, discardable
+`CommandRuntime`, the shared command-fuel ledger, and
+`CommandHostCapabilities`. Its private `command_processor` helper is the only
+`CommandProcessor::new` site in `tex-exec`; each bounded episode borrows those
+roots and creates a borrow-scoped `CommandHostContext`.
 
-- `tex-expand -> tex-lex` remains the retired expansion engine's own input
-  path. Its TeX82, e-TeX 2.6, and pdfTeX 1.40.29 expandable primitive
-  installation entry points now forward to `tex-command`; the identity tables
-  and fresh-INITEX/format-restore policy no longer have a second owner. Its
-  legacy expansion-session fuel remains only a compatibility-path guard;
-  canonical delivery and scanner termination are owned by
-  `tex_command::CommandFuel`.
-- `tex-exec -> tex-expand, tex-lex` remains for the retired `Executor`, its
-  scanner/error/checkpoint types, legacy alignment and assignment modules, and
-  two canonical executor token-string formatting calls. `umber2-johp.14` owns
-  removal of those production execution consumers.
-- `tex-incr -> tex-expand, tex-lex` remains in its legacy delivery,
-  `InputStack`, expansion-context, and checkpoint integration.
-  `umber2-johp.26` owns that cutover.
-- `umber -> tex-expand, tex-lex` remains in direct/CLI and virtual execution,
-  `expand-dump`, the profiling runner, the Umber-specific LaTeX
-  compatibility registry, and legacy resolver/resource adapters. Virtual
-  fresh-INITEX and format-restore policy now calls the canonical TeX82, e-TeX,
-  and pdfTeX registries in `tex-command` directly while preserving restored
-  live meanings; the broader virtual executor cutover remains separate.
-  `umber2-johp.24`,
-  `umber2-johp.25`, and `umber2-johp.26` own the production session cutovers;
-  `umber2-johp.15` owns final adapter and crate deletion after parity.
+Every supported runtime reaches that boundary without a command-path selector:
 
-The 2026-08-02 production cutover moved `umber lex-dump` onto
-`CommandState::next_unicode_source_step`; it now consumes canonical
-`SourceToken` spellings directly and no longer reaches `tex-lex`.
+- direct and retained native jobs use `CanonicalEngineSession`;
+- the CLI composes `VirtualCompileSession`, while `expand-dump` uses the same
+  retained session and `lex-dump` uses `CommandState` tokenization directly;
+- virtual compilation retains a `tex-incr::RevisionCandidate` and canonical
+  resource host across suspension;
+- fresh INITEX construction and format-loaded execution create
+  `CanonicalEngineSession` with the selected immutable `CommandProfile`;
+- editor and fixed-point sessions compose `VirtualCompileSession` and
+  `tex-incr` candidates; and
+- the WebAssembly `CompilerSession` is a representation adapter over
+  `VirtualCompileSession`.
 
-The only additional normal edge is `tools/fixturegen -> tex-lex`, which is
-live-reference fixture tooling rather than a shipped engine path and is
-deliberately retained until its regeneration contract has a canonical
-replacement. Benchmark-only consumers are likewise not production fallback.
-`tex-command` itself has no dependency on either retired crate, and
-`CanonicalMainControl::tex82_initex` now installs its expandable meanings
-directly from the command core.
+Retired crate and uncompiled legacy-source deletion is tracked separately by
+the `umber2-swm9` epic. Those files are not a runtime fallback and must not be
+used as an oracle or reintroduced as a selectable path.
 
 ## 34. End-state invariants
 

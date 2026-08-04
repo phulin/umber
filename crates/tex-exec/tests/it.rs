@@ -1684,6 +1684,28 @@ fn canonical_main_control_has_one_command_owned_delivery_and_aggregate_rollback_
         !driver.contains("cached_command") && !driver.contains("retained_command"),
         "canonical retries must start a fresh command-owned processor episode"
     );
+    for owned_root in [
+        "command: CommandState",
+        "runtime: CommandRuntime",
+        "fuel: tex_command::CommandFuelLedger",
+        "capabilities: CommandHostCapabilities",
+    ] {
+        assert!(
+            driver.contains(owned_root),
+            "the engine boundary must explicitly own `{owned_root}`"
+        );
+    }
+    for borrowed_root in [
+        "command: &'a mut CommandState",
+        "runtime: &'a mut CommandRuntime",
+        "capabilities: &'a mut CommandHostCapabilities",
+        "CommandHostContext::new(capabilities)",
+    ] {
+        assert!(
+            driver.contains(borrowed_root),
+            "the sole processor boundary must borrow `{borrowed_root}`"
+        );
+    }
     assert!(
         driver.contains("struct ObservationBuffer") && driver.contains("pending.flush_into"),
         "observation must be transaction-buffered output from the same command processor, not a cached delivery path"

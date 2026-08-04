@@ -34,6 +34,69 @@ fn virtual_compile_production_sources_stay_on_the_canonical_retained_boundary() 
     assert!(resolvers.contains("CanonicalResourceFulfillment::world_input"));
 }
 
+#[test]
+fn every_supported_runtime_enters_the_command_owned_engine() {
+    let sources = [
+        (
+            "CLI",
+            include_str!("../main.rs"),
+            "cli_resource::run_for_finalization",
+        ),
+        (
+            "retained session",
+            include_str!("../canonical_session.rs"),
+            "control: CanonicalMainControl",
+        ),
+        (
+            "direct library",
+            include_str!("../lib.rs"),
+            "CanonicalEngineSession::new",
+        ),
+        (
+            "loaded format",
+            include_str!("../format_fixture.rs"),
+            "CanonicalEngineSession::new",
+        ),
+        (
+            "virtual compile",
+            include_str!("../virtual_compile.rs"),
+            "drive_with_resource_resolvers",
+        ),
+        (
+            "editor",
+            include_str!("../editor_session.rs"),
+            "VirtualCompileSession",
+        ),
+        (
+            "incremental",
+            include_str!("../../../tex-incr/src/lib.rs"),
+            "control: CanonicalMainControl",
+        ),
+        (
+            "WASM",
+            include_str!("../../../umber-wasm/src/lib.rs"),
+            "VirtualCompileSession",
+        ),
+    ];
+    for (runtime, source, command_entry) in sources {
+        assert!(
+            source.contains(command_entry),
+            "{runtime} must enter through its command-owned engine boundary `{command_entry}`"
+        );
+        for forbidden in [
+            "tex_exec::Executor",
+            "tex_lex::InputStack",
+            "tex_expand::InputResolver",
+            "tex_expand::ResourceLookup",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{runtime} must not regain runtime command selection through `{forbidden}`"
+            );
+        }
+    }
+}
+
 const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
 const CMSY10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmsy10.tfm");
 const CMEX10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmex10.tfm");
