@@ -254,15 +254,7 @@ fn dump_node(
             width,
             height,
             depth,
-        } => {
-            let _ = writeln!(
-                out,
-                "\\rule({}+{})x{}",
-                format_rule_dimension(*height),
-                format_rule_dimension(*depth),
-                format_rule_dimension(*width)
-            );
-        }
+        } => dump_rule(stores, *width, *height, *depth, out),
         Node::Penalty(value) => {
             // TeX82 §184 names a penalty node through §63 `print_esc`, so
             // the header observes the live `\escapechar` value.
@@ -527,16 +519,27 @@ fn dump_leader_payload(
             width,
             height,
             depth,
-        } => {
-            let _ = writeln!(
-                out,
-                "\\rule({}+{})x{}",
-                format_rule_dimension(*height),
-                format_rule_dimension(*depth),
-                format_rule_dimension(*width)
-            );
-        }
+        } => dump_rule(stores, *width, *height, *depth, out),
     }
+}
+
+/// TeX82 §191's `Display rule` begins with `print_esc("rule(")`, so both
+/// list rules and rules used as leader payloads observe the live escape byte.
+fn dump_rule(
+    stores: &Universe,
+    width: Option<Scaled>,
+    height: Option<Scaled>,
+    depth: Option<Scaled>,
+    out: &mut String,
+) {
+    append_escaped_name(stores, "rule(", out);
+    let _ = writeln!(
+        out,
+        "{}+{})x{}",
+        format_rule_dimension(height),
+        format_rule_dimension(depth),
+        format_rule_dimension(width)
+    );
 }
 
 fn noad_name(kind: &NoadKind) -> &'static str {
@@ -1368,6 +1371,44 @@ mod unset_diagnostic_tests {
                 },
             ),
             "kern2.0\nmkern3.0mu\n"
+        );
+    }
+
+    #[test]
+    fn rule_headers_use_the_live_escape_character() {
+        // TeX82 §191 begins a displayed rule with `print_esc("rule(")`;
+        // leader rules use the same node display after their glue header.
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        let glue = stores.intern_glue(GlueSpec::ZERO);
+        let nodes = [
+            Node::Rule {
+                width: Some(Scaled::from_raw(3 * Scaled::UNITY)),
+                height: Some(Scaled::from_raw(2 * Scaled::UNITY)),
+                depth: Some(Scaled::from_raw(Scaled::UNITY)),
+            },
+            Node::Glue {
+                spec: glue,
+                kind: GlueKind::Leaders,
+                leader: Some(LeaderPayload::Rule {
+                    width: Some(Scaled::from_raw(6 * Scaled::UNITY)),
+                    height: Some(Scaled::from_raw(5 * Scaled::UNITY)),
+                    depth: Some(Scaled::from_raw(4 * Scaled::UNITY)),
+                }),
+            },
+        ];
+
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &nodes,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 5,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "|rule(2.0+1.0)x3.0\n|leaders 0.0\n.|rule(5.0+4.0)x6.0\n"
         );
     }
 
