@@ -45,6 +45,13 @@ impl StoreFormat {
                     "font source parameter count exceeds bank capacity",
                 ));
             }
+            if (font.font_info_words as usize) < font.parameters.len()
+                || (font.font_info_words as usize) > crate::font::FONT_INFO_CAPACITY
+            {
+                return Err(StoreFormatError::Invalid(
+                    "font-info allocation is outside canonical bounds",
+                ));
+            }
             if font
                 .identifier
                 .is_some_and(|symbol| symbol as usize >= self.names.len())
@@ -185,9 +192,16 @@ impl StoreFormat {
                 ));
             }
         }
-        let font_info_words = parameter_counts
+        let font_info_words = self
+            .fonts
             .iter()
-            .map(|count| count.expect("all font counts validated above"))
+            .zip(&parameter_counts)
+            .map(|(font, count)| {
+                font.font_info_words as usize
+                    + count
+                        .expect("all font counts validated above")
+                        .saturating_sub(font.parameters.len())
+            })
             .sum::<usize>();
         if font_info_words > crate::font::FONT_INFO_CAPACITY {
             return Err(StoreFormatError::Invalid(

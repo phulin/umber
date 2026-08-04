@@ -23,6 +23,7 @@ pub struct TfmFont {
     pub kerns: Vec<Scaled>,
     pub extensible_recipes: Vec<ExtensibleRecipe>,
     pub parameters: FontParameters,
+    pub(crate) font_info_words: usize,
 }
 
 impl TfmFont {
@@ -42,6 +43,12 @@ impl TfmFont {
         self.characters
             .get(usize::from(code))
             .and_then(Option::as_ref)
+    }
+
+    /// Returns TeX82 §560's words copied into `font_info` by §565.
+    #[must_use]
+    pub fn font_info_words(&self) -> usize {
+        self.font_info_words
     }
 
     /// Converts parsed TFM data into the backend-neutral immutable metric record.

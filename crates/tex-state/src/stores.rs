@@ -416,9 +416,7 @@ impl Stores {
     pub(crate) fn engine_usage_statistics(&mut self) -> EngineUsageStatistics {
         let font_mark = self.fonts.watermark();
         let fonts = font_mark.len as usize;
-        let font_info_words = (0..fonts)
-            .map(|raw| self.env.font_param_len(FontId::new(raw as u32)) as usize)
-            .sum();
+        let font_info_words = self.font_info_words();
         let current = EngineUsageStatistics {
             strings: self.string_pool.used_strings(),
             string_capacity: self.string_pool.string_capacity(),
@@ -1705,7 +1703,7 @@ impl Stores {
                 maximum: crate::font::MAX_FONT_DIMEN,
             })?;
         if self.fonts.would_allocate(&font)
-            && parameter_len
+            && font.font_info_words()
                 > crate::font::FONT_INFO_CAPACITY.saturating_sub(self.font_info_words())
         {
             return Err(FontParameterError::FontInfoCapacity {
@@ -2257,9 +2255,15 @@ impl Stores {
     }
 
     fn font_info_words(&self) -> usize {
-        let fonts = self.fonts.watermark().len as usize;
-        (0..fonts)
-            .map(|raw| self.env.font_param_len(FontId::new(raw as u32)) as usize)
+        self.fonts
+            .iter()
+            .enumerate()
+            .map(|(raw, font)| {
+                let id = FontId::new(raw as u32);
+                font.font_info_words().saturating_add(
+                    (self.env.font_param_len(id) as usize).saturating_sub(font.parameters().len()),
+                )
+            })
             .sum()
     }
 

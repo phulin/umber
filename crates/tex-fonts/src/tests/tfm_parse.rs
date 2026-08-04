@@ -636,6 +636,13 @@ fn parse(bytes: &[u8]) -> TfmFont {
     }
 }
 
+#[test]
+fn font_info_words_exclude_tfm_preamble_and_header() {
+    let bytes = minimal_tfm();
+    let font = parse(&bytes);
+    assert_eq!(font.font_info_words(), bytes.len() / 4 - 6 - 2);
+}
+
 fn char_metric(font: &TfmFont, code: u8) -> &tex_fonts::tfm::Character {
     match font.character(code) {
         Some(character) => character,

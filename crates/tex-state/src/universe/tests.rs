@@ -117,6 +117,25 @@ fn format_round_trip_preserves_multiletter_hash_accounting() {
 }
 
 #[test]
+fn font_info_accounting_preserves_typed_allocation_and_runtime_growth() {
+    let mut universe = Universe::new();
+    assert_eq!(universe.engine_usage_statistics().font_info_words, 7);
+
+    let font = test_font("arena-font", b"arena").with_font_info_words(100);
+    let id = universe.intern_font(font);
+    assert_eq!(universe.engine_usage_statistics().font_info_words, 107);
+
+    universe
+        .set_font_dimen(id, 10, Scaled::from_raw(42))
+        .expect("last loaded font may grow");
+    assert_eq!(universe.engine_usage_statistics().font_info_words, 110);
+
+    let image = universe.dump_format().expect("format dumps");
+    let mut restored = Universe::from_format(World::default(), &image).expect("format loads");
+    assert_eq!(restored.engine_usage_statistics().font_info_words, 110);
+}
+
+#[test]
 fn page_group_selector_consumes_live_signed_warning_control() {
     for (control, warning) in [(0, true), (23, false), (-23, false)] {
         let mut universe = Universe::new();

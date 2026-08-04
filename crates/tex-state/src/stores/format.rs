@@ -476,6 +476,7 @@ struct FormatFont {
     size: i32,
     parameters: Vec<i32>,
     source_parameters: Vec<i32>,
+    font_info_words: u32,
     characters: Vec<Option<tex_fonts::CharMetrics>>,
     lig_kern_program: Vec<tex_fonts::LigKernInstruction>,
     right_boundary_char: Option<u8>,
@@ -2156,6 +2157,10 @@ impl FormatFont {
             size: font.size().raw(),
             parameters: font.parameters().iter().map(|v| v.raw()).collect(),
             source_parameters: font.source_parameters().iter().map(|v| v.raw()).collect(),
+            font_info_words: font
+                .font_info_words()
+                .try_into()
+                .expect("live font-info extent fits the TeX82 capacity"),
             characters: font.metrics().characters().to_vec(),
             lig_kern_program: font.metrics().lig_kern_program().to_vec(),
             right_boundary_char: font.metrics().right_boundary_char(),
@@ -2226,6 +2231,7 @@ impl FormatFont {
                 self.extensible_recipes,
             ),
         )
+        .with_font_info_words(self.font_info_words as usize)
         .with_source_parameters(
             self.source_parameters
                 .into_iter()

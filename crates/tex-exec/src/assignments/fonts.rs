@@ -109,7 +109,8 @@ pub(super) fn execute_font_definition(
                 tfm.font_size,
                 parameters,
                 tfm.font_metrics(),
-            );
+            )
+            .with_font_info_words(tfm.font_info_words());
             if let Some(selection) = opentype {
                 loaded = loaded.with_opentype(selection);
             }
@@ -137,6 +138,7 @@ pub(super) fn execute_font_definition(
                 parameters,
                 tfm.font_metrics(),
             )
+            .with_font_info_words(tfm.font_info_words())
             .with_mapped_opentype(opentype, encoding_map)
         }
         crate::FontSource::ClassicTfmFallback { metrics } => {
@@ -157,6 +159,7 @@ pub(super) fn execute_font_definition(
                 parameters,
                 tfm.font_metrics(),
             )
+            .with_font_info_words(tfm.font_info_words())
             .with_classic_mapping_fallback()
         }
         crate::FontSource::OpenType(selection) => {

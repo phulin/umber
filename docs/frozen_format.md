@@ -215,9 +215,9 @@ The 32-byte header contains version, font count, payload offset and length,
 an optional-prepared-`mag` tag and signed value, the last-loaded font index,
 and a reserved `u32`. The payload is the canonical fixed-integer schema-11
 encoding of detached font records: names and content hashes, immutable and
-source parameters, character metrics, lig/kern instructions, extensible
-recipes, derivation identity, control-sequence identifier index, and pdfTeX
-expansion settings.
+source parameters, TeX82's logical `font_info` word extent, character metrics,
+lig/kern instructions, extensible recipes, derivation identity,
+control-sequence identifier index, and pdfTeX expansion settings.
 
 The decoder validates metric structure, derivation order, identifiers,
 parameter-bank references from the environment overlay, and the last-font

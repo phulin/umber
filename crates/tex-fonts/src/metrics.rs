@@ -144,6 +144,8 @@ pub struct LoadedFont {
     size: Scaled,
     parameters: Vec<Scaled>,
     source_parameters: Vec<Scaled>,
+    /// TeX82's occupied `font_info` extent for this immutable font record.
+    font_info_words: usize,
     metrics: FontMetricsSource,
     opentype: Option<OpenTypeFontSelection>,
     construction: FontConstruction,
@@ -680,6 +682,7 @@ impl LoadedFont {
             Scaled::from_raw(0),
         );
         let source_parameters = parameters.clone();
+        let font_info_words = parameters.len();
         Self {
             name: name.into(),
             path: path.into(),
@@ -689,6 +692,7 @@ impl LoadedFont {
             size,
             parameters,
             source_parameters,
+            font_info_words,
             metrics: FontMetricsSource::Tfm(metrics),
             opentype: None,
             construction: FontConstruction::Loaded,
@@ -697,6 +701,19 @@ impl LoadedFont {
             fallback: None,
             encoding_map: None,
         }
+    }
+
+    /// Attaches TeX82's §560/§565 logical `font_info` allocation.
+    #[must_use]
+    pub const fn with_font_info_words(mut self, font_info_words: usize) -> Self {
+        self.font_info_words = font_info_words;
+        self
+    }
+
+    /// Returns the immutable portion of this font's `font_info` allocation.
+    #[must_use]
+    pub const fn font_info_words(&self) -> usize {
+        self.font_info_words
     }
 
     /// Builds a font selected from OpenType data alone, without compatibility

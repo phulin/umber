@@ -18190,7 +18190,8 @@ fn load_canonical_font(
             tfm.font_size,
             parameters,
             tfm.font_metrics(),
-        );
+        )
+        .with_font_info_words(tfm.font_info_words());
         if let Some((selection, encoding_map)) = mapped {
             font = font.with_mapped_opentype(selection, encoding_map);
         } else if let Some(selection) = opentype {

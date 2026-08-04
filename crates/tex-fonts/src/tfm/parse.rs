@@ -111,6 +111,7 @@ pub(super) fn parse_tfm(bytes: &[u8], size_spec: FontSizeSpec) -> Result<TfmFont
         kerns,
         extensible_recipes,
         parameters,
+        font_info_words: usize::from(counts.lf) - PREAMBLE_WORDS - counts.lh,
     })
 }
 
