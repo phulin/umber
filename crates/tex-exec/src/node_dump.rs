@@ -941,10 +941,12 @@ fn dump_box(
     let (children, physical_replacement_spans) = box_node
         .diagnostic_children
         .map_or((box_node.children, false), |children| (children, true));
+    // TeX82 §183 names both list-node kinds through `print_esc`, so the
+    // header follows the live `\escapechar` just like whatsit names below.
+    append_escaped_name(stores, name, out);
     let _ = write!(
         out,
-        "\\{}({}+{})x{}",
-        name,
+        "({}+{})x{}",
         format_scaled_without_unit(box_node.height),
         format_scaled_without_unit(box_node.depth),
         format_scaled_without_unit(box_node.width)
@@ -1003,9 +1005,10 @@ fn dump_unset(
     // TeX82 §§183--185 dispatch on the single `unset_node` type and always
     // print `\unsetbox`. Umber retains the former packing direction in
     // `kind` for measurement and recursive list context, not as a subtype.
+    append_escaped_name(stores, "unsetbox", out);
     let _ = write!(
         out,
-        "\\unsetbox({}+{})x{}",
+        "({}+{})x{}",
         format_scaled_without_unit(unset.height),
         format_scaled_without_unit(unset.depth),
         format_scaled_without_unit(unset.width)

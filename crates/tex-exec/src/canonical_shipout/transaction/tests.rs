@@ -70,3 +70,20 @@ fn huge_page_recovery_displays_deleted_box_only_when_not_already_traced() {
     report_huge_page_deleted_box(&mut traced, &node, tracing_output);
     assert_eq!(pending_text(&traced), "");
 }
+
+#[test]
+fn huge_page_deleted_box_display_uses_live_escape_character() {
+    // TeX82 §§63/183/641: `ship_out` delegates the deleted box to
+    // `show_box`, whose list-node name is printed through `print_esc`.
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+    let node = empty_vbox(&mut stores);
+
+    report_huge_page_deleted_box(&mut stores, &node, 0);
+
+    let text = pending_text(&stores);
+    assert!(
+        text.contains("The following box has been deleted:\n|vbox(16383.99998+0.0)x0.0"),
+        "{text:?}"
+    );
+}
