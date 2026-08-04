@@ -12631,17 +12631,16 @@ fn shipout_replay_box(
         }
         if expanded.unbalanced {
             // TeX82 §1372's `<Recover from an unbalanced write command>`.
-            crate::error_report::report_error(
-                stores,
-                "Unbalanced write command",
-                &[
-                    "On this page there's a \\write with fewer real {'s than }'s.",
-                    "I can't handle that very well; good luck.",
-                ],
-                expanded
-                    .error_context
-                    .expect("unbalanced write retains its live input context"),
-            )?;
+            // The expansion diagnostics above and this report occur on one
+            // live `write_out` call stack in tex.web. Both must cross the
+            // atomic page transaction in that same detection order.
+            write_publications
+                .borrow_mut()
+                .push(PendingShipoutPublication::UnbalancedWrite {
+                    context: expanded
+                        .error_context
+                        .expect("unbalanced write retains its live input context"),
+                });
         }
         let mut text = String::new();
         for &token in stores.tokens(expanded.tokens.token_list()) {
@@ -18479,6 +18478,7 @@ enum PendingDiagnostic {
 /// detection order rather than grouping reports after writes.
 enum PendingShipoutPublication {
     Diagnostic(PendingDiagnostic),
+    UnbalancedWrite { context: String },
     Write { sink: PrintSink, text: String },
 }
 
@@ -18490,6 +18490,17 @@ fn report_shipout_publications(
         match publication {
             PendingShipoutPublication::Diagnostic(diagnostic) => {
                 report_pending_diagnostics(stores, vec![diagnostic])?;
+            }
+            PendingShipoutPublication::UnbalancedWrite { context } => {
+                crate::error_report::report_error(
+                    stores,
+                    "Unbalanced write command",
+                    &[
+                        "On this page there's a \\write with fewer real {'s than }'s.",
+                        "I can't handle that very well; good luck.",
+                    ],
+                    context,
+                )?;
             }
             PendingShipoutPublication::Write { sink, text } => {
                 if crate::canonical_shipout::direct::write_line_is_open(stores, sink) {
@@ -18918,6 +18929,40 @@ mod discretionary_hyphen_tests {
             panic!("canonical replay appended an explicit discretionary hyphen");
         };
         assert!(stores.nodes(*pre).is_empty());
+    }
+
+    #[test]
+    fn deferred_write_trace_precedes_unbalanced_report() {
+        // TeX82 §§1369--1372: `write_out` traces the write-text token list
+        // and expands its condition before testing the frozen `\endwrite`
+        // stopper. Atomic shipout staging must retain that live-call order.
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        control
+            .register_root_source(tex_command::SourceRegistration::new(
+                tex_command::RegisteredSourceKind::Generated,
+                br"\tracingmacros=2\shipout\hbox{\write16{\if01{\else unbal}\fi}}\end".to_vec(),
+            ))
+            .expect("register canonical source");
+        while let MainControlStep::Continue =
+            control.step(&mut stores).expect("write source executes")
+        {}
+        let effects = stores.world().effect_records();
+        let trace = effects
+            .iter()
+            .position(|effect| {
+                matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
+                    if text.contains("write->") && text.contains("unbal"))
+            })
+            .unwrap_or_else(|| panic!("write trace is visible: {effects:?}"));
+        let report = effects
+            .iter()
+            .position(|effect| {
+                matches!(effect, tex_state::EffectRecord::StreamWrite { text, .. }
+                    if text.contains("Unbalanced write command"))
+            })
+            .unwrap_or_else(|| panic!("write report is visible: {effects:?}"));
+        assert!(trace < report, "{effects:?}");
     }
 }
 
