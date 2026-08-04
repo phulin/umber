@@ -323,10 +323,10 @@ fn dump_node(
             );
         }
         Node::MathOn(width) => {
-            dump_math_marker("\\mathon", *width, out);
+            dump_math_marker(stores, "mathon", *width, out);
         }
         Node::MathOff(width) => {
-            dump_math_marker("\\mathoff", *width, out);
+            dump_math_marker(stores, "mathoff", *width, out);
         }
         Node::Direction(direction) => {
             let name = match direction {
@@ -495,15 +495,15 @@ fn dump_math_noad(
     dump_math_field(stores, &noad.subscript, config, depth + 1, '_', out);
 }
 
-fn dump_math_marker(name: &str, width: Scaled, out: &mut String) {
+fn dump_math_marker(stores: &Universe, name: &str, width: Scaled, out: &mut String) {
+    // TeX82 §§63/184: both `before` and `after` math-node subtypes name
+    // themselves through `print_esc`, so the header observes the live
+    // `\escapechar` even when the node is nested in subsidiary math data.
+    append_escaped_name(stores, name, out);
     if width.raw() == 0 {
-        let _ = writeln!(out, "{name}");
+        out.push('\n');
     } else {
-        let _ = writeln!(
-            out,
-            "{name}, surrounded {}",
-            format_scaled_without_unit(width)
-        );
+        let _ = writeln!(out, ", surrounded {}", format_scaled_without_unit(width));
     }
 }
 
@@ -1394,6 +1394,42 @@ mod unset_diagnostic_tests {
                 },
             ),
             "penalty 10000\n"
+        );
+    }
+
+    #[test]
+    fn math_node_headers_use_the_live_escape_character() {
+        // TeX82 §§63/184 route both math-node subtype names through
+        // `print_esc`, including suppression for a negative `\escapechar`.
+        let mut stores = Universe::new();
+        let nodes = [
+            Node::MathOn(Scaled::from_raw(0)),
+            Node::MathOff(Scaled::from_raw(3 * Scaled::UNITY)),
+        ];
+        let config = DumpConfig {
+            breadth: 5,
+            depth: 0,
+            profile: CommandProfile::TEX82,
+        };
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        assert_eq!(
+            dump_node_slice(&stores, &nodes, config),
+            "|mathon\n|mathoff, surrounded 3.0\n"
+        );
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &nodes,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "mathon\nmathoff, surrounded 3.0\n"
         );
     }
 
