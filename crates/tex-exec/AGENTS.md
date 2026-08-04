@@ -69,6 +69,7 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
 - `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.
 - `src/canonical_shipout.rs`: typed source-free canonical page/PDF-form staging transaction, detached shipout origin, and command-owned write/special/literal replay host contracts.
+- `src/canonical_shipout/transaction/tests.rs`: focused shipout transaction ownership tests, including live command-context precedence for pre-staging errors.
 - `src/canonical_diagnostics.rs`: source-free canonical error reporting, `\show` rendering, activity/page diagnostics, token rendering, and diagnostic sink policy; it has no legacy scanner or executor dependency.
 - `src/assignments/legacy_variables.rs`: retired register, parameter, font
   variable, and stream assignment scanner routing.

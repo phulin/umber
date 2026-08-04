@@ -12,6 +12,9 @@ use crate::dispatch::PreparedDviPage;
 use super::direct;
 use super::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
 
+#[cfg(test)]
+mod tests;
+
 const SHIPOUT_EPISODE_DOMAIN: u32 = 4;
 const SHIPOUT_EPISODE_SCHEMA: u32 = 1;
 const SHIPOUT_ENV_HASH_DOMAIN: u64 = 0x7368_6970_656e_7601;
@@ -88,9 +91,12 @@ pub(crate) fn shipout_node_with_input_summary(
     if huge_shipout_box(&node, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
         // is the whole of the engine's response. Shipout also runs from
-        // canonical replay, which owns no live `InputStack`; the published
-        // summary is what §82 has to display from.
-        let context = crate::diagnostics::show_context(stores, &input_summary);
+        // canonical replay, which owns no live `InputStack`. Its caller
+        // captured §82's display from the command-owned stack before
+        // releasing that borrow; the Universe summary is only republished
+        // later by successful artifact staging and can still name an older
+        // input position here.
+        let context = shipout_error_context(stores, &input_summary, &origin);
         crate::error_report::report_error(
             stores,
             "Huge page cannot be shipped out",
@@ -230,6 +236,17 @@ pub(crate) fn shipout_node_with_input_summary(
         plan,
         committed_effects,
     }))
+}
+
+fn shipout_error_context(
+    stores: &Universe,
+    input_summary: &tex_state::InputSummary,
+    origin: &ShipoutOrigin,
+) -> String {
+    origin
+        .output_open_context
+        .clone()
+        .unwrap_or_else(|| crate::diagnostics::show_context(stores, input_summary))
 }
 
 pub(crate) fn stage_canonical_page(
