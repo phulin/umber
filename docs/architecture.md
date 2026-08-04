@@ -119,7 +119,10 @@ Replay frames have three representations:
   allocation pool when their replay frame retires.
 
 Transient execution does not intern token lists merely to re-enter the input.
-Checkpoint summaries own the remaining transient words by value.
+Checkpoint summaries own the remaining transient words by value. The only
+restartable command/input representation is tex-command's validated
+`CommandSummary`; checkpoints do not retain a parallel lexer or expander
+continuation.
 
 Command snapshots retain each live source cursor over already owned backing
 together with source, replay, condition, alignment, provenance, and allocator

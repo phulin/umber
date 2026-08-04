@@ -1520,11 +1520,9 @@ fn session_ledger_lends_typed_fuel_without_transferring_ownership() {
 #[test]
 fn engine_checkpoint_cannot_be_forged_by_callers() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
-    let tex_lex_dir = manifest_dir.join("../tex-lex");
     let tex_state_dir = manifest_dir.join("../tex-state");
     let dependencies = [
         CompileFailDependency::path("tex-exec", &manifest_dir),
-        CompileFailDependency::path("tex-lex", &tex_lex_dir),
         CompileFailDependency::path("tex-state", &tex_state_dir),
     ];
     assert_compile_fail(
@@ -1537,24 +1535,16 @@ fn engine_checkpoint_cannot_be_forged_by_callers() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
+fn checkpoints_store_only_command_owned_restart_state() {
     let crate_root = test_support::repository_root().join("crates/tex-exec");
     let checkpoint =
         fs::read_to_string(crate_root.join("src/checkpoint.rs")).expect("read checkpoint boundary");
+    let incremental = fs::read_to_string(crate_root.join("../tex-incr/src/lib.rs"))
+        .expect("read incremental session");
     let public_surface =
         fs::read_to_string(crate_root.join("src/lib.rs")).expect("read public surface");
 
-    assert!(checkpoint.contains("enum CheckpointContinuation"));
-    assert!(checkpoint.contains("Canonical(Box<CommandSummary>)"));
-    assert!(checkpoint.contains("LegacyInput(InputSummary)"));
-    assert!(
-        !checkpoint.contains("input: InputSummary,"),
-        "aggregate checkpoints must not always carry a legacy input continuation"
-    );
-    assert!(
-        !checkpoint.contains("input: InputSummary::default()"),
-        "canonical checkpoints must not encode absent legacy input with a sentinel"
-    );
+    assert!(checkpoint.contains("command: Box<CommandSummary>"));
     assert!(
         !checkpoint.contains("pub fn restore_checkpoint<E"),
         "the dead generic InputStack reconstruction API must not return"
@@ -1562,6 +1552,9 @@ fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
     assert!(!checkpoint.contains("pub enum EngineRestoreError"));
     assert!(!public_surface.contains("EngineRestoreError"));
     for forbidden in [
+        "CheckpointContinuation",
+        "LegacyInput",
+        "InputSummary",
         "InputStack::from_summary",
         "MemoryInput::from_offset",
         "WorldInput::from_content_at_offset",
@@ -1573,6 +1566,18 @@ fn canonical_checkpoints_do_not_forward_legacy_input_summaries() {
             "checkpoint schema must not reconstruct retired editor input through {forbidden}"
         );
     }
+    for forbidden in [
+        "execute_revision",
+        "execute_advance",
+        "InputStack",
+        "Executor::new()",
+    ] {
+        assert!(
+            !incremental.contains(forbidden),
+            "incremental sessions must not retain legacy restart path {forbidden}"
+        );
+    }
+    assert!(!crate_root.join("src/legacy_editor_restart.rs").exists());
 }
 
 #[test]

@@ -81,7 +81,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/legacy_assignments.rs`: explicit retired assignment facade used only by
   legacy Executor, dispatch, output, and math fronts; canonical command control
   must not call it.
-- `src/checkpoint.rs`: executor-owned named boundary sessions plus opaque aggregate checkpoint restore over `Universe`, live input, and the rooted mode nest.
+- `src/checkpoint.rs`: executor-owned named boundary sessions plus opaque
+  aggregate checkpoint restore over `Universe`, the required tex-command
+  summary, explicit execution budgets, and the rooted mode nest.
 - `src/align/`: alignment machinery split between canonical and retired fronts. `canonical_execution.rs`, `packaging.rs`, `support.rs`, `transitions.rs`, and `widths/` are source-free completion, unset-node, state-access, lifecycle, and width-resolution owners. `legacy_front.rs` owns the retired aggregate InputStack transaction; `legacy_execution.rs`, `preamble.rs`, `template.rs`, and `noalign.rs` own Executor row/cell execution and scanning. Focused tests remain under the corresponding historical `execution/`, `preamble/`, `widths/`, and `noalign/` test directories.
 - `src/dispatch.rs`: source-free canonical dispatch result, execution statistics, and prepared-page contract shared by canonical command control and the compatibility front.
 - `src/error.rs`: execution error enum, conversions, and display text. Its
@@ -108,9 +110,6 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/legacy_output.rs`: retired `Executor` input-stack fronts for page fire-up and `\output` token-list replay; it delegates all input-free page state to `canonical_page_output.rs` and has no canonical command-control caller.
 - `src/legacy_diagnostics.rs`: retired `Executor` scanners for `\show`, `\showthe`, `\showtokens`, `\showifs`, message, case-change, and ignore-spaces primitives; source-free rendering delegates to `canonical_diagnostics.rs`.
 - `src/legacy_dispatch.rs`: retired `InputStack`/`ExecutionContext` main-control token dispatch, group exits, token replay, and unsupported-command routing; source-free result types live in `dispatch.rs`.
-- `src/legacy_editor_restart.rs`: isolated retired `InputStack` reconstruction
-  used only by the synchronous incremental compatibility path; canonical editor
-  sessions restore through command-owned checkpoints.
 - `src/lib.rs`: public crate surface and module wiring for the TeX execution engine.
 - `src/math/mod.rs`: source-free canonical math owner for font validation plus lowering and display-packaging module wiring.
 - `src/math/display.rs`, `src/math/lower.rs`, and `src/math/support.rs`: dependency-clean display construction, mlist lowering, and shared noad/list kernels.

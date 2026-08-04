@@ -952,10 +952,7 @@ fn successful_execution_publishes_the_exact_final_input_cursor() {
         .expect("final command cursor is quiescent");
 
     assert_eq!(
-        checkpoint
-            .command_summary()
-            .expect("canonical command summary")
-            .root_source_anchor(),
+        checkpoint.command_summary().root_source_anchor(),
         None,
         "the fully consumed root source is absent from the exact final cursor"
     );
@@ -5454,24 +5451,6 @@ fn canonical_output_replay_owns_every_deferred_expansion_family() {
         );
     }
     assert!(!canonical_shipout.contains("assignments::shipout"));
-}
-
-#[test]
-fn retired_editor_input_stack_restart_is_test_only() {
-    let root = include_str!("../lib.rs");
-    assert!(root.contains("#[cfg(any())]\nmod legacy_editor_restart;"));
-
-    let incremental = include_str!("../../../tex-incr/src/lib.rs");
-    for legacy in ["fn execute_revision(", "fn execute_advance("] {
-        let offset = incremental
-            .find(legacy)
-            .expect("retired helper remains covered");
-        let prefix = &incremental[offset.saturating_sub(96)..offset];
-        assert!(
-            prefix.contains("#[cfg(any())]"),
-            "{legacy} regained production reachability"
-        );
-    }
 }
 
 #[test]

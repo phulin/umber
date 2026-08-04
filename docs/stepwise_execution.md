@@ -1,7 +1,7 @@
 # Stepwise TeX execution and resource suspension
 
-This document defines the implementation contract for replacing
-`tex_exec::Executor::run_session` with an owned, stepwise executor. It is the
+This document defines the implementation contract for owned, stepwise
+`CanonicalMainControl` execution. It is the
 engine-side layer beneath the host-neutral resource protocol in
 [`wasm_resource_acquisition.md`](wasm_resource_acquisition.md) and the accepted
 revision transaction in
@@ -22,26 +22,22 @@ native and `wasm32-unknown-unknown` targets.
 
 ## Implementation status
 
-`tex-exec` now exposes the owned `ExecutionRun` and `ExecutionState`, the
-call-local `ExecutionServices`, and the explicit `JobStart`, `MainControl`,
-`FinishEnd`, and `Finalize` lifecycle. The compatibility `run*` and `resume*`
-entry points drive this same state machine. Main control yields after at most
+`tex-exec` exposes the owned canonical control state and the explicit
+`JobStart`, `MainControl`, `FinishEnd`, and `Finalize` lifecycle. Retained
+sessions drive this state machine directly. Main control yields after at most
 256 fully dispatched tokens, paragraph-reuse operations, or fixed 256-token
 text spans, and yields immediately after a named paragraph or shipout boundary;
 it also yields whenever TeX's execution-group depth changes so the environment
 snapshot remains a valid rollback root. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
-Expansion state is detached from input,
-font, image, and read-recorder capabilities between calls.
-
-`tex-lex` now provides the opaque `InputStackSnapshot` prerequisite. Capture
-retains complete owned source cursors and private input machinery, while
-rollback is infallible and resolver-free; `InputSummary` remains the durable
-publication format.
+`CommandRuntime` and every font, image, and read-recorder capability are
+discarded or borrow-scoped between calls. `CommandStateSnapshot` captures the
+complete owned command state for private step rollback, while validated
+`CommandSummary` is the only durable named-checkpoint continuation.
 
 `ExecutionRun` now wraps every candidate operation in a private aggregate
-`StepSavepoint`. A typed resource need restores the matching `Universe`, opaque
-input-stack, mode-nest, execution, statistics, checkpoint-publisher, prepared
+`StepSavepoint`. A typed resource need restores the matching `Universe`,
+command-state, mode-nest, execution, statistics, checkpoint-publisher, prepared
 page, diagnostic/effect/artifact, and lifecycle roots before returning
 `AwaitingResources`; the suspension serial remains monotonic and replay uses
 the original logical resolution index. Named checkpoints and external read
@@ -123,32 +119,31 @@ Everything that currently survives only because `run_session` and its callees
 remain on the stack moves into `ExecutionRun` or an owned component reached by
 it:
 
-| Owned component      | Required contents                                                                                                                                                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `InputStack`         | All source and token-list frames, source/replay/condition allocators, alignment interception, macro invocation provenance, transient token replay, cursors, lexer configuration, caches, and expansion statistics.                                                              |
-| `Universe`           | Environment and group journal, content/node stores, page builder, PDF ledger, input summary, virtual streams and effects, committed artifact sequence, job clock, random state, and every rollback/hash root described by `core_state.md`.                                      |
-| `ModeNest`           | Every mode level, list root and scalar, pending horizontal characters, alignment/math/box submode state, and paragraph continuation state.                                                                                                                                      |
-| `ExecutionStats`     | Delivered and fully dispatched token counts, text-span counts, dump flag, committed prepared DVI page plans, shipped-artifact suffix, and final DVI plans. Candidate increments are not published early.                                                                        |
-| checkpoint publisher | Whether `JobStart` has been emitted, the cached mode projection, boundary occurrence/schedule state, staged `EngineCheckpoint`s, and stop-after-boundary policy. The caller-owned `CheckpointSink` is not retained.                                                             |
-| run artifact state   | The artifact/effect prefixes at run entry, prepared-page queues keyed by artifact identity, and the committed prefix belonging to the current run.                                                                                                                              |
-| expansion state      | `EngineStateSnapshot`, job name and clock, resolution index, meaning-site cache, macro replay site, nesting depths, recoverable diagnostics, expansion-fuel scope, and all paragraph read/dependency recording state. Resolver and recorder references are call-local services. |
-| paragraph memo state | Pending continuation, barrier and disabled-for-run flags, cold recording including effect start and input/span anchors, local boxes, inline-math reads, dependency cache, and the paired `Universe` pure-paragraph recording root.                                              |
-| lifecycle            | The next `ExecutionStep`, whether `\end` or `\dump` was seen, end/output cleanup progress, terminal result, and cancellation latch. Recursive output, alignment, math, and scanner frames never appear here: a step either unwinds them successfully or rolls them back.        |
-| output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                                  |
-| accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                                    |
+| Owned component      | Required contents                                                                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CommandState`       | All source and token-list frames, source/replay/condition allocators, alignment interception, macro invocation provenance, transient command replay, cursors, command profile, and persistent expansion state.                                                           |
+| `Universe`           | Environment and group journal, content/node stores, page builder, PDF ledger, input summary, virtual streams and effects, committed artifact sequence, job clock, random state, and every rollback/hash root described by `core_state.md`.                               |
+| `ModeNest`           | Every mode level, list root and scalar, pending horizontal characters, alignment/math/box submode state, and paragraph continuation state.                                                                                                                               |
+| `ExecutionStats`     | Delivered and fully dispatched token counts, text-span counts, dump flag, committed prepared DVI page plans, shipped-artifact suffix, and final DVI plans. Candidate increments are not published early.                                                                 |
+| checkpoint publisher | Whether `JobStart` has been emitted, the cached mode projection, boundary occurrence/schedule state, staged `EngineCheckpoint`s, and stop-after-boundary policy. The caller-owned `CheckpointSink` is not retained.                                                      |
+| run artifact state   | The artifact/effect prefixes at run entry, prepared-page queues keyed by artifact identity, and the committed prefix belonging to the current run.                                                                                                                       |
+| command runtime      | Discardable caches, scanner watchdogs, and borrow-scoped host context. None enters step snapshots or named checkpoints; replay recreates it around the restored `CommandState`.                                                                                          |
+| paragraph memo state | Pending continuation, barrier and disabled-for-run flags, cold recording including effect start and input/span anchors, local boxes, inline-math reads, dependency cache, and the paired `Universe` pure-paragraph recording root.                                       |
+| lifecycle            | The next `ExecutionStep`, whether `\end` or `\dump` was seen, end/output cleanup progress, terminal result, and cancellation latch. Recursive output, alignment, math, and scanner frames never appear here: a step either unwinds them successfully or rolls them back. |
+| output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
+| accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
 
-The present borrowing `ExecutionContext<'a>` is split into an owned
-`ExecutionState` containing the expansion and paragraph fields above and the
-call-local `ExecutionServices<'a>`. The run owns the job name instead of
-borrowing `&str`.
+`CanonicalMainControl` owns `CommandState`, mode/execution roots, fuel ledger,
+and explicit host capabilities. Each operation constructs borrow-scoped
+`CommandProcessor` and `CommandHostContext` values; neither can outlive the
+operation or enter a snapshot.
 
-`InputSummary` is not sufficient for a per-step savepoint: reconstructing it
-can reopen sources and therefore can itself request a resource. `tex-lex` must
-provide an opaque `InputStackSnapshot` plus infallible rollback over already
-owned backing records. It captures cursor and transient replay state without
-calling a resolver. This may initially be an owned clone of the live stack;
-the representation may later become copy-on-write. Publication summaries
-remain the durable named-checkpoint representation.
+`CommandSummary` is deliberately not the private per-step savepoint: summary
+publication requires a durable quiescent boundary. `CommandStateSnapshot`
+instead captures cursor, transient replay, expansion, scanner, and alignment
+state over already owned backing without calling a host. Named checkpoint
+publication validates quiescence and stores the resulting `CommandSummary` as
+its only command/input continuation.
 
 ## Lifecycle state machine
 
@@ -229,9 +224,9 @@ Immediately before a candidate step, the run captures `StepSavepoint`:
 ```text
 StepSavepoint {
     universe: Snapshot,
-    input: InputStackSnapshot,
+    command: CommandStateSnapshot,
     modes: ModeNest rollback root,
-    execution: ExecutionState rollback root,
+    control: canonical execution rollback roots,
     stats: ExecutionStats rollback root,
     checkpoint_publisher: publisher rollback root,
     artifact/effect/prepared-page prefixes,
@@ -270,8 +265,8 @@ separately from the remaining engine step body. This distinguishes local retry
 cost from host resource resolution without changing the savepoint boundary or
 allowing a retry to skip restoration.
 
-The `Universe` snapshot and input snapshot must be taken and restored as one
-aggregate operation. No caller may roll back input, modes, paragraph recording,
+The `Universe` and command snapshots must be taken and restored as one
+aggregate operation. No caller may roll back command state, modes, paragraph recording,
 execution state, or `Universe` independently. A resource lookup may suspend
 after the blocked operation has entered nested TeX groups; the environment's
 lineage check admits rollback through those still-live descendants while
@@ -386,10 +381,8 @@ Fuel is charged before each expansion loop action, delivered-token dispatch,
 text-span token, memo validation unit, builder unit, shipped node/event, and
 finalization unit. Work performed by a candidate that later rolls back remains
 charged. This prevents a document from resetting its budget by causing
-resource misses. The retired path's per-expansion fuel scope remains its local
-recursive-expansion compatibility limit; canonical execution instead charges
-the shared `tex_command::CommandFuel` ledger before raw delivery. Crossing
-either hard limit detaches
+resource misses. Canonical execution charges the shared
+`tex_command::CommandFuel` ledger before raw delivery. Crossing a hard limit detaches
 a typed error, rolls back the current step, and terminally fails that candidate.
 It is not `AwaitingResources` and cannot be retried by increasing a limit.
 
@@ -425,8 +418,7 @@ revision and immutable resource bindings.
 
 Production sessions default to 10,000,000 committed steps, 100,000 live input
 frames, 256 MiB of environment journal, 1,000,000 pending effects, and
-100,000,000 cumulative legacy expansion-fuel units. Canonical sessions
-separately default to 100,000,000 command-fuel units and accept only
+100,000,000 command-fuel units. Canonical sessions accept only
 `1..=1,000,000,000`; zero and larger values are typed configuration errors.
 `SessionLimits` configures the legacy ceilings uniformly for native and WASM
 sessions; native CLI runs additionally
@@ -463,47 +455,13 @@ acceptance. Native direct output remains deferred until accepted finalization;
 WASM memory output remains detached. Neither platform exposes host effects
 that would need to be undone.
 
-## Migration sequence
+## Command-state cutover
 
-The first migration step is implemented by the resolver-facing
-`ResourceLookup<T>` contract shared by `tex-expand` and `tex-exec`. Resolver
-calls now distinguish `Available`, authoritative `Unavailable`, and
-`NeedResource(ResourceNeed)` outcomes, with malformed or host failures left in
-the error channel. The current one-shot adapter still assembles public request
-batches from its resolver-side request records and retries the whole candidate;
-later steps replace only that outer retry policy, not the typed engine control
-path.
-
-1. Add typed `ResourceLookup`/suspension propagation to input, font, and image
-   resolvers without changing one-shot behavior. Remove missing-resource
-   detection through diagnostic strings.
-2. Split `ExecutionContext` into owned `ExecutionState` and borrowed
-   `ExecutionServices`; make the job name, expansion internals, resolution
-   index, recoverable diagnostics, and paragraph memo state movable across
-   calls.
-3. Add the opaque, infallibly restorable `InputStackSnapshot` and an aggregate
-   `StepSavepoint` over input, `Universe`, modes, execution state, stats, and
-   private output/checkpoint staging.
-4. Introduce `ExecutionRun`, `ExecutionStep`, and `ExecutionStepResult`; port
-   `JobStart` and one-token/fixed-span `MainControl`, then make existing `run*`
-   methods loop over it.
-5. Make paragraph finish, page drain, shipout, and end/finalization return typed
-   suspension unchanged through every recursive layer. Stage checkpoint and
-   recorder delivery until step commit.
-6. **Implemented.** Move prepared DVI/artifact suffix assembly into `Finalize`, add cumulative
-   fuel and cancellation polls, and enforce checked counter exhaustion.
-7. **Implemented.** `tex-incr` and `VirtualCompileSession` retain an
-   `ExecutionRun` across resource batches instead of rerunning a cold or
-   pending revision. The enclosing candidate revision, speculative engine
-   roots, and private VFS build generation remain owned by the candidate.
-8. Route native CLI, direct WASM, worker, and authored JavaScript loops through
-   the same session results; remove the full-attempt resource-retry path after
-   parity and failure-injection gates pass.
-
-Steps 1--6 belong primarily to `tex-expand`, `tex-lex`, `tex-state`, and
-`tex-exec`; step 7 composes `tex-incr`, `umber-vfs`, and `umber`; step 8 removes
-adapter-specific retry assumptions. Each migration step must leave the
-one-shot adapter passing before the next begins.
+The cutover is complete: canonical candidates retain `CommandState`, private
+step rollback uses `CommandStateSnapshot`, and named checkpoints store a
+validated `CommandSummary`. `tex-incr` and Umber resume through that aggregate
+checkpoint plus explicit executor/runtime roots. There is no lexer/expander
+snapshot, reconstruction adapter, or whole-revision compatibility restart.
 
 ## Focused tests and failure injection
 

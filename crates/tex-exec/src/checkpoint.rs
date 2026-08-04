@@ -4,23 +4,16 @@ use std::time::Duration;
 use std::time::Instant;
 
 use tex_command::{CommandProfileMismatch, CommandState, CommandSummary, CommandSummaryError};
-#[cfg(any())]
-use tex_state::SourceId;
-#[cfg(any())]
-use tex_state::source_map::SourceMapError;
 use tex_state::{
-    ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, InputSummary, Snapshot,
-    Universe,
+    ContentHash, FragmentStore, GenerationForkError, GenerationSubstrate, Snapshot, Universe,
 };
 
 use crate::{ExecError, ModeNest, ModeNestSummary};
-#[cfg(any())]
-use tex_lex::InputStack;
 
 /// In-memory schema version for aggregate engine checkpoints.
 ///
-/// Version 6 makes canonical and retired input continuations disjoint.
-pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 6;
+/// Version 7 makes the command summary the only continuation representation.
+pub const ENGINE_CHECKPOINT_SCHEMA_VERSION: u32 = 7;
 
 /// A safe point at which the outer executor can publish restartable state.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -39,7 +32,7 @@ pub struct EngineCheckpoint {
     schema_version: u32,
     boundary: EngineBoundary,
     pub(crate) universe: Snapshot,
-    pub(crate) continuation: CheckpointContinuation,
+    pub(crate) command: Box<CommandSummary>,
     pub(crate) modes: ModeNestSummary,
     state_hash: u64,
     pub(crate) root_anchor: usize,
@@ -47,15 +40,6 @@ pub struct EngineCheckpoint {
     effect_prefix: usize,
     artifact_prefix: usize,
     pub(crate) budget_counters: crate::ExecutionBudgetCounters,
-}
-
-/// The command machine and retired executor have different continuation
-/// owners. Keeping the variants disjoint prevents canonical publication from
-/// smuggling an empty legacy input summary through the checkpoint contract.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CheckpointContinuation {
-    Canonical(Box<CommandSummary>),
-    LegacyInput(InputSummary),
 }
 
 /// Revision roots and their precomputed content identities for checkpoint
@@ -113,9 +97,7 @@ impl EngineCheckpoint {
         substrate: &GenerationSubstrate,
         paragraphs: &[crate::CanonicalParagraphRegion],
     ) -> Result<Vec<crate::CanonicalParagraphRegion>, EditorRestoreError> {
-        let summary = self.command_summary().ok_or(EditorRestoreError::Canonical(
-            CanonicalCheckpointRestoreError::MissingCommandSummary,
-        ))?;
+        let summary = self.command_summary();
         let (_, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
                 let owned = tex_command::OwnedCommandContinuation::detach(summary, source);
@@ -188,7 +170,7 @@ impl EngineCheckpoint {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
-            continuation: CheckpointContinuation::Canonical(Box::new(command)),
+            command: Box::new(command),
             modes,
             state_hash,
             root_anchor,
@@ -227,7 +209,7 @@ impl EngineCheckpoint {
             schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
             boundary,
             universe,
-            continuation: CheckpointContinuation::Canonical(Box::new(command)),
+            command: Box::new(command),
             modes,
             state_hash,
             root_anchor,
@@ -267,14 +249,10 @@ impl EngineCheckpoint {
         self.budget_counters
     }
 
-    /// Returns the validated canonical continuation, when this checkpoint was
-    /// published by the canonical command machine.
+    /// Returns the validated command continuation published at this boundary.
     #[must_use]
-    pub fn command_summary(&self) -> Option<&CommandSummary> {
-        match &self.continuation {
-            CheckpointContinuation::Canonical(summary) => Some(summary.as_ref()),
-            CheckpointContinuation::LegacyInput(_) => None,
-        }
+    pub fn command_summary(&self) -> &CommandSummary {
+        self.command.as_ref()
     }
 
     /// Restores the canonical state roots.  Preparation validates the command
@@ -286,10 +264,7 @@ impl EngineCheckpoint {
         nest: &mut ModeNest,
         universe: &mut Universe,
     ) -> Result<(), CanonicalCheckpointRestoreError> {
-        let CheckpointContinuation::Canonical(summary) = &self.continuation else {
-            return Err(CanonicalCheckpointRestoreError::MissingCommandSummary);
-        };
-        let summary = summary.as_ref().clone();
+        let summary = self.command.as_ref().clone();
         let mut restored_command = command.clone();
         restored_command
             .restore_summary(summary)
@@ -361,9 +336,7 @@ impl EngineCheckpoint {
         }
         let new_content_hash = ContentHash::from_bytes(&new_source);
         let fork_started = Timer::start();
-        let summary = self.command_summary().ok_or(EditorRestoreError::Canonical(
-            CanonicalCheckpointRestoreError::MissingCommandSummary,
-        ))?;
+        let summary = self.command_summary();
         let (mut universe, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
                 let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
@@ -386,11 +359,7 @@ impl EngineCheckpoint {
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
         let mut rebound = self.clone();
-        let CheckpointContinuation::Canonical(command) = &mut rebound.continuation else {
-            return Err(EditorRestoreError::Canonical(
-                CanonicalCheckpointRestoreError::MissingCommandSummary,
-            ));
-        };
+        let command = &mut rebound.command;
         // Stable accepted-generation origins are materialized against the new
         // editor layout together with the continuation graph.
         universe
@@ -474,9 +443,7 @@ impl EngineCheckpoint {
             && substrate
                 .validate_checkpoint_snapshot(&self.universe)
                 .is_ok()
-            && self
-                .command_summary()
-                .is_some_and(|command| command.root_source_matches(old_source))
+            && self.command_summary().root_source_matches(old_source)
     }
 
     #[must_use]
@@ -529,17 +496,11 @@ impl EngineCheckpoint {
     pub fn exact_future_state_matches(&self, other: &Self) -> bool {
         self.boundary == other.boundary
             && self.universe.exact_future_state_matches(&other.universe)
-            && match (&self.continuation, &other.continuation) {
-                (
-                    CheckpointContinuation::Canonical(left),
-                    CheckpointContinuation::Canonical(right),
-                ) => left.exact_future_state_matches(right, self.root_anchor, other.root_anchor),
-                (
-                    CheckpointContinuation::LegacyInput(left),
-                    CheckpointContinuation::LegacyInput(right),
-                ) => left == right,
-                _ => false,
-            }
+            && self.command.exact_future_state_matches(
+                &other.command,
+                self.root_anchor,
+                other.root_anchor,
+            )
             && self.modes == other.modes
     }
 
@@ -575,9 +536,7 @@ impl EngineCheckpoint {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
-        let CheckpointContinuation::Canonical(command) = &mut checkpoint.continuation else {
-            return Err(GenerationForkError::RootRevisionMismatch);
-        };
+        let command = &mut checkpoint.command;
         if !command.rebind_root_source_at(
             roots.old_source.as_bytes(),
             std::sync::Arc::from(roots.new_source.as_bytes()),
@@ -608,16 +567,15 @@ impl EngineCheckpoint {
             return Err(GenerationForkError::ChangedRootInterval);
         }
         let mut checkpoint = self.clone();
-        if let CheckpointContinuation::Canonical(command) = &mut checkpoint.continuation
-            && command.rebind_root_source_at(
-                roots.old_source.as_bytes(),
-                std::sync::Arc::from(roots.new_source.as_bytes()),
-                self.root_anchor,
-                self.root_anchor,
-            )
-        {
-            checkpoint.root_content_hash = Some(roots.new_content_hash);
+        if !checkpoint.command.rebind_root_source_at(
+            roots.old_source.as_bytes(),
+            std::sync::Arc::from(roots.new_source.as_bytes()),
+            self.root_anchor,
+            self.root_anchor,
+        ) {
+            return Err(GenerationForkError::RootRevisionMismatch);
         }
+        checkpoint.root_content_hash = Some(roots.new_content_hash);
         Ok(checkpoint)
     }
 
@@ -714,55 +672,6 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
         self.mode_projection
     }
 
-    #[cfg(any())]
-    pub(crate) fn publish(
-        &mut self,
-        boundary: EngineBoundary,
-        nest: &ModeNest,
-        input: &mut InputStack,
-        universe: &mut Universe,
-        budget_counters: crate::ExecutionBudgetCounters,
-    ) {
-        if !self.sink.wants_checkpoint(boundary) {
-            return;
-        }
-        let input_summary = input.publication_summary(universe);
-        universe.set_input_summary(input_summary.clone());
-        let modes = nest.summary();
-        let mode_hash = match &self.mode_projection {
-            Some((cached, fingerprint)) if cached.shares_root_with(&modes) => *fingerprint,
-            _ => {
-                let fingerprint = modes.semantic_fingerprint(universe);
-                self.mode_projection = Some((modes.clone(), fingerprint));
-                fingerprint
-            }
-        };
-        let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
-            .expect("effect log position must fit in memory address space");
-        let artifact_prefix = universe.world().artifact_pos();
-        let root_anchor = input_summary.conservative_root_position();
-        let root_content_hash = universe.root_editor_content_hash(&input_summary);
-        let universe = if self.sink.wants_exact_state_identity(boundary, root_anchor) {
-            universe.snapshot_with_exact_identity()
-        } else {
-            universe.snapshot()
-        };
-        let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
-        self.sink.checkpoint(EngineCheckpoint {
-            schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
-            boundary,
-            universe,
-            continuation: CheckpointContinuation::LegacyInput(input_summary),
-            modes,
-            state_hash,
-            root_anchor,
-            root_content_hash,
-            effect_prefix,
-            artifact_prefix,
-            budget_counters,
-        });
-    }
-
     pub(crate) fn stop_requested(&self) -> bool {
         self.sink.stop_requested()
     }
@@ -771,7 +680,6 @@ impl<'a, C: CheckpointSink> EngineSession<'a, C> {
 /// Failure to restore a canonical command checkpoint.
 #[derive(Debug)]
 pub enum CanonicalCheckpointRestoreError {
-    MissingCommandSummary,
     InvalidRetainedParagraph,
     CommandProfile(CommandProfileMismatch),
     Mode(ExecError),
@@ -780,9 +688,6 @@ pub enum CanonicalCheckpointRestoreError {
 impl fmt::Display for CanonicalCheckpointRestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingCommandSummary => {
-                f.write_str("checkpoint has no canonical command summary")
-            }
             Self::InvalidRetainedParagraph => {
                 f.write_str("retained paragraph graph cannot be mounted atomically")
             }
@@ -801,17 +706,9 @@ impl std::error::Error for CanonicalCheckpointRestoreError {}
 pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
-    #[cfg(any())]
-    LayoutCursor(tex_lex::LayoutCursorError),
     RootRevisionMismatch,
     Canonical(CanonicalCheckpointRestoreError),
-    #[cfg(any())]
-    CanonicalContinuation,
     ChangedRootPrefix,
-    #[cfg(any())]
-    RootRebind(SourceMapError),
-    #[cfg(any())]
-    IncludedInputUnavailable(SourceId),
     Mode(ExecError),
 }
 
@@ -820,52 +717,19 @@ impl fmt::Display for EditorRestoreError {
         match self {
             Self::Fork(error) => write!(f, "could not fork retained generation: {error}"),
             Self::Layout(error) => write!(f, "could not install editor layout: {error}"),
-            #[cfg(any())]
-            Self::LayoutCursor(error) => {
-                write!(f, "could not bind editor layout to root input: {error}")
-            }
             Self::RootRevisionMismatch => {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
             Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
-            #[cfg(any())]
-            Self::CanonicalContinuation => {
-                f.write_str("canonical checkpoint cannot restore the retired input stack")
-            }
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }
-            #[cfg(any())]
-            Self::RootRebind(error) => write!(f, "could not rebind editor root: {error}"),
-            #[cfg(any())]
-            Self::IncludedInputUnavailable(source) => write!(
-                f,
-                "included generated source {} cannot be reopened",
-                source.raw()
-            ),
             Self::Mode(error) => write!(f, "could not restore checkpoint mode nest: {error}"),
         }
     }
 }
 
 impl std::error::Error for EditorRestoreError {}
-
-#[cfg(any())]
-impl crate::Executor {
-    /// Restores a canonical checkpoint without consulting a host or legacy
-    /// input stack.  All fallible reconstruction happens before any live root
-    /// is changed, so a profile or mode mismatch is atomic.
-    pub fn restore_canonical_checkpoint(
-        &mut self,
-        command: &mut CommandState,
-        universe: &mut Universe,
-        checkpoint: &EngineCheckpoint,
-    ) -> Result<(), CanonicalCheckpointRestoreError> {
-        checkpoint.restore_canonical_state(command, &mut self.nest, universe)?;
-        self.budget_counters = checkpoint.budget_counters;
-        Ok(())
-    }
-}
 
 struct Timer {
     #[cfg(not(target_arch = "wasm32"))]
@@ -895,85 +759,4 @@ impl Timer {
 
 fn combine_mode_hash(universe_hash: u64, mode_hash: u64) -> u64 {
     universe_hash.rotate_left(17) ^ mode_hash
-}
-
-#[cfg(any())]
-mod tests {
-    use super::{CanonicalCheckpointRestoreError, EngineBoundary, EngineCheckpoint};
-    use crate::{ExecutionBudgetCounters, Executor, Mode};
-    use tex_command::{CommandProfile, CommandState, RegisteredSourceKind, SourceRegistration};
-    use tex_state::Universe;
-
-    #[test]
-    fn canonical_checkpoint_restores_command_mode_and_universe_atomically() {
-        let mut universe = Universe::new();
-        universe.set_count(3, 41);
-        let mut command = CommandState::new(CommandProfile::TEX82);
-        command
-            .register_source(SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                b"x".to_vec(),
-            ))
-            .expect("source registers");
-        let mut executor = Executor::new();
-        let checkpoint = EngineCheckpoint::capture_canonical(
-            EngineBoundary::JobStart,
-            &command,
-            executor.nest(),
-            &mut universe,
-            ExecutionBudgetCounters::default(),
-            false,
-        )
-        .expect("quiescent command publishes");
-        let expected_command = checkpoint.command_summary().cloned().expect("summary");
-
-        universe.set_count(3, 99);
-        executor
-            .nest_mut()
-            .push(Mode::Horizontal)
-            .expect("test mode push");
-        command
-            .register_source(SourceRegistration::new(
-                RegisteredSourceKind::Generated,
-                b"y".to_vec(),
-            ))
-            .expect("second source registers");
-        executor
-            .restore_canonical_checkpoint(&mut command, &mut universe, &checkpoint)
-            .expect("canonical checkpoint restores");
-
-        assert_eq!(universe.count(3), 41);
-        assert_eq!(executor.nest().current_mode(), Mode::Vertical);
-        assert_eq!(
-            command.publish_summary().expect("restored quiescent state"),
-            expected_command
-        );
-    }
-
-    #[test]
-    fn canonical_checkpoint_rejects_profile_before_mutation() {
-        let mut source_universe = Universe::new();
-        let source = CommandState::new(CommandProfile::TEX82);
-        let checkpoint = EngineCheckpoint::capture_canonical(
-            EngineBoundary::JobStart,
-            &source,
-            Executor::new().nest(),
-            &mut source_universe,
-            ExecutionBudgetCounters::default(),
-            false,
-        )
-        .expect("quiescent command publishes");
-        let mut universe = Universe::new();
-        universe.set_count(7, 19);
-        let before = universe.snapshot().state_hash();
-        let mut command = CommandState::new(CommandProfile::ETEX26);
-        let mut executor = Executor::new();
-
-        assert!(matches!(
-            executor.restore_canonical_checkpoint(&mut command, &mut universe, &checkpoint),
-            Err(CanonicalCheckpointRestoreError::CommandProfile(_))
-        ));
-        assert_eq!(universe.snapshot().state_hash(), before);
-        assert_eq!(command.profile(), CommandProfile::ETEX26);
-    }
 }

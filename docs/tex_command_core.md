@@ -3908,6 +3908,7 @@ semantic completion, not a runner error. TeX82 §1335's effective INITEX
 format only when that receipt is present; it must not infer dump intent by
 examining source bytes or retired executor statistics.
 
-Native virtual compilation and editor/fixed-point checkpoint persistence are
-separate host boundaries. They adopt this contract in their ordered migration
-issues; the direct cutover does not route them through a compatibility adapter.
+Native virtual compilation and editor/fixed-point checkpoint persistence use
+the same command-owned contract. Their `EngineCheckpoint` values contain a
+required `CommandSummary`; they have no compatibility adapter or alternate
+lexer/expander restart representation.

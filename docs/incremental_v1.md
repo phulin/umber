@@ -159,12 +159,14 @@ BoundaryRecord {
 }
 ```
 
-The opaque `EngineCheckpoint` atomically owns the `Universe` snapshot, input
-summary, mode summary, retained effect boundary, group lineage needed by that
-boundary, and every content/node root reachable from those components. Input
-and mode reconstruction is prepared and validated before `Universe` switches
-branches; a failure leaves the live engine unchanged and is reported to the
-session. There is no partial restore and no fallback field in the record.
+The opaque `EngineCheckpoint` atomically owns the `Universe` snapshot,
+tex-command `CommandSummary`, mode summary, explicit execution-budget state,
+retained effect boundary, group lineage needed by that boundary, and every
+content/node root reachable from those components. Command and mode
+reconstruction is prepared and validated before `Universe` switches branches;
+a failure leaves the live engine unchanged and is reported to the session.
+There is no partial restore, alternate lexer/expander continuation, or fallback
+field in the record.
 
 Restoring the checkpoint alone reproduces the old revision exactly. Applying
 an edit uses a separate aggregate session operation: after it proves the
@@ -476,7 +478,7 @@ a generation substrate, charged once and shared by every record retained on
 it. A unit is charged once when the session first pins it, even if several
 checkpoints or both live generations share it, and is uncharged when the last
 session pin is released. Charges
-include checkpoint records, input/mode summaries, journal and group-history
+include checkpoint records, command/mode summaries, journal and group-history
 blocks, retained effects, and content/node/store blocks kept alive as restart
 roots. Allocation ids, sharing counts, and charged sizes are runtime retention
 metadata and never enter semantic hashes.
@@ -601,6 +603,6 @@ Implementation is not complete until tests prove all of the following:
   providing empirical coverage rather than an absolute suffix-adoption
   guarantee.
 
-Run focused `tex-state`, `tex-lex`, `tex-exec`, and `tex-incr` tests, then
+Run focused `tex-command`, `tex-state`, `tex-exec`, and `tex-incr` tests, then
 `cargo test --tests`, `scripts/check.sh`, the snapshot budget gate,
 and the relevant parity corpora before enabling editor-session mode by default.

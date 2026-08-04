@@ -237,9 +237,9 @@ ranges from rendered messages or current cursors.
 When the session is configured with a schema-11 format, initial startup first
 loads its validated frozen stores into a fresh `World` carrying the requested
 job clock, then reconstructs only the selected driver's process-local
-primitive registry. Input, page and mode roots, retained checkpoint/hash
+primitive registry. Command, page and mode roots, retained checkpoint/hash
 state, effects, and document-local PDF state start fresh. The executor queues
-the format's `\everyjob` list in the input captured by `JobStart`, then executes
+the format's `\everyjob` list in command state captured by `JobStart`, then executes
 it before consuming the root editor input. Resource retries clone that
 prepared template; they do not rebuild or reintern the frozen format stores.
 
@@ -283,7 +283,7 @@ removes the old internal VFS generation charge as soon as no external snapshot
 retains it; charges do not accumulate with revision count.
 
 While a candidate is suspended, live retention telemetry adds its private
-engine-generation charge, shallow executor/input owners, speculative editor
+engine-generation charge, shallow control/command owners, speculative editor
 fragments and layout, memo results, and private output state to the accepted
 revision's charge. The VFS resource charge comes from the candidate's private
 provisioner generation, whose immutable backing may be shared with accepted

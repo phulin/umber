@@ -1573,15 +1573,16 @@ fn shipped_umber_has_no_retired_command_core_dependencies() {
 
     let incremental = std::fs::read_to_string(root.join("crates/tex-incr/src/lib.rs"))
         .expect("read incremental session owner");
-    assert_eq!(
-        incremental.matches("Executor::new()").count(),
-        2,
-        "retired incremental Executor sites must remain a bounded dead island"
-    );
-    for function in ["execute_revision", "execute_advance"] {
+    for retired in [
+        "Executor::new()",
+        "execute_revision",
+        "execute_advance",
+        "InputStack",
+        "ExecutionContext",
+    ] {
         assert!(
-            incremental.contains(&format!("#[cfg(any())]\nfn {function}(")),
-            "retired incremental function {function} must remain unbuildable"
+            !incremental.contains(retired),
+            "incremental sessions must not retain retired restart edge {retired}"
         );
     }
 }

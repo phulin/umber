@@ -29,9 +29,9 @@ existing height/page-preserving suffix-adoption path remains independent.
 Canonical main control owns TeX82 paragraph entry and completion. Paragraph
 memoization is an optional typed consumer of the prepared horizontal list and
 the completed line material; it neither drives line breaking nor reads raw
-input. The legacy executor adapts its input/provenance recorder at that
-boundary. Canonical callers without such a recorder use the inert consumer,
-which has the same state, effects, and artifacts as a cold unobserved run.
+input. Its recorder observes command-owned input and provenance at that
+boundary. Callers without such a recorder use the inert consumer, which has
+the same state, effects, and artifacts as a cold unobserved run.
 
 ## Accepted history
 

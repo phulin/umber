@@ -6,6 +6,8 @@ long-lived editor-session strategy over executor-named checkpoints.
 ## Boundaries
 
 - Treat `EngineCheckpoint` and `CheckpointRetention` as opaque aggregate roots.
+- Restart only through the checkpoint's tex-command-owned summary and explicit
+  executor/runtime roots; do not recreate lexer or expander state.
 - Never traverse `tex-state` substores or manufacture checkpoint boundaries.
 - Correctness is byte-identical accepted artifacts/DVI versus a cold run; reuse
   is optional when schedule, anchor, or state-hash validation fails.
