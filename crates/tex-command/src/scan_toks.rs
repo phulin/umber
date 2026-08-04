@@ -92,6 +92,7 @@ struct ScannedParameterText {
     hash_brace: Option<TracedTokenWord>,
     primary: OriginId,
     malformed_parameter: bool,
+    missing_left_brace: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,68 +243,81 @@ impl CommandProcessor<'_> {
         // with §479's `t`: `Some(highest)` selects the parameter-character
         // rule and bounds a legal parameter number, `None` leaves parameter
         // characters as ordinary text (`\message`, `\write`, `\toks`, ...).
-        let (expanded, parameter_text, macro_parameters, hash_brace, primary, malformed_parameter) =
-            match mode {
-                ScanToksMode::General { expanded } | ScanToksMode::GeneralFor { expanded, .. } => {
-                    // TeX scans the required opening brace through the ordinary
-                    // expanded path even when the replacement text itself is
-                    // collected unexpanded.
-                    let primary = self.scan_left_brace(true)?.origin();
-                    (expanded, Vec::new(), None, None, primary, false)
-                }
-                ScanToksMode::GeneralAfterOpening {
-                    expanded, primary, ..
-                } => {
-                    // The opening command was already classified through
-                    // `get_x_token` by §1227 and backed up solely so the
-                    // absorbing scanner status precedes its replay. Preserve
-                    // that semantic classification here: a `\let` alias for
-                    // `{` is spelled as a control sequence, but it is still
-                    // the one opening command this mode is required to
-                    // consume. Requiring a literal begin-group spelling
-                    // would mistake the following body token for a second
-                    // opening delimiter after the alias replay.
-                    let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
-                    if !matches!(
-                        opening.meaning(),
-                        Meaning::CharToken {
-                            cat: Catcode::BeginGroup,
-                            ..
-                        }
-                    ) {
-                        return Err(CommandError::input_invariant());
+        let (
+            expanded,
+            parameter_text,
+            macro_parameters,
+            hash_brace,
+            primary,
+            malformed_parameter,
+            missing_left_brace,
+        ) = match mode {
+            ScanToksMode::General { expanded } | ScanToksMode::GeneralFor { expanded, .. } => {
+                // TeX scans the required opening brace through the ordinary
+                // expanded path even when the replacement text itself is
+                // collected unexpanded.
+                let primary = self.scan_left_brace(true)?.origin();
+                (expanded, Vec::new(), None, None, primary, false, false)
+            }
+            ScanToksMode::GeneralAfterOpening {
+                expanded, primary, ..
+            } => {
+                // The opening command was already classified through
+                // `get_x_token` by §1227 and backed up solely so the
+                // absorbing scanner status precedes its replay. Preserve
+                // that semantic classification here: a `\let` alias for
+                // `{` is spelled as a control sequence, but it is still
+                // the one opening command this mode is required to
+                // consume. Requiring a literal begin-group spelling
+                // would mistake the following body token for a second
+                // opening delimiter after the alias replay.
+                let opening = self.get_token()?.ok_or(CommandError::input_invariant())?;
+                if !matches!(
+                    opening.meaning(),
+                    Meaning::CharToken {
+                        cat: Catcode::BeginGroup,
+                        ..
                     }
-                    self.observe_expanded_delivery(&opening);
-                    (expanded, Vec::new(), None, None, primary, false)
+                ) {
+                    return Err(CommandError::input_invariant());
                 }
-                ScanToksMode::GeneralText { .. } => {
-                    let primary = self.scan_left_brace(true)?.origin();
-                    (false, Vec::new(), None, None, primary, false)
-                }
-                ScanToksMode::MacroDefinition { expanded } => {
-                    let parameters = self.scan_parameter_text()?;
-                    (
-                        expanded,
-                        parameters.tokens,
-                        Some((parameters.highest_parameter, None)),
-                        parameters.hash_brace,
-                        parameters.primary,
-                        parameters.malformed_parameter,
-                    )
-                }
-                ScanToksMode::MacroDefinitionFor { expanded, target } => {
-                    let parameters = self.scan_parameter_text()?;
-                    (
-                        expanded,
-                        parameters.tokens,
-                        Some((parameters.highest_parameter, Some(target))),
-                        parameters.hash_brace,
-                        parameters.primary,
-                        parameters.malformed_parameter,
-                    )
-                }
-            };
-        let replacement = self.collect_replacement(expanded, macro_parameters)?;
+                self.observe_expanded_delivery(&opening);
+                (expanded, Vec::new(), None, None, primary, false, false)
+            }
+            ScanToksMode::GeneralText { .. } => {
+                let primary = self.scan_left_brace(true)?.origin();
+                (false, Vec::new(), None, None, primary, false, false)
+            }
+            ScanToksMode::MacroDefinition { expanded } => {
+                let parameters = self.scan_parameter_text()?;
+                (
+                    expanded,
+                    parameters.tokens,
+                    Some((parameters.highest_parameter, None)),
+                    parameters.hash_brace,
+                    parameters.primary,
+                    parameters.malformed_parameter,
+                    parameters.missing_left_brace,
+                )
+            }
+            ScanToksMode::MacroDefinitionFor { expanded, target } => {
+                let parameters = self.scan_parameter_text()?;
+                (
+                    expanded,
+                    parameters.tokens,
+                    Some((parameters.highest_parameter, Some(target))),
+                    parameters.hash_brace,
+                    parameters.primary,
+                    parameters.malformed_parameter,
+                    parameters.missing_left_brace,
+                )
+            }
+        };
+        let replacement = if missing_left_brace {
+            Vec::new()
+        } else {
+            self.collect_replacement(expanded, macro_parameters)?
+        };
         let mut replacement = replacement;
         // TeX's `#{` parameter-text special case treats that left brace as a
         // delimiter and appends the same saved brace after the replacement
@@ -407,6 +421,39 @@ impl CommandProcessor<'_> {
                     hash_brace: None,
                     primary,
                     malformed_parameter,
+                    missing_left_brace: false,
+                });
+            }
+            if is_end_group(token) {
+                // TeX82 §§475--476's `done1` branch has already consumed the
+                // right brace and decremented `align_state`. It expresses
+                // shock, restores that contribution, and finishes the
+                // definition immediately with empty replacement text.
+                observe!(
+                    self,
+                    CommandObservation::Diagnostic(DiagnosticRecord {
+                        severity: "error",
+                        diagnostic: "missing_macro_definition_left_brace",
+                        arguments: Vec::new(),
+                    }),
+                );
+                self.command.alignment.align_state += 1;
+                let context = self.command.output_open_context(&self.state);
+                let mut report = self.state.print_err("Missing { inserted");
+                report
+                    .help(&[
+                        "Where was the left brace? You said something like `\\def\\a}',",
+                        "which I'm going to interpret as `\\def\\a{}'.",
+                    ])
+                    .context(context);
+                report.error().jump_out()?;
+                return Ok(ScannedParameterText {
+                    tokens: output,
+                    highest_parameter: next_parameter - 1,
+                    hash_brace: None,
+                    primary,
+                    malformed_parameter,
+                    missing_left_brace: true,
                 });
             }
             if !is_parameter(token) {
@@ -423,6 +470,7 @@ impl CommandProcessor<'_> {
                     hash_brace: Some(follower.spelling()),
                     primary,
                     malformed_parameter,
+                    missing_left_brace: false,
                 });
             }
             if let Some(number) = parameter_number(follower_token)

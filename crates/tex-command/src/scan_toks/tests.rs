@@ -109,6 +109,64 @@ fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
 }
 
 #[test]
+fn macro_definition_right_brace_reports_missing_left_brace_and_finishes() {
+    let mut command = CommandState::default();
+    push(
+        &mut command,
+        vec![
+            Token::Char {
+                ch: '}',
+                cat: Catcode::EndGroup,
+            },
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let scanned = processor
+            .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+            .expect("TeX82 §§475--476 finish the recovered empty definition");
+        assert!(
+            processor
+                .state
+                .tokens(scanned.parameter_text.token_list())
+                .is_empty()
+        );
+        assert!(
+            processor
+                .state
+                .tokens(scanned.replacement_text.token_list())
+                .is_empty()
+        );
+        assert_eq!(
+            processor.command.alignment.align_state,
+            crate::processor::TOP_LEVEL_ALIGN_STATE
+        );
+        assert_eq!(
+            processor
+                .get_token()
+                .expect("following token delivers")
+                .expect("following token remains unread")
+                .spelling()
+                .semantic_token(),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            }
+        );
+    }
+    let diagnostic = diagnostic_text(&universe);
+    assert!(diagnostic.starts_with("! Missing { inserted."));
+    assert!(diagnostic.contains("Where was the left brace?"));
+}
+
+#[test]
 fn general_after_opening_replays_a_begin_group_alias_by_meaning() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
