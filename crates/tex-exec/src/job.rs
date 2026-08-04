@@ -549,41 +549,48 @@ fn terminal_exhausted_context(
 /// carriage return put it (`term_offset:=0`). The next pass's `print_nl` then
 /// breaks for the transcript and not for the terminal.
 ///
-/// What an accepted line's *tokens* do is not modelled. An empty line
-/// contributes only `\endlinechar`, whose `\par` is a no-op in the vertical
-/// or restricted horizontal mode §360 is reached in, so the corpus -- which
-/// types nothing else at this prompt -- is unaffected; a non-empty line is
-/// read, echoed, and then discarded rather than executed.
-pub(crate) fn prompt_for_more_input(stores: &mut Universe, startup_terminal_line: &str) {
+/// This function performs exactly one acquisition. The owning canonical
+/// control installs an accepted line as a real terminal source, so its tokens
+/// execute through ordinary command delivery and fuel accounting before a
+/// later root-exhaustion step returns here for the next `*` prompt.
+pub(crate) enum EndOfInputAction {
+    Line(String),
+    Fatal(tex_command::FatalError),
+}
+
+pub(crate) fn prompt_for_more_input(
+    stores: &mut Universe,
+    startup_terminal_line: &str,
+    buffered_line_is_empty: bool,
+) -> EndOfInputAction {
     // tex.web §360's `else fatal_error("*** (job aborted...)")`.
     if !stores
         .command_context()
         .interaction_permits_terminal_input()
     {
-        report_emergency_stop(stores, startup_terminal_line, false);
-        return;
+        return EndOfInputAction::Fatal(report_emergency_stop(
+            stores,
+            startup_terminal_line,
+            false,
+        ));
     }
     // §360's `limit=start`, carried across passes: §331's `**` line is what
     // the buffer holds until this loop's own first read replaces it.
-    let mut buffered_line_is_empty = startup_terminal_line.is_empty();
-    loop {
-        if buffered_line_is_empty {
-            stores
-                .printer()
-                .print_nl("(Please type a command or say `\\end')");
-        }
-        stores.printer().print_ln();
-        // §71's `prompt_input("*")`: the prompt, `term_input`'s read, and --
-        // on success -- its transcript echo, all owned by `input_ln`.
-        let line = stores
-            .command_context()
-            .input_ln(tex_state::CommandLineSource::Terminal { prompt: "*" });
-        let Some(line) = line else {
-            // §71's `fatal_error("End of file on the terminal!")`.
-            report_emergency_stop(stores, startup_terminal_line, true);
-            return;
-        };
-        buffered_line_is_empty = line.is_empty();
+    if buffered_line_is_empty {
+        stores
+            .printer()
+            .print_nl("(Please type a command or say `\\end')");
+    }
+    stores.printer().print_ln();
+    // §71's `prompt_input("*")`: the prompt, `term_input`'s read, and --
+    // on success -- its transcript echo, all owned by `input_ln`.
+    let line = stores
+        .command_context()
+        .input_ln(tex_state::CommandLineSource::Terminal { prompt: "*" });
+    match line {
+        Some(line) => EndOfInputAction::Line(line),
+        // §71's `fatal_error("End of file on the terminal!")`.
+        None => EndOfInputAction::Fatal(report_emergency_stop(stores, startup_terminal_line, true)),
     }
 }
 
@@ -595,16 +602,22 @@ pub(crate) fn prompt_for_more_input(stores: &mut Universe, startup_terminal_line
 /// errorstop job from being prompted at §83's `? ` on its way out -- here, of
 /// all places, since the reason this report exists is that the terminal has
 /// nothing left to answer with.
-fn report_emergency_stop(stores: &mut Universe, startup_terminal_line: &str, interactive: bool) {
+fn report_emergency_stop(
+    stores: &mut Universe,
+    startup_terminal_line: &str,
+    interactive: bool,
+) -> tex_command::FatalError {
     let context = terminal_exhausted_context(stores, startup_terminal_line, interactive);
     let mut report = stores.print_err("Emergency stop");
     report.context(context);
-    report.help(&[if interactive {
+    let help = if interactive {
         "End of file on the terminal!"
     } else {
         "*** (job aborted, no legal \\end found)"
-    }]);
+    };
+    report.help(&[help]);
     report.succumb();
+    tex_command::FatalError::emergency_stop(help)
 }
 
 /// tex.web §1333's `close_files_and_terminate`, minus §1378's write-stream

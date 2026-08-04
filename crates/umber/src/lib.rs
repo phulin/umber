@@ -104,17 +104,26 @@ pub use tex_state::{InputDependency, InputDependencyAccess, InputDependencyOutco
 pub use umber_vfs::FileContentId;
 pub use virtual_compile::RenderUpdate;
 
-/// Complete immutable startup capability for one retained canonical run.
+/// Immutable startup capability for one retained canonical run.
+///
+/// The completion policy distinguishes a complete TeX job, which must scan a
+/// canonical terminator, from a host-owned fragment that intentionally stops
+/// at its authored root boundary.
 pub struct RetainedRootRequest {
     pub startup_name: String,
     pub invocation: String,
     pub profile: CommandProfile,
     pub source: SourceRegistration,
+    pub completion: tex_exec::RootCompletionPolicy,
 }
 
 impl RetainedRootRequest {
+    /// Constructs a complete authored TeX job.
+    ///
+    /// The source must reach `\end`, `\dump`, or a format-level equivalent.
+    /// Root EOF without one follows TeX82's missing-`\end` handling.
     #[must_use]
-    pub fn authored(
+    pub fn authored_job(
         startup_name: impl Into<String>,
         source: impl Into<Arc<[u8]>>,
         profile: CommandProfile,
@@ -125,6 +134,25 @@ impl RetainedRootRequest {
             startup_name,
             profile,
             source: SourceRegistration::new(RegisteredSourceKind::Generated, source.into()),
+            completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
+        }
+    }
+
+    /// Constructs an authored fragment which stops at its root EOF without
+    /// pretending that TeX scanned `\end` or running final cleanup.
+    #[must_use]
+    pub fn authored_fragment(
+        startup_name: impl Into<String>,
+        source: impl Into<Arc<[u8]>>,
+        profile: CommandProfile,
+    ) -> Self {
+        let startup_name = startup_name.into();
+        Self {
+            invocation: startup_name.clone(),
+            startup_name,
+            profile,
+            source: SourceRegistration::new(RegisteredSourceKind::Generated, source.into()),
+            completion: tex_exec::RootCompletionPolicy::StopAtRootEof,
         }
     }
 
@@ -141,6 +169,7 @@ impl RetainedRootRequest {
             startup_name,
             profile,
             source: SourceRegistration::world(source),
+            completion: tex_exec::RootCompletionPolicy::RequireTeXEnd,
         }
     }
 }
@@ -162,11 +191,22 @@ pub fn run_retained_root(
     host: &mut dyn CanonicalResourceHost,
 ) -> Result<RunResult, CanonicalSessionError> {
     let mut session = CanonicalEngineSession::new(stores, request.profile);
-    session.register_retained_root_with_invocation(
-        &request.startup_name,
-        &request.invocation,
-        request.source,
-    )?;
+    match request.completion {
+        tex_exec::RootCompletionPolicy::RequireTeXEnd => {
+            session.register_retained_root_with_invocation(
+                &request.startup_name,
+                &request.invocation,
+                request.source,
+            )?;
+        }
+        tex_exec::RootCompletionPolicy::StopAtRootEof => {
+            session.register_retained_fragment_with_invocation(
+                &request.startup_name,
+                &request.invocation,
+                request.source,
+            )?;
+        }
+    }
     session.run(host, &mut NoCanonicalCheckpoints)
 }
 
@@ -1633,7 +1673,7 @@ pub fn run_memory_with_stores_and_profile(
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
     let mut session = CanonicalEngineSession::new(stores, profile);
     session.project_terminal_text_to_root_body();
-    session.register_retained_root_with_invocation(
+    session.register_retained_fragment_with_invocation(
         "texput",
         "texput",
         SourceRegistration::new(
@@ -2001,7 +2041,7 @@ mod tests {
             );
             let error = run_input_collecting_artifacts_with_profile(
                 &mut stores,
-                super::RetainedRootRequest::authored(
+                super::RetainedRootRequest::authored_job(
                     "profile-boundary",
                     source.as_bytes(),
                     profile,
@@ -2025,7 +2065,7 @@ mod tests {
         );
         let result = run_input_collecting_artifacts_with_profile(
             &mut stores,
-            super::RetainedRootRequest::authored(
+            super::RetainedRootRequest::authored_job(
                 "profile-boundary",
                 source.as_bytes(),
                 CommandProfile::PDFTEX14029,
@@ -2048,7 +2088,7 @@ mod tests {
             let mut session = crate::CanonicalEngineSession::new(stores, CommandProfile::TEX82);
             session.project_terminal_text_to_root_body();
             session
-                .register_retained_root_with_invocation(
+                .register_retained_fragment_with_invocation(
                     "texput",
                     "texput",
                     tex_command::SourceRegistration::new(RegisteredSourceKind::Generated, source),

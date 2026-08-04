@@ -1670,7 +1670,8 @@ fn run_recovered_diagnostic_after_tfm_load_exits_successfully() {
     let source = temp_dir.path().join("after-font.tex");
     let child = temp_dir.path().join("child.tex");
     let tfm = temp_dir.path().join("cmr10.tfm");
-    fs::write(&source, "\\font\\f=cmr10 \\relax\n\\input child\n").expect("write main fixture");
+    fs::write(&source, "\\font\\f=cmr10 \\relax\n\\input child\n\\end\n")
+        .expect("write main fixture");
     fs::write(&child, "\\global X\n").expect("write diagnostic fixture");
     fs::copy(
         test_support::repository_root().join("crates/tex-fonts/tests/fixtures/cm/cmr10.tfm"),
@@ -1985,7 +1986,8 @@ fn run_recovers_from_deadcycles_overflow() {
         "\\maxdeadcycles=1 \\output={\\setbox1=\\box255}\n\
          \\topskip=0pt \\setbox0=\\hbox{}\n\
          \\copy0 \\penalty-10000\n\
-         \\copy0 \\penalty-10000\n",
+         \\copy0 \\penalty-10000\n\
+         \\end\n",
     )
     .expect("write deadcycles fixture");
 
@@ -2009,7 +2011,7 @@ fn run_recovers_from_deadcycles_overflow() {
 fn run_recovers_from_extra_right_brace() {
     let temp_dir = tempfile::tempdir().expect("create diagnostic temp dir");
     let source = temp_dir.path().join("brace.tex");
-    fs::write(&source, "}\n").expect("write diagnostic fixture");
+    fs::write(&source, "}\n\\end\n").expect("write diagnostic fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -2035,7 +2037,7 @@ fn run_recovers_from_extra_right_brace() {
 fn run_recovers_from_undefined_control_sequence() {
     let temp_dir = tempfile::tempdir().expect("create expansion diagnostic temp dir");
     let source = temp_dir.path().join("undefined.tex");
-    fs::write(&source, "\\undefined\n").expect("write expansion diagnostic fixture");
+    fs::write(&source, "\\undefined\n\\end\n").expect("write expansion diagnostic fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
@@ -2064,7 +2066,7 @@ fn run_recovers_from_undefined_control_sequence() {
 fn run_recovers_from_extra_endgroup_in_macro() {
     let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
     let source = temp_dir.path().join("macro.tex");
-    fs::write(&source, "\\def\\a{\\endgroup}\\a\n").expect("write macro diagnostic fixture");
+    fs::write(&source, "\\def\\a{\\endgroup}\\a\n\\end\n").expect("write macro diagnostic fixture");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)

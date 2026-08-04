@@ -19,7 +19,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 
 - `AGENTS.md`: crate-local guidance for CLI-driver ownership, boundaries, validation, and this file map.
 - `Cargo.toml`: package metadata, feature flags, workspace lint inheritance, and engine/test dependencies.
-- `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/first_failure_locator.rs`.
+- `src/canonical_session.rs`: `CanonicalEngineSession`, the retained host-neutral entry point for canonical `tex-command`/`CanonicalMainControl` execution; explicit complete-job versus authored-fragment completion, typed resource-suspension fulfillment, checkpoint publication, and the `CanonicalResourceHost` contract used by real drivers and by `examples/first_failure_locator.rs`.
 - `src/expand_dump.rs`: implementation of the `expand-dump` CLI command through the shared engine session and dump primitive setup.
 - `src/format_cache_cli.rs`: pinned LaTeX/pdfLaTeX generated-format cache identity, validated restore, and atomic publication CLI adapter.
 - `src/format_fixture.rs`: generic content-addressed format recipes, fresh loaded-universe reconstruction, typed resource fulfillment, and the raw TeX82 loaded-fixture first slice.

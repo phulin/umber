@@ -305,6 +305,11 @@ fn setup_universe() -> Universe {
     seed_world(&mut world);
     let mut universe = Universe::with_world(world);
     umber::prepare_run_stores(&mut universe);
+    // These are retained fragments, not interactive error-dialogue tests.
+    // Scroll mode still permits the generated terminal `\read` operations
+    // while allowing deliberately invalid register probes to recover without
+    // consuming the terminal-read fixture as §83 responses.
+    universe.set_interaction_mode(tex_state::InteractionMode::Scroll);
     universe
 }
 

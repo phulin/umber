@@ -17,8 +17,8 @@ use tex_command::{
     MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
     PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
     PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
-    PdfReferenceObjectRequest, PdfStartLinkRequest, RestrictedIntegerClass, ScannedAccent,
-    ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind, RestrictedIntegerClass,
+    ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
     ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
     ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
     ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
@@ -207,9 +207,13 @@ pub struct CanonicalMainControl {
     /// Empty when no startup line was scanned, which is §313's own display for
     /// a base level whose consumed and pending text are both empty.
     startup_terminal_line: String,
-    /// Host-owned authored chunks end when their registered root is
-    /// exhausted; complete TeX jobs retain §360's interactive `*` loop.
-    stop_at_end_of_input: bool,
+    /// Whether §360's most recently acquired terminal line was empty. `None`
+    /// means no `*`-prompt line has been acquired yet, so the startup line's
+    /// emptiness supplies the first value.
+    terminal_line_was_empty: Option<bool>,
+    /// Whether root exhaustion is TeX82 §360's missing-`\end` path or an
+    /// explicit host-owned fragment boundary.
+    root_completion: RootCompletionPolicy,
     /// The ordered publication transaction produced by
     /// `fire_pending_page_output` after the contributing step's own records.
     /// It first receives any earlier named-list pushes still owned by that
@@ -2181,10 +2185,43 @@ impl CanonicalMainControl {
         self.drain_file_framing_events(stores);
     }
 
-    /// Selects retained fragment semantics: root exhaustion is the host
-    /// boundary and must not consume §71 terminal lines looking for `\end`.
-    pub fn stop_at_end_of_input(&mut self) {
-        self.stop_at_end_of_input = true;
+    /// Selects whether exhaustion of the registered root ends an authored
+    /// fragment or enters TeX82 §360's missing-`\end` handling.
+    pub fn set_root_completion_policy(&mut self, policy: RootCompletionPolicy) {
+        self.root_completion = policy;
+    }
+
+    /// Performs one §360 terminal-input episode after a complete job reaches
+    /// root EOF without `\end` or `\dump`.
+    ///
+    /// One accepted line is installed as a real terminal source and returned
+    /// to main control for ordinary tokenization and fuel accounting. Fatal
+    /// EOF is latched as §93's terminal `End`, so no driver can advance the
+    /// exhausted source again.
+    fn handle_root_end_of_input(&mut self, stores: &mut Universe) -> ReplayStep {
+        let previous_line_was_empty = self
+            .terminal_line_was_empty
+            .unwrap_or(self.startup_terminal_line.is_empty());
+        match crate::job::prompt_for_more_input(
+            stores,
+            &self.startup_terminal_line,
+            previous_line_was_empty,
+        ) {
+            crate::job::EndOfInputAction::Line(line) => {
+                self.terminal_line_was_empty = Some(line.is_empty());
+                let source =
+                    SourceRegistration::new(RegisteredSourceKind::Generated, line.into_bytes());
+                let id = self
+                    .command
+                    .register_source(source)
+                    .expect("finite command fuel bounds terminal source identities");
+                self.command
+                    .open_registered_source(id)
+                    .expect("fresh terminal source must be openable");
+                ReplayStep::Continue
+            }
+            crate::job::EndOfInputAction::Fatal(fatal) => self.succumb(fatal),
+        }
     }
 
     /// Registers the startup root and immediately renders its §537 opening
@@ -3154,7 +3191,7 @@ impl CanonicalMainControl {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
-        let result = apply_scanned_step(
+        let mut result = apply_scanned_step(
             scanned,
             stores,
             &mut self.modes,
@@ -3188,8 +3225,10 @@ impl CanonicalMainControl {
         }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput) && !self.stop_at_end_of_input {
-            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
+        } else if matches!(result, ReplayStep::EndOfInput)
+            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
+        {
+            result = self.handle_root_end_of_input(stores);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -3932,7 +3971,7 @@ impl CanonicalMainControl {
             } => Some((*dump, incomplete_conditions.clone())),
             _ => None,
         };
-        let result = apply_scanned_step(
+        let mut result = apply_scanned_step(
             scanned,
             stores,
             &mut self.modes,
@@ -3966,8 +4005,10 @@ impl CanonicalMainControl {
         }
         if let (ReplayStep::End, Some((dump, incomplete_conditions))) = (&result, end_tail) {
             self.end_of_job_final_cleanup(stores, dump, incomplete_conditions);
-        } else if matches!(result, ReplayStep::EndOfInput) && !self.stop_at_end_of_input {
-            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
+        } else if matches!(result, ReplayStep::EndOfInput)
+            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
+        {
+            result = self.handle_root_end_of_input(stores);
         }
         self.resume_main_control_parking(parking, stores);
         if fires_afterassignment {
@@ -5879,7 +5920,7 @@ impl CanonicalMainControl {
             _ => None,
         };
         let fires_afterassignment = scanned.fires_afterassignment();
-        let result = apply_scanned_step(
+        let mut result = apply_scanned_step(
             scanned.clone(),
             stores,
             &mut self.modes,
@@ -5935,8 +5976,10 @@ impl CanonicalMainControl {
         ) = (&result, &scanned)
         {
             self.end_of_job_final_cleanup(stores, *dump, incomplete_conditions.clone());
-        } else if matches!(result, Ok(ReplayStep::EndOfInput)) && !self.stop_at_end_of_input {
-            crate::job::prompt_for_more_input(stores, &self.startup_terminal_line);
+        } else if matches!(result, Ok(ReplayStep::EndOfInput))
+            && self.root_completion == RootCompletionPolicy::RequireTeXEnd
+        {
+            result = Ok(self.handle_root_end_of_input(stores));
         }
         if result.is_ok() {
             self.resume_main_control_parking(parking, stores);
@@ -6188,6 +6231,19 @@ pub enum MainControlStep {
     Continue,
     EndOfInput,
     End,
+}
+
+/// Host contract for exhaustion of the registered root source.
+///
+/// TeX jobs require §1045's `\end` or `\dump`; physical EOF instead enters
+/// §360's terminal-input path. Editor and property-test fragments are a
+/// separate host abstraction whose authored root boundary intentionally
+/// returns without running TeX's final cleanup.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RootCompletionPolicy {
+    #[default]
+    RequireTeXEnd,
+    StopAtRootEof,
 }
 
 // The fixture suite retains its historical vocabulary locally.  This alias is

@@ -101,7 +101,7 @@ fn main() -> ExitCode {
     let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
     let root_source = format!("\\input plain.tex \\input {source}.tex\n");
     session
-        .register_authored_root("job.tex", Arc::from(root_source.into_bytes()))
+        .register_authored_job("job.tex", Arc::from(root_source.into_bytes()))
         .expect("register the locator's authored root");
 
     let mut host = CorpusHost;

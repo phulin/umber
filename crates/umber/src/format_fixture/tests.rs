@@ -557,7 +557,7 @@ fn run_explicit_fresh_compatibility(
         .set_fuel_limit(recipe.guards.command_fuel)
         .expect("finite fresh fuel");
     session
-        .register_authored_root(source_name, source)
+        .register_authored_job(source_name, source)
         .expect("fresh root");
     let mut recorder = Recorder::default();
     let result = session

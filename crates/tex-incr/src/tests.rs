@@ -4955,6 +4955,63 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
 }
 
 #[test]
+fn canonical_candidate_root_eof_is_one_fatal_completion() {
+    let session = Session::start(
+        canonical_template_without_preinstalled_primitives(),
+        "missing-end",
+        RevisionId::new(1),
+        "\\endinput",
+        usize::MAX,
+    )
+    .expect("session starts");
+    let mut candidate = session.start_cold_candidate().expect("cold candidate");
+
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut StagedCanonicalHost::default(),
+                &Cancellation::new(),
+            )
+            .expect("fatal root EOF reaches completion"),
+        RevisionCandidateResult::Complete
+    ));
+    let effects = candidate
+        .completed_universe_mut()
+        .expect("completed candidate exposes its universe")
+        .world()
+        .effect_records()
+        .len();
+    assert_eq!(
+        candidate
+            .completed_universe_mut()
+            .expect("completed candidate exposes its universe")
+            .world()
+            .error_channel()
+            .history(),
+        tex_state::print::ErrorHistory::FatalErrorStop
+    );
+
+    assert!(matches!(
+        candidate
+            .drive_with_resource_resolvers(
+                &mut StagedCanonicalHost::default(),
+                &Cancellation::new(),
+            )
+            .expect("completion remains latched"),
+        RevisionCandidateResult::Complete
+    ));
+    assert_eq!(
+        candidate
+            .completed_universe_mut()
+            .expect("completed candidate exposes its universe")
+            .world()
+            .effect_records()
+            .len(),
+        effects
+    );
+}
+
+#[test]
 fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
     let mut session = Session::start(
         canonical_template_without_preinstalled_primitives(),

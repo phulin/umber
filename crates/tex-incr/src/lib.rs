@@ -764,7 +764,12 @@ impl RevisionCandidate {
                         CandidateSink::Cold(sink) => sink.stop_requested(),
                         CandidateSink::Advance(sink) => sink.stop_requested(),
                     };
-                    if stop || matches!(step, MainControlStep::End) {
+                    // Full jobs convert root EOF into §93's fatal `End` inside
+                    // canonical control. Explicit fragment sessions retain
+                    // `EndOfInput` as their successful host boundary. Either
+                    // result is terminal here; replaying an exhausted source
+                    // can only duplicate diagnostics and grow state.
+                    if stop || matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                         self.control
                             .finalize_page_output_receipts(&mut self.universe);
                         let prepared_dvi_pages = self.control.take_prepared_dvi_pages();

@@ -186,6 +186,18 @@ should live near the crate that owns the behavior; fixture data should live in
 the shared corpus tree unless it is strictly local to one crate-level
 integration test.
 
+TeX test inputs must state whether they are complete jobs or host-owned
+fragments. A complete job includes the terminator appropriate to the surface
+under test: normally `\end`, `\dump` for an INITEX format build, `\bye` when
+Plain's cleanup is part of the behavior, or `\end{document}` for LaTeX. Include
+files, scanner snippets, generated property-test chunks, and editor buffers may
+instead use the explicit fragment harness, which stops at root EOF without
+pretending that TeX scanned `\end` or running final cleanup. Harnesses must not
+silently append a terminator: doing so can hide scanner state, grouping, page
+output, and final-cleanup defects. A test of missing-terminator behavior is a
+complete job by definition and must assert the mode-specific diagnostic and a
+bounded terminal result.
+
 Default cargo tests must consume committed fixtures without invoking live TeX
 tools. Licensing-sensitive external-document tests may conditionally consume
 gitignored local oracles. Regenerate fixtures and local oracles only through

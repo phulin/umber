@@ -455,7 +455,7 @@ impl<'a> CanonicalEngineSession<'a> {
         self.project_root_body_terminal_text = true;
     }
 
-    /// Registers the sole World- or host-selected immutable root before any
+    /// Registers the sole World- or host-selected complete job before any
     /// canonical operation.
     ///
     /// The registration is transferred unchanged so its World input-record
@@ -469,7 +469,7 @@ impl<'a> CanonicalEngineSession<'a> {
         self.register_retained_root_with_invocation(startup_input_name, startup_input_name, source)
     }
 
-    /// Registers a root while retaining the complete §534 invocation line.
+    /// Registers a complete job while retaining the §534 invocation line.
     ///
     /// The line may include driver syntax such as web2c's `&format`; job-name
     /// derivation and source identity continue to use `startup_input_name`.
@@ -479,6 +479,40 @@ impl<'a> CanonicalEngineSession<'a> {
         startup_invocation_line: &str,
         source: SourceRegistration,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_root_with_policy(
+            startup_input_name,
+            startup_invocation_line,
+            source,
+            tex_exec::RootCompletionPolicy::RequireTeXEnd,
+        )
+    }
+
+    /// Registers an authored fragment whose root EOF is the host boundary.
+    ///
+    /// This does not synthesize `\end` or run TeX's final cleanup. Complete
+    /// jobs must use [`Self::register_retained_root_with_invocation`] and
+    /// provide their own canonical terminator.
+    pub fn register_retained_fragment_with_invocation(
+        &mut self,
+        startup_input_name: &str,
+        startup_invocation_line: &str,
+        source: SourceRegistration,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_root_with_policy(
+            startup_input_name,
+            startup_invocation_line,
+            source,
+            tex_exec::RootCompletionPolicy::StopAtRootEof,
+        )
+    }
+
+    fn register_retained_root_with_policy(
+        &mut self,
+        startup_input_name: &str,
+        startup_invocation_line: &str,
+        source: SourceRegistration,
+        completion: tex_exec::RootCompletionPolicy,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         if self.root_registered {
             return Err(CanonicalSessionError::RootAlreadyRegistered);
         }
@@ -486,8 +520,8 @@ impl<'a> CanonicalEngineSession<'a> {
             .capabilities_mut()
             .set_startup_job_name(startup_input_name);
         self.root_framing_is_command_owned = source.name().is_some();
-        if source.kind() == RegisteredSourceKind::Generated && source.name().is_none() {
-            self.control.stop_at_end_of_input();
+        self.control.set_root_completion_policy(completion);
+        if completion == tex_exec::RootCompletionPolicy::StopAtRootEof {
             self.terminal_input_cursor = Some(self.stores.terminal_input_position());
         }
         let source = self.control.register_root_source(source)?;
@@ -507,18 +541,31 @@ impl<'a> CanonicalEngineSession<'a> {
         self.register_retained_root(startup_input_name, SourceRegistration::world(content))
     }
 
-    /// Registers an authored in-memory root.
+    /// Registers a complete authored in-memory job.
     ///
     /// This is intentionally not a World-input adapter: selected World roots
     /// must use [`Self::register_world_root`] or
     /// [`Self::register_retained_root`] so their input-record identity is not
-    /// discarded.
-    pub fn register_authored_root(
+    /// discarded. The source must provide its own canonical terminator.
+    pub fn register_authored_job(
         &mut self,
         startup_input_name: &str,
         bytes: Arc<[u8]>,
     ) -> Result<tex_state::SourceId, CanonicalSessionError> {
         self.register_retained_root(
+            startup_input_name,
+            SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
+        )
+    }
+
+    /// Registers an in-memory fragment which completes at its root EOF.
+    pub fn register_authored_fragment(
+        &mut self,
+        startup_input_name: &str,
+        bytes: Arc<[u8]>,
+    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        self.register_retained_fragment_with_invocation(
+            startup_input_name,
             startup_input_name,
             SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
         )
@@ -1290,7 +1337,7 @@ mod tests {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
         session
-            .register_authored_root("stats.tex", b"\\number42\\end".to_vec().into())
+            .register_authored_job("stats.tex", b"\\number42\\end".to_vec().into())
             .expect("stats root registers");
         let (_, stats) = session
             .run_with_expansion_stats(&mut WorldHost, &mut Vec::new())
@@ -1465,7 +1512,7 @@ mod tests {
             };
             let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
             session
-                .register_authored_root("observer", Arc::clone(&source))
+                .register_authored_job("observer", Arc::clone(&source))
                 .expect("root registers");
             let mut observations = ObservationRecorder::default();
             let run = session
@@ -1532,7 +1579,7 @@ mod tests {
             .set_fuel_limit(100_000)
             .expect("bounded fatal microfixture fuel");
         session
-            .register_authored_root("undefined.tex", Arc::from(source.into_bytes()))
+            .register_authored_job("undefined.tex", Arc::from(source.into_bytes()))
             .expect("root registers");
 
         session
@@ -1572,7 +1619,7 @@ mod tests {
             .set_fuel_limit(100_000)
             .expect("bounded fatal microfixture fuel");
         session
-            .register_authored_root("fatal.tex", Arc::from(source.into_bytes()))
+            .register_authored_job("fatal.tex", Arc::from(source.into_bytes()))
             .expect("root registers");
         let mut observations = ObservationRecorder::default();
 
@@ -1612,7 +1659,7 @@ mod tests {
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_fuel_limit(16).expect("finite fuel");
         session
-            .register_authored_root("empty.tex", root)
+            .register_authored_fragment("empty.tex", root)
             .expect("root registers");
         let mut observations = ObservationRecorder::default();
 
@@ -1671,11 +1718,119 @@ mod tests {
     }
 
     #[test]
+    fn explicit_fragment_eof_completes_without_terminal_input_or_final_cleanup() {
+        let (mut stores, root) = prepared_session(b"\\global\\count0=7");
+        stores
+            .world_mut()
+            .push_memory_terminal_line("\\global\\count0=99\\end")
+            .expect("terminal line is staged");
+        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        session
+            .register_authored_fragment("fragment", root)
+            .expect("fragment registers");
+
+        let run = session
+            .run(&mut WorldHost, &mut Vec::new())
+            .expect("fragment EOF completes");
+
+        assert_eq!(session.stores().count(0), 7);
+        assert_eq!(
+            session.stores().world().stream_bufs().terminal_input_next(),
+            0
+        );
+        assert!(run.fatal.is_none());
+    }
+
+    #[test]
+    fn complete_job_eof_is_one_mode_specific_fatal_termination() {
+        for interaction in [
+            tex_state::InteractionMode::Batch,
+            tex_state::InteractionMode::Nonstop,
+            tex_state::InteractionMode::Scroll,
+            tex_state::InteractionMode::ErrorStop,
+        ] {
+            let (mut stores, root) = prepared_session(b"");
+            stores.set_interaction_mode(interaction);
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session.set_fuel_limit(32).expect("finite EOF fuel");
+            session
+                .register_authored_job("missing-end.tex", root)
+                .expect("job registers");
+
+            let run = session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("fatal EOF reaches terminal completion");
+            let help = if matches!(
+                interaction,
+                tex_state::InteractionMode::Scroll | tex_state::InteractionMode::ErrorStop
+            ) {
+                "End of file on the terminal!"
+            } else {
+                "*** (job aborted, no legal \\end found)"
+            };
+            assert_eq!(
+                run.fatal,
+                Some(tex_command::FatalError::emergency_stop(help)),
+                "interaction {interaction:?}"
+            );
+            assert_eq!(
+                session.stores().world().error_channel().history(),
+                tex_state::print::ErrorHistory::FatalErrorStop
+            );
+            let burned = session.fuel_burned();
+            assert!(burned <= session.fuel_limit());
+            assert!(matches!(
+                session
+                    .advance_until_waiting(&mut Vec::new())
+                    .expect("fatal completion stays latched"),
+                CanonicalSessionState::Complete(_)
+            ));
+            assert_eq!(session.fuel_burned(), burned);
+        }
+    }
+
+    #[test]
+    fn interactive_root_eof_executes_terminal_lines_until_end() {
+        for interaction in [
+            tex_state::InteractionMode::Scroll,
+            tex_state::InteractionMode::ErrorStop,
+        ] {
+            let (mut stores, root) = prepared_session(b"");
+            stores.set_interaction_mode(interaction);
+            stores
+                .world_mut()
+                .push_memory_terminal_line("")
+                .expect("empty terminal line is staged");
+            stores
+                .world_mut()
+                .push_memory_terminal_line("\\global\\count0=42\\end")
+                .expect("terminating terminal line is staged");
+            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            session.set_fuel_limit(64).expect("finite terminal fuel");
+            session
+                .register_authored_job("terminal-end.tex", root)
+                .expect("job registers");
+
+            let run = session
+                .run(&mut WorldHost, &mut Vec::new())
+                .expect("terminal end completes the job");
+
+            assert!(run.fatal.is_none(), "interaction {interaction:?}");
+            assert_eq!(session.stores().count(0), 42);
+            assert_eq!(
+                session.stores().world().stream_bufs().terminal_input_next(),
+                2
+            );
+            assert!(session.fuel_burned() <= session.fuel_limit());
+        }
+    }
+
+    #[test]
     fn unobserved_completion_does_not_republish_termination() {
         let (mut stores, root) = prepared_session(b"");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("empty.tex", root)
+            .register_authored_fragment("empty.tex", root)
             .expect("root registers");
 
         assert!(matches!(
@@ -1696,10 +1851,10 @@ mod tests {
 
     #[test]
     fn resource_suspension_does_not_publish_or_latch_termination() {
-        let (mut stores, root) = prepared_session(br"\input child");
+        let (mut stores, root) = prepared_session(br"\input child\end");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let mut observations = ObservationRecorder::default();
 
@@ -1755,7 +1910,7 @@ mod tests {
         tex_exec::install_unexpandable_primitives(&mut stores);
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::ETEX26);
         session
-            .register_authored_root("alphabetic.tex", source)
+            .register_authored_job("alphabetic.tex", source)
             .expect("root registers");
         let mut observations = ObservationRecorder::default();
         session
@@ -1794,7 +1949,7 @@ mod tests {
             prepared_session(b"\\message{once}\\input child x\\par\\shipout\\hbox{x}\\end");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
         let mut checkpoints = Vec::new();
@@ -1849,7 +2004,7 @@ mod tests {
         let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
         session.set_fuel_limit(64).expect("finite fuel");
         session
-            .register_authored_root("headline.tex", Arc::from(&b"\\end"[..]))
+            .register_authored_job("headline.tex", Arc::from(&b"\\end"[..]))
             .expect("INITEX root registers");
 
         session
@@ -1896,7 +2051,7 @@ mod tests {
                 CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82)
             };
             session
-                .register_authored_root("./trip.tex", Arc::from(SOURCE))
+                .register_authored_job("./trip.tex", Arc::from(SOURCE))
                 .expect("root registers");
 
             session
@@ -1926,7 +2081,7 @@ mod tests {
 
         let (mut cold_stores, cold_root) = prepared_session(SOURCE);
         let mut cold = CanonicalEngineSession::new(&mut cold_stores, CommandProfile::TEX82);
-        cold.register_authored_root("cold.tex", cold_root)
+        cold.register_authored_job("cold.tex", cold_root)
             .expect("cold root registers");
         cold.run(&mut WorldHost, &mut Vec::new())
             .expect("cold session recovers from init-only patterns");
@@ -1940,7 +2095,7 @@ mod tests {
         let mut initex_stores = Universe::new_with_plain_catcodes();
         let mut initex = CanonicalEngineSession::tex82_initex(&mut initex_stores);
         initex
-            .register_authored_root("initex.tex", Arc::from(SOURCE))
+            .register_authored_job("initex.tex", Arc::from(SOURCE))
             .expect("INITEX root registers");
         initex
             .run(&mut WorldHost, &mut Vec::new())
@@ -1959,7 +2114,7 @@ mod tests {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
         session
-            .register_authored_root("plain.tex", Arc::from(&b"\\dump"[..]))
+            .register_authored_job("plain.tex", Arc::from(&b"\\dump"[..]))
             .expect("INITEX root registers");
 
         let run = session
@@ -1979,7 +2134,7 @@ mod tests {
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_no_progress_limit(2);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
         let mut checkpoints = Vec::new();
@@ -2008,7 +2163,7 @@ mod tests {
             stores.set_interaction_mode(interaction);
             let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
             session
-                .register_authored_root("job.tex", root)
+                .register_authored_job("job.tex", root)
                 .expect("root registers");
             let mut host = UnavailableThenInputHost {
                 unavailable: 2,
@@ -2029,7 +2184,7 @@ mod tests {
             stores.set_interaction_mode(interaction);
             let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
             session
-                .register_authored_root("job.tex", root)
+                .register_authored_job("job.tex", root)
                 .expect("root registers");
             let mut host = UnavailableThenInputHost {
                 unavailable: usize::MAX,
@@ -2057,7 +2212,7 @@ mod tests {
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_no_progress_limit(1);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
 
@@ -2123,7 +2278,7 @@ mod tests {
         );
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let mut host = OneInputHost { calls: 0 };
 
@@ -2157,7 +2312,7 @@ mod tests {
             .expect("child is seeded");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
 
         let run = session
@@ -2189,7 +2344,7 @@ mod tests {
             .expect("font is seeded");
         let mut font_session = CanonicalEngineSession::new(&mut font_stores, CommandProfile::TEX82);
         font_session
-            .register_authored_root("font.tex", font_root)
+            .register_authored_job("font.tex", font_root)
             .expect("font root registers");
         font_session
             .run(&mut WorldHost, &mut Vec::new())
@@ -2213,7 +2368,7 @@ mod tests {
         let mut image_session =
             CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14029);
         image_session
-            .register_authored_root("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
+            .register_authored_job("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
             .expect("image root registers");
         image_session
             .run(&mut WorldHost, &mut Vec::new())
@@ -2239,7 +2394,7 @@ mod tests {
         let (mut stores, root) = prepared_session(b"\\input child\\end");
         let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
         session
-            .register_authored_root("job.tex", root)
+            .register_authored_job("job.tex", root)
             .expect("root registers");
         let need = match session
             .advance_until_waiting(&mut Vec::new())
@@ -2288,7 +2443,7 @@ mod tests {
             let (mut stores, root) = prepared_session(b"\\def\\cycle{\\cycle}\\cycle");
             let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
             session
-                .register_authored_root("cycle.tex", root)
+                .register_authored_job("cycle.tex", root)
                 .expect("root registers");
             session.set_fuel_limit(19).expect("valid tiny limit");
             let mut observations = ObservationRecorder::default();

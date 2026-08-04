@@ -67,6 +67,9 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
 - `src/canonical_shipout/direct/lower.rs`: state-to-artifact scalar and enum lowering helpers.
 - `src/assignments/tokens.rs`: prefix validation, globaldefs policy, optional equals, and token-list assignment helpers.
 - `src/canonical_page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state shared by canonical command control and the compatibility front.
+- `src/canonical_main_control.rs`: production command delivery and execution
+  driver, including the explicit complete-job versus fragment root-completion
+  contract and bounded §360 terminal-input continuation.
 - `src/canonical_paragraph_memo.rs`: source-free canonical paragraph dependency and mutation validation, deterministic mutation replay, and compact provenance-recipe construction shared by canonical replay and legacy recording.
 - `src/canonical_shipout.rs`: typed source-free canonical page/PDF-form staging transaction, detached shipout origin, and command-owned write/special/literal replay host contracts.
 - `src/canonical_shipout/transaction/tests.rs`: focused shipout transaction ownership tests, including live command-context precedence for pre-staging errors.
@@ -96,7 +99,8 @@ Use this crate when behavior mutates live engine state or depends on TeX's curre
   first line (§534), rendering `tex-command`'s drained §537/§362 `(name`/`)`
   file-bracketing queue, §1335's `final_cleanup` tail (paren close,
   incomplete-conditional and history notes, the `\dump`-outside-INITEX
-  note), and §1333's `close_files_and_terminate` DVI/transcript report. See
+  note), one-acquisition §360 terminal continuation after root EOF, and
+  §1333's `close_files_and_terminate` DVI/transcript report. See
   `docs/job_framing.md`; tests in `src/job/tests.rs`.
 - `src/job_output.rs`: TeX82 §§532--536's engine-owned lazy DVI/transcript
   names, `texput` fallback, transcript-open state, and interactive open retry;

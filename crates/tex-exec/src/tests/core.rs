@@ -1060,7 +1060,7 @@ fn outer_lastskip_uses_page_glue_only_when_the_contribution_list_is_empty() {
 fn dispatch_relax_continues_without_state_mutation() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control.stop_at_end_of_input();
+    control.set_root_completion_policy(crate::RootCompletionPolicy::StopAtRootEof);
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -1150,7 +1150,7 @@ fn incomplete_delimited_macro_at_outer_token_recovers_once_with_par() {
 fn incomplete_delimited_macro_from_inserted_replay_retains_clean_eof_recovery() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control.stop_at_end_of_input();
+    control.set_root_completion_policy(crate::RootCompletionPolicy::StopAtRootEof);
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -2993,7 +2993,7 @@ fn paragraph_indent_is_a_null_box_without_a_pack_transition() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     stores.enable_geometry_observation();
     let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control.stop_at_end_of_input();
+    control.set_root_completion_policy(crate::RootCompletionPolicy::StopAtRootEof);
     run_registered_canonical_tex82(&mut control, &mut stores, "\\parindent=2pt\\indent");
 
     let [Node::HList(indent)] = control.current_list().nodes() else {

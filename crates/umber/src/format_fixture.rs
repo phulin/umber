@@ -612,7 +612,7 @@ pub(crate) fn construct_format_in_worker(
     let mut session =
         CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session.set_fuel_limit(recipe.guards.command_fuel)?;
-    let root = session.register_authored_root(
+    let root = session.register_authored_job(
         &recipe.construction_source_name,
         Arc::clone(&recipe.construction_source),
     )?;

@@ -5011,7 +5011,7 @@ mod tests {
         let mut image_resolver = StaticImageResolver { source: image };
         run_input_collecting_artifacts_with_profile(
             stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -5032,7 +5032,7 @@ mod tests {
         };
         run_input_collecting_artifacts_with_profile(
             stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -5591,7 +5591,7 @@ mod tests {
         };
         run_input_collecting_artifacts(
             &mut stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -5656,7 +5656,7 @@ mod tests {
         let mut image_resolver = StaticImageResolver { source: image };
         let error = run_input_collecting_artifacts(
             &mut fatal_stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 b"\\pdfoutput=1 \\pdfinclusionerrorlevel=1 \\pdfximage {page.pdf}\\end".as_slice(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -6830,7 +6830,7 @@ mod tests {
         let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
         run_input_collecting_artifacts_with_profile(
             stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -6848,7 +6848,7 @@ mod tests {
         let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
         run_input_collecting_artifacts_with_profile(
             stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
@@ -6869,7 +6869,7 @@ mod tests {
         let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
         run_input_collecting_artifacts_with_profile(
             stores,
-            RetainedRootRequest::authored(
+            RetainedRootRequest::authored_job(
                 "pdf-test",
                 source.as_bytes(),
                 tex_command::CommandProfile::PDFTEX14029,
