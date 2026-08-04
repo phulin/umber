@@ -670,6 +670,19 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
         backups, 2,
         "the brace and inserted paragraph each have one backup owner"
     );
+    let recovered_par = extra.input.levels.last().and_then(|level| match level {
+        crate::input::InputLevel::Tokens(cursor) => match &cursor.payload {
+            crate::input::TokenPayload::BackedUp(tokens) => tokens
+                .get(cursor.index)
+                .map(|token| token.spelling.semantic_token()),
+            _ => None,
+        },
+        crate::input::InputLevel::Source(_) => None,
+    });
+    assert!(
+        matches!(recovered_par, Some(Token::Cs(_))),
+        "TeX82 §395 inserts ordinary par_token, not a frozen primitive token"
+    );
 
     let (non_long, outcome, observations) =
         run_observed_macro_call(b"\\m\\par", MeaningFlags::EMPTY);

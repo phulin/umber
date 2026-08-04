@@ -922,10 +922,19 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    /// Installs TeX82 §395's frozen `\par` after an extra right brace in a
-    /// macro argument. The offending brace has already been backed up.
+    /// Installs TeX82 §395's `par_token` after an extra right brace in a macro
+    /// argument. The offending brace has already been backed up.
+    ///
+    /// Unlike §336's frozen outer-validity recovery, §395 assigns the token
+    /// for the ordinary `\par` control sequence. Its meaning is therefore
+    /// resolved when the inserted token is delivered, including a meaning
+    /// that the user has reassigned since INITEX installed the primitive.
     pub(crate) fn insert_macro_argument_recovery_par(&mut self) -> Result<(), CommandError> {
-        let par = self.frozen_primitive_token("par")?;
+        let par = Token::Cs(
+            self.state
+                .symbol("par")
+                .ok_or(CommandError::input_invariant())?,
+        );
         let level = self.command.push_token_level(
             TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
                 par,

@@ -651,7 +651,7 @@ impl CommandProcessor<'_> {
                 .ok_or(CommandError::ParagraphInMacroArgument)?;
             // TeX82 §23's recovered `cur_cmd := spacer` is the return
             // value of the interrupted raw delivery, not a token linked into
-            // §394's temporary argument list. The inserted frozen `\par`
+            // §394's temporary argument list. The inserted `\par`
             // aborts this match on the next demand; §306's already-owned
             // runaway pseudoprint must therefore end at the last real token.
             if command.is_outer_recovery_space() {
@@ -796,7 +796,7 @@ impl CommandProcessor<'_> {
         {
             if self.eof_recovered_while_matching {
                 // TeX82 §23 calls `check_outer_validity` after source EOF;
-                // §394 then aborts this match on its inserted frozen `\par`.
+                // §394 then aborts this match on its inserted `\par`.
                 // That terminator is consumed by the failed expansion, unlike
                 // a user-supplied paragraph which `back_error` must replay.
                 self.set_runaway_partial(crate::processor::RUNAWAY_SCAN_DIAGNOSTIC, partial);
