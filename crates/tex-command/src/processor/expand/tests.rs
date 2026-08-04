@@ -1483,6 +1483,62 @@ fn recursive_input_during_filename_scan_inserts_frozen_relax_before_restored_inp
     );
 }
 
+#[test]
+fn recursive_input_retires_inserted_relax_before_restored_input_diagnostic() {
+    // TeX82 §§310, 314, 378, 527: `insert_relax` creates two input levels and
+    // retypes only the frozen-relax level as `inserted`. Once that terminator
+    // has been read, the next expanded fetch retires its depleted level before
+    // diagnosing the separately backed-up command as `<recently read>`.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let input = install_expandable(&mut universe, "input", ExpandablePrimitive::Input);
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(vec![traced(Token::Cs(input))])),
+        TokenBehavior::Ordinary,
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    command
+        .begin_file_name()
+        .expect("outer filename scan begins");
+
+    let mut capabilities = CommandHostCapabilities::default();
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let boundary = processor
+            .get_x_token()
+            .expect("recursive input recovery succeeds")
+            .expect("frozen relax terminates the filename scan");
+        assert_eq!(boundary.spelling().semantic_token(), Token::frozen_relax());
+    }
+
+    command.end_file_name();
+    universe.set_meaning(input, Meaning::Undefined);
+    {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        assert!(
+            processor
+                .get_x_token()
+                .expect("restored undefined input is diagnosed")
+                .is_none()
+        );
+    }
+    let diagnostic = command
+        .take_semantic_diagnostics()
+        .into_iter()
+        .find_map(|diagnostic| match diagnostic {
+            crate::CommandSemanticDiagnostic::UndefinedControlSequence { context } => Some(context),
+            _ => None,
+        })
+        .expect("undefined input diagnostic is queued");
+    assert!(
+        diagnostic.contains("<recently read> \\input "),
+        "{diagnostic:?}"
+    );
+    assert!(!diagnostic.contains("<inserted text>"), "{diagnostic:?}");
+}
+
 fn effect_text(universe: &Universe) -> String {
     universe
         .world()

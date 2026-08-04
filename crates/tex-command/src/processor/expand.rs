@@ -1175,21 +1175,29 @@ impl CommandProcessor<'_> {
 
     fn expand_input(&mut self, opener: CurrentCommand) -> Result<(), CommandError> {
         if self.command.name_in_progress() {
-            // TeX82 §§378/527: restore the recursively encountered `\input`,
-            // then place inaccessible `frozen_relax` above it. The active
-            // filename scan stops empty at the relax; ordinary expansion
-            // later reaches the restored input.
+            // TeX82 §§378/527 call §378's `insert_relax`: two distinct
+            // `back_input` operations first restore the recursively
+            // encountered `\input`, then place inaccessible `frozen_relax`
+            // above it and retype only that second level as `inserted`. The
+            // distinction is observable after the relax terminates the
+            // active filename scan: its depleted inserted level retires, so
+            // a diagnostic on the restored command says `<recently read>`.
+            let opener_origin = opener.origin();
+            self.back_input(opener)?;
             let origin = self
                 .state
-                .synthesized_origin(SynthesizedOriginKind::Expansion, opener.origin());
+                .synthesized_origin(SynthesizedOriginKind::Expansion, opener_origin);
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
-            self.insert_expansion_list(
-                TokenPayload::Transient(SharedTokenBuffer::new(vec![
-                    frozen_relax,
-                    opener.spelling(),
-                ])),
-                Some(Token::frozen_relax()),
+            let level = self.command.push_token_level(
+                TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                    spelling: frozen_relax,
+                    source_provenance: None,
+                }])),
+                TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+                RetirementBehavior::Pop,
+                ReplayTrace::Inserted,
             );
+            self.observe_inserted_token_recovery(level, Token::frozen_relax());
             return Ok(());
         }
         let _input = self
