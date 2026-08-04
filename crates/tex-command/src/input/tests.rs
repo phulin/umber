@@ -109,6 +109,80 @@ fn source_context_prints_physical_characters_through_live_newlinechar() {
 }
 
 #[test]
+fn source_context_projects_recursive_superscript_reductions_from_live_buffer() {
+    // TeX82 §§355/316: `qq1qM` is reduced in place first to `qqM`, then to
+    // carriage return when `q` has superscript catcode. Error pseudoprint
+    // observes that mutable buffer as `^^M`, not the immutable source bytes.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"leftqq1qMright".as_slice(),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut queries = crate::input::CatcodeQueries(|code: crate::profile::CharacterCode| {
+        if code.to_byte() == Ok(b'q') {
+            tex_state::token::Catcode::Superscript
+        } else if code.to_byte() == Ok(b'\r') {
+            tex_state::token::Catcode::Active
+        } else {
+            tex_state::token::Catcode::Other
+        }
+    });
+    for _ in 0..5 {
+        let _ = command.next_exact_source_step(13, &mut queries);
+    }
+
+    let InputLevel::Source(level) = command.input.levels.last().expect("source level") else {
+        panic!("source level expected");
+    };
+    let context =
+        InputState::source_context_level(level, true, None, None).expect("source context");
+    assert_eq!(
+        render_error_context(&[context], ErrorContextWidths::default(), 5),
+        "\nl.1 left^^M\n           right^^M"
+    );
+}
+
+#[test]
+fn control_word_lookahead_does_not_cross_the_pseudoprint_cursor() {
+    // TeX82 §§355--356 back `loc` up before the first nonletter. The command
+    // core's source cursor projection keeps that still-unread spelling on the
+    // second pseudoprint line, where the live newline character applies.
+    let mut command = CommandState::default();
+    let source = command
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            b"\\foo^^Ytail".as_slice(),
+        ))
+        .expect("source registers");
+    command
+        .open_registered_source(source)
+        .expect("source opens");
+    let mut queries =
+        crate::input::CatcodeQueries(|code: crate::profile::CharacterCode| match code.to_byte() {
+            Ok(b'\\') => tex_state::token::Catcode::Escape,
+            Ok(b'^') => tex_state::token::Catcode::Superscript,
+            Ok(b'a'..=b'z') => tex_state::token::Catcode::Letter,
+            _ => tex_state::token::Catcode::Other,
+        });
+    let _ = command.next_exact_source_step(13, &mut queries);
+
+    let InputLevel::Source(level) = command.input.levels.last().expect("source level") else {
+        panic!("source level expected");
+    };
+    let context =
+        InputState::source_context_level(level, true, None, Some('Y')).expect("source context");
+    assert_eq!(
+        render_error_context(&[context], ErrorContextWidths::default(), 5),
+        "\nl.1 \\foo\n        ^^\ntail^^M"
+    );
+}
+
+#[test]
 fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     // TeX82 §§315/354/375/780: the stored `frozen_end_template` is current
     // after raw delivery, then read once §375 replaces it with `frozen_endv`.

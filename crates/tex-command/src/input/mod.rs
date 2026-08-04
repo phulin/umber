@@ -231,6 +231,18 @@ impl InputState {
             rendered
         }
 
+        fn print_source_code(
+            code: crate::profile::CharacterCode,
+            newlinechar: Option<char>,
+        ) -> Option<String> {
+            let character = if code.is_byte() {
+                char::from(code.to_byte().ok()?)
+            } else {
+                code.to_char().ok()?
+            };
+            Some(print_source_text(&character.to_string(), newlinechar))
+        }
+
         let line = source.cursor.line.as_ref()?;
         let bytes = &source.cursor.current_backing().bytes;
         let start = line.physical.content_range().start();
@@ -259,10 +271,33 @@ impl InputState {
         // §313 pseudoprints each buffer character through §59's `print`, so
         // both the live `new_line_char` and TeX's printable character-string
         // spelling apply to physical source text just as they do to tokens.
-        let mut before =
-            print_source_text(&String::from_utf8_lossy(&bytes[start..cursor]), newlinechar);
-        let mut after =
-            print_source_text(&String::from_utf8_lossy(&bytes[cursor..end]), newlinechar);
+        let render_range = |range_start: usize, range_end: usize| -> Option<String> {
+            let mut rendered = String::new();
+            let mut position = range_start;
+            for spelling in &line.reduced_spellings {
+                let spelling_start = usize::try_from(spelling.range.start()).ok()?;
+                let spelling_end = usize::try_from(spelling.range.end()).ok()?;
+                if spelling_end <= range_start || spelling_start >= range_end {
+                    continue;
+                }
+                if spelling_start < position || spelling_end > range_end {
+                    return None;
+                }
+                rendered.push_str(&print_source_text(
+                    &String::from_utf8_lossy(&bytes[position..spelling_start]),
+                    newlinechar,
+                ));
+                rendered.push_str(&print_source_code(spelling.code, newlinechar)?);
+                position = spelling_end;
+            }
+            rendered.push_str(&print_source_text(
+                &String::from_utf8_lossy(&bytes[position..range_end]),
+                newlinechar,
+            ));
+            Some(rendered)
+        };
+        let mut before = render_range(start, cursor)?;
+        let mut after = render_range(cursor, end)?;
         if let Some(endline) = line.endline {
             let character = if endline.is_byte() {
                 char::from(endline.to_byte().ok()?)

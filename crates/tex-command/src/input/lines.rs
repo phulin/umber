@@ -295,6 +295,17 @@ pub(crate) struct SourceLineState {
     pub(crate) scalar_cursor: u64,
     pub(crate) endline: Option<CharacterCode>,
     pub(crate) endline_delivered: bool,
+    /// TeX82 §355 reductions already applied to the mutable input buffer.
+    ///
+    /// Source bytes remain immutable for provenance, so §316's pseudoprint
+    /// projects these replacements over them to recover TeX's live buffer.
+    pub(crate) reduced_spellings: Vec<ReducedSourceSpelling>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ReducedSourceSpelling {
+    pub(crate) range: SourceRange,
+    pub(crate) code: CharacterCode,
 }
 
 impl SourceLineState {
@@ -324,6 +335,11 @@ impl SourceLineState {
         self.physical.content.start = u64::try_from(new_start).ok()?;
         self.retained_end = self.retained_end.checked_add_signed(byte_delta)?;
         self.byte_cursor = new_cursor;
+        for spelling in &mut self.reduced_spellings {
+            spelling.range.source = source;
+            spelling.range.start = spelling.range.start.checked_add_signed(byte_delta)?;
+            spelling.range.end = spelling.range.end.checked_add_signed(byte_delta)?;
+        }
         self.scalar_cursor = match mode {
             CharacterMode::EightBitExact => u64::try_from(new_cursor_index - new_start).ok()?,
             CharacterMode::UnicodeExtended => u64::try_from(
@@ -482,6 +498,7 @@ impl SourceCursor {
             scalar_cursor: 0,
             endline,
             endline_delivered: false,
+            reduced_spellings: Vec::new(),
         });
         self.lexer_state = super::tokenizer::LexerState::NewLine;
         self.line.as_mut()
@@ -563,6 +580,7 @@ impl SourceCursor {
             scalar_cursor: 0,
             endline,
             endline_delivered: false,
+            reduced_spellings: Vec::new(),
         });
         self.line_backing = Some(backing);
         self.lexer_state = super::tokenizer::LexerState::NewLine;
@@ -596,6 +614,7 @@ impl SourceCursor {
             scalar_cursor: 0,
             endline: None,
             endline_delivered: true,
+            reduced_spellings: Vec::new(),
         });
         self.line_backing = None;
         self.lexer_state = super::tokenizer::LexerState::NewLine;

@@ -239,7 +239,7 @@ impl SourceCursor {
             let mut catcode = |code: CharacterCode| queries.catcode(code);
 
             let Some(character) =
-                self.next_reduced_character(&bytes, mode, superscript, &mut catcode)
+                self.next_reduced_character(&bytes, mode, superscript, false, &mut catcode)
             else {
                 if force_eof || (self.end_after_line && !self.pending_acquired_line) {
                     // TeX82 §362 reaches `end_file_reading` with the final
@@ -254,6 +254,29 @@ impl SourceCursor {
             };
             let scalar_range = self.spelling_scalar_range(character);
             let observed = catcode(character.code());
+
+            // A reduced active character is itself a control-sequence name.
+            // Once delivered, TeX82 §355's buffer spelling is the reduced
+            // character that §316 pseudoprints, just as for an escaped
+            // single-character control sequence. Keep invalid-character
+            // recovery on the unreduced physical spelling: §346 reports it
+            // immediately, before a control sequence has been formed.
+            if observed == Catcode::Active
+                && character
+                    .range()
+                    .end()
+                    .saturating_sub(character.range().start())
+                    > 1
+                && let Some(line) = self.line.as_mut()
+            {
+                line.reduced_spellings
+                    .retain(|spelling| spelling.range.start() != character.range().start());
+                line.reduced_spellings
+                    .push(super::lines::ReducedSourceSpelling {
+                        range: character.range(),
+                        code: character.code(),
+                    });
+            }
 
             match observed {
                 Catcode::Ignored => continue,
@@ -367,7 +390,8 @@ impl SourceCursor {
         superscript: SuperscriptPolicy,
         catcode: &mut impl FnMut(CharacterCode) -> Catcode,
     ) -> SourceToken {
-        let Some(first) = self.next_reduced_character(bytes, mode, superscript, catcode) else {
+        let Some(first) = self.next_reduced_character(bytes, mode, superscript, true, catcode)
+        else {
             return SourceToken::ControlSequence {
                 name: Vec::new(),
                 kind: SourceControlSequenceKind::Null,
@@ -389,7 +413,8 @@ impl SourceCursor {
         let kind = if first_catcode == Catcode::Letter {
             loop {
                 let saved = self.line.clone().expect("control sequence has a line");
-                let Some(next) = self.next_reduced_character(bytes, mode, superscript, catcode)
+                let Some(next) =
+                    self.next_reduced_character(bytes, mode, superscript, true, catcode)
                 else {
                     break;
                 };
@@ -425,11 +450,20 @@ impl SourceCursor {
         bytes: &[u8],
         mode: CharacterMode,
         superscript: SuperscriptPolicy,
+        persist_reduction: bool,
         catcode: &mut impl FnMut(CharacterCode) -> Catcode,
     ) -> Option<SourceCharacter> {
         let line = self.line.as_mut()?;
         let first = line.next_character(mode, bytes)?;
-        reduce_superscript_notation(line, bytes, first, mode, superscript, catcode)
+        reduce_superscript_notation(
+            line,
+            bytes,
+            first,
+            mode,
+            superscript,
+            persist_reduction,
+            catcode,
+        )
     }
 
     fn spelling_scalar_range(&self, character: SourceCharacter) -> SourceScalarRange {
@@ -464,6 +498,7 @@ fn reduce_superscript_notation(
     first: SourceCharacter,
     mode: CharacterMode,
     policy: SuperscriptPolicy,
+    persist_reduction: bool,
     catcode: &mut impl FnMut(CharacterCode) -> Catcode,
 ) -> Option<SourceCharacter> {
     let start = first.range().start();
@@ -505,6 +540,20 @@ fn reduce_superscript_notation(
             scalar_offset: first.scalar_offset(),
             synthetic: false,
         };
+        // TeX82 §355 overwrites the first superscript byte with the reduced
+        // character and shifts the remaining buffer left. Immutable source
+        // storage cannot do that, so retain the equivalent replacement for
+        // §316's later pseudoprint of the live buffer. A recursive reduction
+        // supersedes the shorter replacement recorded by its first pass.
+        if persist_reduction {
+            line.reduced_spellings
+                .retain(|spelling| spelling.range.start() != start);
+            line.reduced_spellings
+                .push(super::lines::ReducedSourceSpelling {
+                    range: current.range(),
+                    code,
+                });
+        }
         // TeX's `reswitch` behavior applies again if the replacement currently
         // has superscript catcode.
     }
