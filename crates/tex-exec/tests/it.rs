@@ -7,7 +7,7 @@ use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
 
 #[test]
-fn alignment_closing_brace_reports_inserted_cr_before_replay() {
+fn alignment_closing_brace_reports_inserted_cr_and_followup_brace() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);
     stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
@@ -15,7 +15,10 @@ fn alignment_closing_brace_reports_inserted_cr_before_replay() {
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
-            Arc::<[u8]>::from(br"\halign{#\cr x}\end".as_slice()),
+            Arc::<[u8]>::from(
+                br"\long\def\l#1{}\let\PAR=\par\def\par{\relax\PAR}\halign{#&#&\l{#}\cr a&b&c&&&.}\par\cr}\end"
+                    .as_slice(),
+            ),
         ))
         .expect("alignment-recovery source registers");
 
@@ -55,6 +58,11 @@ fn alignment_closing_brace_reports_inserted_cr_before_replay() {
         .map(|offset| diagnostic + offset)
         .unwrap_or_else(|| panic!("inserted frozen \\cr context: {transcript:?}"));
     assert!(diagnostic < inserted, "{transcript:?}");
+    let missing_left_brace = transcript[diagnostic..]
+        .find("! Missing { inserted.")
+        .map(|offset| diagnostic + offset)
+        .unwrap_or_else(|| panic!("TeX82 §1127 diagnostic: {transcript:?}"));
+    assert!(diagnostic < missing_left_brace, "{transcript:?}");
 }
 
 #[test]

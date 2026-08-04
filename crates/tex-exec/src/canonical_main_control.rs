@@ -6484,8 +6484,11 @@ enum ScannedStep {
     BeginNoAlign {
         alignment: AlignmentIdentity,
     },
+    /// TeX82 §1127's `align_error` has backed up the delimiter and inserted
+    /// this balancing brace. Applying the step emits the matching `ins_error`
+    /// diagnostic before replay fetches the inserted token.
     AlignmentRecovery {
-        opens_simple_group: bool,
+        brace: Catcode,
     },
     BeginSimpleGroup,
     EndSimpleGroup,
@@ -10449,14 +10452,12 @@ fn scan_align_error(
         .map_err(command_error)?
     {
         None => Ok(ScannedStep::MisplacedAlignmentDelimiter { token }),
-        Some(recovery) => Ok(ScannedStep::AlignmentRecovery {
-            opens_simple_group: matches!(
-                recovery,
-                tex_state::token::Token::Char {
-                    cat: Catcode::BeginGroup,
-                    ..
-                }
-            ),
+        Some(tex_state::token::Token::Char {
+            cat: brace @ (Catcode::BeginGroup | Catcode::EndGroup),
+            ..
+        }) => Ok(ScannedStep::AlignmentRecovery { brace }),
+        Some(_) => Err(ExecError::MissingToken {
+            context: "align_error balancing brace",
         }),
     }
 }
@@ -16333,7 +16334,27 @@ fn apply_scanned_step(
             schedule_aftergroup(command, stores, aftergroup)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::AlignmentRecovery { opens_simple_group } => {
+        ScannedStep::AlignmentRecovery { brace } => {
+            let (message, opens_simple_group) = match brace {
+                Catcode::BeginGroup => ("Missing { inserted", true),
+                Catcode::EndGroup => ("Missing } inserted", false),
+                _ => {
+                    return Err(ExecError::MissingToken {
+                        context: "align_error balancing brace",
+                    });
+                }
+            };
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                message,
+                &[
+                    "I've put in what seems to be necessary to fix",
+                    "the current column of the current alignment.",
+                    "Try to go on, since this might almost work.",
+                ],
+                context,
+            )?;
             boxes.recovery_simple_group_pending = opens_simple_group;
             Ok(ReplayStep::Continue)
         }

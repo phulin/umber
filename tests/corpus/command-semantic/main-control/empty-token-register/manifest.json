@@ -34,18 +34,18 @@
           "kind": "xfail",
           "bug": "umber2-alfh.11",
           "mismatch": {
-            "line": 11,
-            "expected": "! File ended while scanning text of \\toks.",
-            "actual": "! File ended while scanning text of ."
+            "line": 14,
+            "expected": "<*> empty-token-register.tex",
+            "actual": "? "
           }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
           "mismatch": {
-            "line": 13,
-            "expected": "! File ended while scanning text of \\toks.",
-            "actual": "! File ended while scanning text of ."
+            "line": 16,
+            "expected": "<*> empty-token-register.tex",
+            "actual": "? "
           }
         },
         "dvi": { "kind": "empty" },
