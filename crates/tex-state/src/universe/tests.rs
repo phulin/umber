@@ -83,10 +83,10 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
     let initially_used = loaded.engine_usage_statistics();
     assert_eq!(initially_used.strings, 0);
     assert_eq!(initially_used.string_characters, 0);
-    assert_eq!(initially_used.string_capacity, 15_000 - (1_027 + 3));
+    assert_eq!(initially_used.string_capacity, 15_000 - (1_027 + 4));
     assert_eq!(
         initially_used.string_character_capacity,
-        125_000 - (106_841 + "format-control".len() + 9)
+        125_000 - (106_841 + "format-control".len() + "nullfont".len() + 9)
     );
 
     loaded.intern("job-control");
@@ -1204,6 +1204,33 @@ fn frozen_non_node_sections_are_deterministic_and_keep_mutable_overlays() {
     assert_eq!(loaded.catcode('\u{1f642}'), Catcode::Active);
     assert_eq!(loaded.hyphenation_exception("overlay"), None);
     assert_eq!(loaded.dump_format().expect("rollback redump"), image);
+}
+
+#[test]
+fn hyphenation_exception_occupancy_and_capacity_survive_format_replacement() {
+    // TeX82 §§934/1334: one-letter words never occupy the table, while a
+    // language-qualified replacement updates one occupied entry in place.
+    let mut universe = Universe::new();
+    universe.set_hyphenation_exception_capacity(659);
+    universe.add_hyphenation_exception(ExceptionSpec {
+        word: "t".to_owned(),
+        positions: Vec::new(),
+    });
+    universe.add_hyphenation_exception(ExceptionSpec {
+        word: "bbbbbb".to_owned(),
+        positions: vec![2],
+    });
+    let image = universe.dump_format().expect("hyphenation usage format");
+    let mut loaded = Universe::from_format(World::memory(), &image).expect("loaded usage");
+    loaded.add_hyphenation_exception(ExceptionSpec {
+        word: "bbbbbb".to_owned(),
+        positions: vec![3],
+    });
+
+    let usage = loaded.engine_usage_statistics();
+    assert_eq!(usage.hyphenation_exceptions, 1);
+    assert_eq!(usage.hyphenation_exception_capacity, 659);
+    assert_eq!(loaded.hyphenation_exception("bbbbbb"), Some(&[3][..]));
 }
 
 #[test]

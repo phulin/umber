@@ -4718,6 +4718,11 @@ impl Universe {
         self.stores.set_hyphenation_trie_capacity(capacity);
     }
 
+    /// Selects tex.web §934's profile-owned `hyph_size`.
+    pub fn set_hyphenation_exception_capacity(&mut self, capacity: usize) {
+        self.stores.set_hyphenation_exception_capacity(capacity);
+    }
+
     #[must_use]
     pub fn contains_hyphenation_pattern_for_language(
         &self,

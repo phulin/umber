@@ -450,6 +450,8 @@ fn trip_format_recipe(
     tfm: Arc<[u8]>,
 ) -> FormatRecipe {
     let mut recipe = profile.recipe();
+    // Knuth's TRIP build deliberately selects this non-production `hyph_size`.
+    recipe.hyphenation_exception_capacity = 659;
     recipe.format_name = profile.format_name().into();
     // TeX82 §1328 persists the dump job name independently of web2c §61's
     // selected `dump_name` used by the terminal banner.
@@ -467,7 +469,7 @@ fn trip_format_recipe(
             bytes: tfm,
         },
     ];
-    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v1"[..]);
+    recipe.distribution_identity = Arc::from(&b"pinned-trip-public-format-boundary-v2"[..]);
     recipe.clock = JobClock {
         time: 13 * 60 + 36,
         second: 0,
@@ -785,6 +787,7 @@ fn plain_format_recipe(repo_root: &Path) -> Result<FormatRecipe, String> {
     }
     Ok(FormatRecipe {
         engine: EngineMode::Tex82,
+        hyphenation_exception_capacity: 307,
         format_name: "repository-plain-tex82".into(),
         format_ident_name: "repository-plain-tex82".into(),
         construction_source_name: "repository-plain-tex82.ini".into(),

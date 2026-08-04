@@ -230,6 +230,7 @@ pub struct EngineUsageStatistics {
     pub font_info_words: usize,
     pub fonts: usize,
     pub hyphenation_exceptions: usize,
+    pub hyphenation_exception_capacity: usize,
     pub input_stack: usize,
     pub nest_stack: usize,
     pub parameter_stack: usize,
@@ -341,6 +342,9 @@ impl EngineUsageStatistics {
             hyphenation_exceptions: self
                 .hyphenation_exceptions
                 .max(other.hyphenation_exceptions),
+            hyphenation_exception_capacity: self
+                .hyphenation_exception_capacity
+                .max(other.hyphenation_exception_capacity),
             input_stack: self.input_stack.max(other.input_stack),
             nest_stack: self.nest_stack.max(other.nest_stack),
             parameter_stack: self.parameter_stack.max(other.parameter_stack),
@@ -433,7 +437,8 @@ impl Stores {
             control_sequences: self.interner.multiletter_len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
-            hyphenation_exceptions: self.hyphenation.exception_count(),
+            hyphenation_exceptions: self.hyphenation.exception_usage().occupied,
+            hyphenation_exception_capacity: self.hyphenation.exception_usage().capacity,
             ..EngineUsageStatistics::default()
         };
         let high_water = self.usage_high_water.merge_max(current);
@@ -728,6 +733,10 @@ impl Stores {
         Arc::make_mut(&mut self.hyphenation).set_trie_capacity(capacity);
     }
 
+    pub fn set_hyphenation_exception_capacity(&mut self, capacity: usize) {
+        Arc::make_mut(&mut self.hyphenation).set_exception_capacity(capacity);
+    }
+
     #[must_use]
     pub(crate) fn contains_hyphenation_pattern_for_language(
         &self,
@@ -760,9 +769,10 @@ impl Stores {
         // `make_string`; the exception table retains that string. The second
         // extra byte is the command core's unfinished current-string byte:
         // §1334 counts it in `pool_ptr` although it has no `str_ptr` entry.
-        self.string_pool
-            .allocate(1, exception.word.len().saturating_add(2));
-        Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
+        let string_bytes = exception.word.len().saturating_add(2);
+        let _insertion =
+            Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
+        self.string_pool.allocate(1, string_bytes);
     }
 
     pub fn save_hyphenation_codes(

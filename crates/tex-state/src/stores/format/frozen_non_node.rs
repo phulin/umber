@@ -10,6 +10,7 @@ pub(crate) const CODE_TABLES_SECTION: u32 = 336;
 pub(crate) const HYPHENATION_SECTION: u32 = 352;
 
 const VERSION: u32 = 1;
+const HYPHENATION_VERSION: u32 = 2;
 const FONTS_HEADER: usize = 32;
 const CODE_TABLES_HEADER: usize = 16;
 const CODE_TABLE_RECORD: usize = 32;
@@ -228,7 +229,7 @@ fn encode_hyphenation(table: &HyphenationTable) -> Result<Vec<u8>, StoreFormatEr
     let payload =
         bincode::serialize(table).map_err(|error| StoreFormatError::Codec(error.to_string()))?;
     let mut out = vec![0; HYPHENATION_HEADER + payload.len()];
-    put_u32(&mut out, 0, VERSION);
+    put_u32(&mut out, 0, HYPHENATION_VERSION);
     put_u32(&mut out, 4, HYPHENATION_HEADER as u32);
     put_u32(
         &mut out,
@@ -241,7 +242,7 @@ fn encode_hyphenation(table: &HyphenationTable) -> Result<Vec<u8>, StoreFormatEr
 
 fn decode_hyphenation(bytes: &[u8]) -> Result<HyphenationTable, StoreFormatError> {
     if bytes.len() < HYPHENATION_HEADER
-        || read_u32(bytes, 0) != VERSION
+        || read_u32(bytes, 0) != HYPHENATION_VERSION
         || read_u32(bytes, 4) as usize != HYPHENATION_HEADER
         || read_u32(bytes, 12) != 0
         || HYPHENATION_HEADER.checked_add(read_u32(bytes, 8) as usize) != Some(bytes.len())

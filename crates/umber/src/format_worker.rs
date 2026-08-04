@@ -34,7 +34,7 @@ use crate::format_fixture::{
     construct_format_in_worker,
 };
 
-const PROTOCOL: u32 = 3;
+const PROTOCOL: u32 = 4;
 const AUTH_KEY_BYTES: usize = 32;
 const REQUEST_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-REQUEST-V3\0";
 const RESPONSE_PREFIX: &[u8] = b"\0UMBER-FORMAT-WORKER-RESPONSE-V3\0";
@@ -54,6 +54,7 @@ struct Request {
     protocol: u32,
     identity: [u8; 32],
     engine: u8,
+    hyphenation_exception_capacity: u64,
     format_name: String,
     format_ident_name: String,
     source_name: String,
@@ -839,6 +840,10 @@ impl Request {
             protocol: PROTOCOL,
             identity,
             engine: engine_tag(recipe.engine),
+            hyphenation_exception_capacity: recipe
+                .hyphenation_exception_capacity
+                .try_into()
+                .map_err(|_| FormatFixtureError::UnboundedGuard)?,
             format_name: recipe.format_name.clone(),
             format_ident_name: recipe.format_ident_name.clone(),
             source_name: recipe.construction_source_name.clone(),
@@ -871,6 +876,10 @@ impl Request {
     fn into_recipe(self) -> Result<FormatRecipe, String> {
         let recipe = FormatRecipe {
             engine: decode_engine(self.engine)?,
+            hyphenation_exception_capacity: self
+                .hyphenation_exception_capacity
+                .try_into()
+                .map_err(|_| "hyphenation exception capacity is not host-representable")?,
             format_name: self.format_name,
             format_ident_name: self.format_ident_name,
             construction_source_name: self.source_name,

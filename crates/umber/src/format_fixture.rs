@@ -92,6 +92,8 @@ pub enum LoadedFormatResource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FormatRecipe {
     pub engine: EngineMode,
+    /// tex.web §934's configured exception-table capacity (`hyph_size`).
+    pub hyphenation_exception_capacity: usize,
     /// web2c's selected `dump_name`, used by §61's terminal banner.
     pub format_name: String,
     /// The dump job name embedded by TeX82 §1328 and restored for §536's log.
@@ -114,6 +116,7 @@ impl FormatRecipe {
     pub fn raw_tex82() -> Self {
         Self {
             engine: EngineMode::Tex82,
+            hyphenation_exception_capacity: 307,
             format_name: "raw-tex82".into(),
             format_ident_name: "raw-tex82".into(),
             construction_source_name: "raw-tex82.ini".into(),
@@ -142,6 +145,7 @@ impl FormatRecipe {
     pub fn raw_etex26() -> Self {
         Self {
             engine: EngineMode::ETex,
+            hyphenation_exception_capacity: 307,
             format_name: "raw-etex26".into(),
             format_ident_name: "raw-etex26".into(),
             construction_source_name: "raw-etex26.ini".into(),
@@ -173,6 +177,7 @@ impl FormatRecipe {
     pub fn production_pdftex14027() -> Self {
         Self {
             engine: EngineMode::PdfTex,
+            hyphenation_exception_capacity: 307,
             format_name: "production".into(),
             format_ident_name: "production".into(),
             construction_source_name: "production-pdftex14027.ini".into(),
@@ -207,6 +212,7 @@ impl FormatRecipe {
             &COMMAND_OBSERVATION_SCHEMA_VERSION.to_le_bytes(),
             &profile.to_stable_bytes(),
             &profile.fingerprint().get().to_le_bytes(),
+            &(self.hyphenation_exception_capacity as u64).to_le_bytes(),
             &registry_state.to_le_bytes(),
             &tex_observe::EVIDENCE_CODEC_SCHEMA.to_le_bytes(),
             &(tex_observe::MAX_EVIDENCE_EVENTS_PER_STREAM as u64).to_le_bytes(),
@@ -600,6 +606,7 @@ pub(crate) fn construct_format_in_worker(
     recipe.guards.validate()?;
     let mut universe = Universe::with_world(World::memory_with_clock(recipe.clock));
     recipe.engine.prepare_initex(&mut universe);
+    universe.set_hyphenation_exception_capacity(recipe.hyphenation_exception_capacity);
     universe.set_interaction_mode(recipe.construction_interaction);
     universe.set_error_context_widths(recipe.construction_error_context_widths);
     let mut session =

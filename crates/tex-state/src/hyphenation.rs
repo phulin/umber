@@ -14,6 +14,23 @@ const fn default_trie_capacity() -> usize {
     PDFTEX_TRIE_SIZE
 }
 
+const fn default_exception_capacity() -> usize {
+    307
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HyphenationExceptionUsage {
+    pub occupied: usize,
+    pub capacity: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExceptionInsertion {
+    Ignored,
+    Replaced,
+    Allocated,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HyphenationCapacityError {
     pub capacity: usize,
@@ -36,6 +53,10 @@ pub struct HyphenationTable {
     /// Runtime `trie_size`. This is configuration, not format-image state.
     #[serde(skip, default = "default_trie_capacity")]
     trie_capacity: usize,
+    /// TeX82 §1334's `hyph_count` and §934's configured `hyph_size`.
+    exception_occupied: usize,
+    #[serde(default = "default_exception_capacity")]
+    exception_capacity: usize,
 }
 
 impl PartialEq for HyphenationTable {
@@ -44,6 +65,8 @@ impl PartialEq for HyphenationTable {
             && self.hyphen_codes == other.hyphen_codes
             && self.patterns_open == other.patterns_open
             && self.trie_capacity == other.trie_capacity
+            && self.exception_occupied == other.exception_occupied
+            && self.exception_capacity == other.exception_capacity
     }
 }
 
@@ -135,11 +158,11 @@ pub struct ExceptionSpec {
 impl HyphenationTable {
     /// Number of live language-qualified hyphenation exceptions.
     #[must_use]
-    pub(crate) fn exception_count(&self) -> usize {
-        self.languages
-            .values()
-            .map(|table| table.exceptions.len())
-            .sum()
+    pub(crate) const fn exception_usage(&self) -> HyphenationExceptionUsage {
+        HyphenationExceptionUsage {
+            occupied: self.exception_occupied,
+            capacity: self.exception_capacity,
+        }
     }
 
     #[must_use]
@@ -150,6 +173,8 @@ impl HyphenationTable {
             patterns_open: true,
             dependency_fingerprints: OnceLock::new(),
             trie_capacity: default_trie_capacity(),
+            exception_occupied: 0,
+            exception_capacity: default_exception_capacity(),
         }
     }
 
@@ -159,6 +184,10 @@ impl HyphenationTable {
     /// avoids making exhaustion depend on the host allocator.
     pub fn set_trie_capacity(&mut self, capacity: usize) {
         self.trie_capacity = capacity;
+    }
+
+    pub fn set_exception_capacity(&mut self, capacity: usize) {
+        self.exception_capacity = capacity;
     }
 
     #[must_use]
@@ -171,6 +200,14 @@ impl HyphenationTable {
     }
 
     pub(crate) fn validate_frozen(&self) -> Result<(), &'static str> {
+        let occupied = self
+            .languages
+            .values()
+            .map(|table| table.exceptions.len())
+            .sum::<usize>();
+        if occupied != self.exception_occupied || occupied > self.exception_capacity {
+            return Err("invalid frozen hyphenation exception occupancy");
+        }
         for table in self.languages.values() {
             if table.nodes.is_empty() {
                 return Err("frozen hyphenation language has no root");
@@ -268,20 +305,33 @@ impl HyphenationTable {
         !letters.is_empty() && !table.nodes[node].values.is_empty()
     }
 
-    pub fn add_exception(&mut self, exception: ExceptionSpec) {
-        self.add_exception_for_language(0, exception);
+    pub fn add_exception(&mut self, exception: ExceptionSpec) -> ExceptionInsertion {
+        self.add_exception_for_language(0, exception)
     }
 
-    pub fn add_exception_for_language(&mut self, language: u8, exception: ExceptionSpec) {
-        if exception.word.is_empty() {
-            return;
+    pub fn add_exception_for_language(
+        &mut self,
+        language: u8,
+        exception: ExceptionSpec,
+    ) -> ExceptionInsertion {
+        // TeX82 §934 enters a completed exception only when `n>1`.
+        if exception.word.chars().nth(1).is_none() {
+            return ExceptionInsertion::Ignored;
         }
         self.dependency_fingerprints = OnceLock::new();
-        self.languages
+        let replaced = self
+            .languages
             .entry(language)
             .or_default()
             .exceptions
-            .insert(exception.word, exception.positions);
+            .insert(exception.word, exception.positions)
+            .is_some();
+        if replaced {
+            ExceptionInsertion::Replaced
+        } else {
+            self.exception_occupied = self.exception_occupied.saturating_add(1);
+            ExceptionInsertion::Allocated
+        }
     }
 
     pub fn save_hyphen_codes(

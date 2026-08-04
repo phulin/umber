@@ -717,7 +717,9 @@ fn print_usage_statistics(stores: &mut Universe, profile: CommandProfile) {
     if usage.hyphenation_exceptions != 1 {
         printer.print_char('s');
     }
-    printer.print(" out of 307").print_nl(" ");
+    printer.print(" out of ");
+    print_usize(&mut printer, usage.hyphenation_exception_capacity);
+    printer.print_nl(" ");
     print_stack_usage(&mut printer, usage);
 }
 
