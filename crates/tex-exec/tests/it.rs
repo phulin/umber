@@ -7,6 +7,57 @@ use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
 
 #[test]
+fn alignment_closing_brace_reports_inserted_cr_before_replay() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(br"\halign{#\cr x}\end".as_slice()),
+        ))
+        .expect("alignment-recovery source registers");
+
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("alignment-recovery source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    let diagnostic = transcript
+        .find("! Missing \\cr inserted.")
+        .unwrap_or_else(|| panic!("TeX82 §§82/1132 diagnostic: {transcript:?}"));
+    let inserted = transcript[diagnostic..]
+        .find("<inserted text>")
+        .map(|offset| diagnostic + offset)
+        .unwrap_or_else(|| panic!("inserted frozen \\cr context: {transcript:?}"));
+    assert!(diagnostic < inserted, "{transcript:?}");
+}
+
+#[test]
 fn paragraph_start_page_build_reports_backed_up_context_before_help() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);

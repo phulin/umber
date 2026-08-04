@@ -5912,6 +5912,10 @@ enum ScannedStep {
     /// reaches §366 `expand` and §375 backs up a separate `frozen_endv` token
     /// to be reread.
     AlignmentTemplateEntered,
+    /// TeX82 §1132's `align_group` recovery has backed up the closing brace
+    /// and inserted frozen `\cr`; §82's `ins_error` diagnostic must run
+    /// before alignment delivery fetches that inserted row terminator.
+    MissingAlignmentCr,
     MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
     Math(CanonicalMathRequest),
@@ -7041,7 +7045,7 @@ fn scan_alignment_delivery_step(
                         tex_command::AlignmentDeliveryEvent::ClosingBrace(command),
                     )
                     .map_err(command_error)?;
-                return Ok(ScannedStep::Continue);
+                return Ok(ScannedStep::MissingAlignmentCr);
             }
             if matches!(command.meaning(), Meaning::EndV) {
                 // TeX82 §§1046-1047 route `mmode+endv` through
@@ -7095,7 +7099,7 @@ fn scan_alignment_delivery_step(
                     processor
                         .begin_alignment_v_template(alignment, event)
                         .map_err(command_error)?;
-                    return Ok(ScannedStep::AlignmentTemplateEntered);
+                    Ok(ScannedStep::AlignmentTemplateEntered)
                 }
                 tex_command::AlignmentDeliveryEvent::ClosingBrace(_) => {
                     // TeX82 §1132 selects this executor-owned align_group
@@ -7104,9 +7108,9 @@ fn scan_alignment_delivery_step(
                     processor
                         .recover_alignment_closing_brace(event)
                         .map_err(command_error)?;
+                    Ok(ScannedStep::MissingAlignmentCr)
                 }
             }
-            Ok(ScannedStep::Continue)
         }
     }
 }
@@ -11976,6 +11980,7 @@ fn applied_mutation_observation(
         | ScannedStep::Relax
         | ScannedStep::AlignPeekRestart { .. }
         | ScannedStep::AlignmentTemplateEntered
+        | ScannedStep::MissingAlignmentCr
         | ScannedStep::MissingMathShift
         | ScannedStep::EndOfInput
         | ScannedStep::End { .. }
@@ -13668,6 +13673,20 @@ fn apply_scanned_step(
                     "I've inserted a begin-math/end-math symbol since I think",
                     "you left one out. Proceed, with fingers crossed.",
                 ],
+                context,
+            )?;
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::MissingAlignmentCr => {
+            // TeX82 §1132 reaches §82's `ins_error` only after §325 has
+            // backed up the brace and frozen `\cr` has been inserted. The
+            // open context therefore labels the repair `<inserted text>` and
+            // leaves the original brace below it as `<to be read again>`.
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::error_report::report_error(
+                stores,
+                "Missing \\cr inserted",
+                &["I'm guessing that you meant to end an alignment here."],
                 context,
             )?;
             Ok(ReplayStep::Continue)
