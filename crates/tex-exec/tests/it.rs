@@ -59,6 +59,60 @@ fn restricted_horizontal_hrule_reports_source_before_rule_spec_lookahead() {
 }
 
 #[test]
+fn restricted_horizontal_prevdepth_reports_before_scanning_an_operand() {
+    // TeX82 §1243's `alter_aux` compares `cur_chr` with `abs(mode)` before
+    // `scan_optional_equals` and `scan_normal_dimen`. The following `\relax`
+    // therefore remains an ordinary command instead of becoming a rejected
+    // dimension operand.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(br"\setbox0=\hbox{\prevdepth\relax X}\end".as_slice()),
+        ))
+        .expect("restricted-horizontal prevdepth source registers");
+
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("restricted-horizontal prevdepth source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    assert!(
+        transcript.contains("! You can't use `\\prevdepth' in restricted horizontal mode."),
+        "{transcript}"
+    );
+    assert!(
+        !transcript.contains("Missing number, treated as zero."),
+        "{transcript}"
+    );
+}
+
+#[test]
 fn alignment_closing_brace_reports_inserted_cr_and_followup_brace() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);

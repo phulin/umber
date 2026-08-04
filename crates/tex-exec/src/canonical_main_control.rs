@@ -6080,6 +6080,13 @@ enum ScannedStep {
     PrevDepth {
         value: Scaled,
     },
+    /// TeX82 §1243 checks `cur_chr<>abs(mode)` before calling either
+    /// `scan_optional_equals` or `scan_normal_dimen`. Thus an illegal-mode
+    /// `\prevdepth` reports `report_illegal_case` while preserving the very
+    /// next token as an ordinary main-control command.
+    IllegalPrevDepth {
+        token: Token,
+    },
     /// TeX82 §1243's `set_aux` assignment for the horizontal-mode modifier:
     /// `\spacefactor=<number>` sets the current horizontal list's space
     /// factor. Legal only in horizontal or restricted-horizontal mode;
@@ -8214,9 +8221,15 @@ fn scan_command(
             Ok(ScannedStep::ControlSpace)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PrevDepth) => {
-            let _ = processor.scan_optional_equals().map_err(command_error)?;
-            let value = processor.scan_dimension().map_err(command_error)?.value;
-            Ok(ScannedStep::PrevDepth { value })
+            if matches!(mode, Mode::Vertical | Mode::InternalVertical) {
+                let _ = processor.scan_optional_equals().map_err(command_error)?;
+                let value = processor.scan_dimension().map_err(command_error)?.value;
+                Ok(ScannedStep::PrevDepth { value })
+            } else {
+                Ok(ScannedStep::IllegalPrevDepth {
+                    token: command.spelling().semantic_token(),
+                })
+            }
         }
         // TeX82 §1265's `any_mode(set_interaction): prefixed_command` ->
         // `new_interaction` (§1264): `interaction:=cur_chr`. The four
@@ -11918,6 +11931,7 @@ fn applied_mutation_observation(
         // table), and §1265's `new_interaction` (the `interaction` global).
         ScannedStep::BoxDimensionAssignment { .. }
         | ScannedStep::PrevDepth { .. }
+        | ScannedStep::IllegalPrevDepth { .. }
         | ScannedStep::SpaceFactor { .. }
         | ScannedStep::IllegalSpaceFactor { .. }
         | ScannedStep::PrevGraf { .. }
@@ -14128,19 +14142,21 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::PrevDepth { value } => {
-            if matches!(
+            debug_assert!(matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
-            ) {
-                modes.current_list_mutation().set_prev_depth(value);
-            } else {
-                // TeX82 §1243's `alter_aux`: `if cur_chr<>abs(mode) then
-                // report_illegal_case`, which prints "You can't use
-                // `\prevdepth' in ... mode" and otherwise leaves the value
-                // alone -- it does not raise an executor error.
-                let token = Token::Cs(stores.intern("prevdepth").symbol());
-                crate::diagnostics::report_illegal_case(stores, token, modes.current_mode())?;
-            }
+            ));
+            modes.current_list_mutation().set_prev_depth(value);
+            Ok(ReplayStep::Continue)
+        }
+        ScannedStep::IllegalPrevDepth { token } => {
+            let context = command.state.output_open_context(&stores.command_context());
+            crate::diagnostics::report_illegal_case_with_context(
+                stores,
+                token,
+                modes.current_mode(),
+                Some(context),
+            )?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SpaceFactor { value } => {
