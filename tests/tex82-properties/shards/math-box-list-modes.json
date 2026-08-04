@@ -881,14 +881,9 @@
       ],
       "semantic_owner": "tex-exec::boxes",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -936,26 +931,9 @@
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "production_driver_replays_paragraph_backup_and_typed_assignment"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_character_run_lookahead_delivers_later_characters_raw_only"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_noboundary_in_vertical_mode_starts_a_paragraph"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_text_material_space_factor_and_ligature_matrix"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -998,18 +976,9 @@
       ],
       "semantic_owner": "tex-exec::main-control",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_initex_replay_scans_complete_rule_specs_through_command_control"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_direct_material_rule_glue_kern_and_group_cleanup_matrix"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -1060,30 +1029,9 @@
       ],
       "semantic_owner": "tex-exec::boxes",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_box_construction_scans_specs_hooks_and_scopes_targets"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_box_lifecycle_unboxing_and_leaders_do_not_reopen_input"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_box_shift_missing_box_operand_recovers_and_replays_the_command"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_box_request_lifecycle_mode_and_recovery_matrix"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -1126,26 +1074,9 @@
       ],
       "semantic_owner": "tex-exec::paragraphs",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "production_driver_replays_paragraph_backup_and_typed_assignment"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "paragraph_start_backs_up_the_triggering_macro_parameter_before_replay"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_paragraph_page_builder_is_observer_neutral"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_paragraph_entry_exit_mode_and_recovery_matrix"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -1196,30 +1127,9 @@
       ],
       "semantic_owner": "tex-exec::lists",
       "test_level": "rust-unit+semantic-minifixture",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_insert_recovers_reserved_and_out_of_range_class_numbers"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_vadjust_splices_across_a_paragraph_line_break"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_delete_last_removes_only_matching_tail_node"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_italic_correction_uses_the_font_metric_amount"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_structured_list_material_mode_and_recovery_matrix"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": []
     },
     {
@@ -1271,36 +1181,12 @@
           "test": "discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery"
         },
         {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "production_driver_executes_discretionary_parts_in_isolated_hmode_episodes"
-        },
-        {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "accent_scanner_separates_the_accent_code_from_the_base_lookahead"
         },
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_discretionary_and_text_accent_boundary_matrix"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_discretionary_retains_exact_three_part_ownership"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_discretionary_accepts_empty_one_and_127_node_replacements"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_text_accent_has_exact_cmr10_numeric_geometry"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_text_accent_replays_a_noncharacter_base_exactly_once"
         }
       ],
       "status": "covered",
@@ -1347,14 +1233,6 @@
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_init_math_probe_leaves_the_following_conditional_unexpanded"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -1407,14 +1285,6 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "math_given_field_preserves_every_non_ord_code_without_input_events"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_non_ord_mathchar_fields_discard_the_class_nibble"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1506,10 +1376,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "production_driver_math_choice_inside_alignment_cell_retires_cleanly"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1547,18 +1413,6 @@
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_math_script_field_is_observed_like_every_other_episode"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/math.rs",
-          "test": "canonical_double_script_reports_tex82_message_and_help_before_field_scan"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/math.rs",
-          "test": "canonical_script_reservation_matrix_ignores_later_tail_appends"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -1628,10 +1482,6 @@
           "test": "left_right_delimiters_size_to_enclosed_list"
         },
         {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1685,18 +1535,6 @@
       "semantic_owner": "tex-exec::math",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_init_math_probe_leaves_the_following_conditional_unexpanded"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_math_shift_replays_identically_with_and_without_an_observer"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_eqno_inside_display_math_is_unaffected"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"

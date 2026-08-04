@@ -4,10 +4,6 @@
 //! raw token delivery or expansion.
 
 #![forbid(unsafe_code)]
-#![allow(
-    dead_code,
-    reason = "canonical kernels are exercised through higher-level command fixtures; retired unit-only callers were removed with the compatibility graph"
-)]
 
 mod align;
 mod canonical_assignments;
@@ -37,7 +33,6 @@ mod retained_resource;
 mod session_api;
 mod splitting;
 mod timing;
-mod transaction;
 mod vertical;
 
 use canonical_diagnostics as diagnostics;
@@ -83,6 +78,3 @@ pub use retained_resource::{
 pub use session_api::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionTelemetry, PendingInterrupt,
 };
-
-#[cfg(any())]
-mod tests;

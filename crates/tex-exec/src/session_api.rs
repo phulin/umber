@@ -78,8 +78,4 @@ impl PendingInterrupt {
     pub fn is_pending(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
-
-    pub(crate) fn take(&self) -> bool {
-        self.0.swap(false, Ordering::AcqRel)
-    }
 }

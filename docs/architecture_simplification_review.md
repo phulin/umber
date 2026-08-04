@@ -67,27 +67,17 @@ Double-counting rules used here are strict:
 
 Affected crates: `tex-command`, `tex-exec`, `tex-incr`, `umber`, `tex-state`, `tex-fonts`, `tex-typeset`, `tex-out`, `umber-wasm`, and `tex-command-stream`.
 
-**Current design — observed.** `tex-exec` publicly exports both `CanonicalMainControl` and the legacy `Executor` through separate surfaces at [`crates/tex-exec/src/lib.rs:43`](/home/phulin/umber/crates/tex-exec/src/lib.rs:43) and [`crates/tex-exec/src/lib.rs:53`](/home/phulin/umber/crates/tex-exec/src/lib.rs:53). `umber::EngineSession` stores canonical state but still selects the old executor whenever the canonical root is not registered at [`crates/umber/src/lib.rs:221`](/home/phulin/umber/crates/umber/src/lib.rs:221) and [`crates/umber/src/lib.rs:452`](/home/phulin/umber/crates/umber/src/lib.rs:452). Incremental execution still constructs an `Executor` directly in [`crates/tex-incr/src/lib.rs:2948`](/home/phulin/umber/crates/tex-incr/src/lib.rs:2948), even though the same crate already drives canonical steps at [`crates/tex-incr/src/lib.rs:621`](/home/phulin/umber/crates/tex-incr/src/lib.rs:621).
-
-The duplicate is architectural, not merely an API façade: raw-token assignment, scanning, math, alignment, font loading, shipout, resource suspension, and checkpoint behavior have two paths.
+**Current design — implemented.** `tex-command` owns source delivery, expansion, and operand scanning, while `tex-exec::CanonicalMainControl` is the sole stomach transition machine. Native, virtual, incremental, format-loaded, and WebAssembly sessions all drive that command-owned path. The retired executor, lexer/expander representations, assignment/alignment/math scanner fronts, replay adapters, and compatibility-only tests are absent from the workspace and tex-exec source graph.
 
 **End state.** `CanonicalMainControl` becomes the only production transition machine. `EngineSession` may remain as a compatibility façade, but it delegates unconditionally to canonical state. The legacy `Executor`, executor-only raw dispatch and assignment machinery, duplicate font/materialization paths, and duplicate checkpoint plumbing disappear. Shared code used by canonical execution remains.
 
-This program does not delete `tex-lex` or `tex-expand`; those crates are explicitly outside this synthesis.
+The completed cutover also deleted `tex-lex` and `tex-expand`; their required behavior now belongs to `tex-command` rather than a compatibility façade.
 
 **Estimated net reduction.** 6,000–10,000 production/tool LOC and 3,500–7,000 test/support LOC. Confidence: medium. The source evidence for duplication is strong, but TeX’s observable behavior makes the deletion surface unusually risky.
 
 **Why functionality can be preserved.** The canonical path already owns typed command state, resource needs, checkpoints, and committed transitions. Preservation requires equality of DVI/PDF output, diagnostics, tracing, source locations, fuel behavior, format bytes, state identities, resource suspension ordering, and incremental replay—not merely successful compilation.
 
-**Migration and rollback.**
-
-1. Keep the old branch behind the existing session/profile distinction and make canonical execution selectable per profile.
-2. Migrate `umber`, `umber-wasm`, and `tex-incr` callers to canonical resource and checkpoint capabilities.
-3. Run old and canonical paths against identical inputs and compare artifacts, semantic events, diagnostics, state hashes, and resource requests.
-4. Delete executor-only subsystems in slices: assignment dispatch, font path, math/alignment path, then old checkpoint and output adapters.
-5. Retain `EngineSession` as a delegating public wrapper until downstream users migrate.
-
-Each slice has a rollback point at the session dispatcher: restore the old executor branch without reverting the already-added canonical adapter.
+**Migration status.** Runtime callers use canonical resource and checkpoint capabilities, and the executor-only assignment, font, math, alignment, checkpoint, output, and diagnostic fronts have been deleted. Rollback now means reverting the cutover commits; there is intentionally no session selector that can revive the old engine.
 
 **Equivalence gates and risks.** Required gates include TRIP/e-TRIP transcripts, canonical semantic streams, byte-exact DVI where applicable, normalized and rendered PDF parity, format dump/restore, malformed input diagnostics, fuel/RSS bounds, resource unavailable/fulfilled replay, and cold-versus-incremental equality. The major risks are missing primitives, allocation-order changes, diagnostic timing, resource suspension at different boundaries, and hidden external users of `Executor`.
 

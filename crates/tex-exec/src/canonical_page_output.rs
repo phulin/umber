@@ -7,7 +7,7 @@ use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{BoxNode, BoxNodeFields, GlueKind, Node, Sign};
 use tex_state::page::{
-    AWFUL_BAD, INF_PENALTY, PageDimension, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
+    AWFUL_BAD, INF_PENALTY, PageFireUp, PageInsertionStatus, PageInteger, PageMark,
 };
 use tex_state::scaled::{GlueSetRatio, Scaled};
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
@@ -593,18 +593,6 @@ pub(crate) fn job_is_all_over(stores: &Universe) -> bool {
         && stores.page_contributions().is_empty()
         && stores.page_integer(PageInteger::DeadCycles) == 0
 }
-
-pub(crate) fn job_is_quiescent(stores: &Universe) -> bool {
-    stores.current_page_len() == 0
-        && stores.page_contributions().is_empty()
-        && stores.page_fire_up().is_none()
-        && stores.page_dimension(PageDimension::Total).raw() == 0
-        && stores.page_integer(PageInteger::DeadCycles) == 0
-}
-
-#[cfg(any())]
-#[path = "output/tests.rs"]
-mod structured_tests;
 
 #[cfg(any())]
 mod tests {

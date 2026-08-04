@@ -463,8 +463,6 @@ pub(crate) fn deferred_write_sink(stores: &Universe, sink: PrintSink) -> Option<
 pub(crate) fn write_line_is_open(stores: &Universe, sink: PrintSink) -> bool {
     normalize::write_line_is_open(stores, sink)
 }
-#[cfg(any())]
-mod tests;
 
 use lower::*;
 use materialize::{emitted_list_is_empty, materialize_node_list};

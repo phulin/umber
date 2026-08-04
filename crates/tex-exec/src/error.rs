@@ -1,12 +1,6 @@
 use std::fmt;
 
 use tex_command::{CommandError, FatalError};
-#[cfg(any())]
-use tex_expand::ExpandError;
-#[cfg(any())]
-use tex_expand::scan::ScanToksError;
-#[cfg(any())]
-use tex_lex::LexError;
 use tex_state::FontParameterError;
 use tex_state::ProvenanceResolver;
 use tex_state::Universe;
@@ -48,15 +42,7 @@ pub enum ExecError {
         site: DiagnosticSite,
         frozen: Option<FrozenDiagnosticOrigin>,
     },
-    #[cfg(any())]
-    Expand(ExpandError),
-    #[cfg(any())]
-    Lex(LexError),
     NeedResource(crate::ResourceNeed),
-    #[cfg(any())]
-    ScanToks(ScanToksError),
-    #[cfg(any())]
-    ScanGlue(tex_expand::scan_glue::ScanGlueError),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
     PdfFontMap(tex_fonts::PdfFontMapError),
@@ -289,15 +275,6 @@ pub enum ExecError {
 }
 
 impl ExecError {
-    #[must_use]
-    pub(crate) fn is_undefined_control_sequence(&self) -> bool {
-        #[cfg(any())]
-        if matches!(self, Self::Expand(error) if error.is_undefined_control_sequence()) {
-            return true;
-        }
-        false
-    }
-
     /// The fatal payload this error is carrying, if any.
     ///
     /// `Captured` wraps an inner error with a diagnostic site, so the search
@@ -331,19 +308,11 @@ impl fmt::Display for ExecError {
                 "execution {resource} budget {limit} exceeded at {attempted}"
             ),
             Self::Captured { error, .. } => write!(f, "{error}"),
-            #[cfg(any())]
-            Self::Expand(err) => write!(f, "{err}"),
             Self::NeedResource(need) => write!(
                 f,
                 "resource request {} requires host resolution",
                 need.request_index()
             ),
-            #[cfg(any())]
-            Self::Lex(err) => write!(f, "{err}"),
-            #[cfg(any())]
-            Self::ScanToks(err) => write!(f, "{err}"),
-            #[cfg(any())]
-            Self::ScanGlue(err) => write!(f, "{err}"),
             Self::World(err) => write!(f, "{err}"),
             Self::FontParse(err) => write!(f, "{err}"),
             Self::PdfFontMap(err) => write!(f, "{err}"),
@@ -586,30 +555,10 @@ impl fmt::Display for ExecError {
     }
 }
 
-impl ExecError {
-    pub(crate) fn is_resource_budget_error(&self) -> bool {
-        match self {
-            Self::CumulativeFuelExceeded { .. } | Self::ResourceBudgetExceeded { .. } => true,
-            Self::Captured { error, .. } => error.is_resource_budget_error(),
-            #[cfg(any())]
-            Self::Expand(tex_expand::ExpandError::CumulativeWorkLimitExceeded { .. }) => true,
-            _ => false,
-        }
-    }
-}
-
 impl std::error::Error for ExecError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Captured { error, .. } => Some(error),
-            #[cfg(any())]
-            Self::Expand(err) => Some(err),
-            #[cfg(any())]
-            Self::Lex(err) => Some(err),
-            #[cfg(any())]
-            Self::ScanToks(err) => Some(err),
-            #[cfg(any())]
-            Self::ScanGlue(err) => Some(err),
             Self::World(err) => Some(err),
             Self::FontParse(err) => Some(err),
             Self::PdfFontMap(err) => Some(err),
@@ -718,10 +667,6 @@ impl ExecError {
             | Self::ExecutionCancelled
             | Self::CumulativeFuelExceeded { .. }
             | Self::ResourceBudgetExceeded { .. } => None,
-            #[cfg(any())]
-            Self::Expand(err) => err.primary_origin(),
-            #[cfg(any())]
-            Self::ScanGlue(err) => err.primary_origin(),
             Self::UndefinedControlSequence { origin, .. }
             | Self::UnexpectedMacroDelivery { origin, .. }
             | Self::UnexpectedExpandableDelivery { origin, .. }
@@ -744,10 +689,6 @@ impl ExecError {
             Self::MissingLeaderPayload { context }
             | Self::LeadersNotFollowedByProperGlue { context } => Some(context.origin()),
             Self::PrefixWithNonDefinition { origin } => *origin,
-            #[cfg(any())]
-            Self::Lex(err) => err.diagnostic_site().primary_origin(),
-            #[cfg(any())]
-            Self::ScanToks(_) => None,
             Self::World(_)
             | Self::FontParse(_)
             | Self::PdfFontMap(_)
@@ -822,10 +763,6 @@ impl ExecError {
     pub fn diagnostic_site(&self) -> DiagnosticSite {
         match self {
             Self::Captured { site, .. } => site.clone(),
-            #[cfg(any())]
-            Self::Lex(err) => err.diagnostic_site().clone(),
-            #[cfg(any())]
-            Self::Expand(err) => err.diagnostic_site(),
             _ => DiagnosticSite::new(self.primary_origin(), [], None),
         }
     }
@@ -855,32 +792,6 @@ impl ExecError {
                 inherited.expansion_head(),
             ),
             frozen: None,
-        }
-    }
-
-    #[cfg(any())]
-    pub(crate) fn capture(self, input: &tex_lex::InputStack) -> Self {
-        if matches!(self, Self::Captured { .. } | Self::NeedResource(_)) {
-            return self;
-        }
-        let inherited = self.diagnostic_site();
-        if inherited.expansion_head().is_some() {
-            return Self::Captured {
-                error: Box::new(self),
-                site: inherited,
-                frozen: None,
-            };
-        }
-        let site =
-            input.diagnostic_site(self.primary_origin(), inherited.related().iter().copied());
-        if site.expansion_head().is_none() {
-            self
-        } else {
-            Self::Captured {
-                error: Box::new(self),
-                site,
-                frozen: None,
-            }
         }
     }
 
@@ -946,37 +857,6 @@ impl From<tex_state::print::JumpOut> for ExecError {
     /// frame that corresponds to `end_of_TEX`.
     fn from(jump: tex_state::print::JumpOut) -> Self {
         Self::Fatal(jump.into())
-    }
-}
-
-#[cfg(any())]
-impl From<ExpandError> for ExecError {
-    fn from(value: ExpandError) -> Self {
-        match value {
-            ExpandError::NeedResource(need) => Self::NeedResource(need.into()),
-            value => Self::Expand(value),
-        }
-    }
-}
-
-#[cfg(any())]
-impl From<LexError> for ExecError {
-    fn from(value: LexError) -> Self {
-        Self::Lex(value)
-    }
-}
-
-#[cfg(any())]
-impl From<ScanToksError> for ExecError {
-    fn from(value: ScanToksError) -> Self {
-        Self::ScanToks(value)
-    }
-}
-
-#[cfg(any())]
-impl From<tex_expand::scan_glue::ScanGlueError> for ExecError {
-    fn from(value: tex_expand::scan_glue::ScanGlueError) -> Self {
-        Self::ScanGlue(value)
     }
 }
 

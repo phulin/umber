@@ -7,7 +7,7 @@ use tex_state::page::{PageDimension, PageInteger};
 
 /// Installs TeX82's unexpandable primitive table.
 ///
-/// The names registered here, together with `tex-expand`'s expandable table,
+/// The names registered here, together with `tex-command`'s expandable table,
 /// are exactly the 325 strings tex.web passes to `primitive(...)` (§264's
 /// `@p @!init procedure primitive`), plus §1369's frozen `\endwrite`
 /// sentinel. It is never a superset: a control sequence that plain.tex or

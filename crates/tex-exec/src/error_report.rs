@@ -7,7 +7,7 @@
 //!
 //! - §82's `show_context` display. The location lines (`l.4␣\spacefactor`,
 //!   `<to be read again>␣`, `<inserted text>␣`) are not part of the message;
-//!   `error` prints them from the live input stack after the message's
+//!   `error` prints them from the live command input after the message's
 //!   closing period. A literal cannot know them, so a report written as a
 //!   literal either omits them or hard-codes a guess.
 //! - §90's `<Put help message on the transcript file>`, which is defined as a
@@ -20,14 +20,7 @@
 //! Every site therefore calls one of the entry points here. Adding a new
 //! error message means adding a `report_*` call, never a `write_text`.
 
-#[cfg(any())]
-use tex_lex::InputStack;
 use tex_state::Universe;
-#[cfg(any())]
-use tex_state::token::TracedTokenWord;
-
-#[cfg(any())]
-use crate::diagnostics::show_context;
 
 /// tex.web §73's `print_err`, §79's help lines, and §82's `error`.
 ///
@@ -43,79 +36,4 @@ pub(crate) fn report_error(
     report.help(help);
     report.context(context);
     Ok(report.error().jump_out()?)
-}
-
-/// [`report_error`] with §82's context read from the live input stack.
-#[cfg(any())]
-pub(crate) fn report_input_error(
-    input: &InputStack,
-    stores: &mut Universe,
-    message: &str,
-    help: &[&str],
-) -> Result<(), crate::ExecError> {
-    let context = show_context(stores, &input.summary());
-    report_error(stores, message, help, context)
-}
-
-/// tex.web §327's `back_error`: `back_input` and then `error`.
-///
-/// Backing the offending token up first is what makes §314 describe it as
-/// `<to be read again>␣` on its own context line, so the report names the
-/// token that caused it without the message text having to quote it.
-#[cfg(any())]
-pub(crate) fn back_error(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    token: TracedTokenWord,
-    message: &str,
-    help: &[&str],
-) -> Result<(), crate::ExecError> {
-    back_tokens(input, stores, std::iter::once(token));
-    report_input_error(input, stores, message, help)
-}
-
-/// tex.web §325's `back_input` for a report that backs up more than one
-/// token, or that must back up before printing anything.
-#[cfg(any())]
-pub(crate) fn back_tokens<I>(input: &mut InputStack, _stores: &mut Universe, tokens: I)
-where
-    I: IntoIterator<Item = TracedTokenWord>,
-{
-    input.back_error_input(tokens);
-}
-
-/// tex.web §327's `ins_error`: `back_input` with the list retyped as
-/// `inserted`, then `error`.
-///
-/// The tokens are what TeX is inserting on the user's behalf -- the `$` of
-/// `Missing $ inserted`, the `{` of `Missing { inserted` -- so §314 shows
-/// them under `<inserted text>␣` rather than as something the user wrote.
-#[cfg(any())]
-pub(crate) fn ins_error<I>(
-    input: &mut InputStack,
-    stores: &mut Universe,
-    tokens: I,
-    message: &str,
-    help: &[&str],
-) -> Result<(), crate::ExecError>
-where
-    I: IntoIterator<Item = TracedTokenWord>,
-{
-    insert_tokens(input, stores, tokens);
-    report_input_error(input, stores, message, help)
-}
-
-/// The `inserted` half of [`ins_error`], for a site that must insert before
-/// it can render the message text.
-///
-/// Deliberately not [`back_tokens`]'s path: these tokens are TeX's own
-/// repair, delivered for the first time, so the alignment brace count must
-/// see them exactly as it would see any other token. Backing them up instead
-/// would cancel a delivery that never happened.
-#[cfg(any())]
-pub(crate) fn insert_tokens<I>(input: &mut InputStack, stores: &mut Universe, tokens: I)
-where
-    I: IntoIterator<Item = TracedTokenWord>,
-{
-    crate::insert_traced_tokens(input, stores, tokens);
 }

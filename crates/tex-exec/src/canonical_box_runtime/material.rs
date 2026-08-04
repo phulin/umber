@@ -2,7 +2,7 @@ use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{KernKind, Node};
 use tex_state::scaled::Scaled;
-use tex_state::{BoxDimension, TakeUnboxResult, UnboxKind, Universe};
+use tex_state::{TakeUnboxResult, UnboxKind, Universe};
 
 use crate::vertical::{append_vertical_contribution, is_outer_vertical};
 
@@ -11,57 +11,6 @@ use crate::{ExecError, Mode, ModeNest};
 
 use crate::canonical_box_runtime::first_box_node;
 use crate::canonical_box_runtime::hmode::flush_pending_hchars;
-
-pub(crate) fn acquire_box_register(
-    stores: &mut Universe,
-    index: u16,
-    copy: bool,
-) -> Option<tex_state::ids::NodeListId> {
-    let id = if copy {
-        stores.box_reg(index)
-    } else {
-        stores.take_box_reg_same_level(index)
-    };
-    if copy && let Some(id) = id {
-        stores.pin_survivor(id);
-    }
-    id
-}
-
-pub(crate) fn assign_box_dimension(
-    stores: &mut Universe,
-    index: u16,
-    dimension: BoxDimension,
-    value: Scaled,
-    global: bool,
-) {
-    if global {
-        stores.set_box_dimension_global(index, dimension, value);
-    } else {
-        stores.set_box_dimension(index, dimension, value);
-    }
-}
-
-pub(crate) fn box_dimension_for_primitive(
-    primitive: UnexpandablePrimitive,
-) -> Result<BoxDimension, ExecError> {
-    match primitive {
-        UnexpandablePrimitive::Wd => Ok(BoxDimension::Width),
-        UnexpandablePrimitive::Ht => Ok(BoxDimension::Height),
-        UnexpandablePrimitive::Dp => Ok(BoxDimension::Depth),
-        _ => Err(ExecError::UnsupportedAssignmentTarget),
-    }
-}
-
-pub(crate) fn execute_scanned_unbox(
-    primitive: UnexpandablePrimitive,
-    index: u16,
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, None)
-}
 
 pub(crate) fn execute_scanned_unbox_with_error_context(
     primitive: UnexpandablePrimitive,
@@ -256,18 +205,6 @@ fn report_cannot_delete_from_page(
         ])
         .context(error_context.to_owned());
     report.error().jump_out()?;
-    Ok(())
-}
-
-pub(crate) fn append_box_register(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    id: Option<tex_state::ids::NodeListId>,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    if let Some(node) = first_box_node(stores, id) {
-        append_box_node_to_current_list(nest, stores, node, fuel)?;
-    }
     Ok(())
 }
 

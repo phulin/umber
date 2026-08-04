@@ -2,7 +2,6 @@ pub(crate) struct ParagraphBreakResult {
     pub(crate) last_line: Option<BoxNode>,
     pub(crate) active_directions: Vec<Direction>,
     pub(crate) finished_nodes: Vec<Node>,
-    pub(crate) line_count: i32,
 }
 
 impl ParagraphBreakResult {
@@ -11,7 +10,6 @@ impl ParagraphBreakResult {
             last_line: None,
             active_directions: Vec::new(),
             finished_nodes: Vec::new(),
-            line_count: 0,
         }
     }
 }
@@ -233,7 +231,6 @@ pub(crate) fn break_current_paragraph(
         last_line,
         active_directions,
         finished_nodes,
-        line_count,
     })
 }
 

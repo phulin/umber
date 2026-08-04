@@ -2,13 +2,10 @@
 
 pub(crate) mod display;
 mod lower;
-mod support;
 
 use tex_state::Universe;
 use tex_state::math::MathFontSize;
 
-#[cfg(any())]
-pub(crate) use lower::finish_math_lists;
 pub(crate) use lower::finish_math_lists_owned;
 pub(crate) use lower::{
     MathConversionErrorContext, finish_inline_math_list_node, finish_math_list_node,
@@ -98,12 +95,4 @@ pub(crate) fn testing_math_font_failure(stores: &mut Universe) -> Option<&'stati
         MathFontFailure::Symbol => "symbol",
         MathFontFailure::Extension => "extension",
     })
-}
-
-#[cfg(any())]
-pub(crate) fn testing_finish_current_math_list(
-    nest: &mut crate::ModeNest,
-    stores: &mut Universe,
-) -> tex_state::ids::NodeListId {
-    support::finish_current_math_list(nest, stores)
 }

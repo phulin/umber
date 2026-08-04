@@ -1,15 +1,13 @@
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::Order;
-use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::Scaled;
-use tex_state::token::{OriginId, Token};
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
 use crate::canonical_box_runtime::{hpack_with_overfull_rule, split_hpack_migrations};
-use crate::mode::{DisplayEqNo, EqNoSide};
+use crate::mode::EqNoSide;
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{
     append_node_to_vertical_list, append_vertical_contribution, build_page_if_outer_vertical,
@@ -32,46 +30,6 @@ fn scaled_mul(factor: i32, value: Scaled) -> Scaled {
 }
 
 use super::lower::{MathConversionErrorContext, convert_math_hlist_with_error_context};
-use super::support::finish_current_math_list;
-
-pub(super) fn start_eq_no(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    primitive: UnexpandablePrimitive,
-) -> Result<(), ExecError> {
-    if nest.current_mode() != Mode::DisplayMath {
-        return Err(ExecError::UnimplementedTypesetting {
-            mode: nest.current_mode(),
-            token: Token::Cs(
-                stores
-                    .intern(if primitive == UnexpandablePrimitive::EqNo {
-                        "eqno"
-                    } else {
-                        "leqno"
-                    })
-                    .symbol(),
-            ),
-            origin: OriginId::UNKNOWN,
-            operation: "equation number",
-        });
-    }
-    let display = finish_current_math_list(nest, stores);
-    let side = if primitive == UnexpandablePrimitive::LeftEqNo {
-        EqNoSide::Left
-    } else {
-        EqNoSide::Right
-    };
-    stores.enter_group_with_kind(tex_state::GroupKind::MathShift);
-    stores.set_int_param(IntParam::FAM, -1);
-    // TeX.web enters negative math mode for the equation number. Keeping this
-    // as a real mode level is important: the first `$` closes the equation
-    // number and the following `$` closes the enclosing display, and both the
-    // mode nest and save stack must remain snapshot-coverable between them.
-    nest.push(Mode::Math)?;
-    nest.current_list_mutation()
-        .set_display_eq_no(DisplayEqNo { side, display });
-    Ok(())
-}
 
 pub(crate) struct FinishedEqNo {
     pub side: EqNoSide,

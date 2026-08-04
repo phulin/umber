@@ -636,47 +636,6 @@ impl CheckpointSink for Vec<EngineCheckpoint> {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct NoopCheckpointSink;
-
-impl CheckpointSink for NoopCheckpointSink {
-    fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
-        false
-    }
-
-    fn checkpoint(&mut self, _checkpoint: EngineCheckpoint) {}
-}
-
-/// Capability held by one outer executor run to publish named checkpoints.
-///
-/// Keeping capture here makes recursive scanners, alignments, box/math
-/// builders, output routines, and nested shipouts structurally unable to
-/// publish durable continuation state.
-pub(crate) struct EngineSession<'a, C> {
-    sink: &'a mut C,
-    mode_projection: Option<(ModeNestSummary, u64)>,
-}
-
-impl<'a, C: CheckpointSink> EngineSession<'a, C> {
-    pub(crate) fn with_mode_projection(
-        sink: &'a mut C,
-        mode_projection: Option<(ModeNestSummary, u64)>,
-    ) -> Self {
-        Self {
-            sink,
-            mode_projection,
-        }
-    }
-
-    pub(crate) fn into_mode_projection(self) -> Option<(ModeNestSummary, u64)> {
-        self.mode_projection
-    }
-
-    pub(crate) fn stop_requested(&self) -> bool {
-        self.sink.stop_requested()
-    }
-}
-
 /// Failure to restore a canonical command checkpoint.
 #[derive(Debug)]
 pub enum CanonicalCheckpointRestoreError {

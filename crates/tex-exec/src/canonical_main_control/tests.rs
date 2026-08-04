@@ -4164,26 +4164,13 @@ fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
     let mut stores = Universe::new_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
     tex_command::install_tex82_expandable_primitives(&mut stores);
-    stores
-        .world_mut()
-        .set_memory_file(
-            "cmr10.tfm",
-            include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm").to_vec(),
-        )
-        .expect("seed cmr10");
-    let mut setup = tex_lex::InputStack::new(tex_lex::MemoryInput::new("\\font\\base=cmr10 \\end"));
-    crate::Executor::new()
-        .run(&mut setup, &mut stores)
-        .expect("seed base font through the ordinary loader");
-    let base = match stores.meaning(stores.symbol("base").expect("base selector")) {
-        Meaning::Font(font) => font,
-        meaning => panic!("base is a font, got {meaning:?}"),
-    };
     stores.set_int_param_global(IntParam::PDF_OUTPUT, 1);
     let mut control = pdftex_font_action_control(&mut stores);
+    register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
         concat!(
+            "\\font\\base=cmr10 ",
             "\\def\\attr{/StemV 70}\\def\\chars{CABA}\\def\\uni{0041}",
             "\\pdffontexpand\\base 100 50 10 autoexpand ",
             "\\pdffontattr\\base{\\attr}\\pdfincludechars\\base{\\chars}",
@@ -4194,6 +4181,10 @@ fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
     );
 
     run_to_end(&mut control, &mut stores);
+    let base = match stores.meaning(stores.symbol("base").expect("base selector")) {
+        Meaning::Font(font) => font,
+        meaning => panic!("base is a font, got {meaning:?}"),
+    };
 
     assert_eq!(
         stores.font_expansion(base),

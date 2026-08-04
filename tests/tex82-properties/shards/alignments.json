@@ -490,10 +490,6 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "alignment_preamble_opening_scans_the_scan_spec_clause"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_halign_in_unrestricted_horizontal_ends_paragraph_before_alignment"
         }
       ],
       "status": "covered",
@@ -607,14 +603,9 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "tex82_alignment_lookahead_expands_macros_before_replay"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": null
     },
     {
@@ -644,14 +635,9 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_alignment_cell_modes_are_observer_independent_and_finite"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": null
     },
     {
@@ -768,18 +754,9 @@
       ],
       "semantic_owner": "tex-exec::align",
       "test_level": "planned-rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "periodic_preamble_replays_its_u_template_before_retirement"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_alignment_finalizes_rows_into_the_enclosing_list"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": null
     },
     {
@@ -952,10 +929,6 @@
             "finish-orchestration passes with count:0=0",
             "happy-path alignment groups restore before environment insertion"
           ]
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "fin_align_missing_groups_report_align1_and_align0_confusion"
         }
       ],
       "status": "covered"
@@ -1238,14 +1211,6 @@
         {
           "path": "crates/tex-command/src/processor/alignment/tests.rs",
           "test": "alignment_misplaced_command_recovery_matrix"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/align.rs",
-          "test": "misplaced_omit_in_nonstop_alignment_reports_and_continues"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/align.rs",
-          "test": "misplaced_noalign_in_cell_reports_and_continues_in_error_stop_mode"
         }
       ],
       "status": "covered",
@@ -1398,14 +1363,9 @@
       ],
       "semantic_owner": "tex-exec::math-display",
       "test_level": "planned-rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_display_alignment_discards_a_preceding_formula"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null,
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4",
       "planned_coverage": null
     }
   ]

@@ -82,10 +82,6 @@ enum Inverse {
         level_id: u64,
         old: tex_state::node_sequence::NodeSequence,
     },
-    AlignState {
-        level_id: u64,
-        old: Option<AlignState>,
-    },
     Push {
         level_id: u64,
     },
@@ -194,13 +190,6 @@ impl ListJournal<'_> {
             old,
         });
     }
-
-    pub(super) fn record_align_state(&mut self, old: Option<AlignState>) {
-        self.inverses.push(Inverse::AlignState {
-            level_id: self.level_id,
-            old,
-        });
-    }
 }
 
 impl ModeNest {
@@ -281,9 +270,6 @@ impl ModeNest {
                 }
                 Inverse::Nodes { level_id, old } => {
                     self.level_by_id_mut(level_id).list.sequence = old;
-                }
-                Inverse::AlignState { level_id, old } => {
-                    self.level_by_id_mut(level_id).list.align_state = old;
                 }
                 Inverse::Push { level_id } => {
                     let index = self.level_index(level_id);

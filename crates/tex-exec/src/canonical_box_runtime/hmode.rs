@@ -7,99 +7,10 @@ use tex_state::math::{MathField, MathNoad, NoadClass, NoadKind};
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{BoxNode, BoxNodeFields, DiscKind, GlueKind, KernKind, Node, Sign};
 use tex_state::scaled::{GlueSetRatio, Scaled};
-use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
+use tex_state::token::OriginId;
 
-use crate::mode::{PendingHChar, PendingHRun, PendingHRunChar};
+use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{ExecError, Mode, ModeNest};
-
-pub(crate) fn try_append_character(
-    nest: &mut ModeNest,
-    traced: TracedTokenWord,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<bool, ExecError> {
-    let token = traced.semantic_token();
-    match (nest.current_mode(), token) {
-        (Mode::RestrictedHorizontal | Mode::Horizontal, Token::Char { ch, cat }) => {
-            if cat == Catcode::Space {
-                append_space(nest, stores, fuel)?;
-            } else {
-                append_hchar_with_fuel(nest, stores, ch, traced.origin(), false, fuel)?;
-            }
-            Ok(true)
-        }
-        _ => Ok(false),
-    }
-}
-
-/// Consumes a preclassified horizontal text span into the pending TFM machine.
-/// OpenType runs retain their shaping-specific source collection and
-/// deliberately use the scalar path.
-pub(crate) fn try_append_tfm_character_span(
-    nest: &mut ModeNest,
-    traced: &[TracedTokenWord],
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<bool, ExecError> {
-    let mode = nest.current_mode();
-    if !matches!(mode, Mode::RestrictedHorizontal | Mode::Horizontal) {
-        return Ok(false);
-    }
-    let font = stores.current_font();
-    if is_ltr_shaping_font(stores, font) {
-        return Ok(false);
-    }
-
-    let mut offset = 0;
-    while offset < traced.len() {
-        let Token::Char { cat, .. } = traced[offset].semantic_token() else {
-            unreachable!("preclassified horizontal text spans contain only character tokens")
-        };
-        if cat == Catcode::Space {
-            append_space(nest, stores, fuel)?;
-            offset += 1;
-            continue;
-        }
-        fix_hyphen_language_with_fuel(nest, stores, mode, fuel)?;
-
-        // A TFM run cannot continue an OpenType pending run. This is normally
-        // a font-command boundary, but keeping the guard here makes this
-        // entry point correct for any future span producer.
-        if nest.current_list().pending_hchars().is_some_and(|pending| {
-            pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)
-        }) {
-            flush_pending_hchar_run_with_fuel(nest, stores, mode == Mode::Horizontal, false, fuel)?;
-        }
-
-        let mut list = nest.current_list_mutation();
-        let mut pending = list.take_pending_hchars();
-        let mut space_factor = list.space_factor();
-        while offset < traced.len() {
-            let Token::Char { ch, cat } = traced[offset].semantic_token() else {
-                unreachable!("preclassified horizontal text spans contain only character tokens")
-            };
-            if cat == Catcode::Space {
-                break;
-            }
-            if append_tfm_hchar(
-                &mut pending,
-                stores,
-                font,
-                ch,
-                traced[offset].origin(),
-                list.nodes().len(),
-            ) {
-                space_factor = next_space_factor(space_factor, stores, ch);
-            }
-            offset += 1;
-        }
-        if let Some(pending) = pending {
-            list.set_pending_hchars(pending);
-        }
-        list.set_space_factor(space_factor);
-    }
-    Ok(true)
-}
 
 pub(crate) fn append_canonical_character_with_fuel(
     nest: &mut ModeNest,
@@ -317,15 +228,6 @@ fn candidate_positions_for_chars(
     stores.hyphen_positions_for_language(language, &normalized, left, right)
 }
 
-fn append_space(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
-    append_space_after_flush(nest, stores)
-}
-
 pub(crate) fn append_space_after_flush(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -356,15 +258,6 @@ pub(crate) fn append_space_after_flush(
 /// `space_factor=1000` and otherwise scales the glue through `app_space`
 /// (§1042). Scanner fronts and canonical main control share this typed
 /// mode-switch-then-append operation.
-pub(crate) fn append_control_space_glue(
-    nest: &mut ModeNest,
-    stores: &mut Universe,
-    fuel: &mut tex_command::CommandFuel,
-) -> Result<(), ExecError> {
-    flush_pending_hchars(nest, stores, fuel)?;
-    append_control_space_glue_after_flush(nest, stores)
-}
-
 pub(crate) fn append_control_space_glue_after_flush(
     nest: &mut ModeNest,
     stores: &mut Universe,
@@ -621,34 +514,6 @@ pub(crate) fn append_pending_hchar(
         .push(crate::mode::PendingHChar { font, ch, origin });
     pending.current = PendingHRunChar::new(font, ch, origin);
     list.set_pending_hchars(pending);
-}
-
-pub(crate) fn append_tfm_hchar(
-    pending: &mut Option<PendingHRun>,
-    stores: &mut Universe,
-    font: FontId,
-    ch: char,
-    origin: OriginId,
-    insertion_index: usize,
-) -> bool {
-    if !stores.font(font).character_exists(ch)
-        && font_code(ch)
-            .ok()
-            .is_none_or(|code| stores.font_false_boundary_char(font) != Some(code))
-    {
-        crate::diagnostics::report_missing_character_warning(stores, font, ch, false);
-        return false;
-    }
-    let Some(mut current_run) = pending.take() else {
-        *pending = Some(PendingHRun::new(font, ch, origin, insertion_index));
-        return true;
-    };
-    current_run
-        .source
-        .push(crate::mode::PendingHChar { font, ch, origin });
-    current_run.current = PendingHRunChar::new(font, ch, origin);
-    *pending = Some(current_run);
-    true
 }
 
 pub(crate) fn is_strong_script(script: tex_shape::Script) -> bool {

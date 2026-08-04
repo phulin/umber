@@ -786,20 +786,16 @@ fn canonical_box_material_physically_owns_post_scan_mutations() {
         );
     }
     for implementation in [
-        "fn execute_scanned_unbox(",
+        "fn execute_scanned_unbox_with_error_context(",
         "fn execute_scanned_saved_vertical_discards(",
         "fn execute_delete_last(",
         "fn execute_delete_last_outer_vertical(",
-        "fn append_box_register(",
         "fn append_box_node_to_current_list(",
         "fn extract_box_migrations(",
         "fn split_hpack_migrations(",
         "fn append_unboxed(",
         "fn report_incompatible_unbox(",
         "fn apply_box_shift_delta(",
-        "fn acquire_box_register(",
-        "fn assign_box_dimension(",
-        "fn box_dimension_for_primitive(",
     ] {
         assert!(
             owner.contains(implementation),
@@ -834,7 +830,6 @@ fn canonical_leaders_physically_own_payload_and_contribution_runtime() {
     for implementation in [
         "fn payload_from_node(",
         "fn leader_glue_kind(",
-        "fn infinite_glue_for_skip_primitive(",
         "fn take_register_payload(",
         "fn append_leader_contribution(",
     ] {
@@ -1069,7 +1064,7 @@ fn canonical_command_control_has_no_legacy_paragraph_front_callers() {
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn canonical_math_family_has_no_legacy_dependencies() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src/math");
-    for relative in ["mod.rs", "display.rs", "lower.rs", "support.rs"] {
+    for relative in ["mod.rs", "display.rs", "lower.rs"] {
         let source = fs::read_to_string(source_root.join(relative))
             .expect("read canonical math-family source");
         for forbidden in [
@@ -1122,7 +1117,6 @@ fn canonical_alignment_family_has_no_legacy_dependencies() {
         source_root.join("mod.rs"),
         source_root.join("canonical_execution.rs"),
         source_root.join("packaging.rs"),
-        source_root.join("transitions.rs"),
     ];
     canonical.extend(production_rust_sources(&source_root.join("widths")));
     for path in canonical {
@@ -1539,18 +1533,6 @@ fn checkpoints_store_only_command_owned_restart_state() {
 }
 
 #[test]
-fn scoped_execution_transaction_cannot_escape_public_api() {
-    let manifest_dir = test_support::repository_root().join("crates/tex-exec");
-    let dependencies = [CompileFailDependency::path("tex-exec", &manifest_dir)];
-    assert_compile_fail(
-        "execution-transaction-private",
-        &manifest_dir.join("tests/ui/execution_transaction_private.rs"),
-        &dependencies,
-        &["E0603", "module `transaction` is private"],
-    );
-}
-
-#[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
 fn mode_list_mutation_capabilities_do_not_expose_mutable_aggregate_references() {
     let manifest_dir = test_support::repository_root().join("crates/tex-exec");
@@ -1819,7 +1801,7 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn compatibility_collapse_removes_legacy_execution_from_every_graph() {
+fn tex_exec_has_one_command_front_across_compiled_and_dormant_source() {
     let root = test_support::repository_root().join("crates/tex-exec");
     let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read tex-exec manifest");
     let normal_dependencies = manifest
@@ -1876,19 +1858,44 @@ fn compatibility_collapse_removes_legacy_execution_from_every_graph() {
         );
     }
 
-    let canonical = fs::read_to_string(root.join("src/canonical_main_control.rs"))
-        .expect("read canonical main control");
-    for forbidden in [
-        "crate::assignments",
-        "crate::legacy_",
-        "ExecutionContext",
-        "Executor",
-        "tex_expand",
-        "tex_lex",
-    ] {
-        assert!(
-            !canonical.contains(forbidden),
-            "shipping canonical control must not reach {forbidden}"
-        );
+    for path in all_rust_sources(&root.join("src")) {
+        let source = fs::read_to_string(&path).expect("read tex-exec Rust source");
+        for forbidden in [
+            "use tex_lex",
+            "tex_lex::",
+            "use tex_expand",
+            "tex_expand::",
+            "crate::assignments",
+            "crate::legacy_assignments",
+            "crate::legacy_diagnostics",
+            "crate::legacy_dispatch",
+            "crate::legacy_output",
+            "crate::legacy_paragraph_memo",
+            "crate::raw_delivery",
+            "crate::Executor",
+            "crate::ExecutionContext",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{} must not retain retired command boundary `{forbidden}`",
+                path.display()
+            );
+        }
     }
+}
+
+fn all_rust_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut sources = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).expect("read source directory") {
+            let path = entry.expect("read source entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                sources.push(path);
+            }
+        }
+    }
+    sources
 }

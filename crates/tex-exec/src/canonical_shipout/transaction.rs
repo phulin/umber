@@ -71,7 +71,7 @@ pub fn retry_unavailable_stream_open(
 /// caller that knows one always knows the other.
 /// Ships a completed box using an already-owned publication summary.
 ///
-/// Canonical command replay has no legacy `InputStack`: it publishes the
+/// Canonical command replay has no independent source stack: it publishes the
 /// most recently committed input summary while retaining command input in its
 /// own state.  The direct artifact kernel needs only this detached summary,
 /// never a source-consumption capability.
@@ -93,7 +93,7 @@ pub(crate) fn shipout_node_with_input_summary(
     if huge_shipout_box(&node, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
         // is the whole of the engine's response. Shipout also runs from
-        // canonical replay, which owns no live `InputStack`. Its caller
+        // canonical replay, which owns no live source stack. Its caller
         // captured §82's display from the command-owned stack before
         // releasing that borrow; the Universe summary is only republished
         // later by successful artifact staging and can still name an older
@@ -332,15 +332,6 @@ pub(crate) fn stage_canonical_page(
     )
 }
 
-pub(crate) fn stage_pdf_form(
-    form: tex_state::PdfFormRecord,
-    stores: &mut Universe,
-    write_expander: &mut direct::WriteExpander<'_>,
-    replay_expander: &mut direct::ReplayTextExpander<'_>,
-) -> Result<tex_state::PdfFormArtifact, ExecError> {
-    direct::stage_form(form, stores, write_expander, replay_expander)
-}
-
 pub(crate) fn stage_canonical_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
@@ -348,41 +339,6 @@ pub(crate) fn stage_canonical_form(
     replay_expander: &mut TextReplayHost<'_>,
 ) -> Result<tex_state::PdfFormArtifact, ExecError> {
     direct::stage_form(form, stores, write_expander, replay_expander)
-}
-
-#[cfg(any())]
-pub(crate) fn test_stage_shipout_artifact(
-    node: Node,
-    stores: &mut Universe,
-) -> Result<tex_out::PageArtifact, ExecError> {
-    let execution = crate::ExecutionContext::new("texput");
-    let emit_dvi = execution.emits_dvi();
-    let mut legacy_write_expander =
-        |_: &mut Universe, _: tex_state::PrintSink, _: tex_state::ids::TokenListId| {
-            Ok(crate::canonical_shipout::ExpandedWrite::transactional(
-                String::new(),
-            ))
-        };
-    let mut legacy_replay_expander =
-        |_: &mut Universe, _: direct::ReplayTextKind, _: tex_state::ids::TokenListId| {
-            Ok(crate::canonical_shipout::ExpandedReplayText(Vec::new()))
-        };
-    let pending_end = stores.world().effect_records().len();
-    let staged = direct::stage_shipout(
-        node,
-        tex_state::InputSummary::default(),
-        ShipoutOrigin {
-            output_open_context: None,
-            pending_end,
-            announce_openout: true,
-        },
-        stores,
-        emit_dvi,
-        &mut legacy_write_expander,
-        &mut legacy_replay_expander,
-    )?;
-    tex_out::PageArtifact::from_bytes(staged.artifact.bytes())
-        .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))
 }
 
 fn shipout_geometry(node: &Node, stores: &Universe) -> Option<GeometryObservation> {

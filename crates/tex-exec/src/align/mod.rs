@@ -4,7 +4,6 @@ mod canonical_execution;
 pub(crate) use canonical_execution::{FinishedAlignment, append_finished_alignment};
 
 pub(crate) mod packaging;
-mod transitions;
 pub(crate) mod widths;
 
 use tex_state::Universe;

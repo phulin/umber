@@ -1,14 +1,3 @@
-/// TeX82 §961's `k>0` branch ("Insert a new pattern into the linked trie")
-/// applied to §962's already-validated pattern representation. Canonical main
-/// control receives that representation directly from its live scanner; the
-/// retired compatibility path converts its raw words before crossing this
-/// apply boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HyphenationApplyDiagnostic {
-    NotALetter,
-    DuplicatePattern,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct MissingHyphenDiagnostic {
     pub(super) node_index: usize,
@@ -21,61 +10,17 @@ struct HyphenationProjection<'a> {
     missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
 }
 
-pub(crate) fn report_apply_diagnostics(
-    stores: &mut Universe,
-    diagnostics: Vec<HyphenationApplyDiagnostic>,
-) -> Result<(), ExecError> {
-    for diagnostic in diagnostics {
-        let (message, help): (&str, &[&str]) = match diagnostic {
-            HyphenationApplyDiagnostic::NotALetter => (
-                "Not a letter",
-                &[
-                    "Letters in \\hyphenation words must have \\lccode>0.",
-                    "Proceed; I'll ignore the character I just read.",
-                ],
-            ),
-            HyphenationApplyDiagnostic::DuplicatePattern => {
-                ("Duplicate pattern", &["(See Appendix H.)"])
-            }
-        };
-        let mut report = stores.print_err(message);
-        report.help(help);
-        report.error().jump_out()?;
-    }
-    Ok(())
-}
-
-pub(crate) fn apply_patterns(
-    stores: &mut Universe,
-    patterns: Vec<PatternSpec>,
-) -> Result<Vec<HyphenationApplyDiagnostic>, tex_state::hyphenation::HyphenationCapacityError> {
-    install_patterns(stores, patterns, true)
-}
-
 /// Installs patterns whose §963 duplicate diagnostics were already reported
 /// by the canonical live scanner.
 pub(crate) fn apply_scanned_patterns(
     stores: &mut Universe,
     patterns: Vec<PatternSpec>,
 ) -> Result<(), ExecError> {
-    let diagnostics = install_patterns(stores, patterns, false).map_err(pattern_capacity_error)?;
-    debug_assert!(diagnostics.is_empty());
-    Ok(())
-}
-
-fn install_patterns(
-    stores: &mut Universe,
-    patterns: Vec<PatternSpec>,
-    collect_duplicate_diagnostics: bool,
-) -> Result<Vec<HyphenationApplyDiagnostic>, tex_state::hyphenation::HyphenationCapacityError> {
     let language = current_language(stores);
-    let mut diagnostics = Vec::new();
     for pattern in patterns {
-        if stores.add_hyphenation_pattern_for_language(language, pattern)?
-            && collect_duplicate_diagnostics
-        {
-            diagnostics.push(HyphenationApplyDiagnostic::DuplicatePattern);
-        }
+        stores
+            .add_hyphenation_pattern_for_language(language, pattern)
+            .map_err(pattern_capacity_error)?;
     }
     if stores.int_param(IntParam::SAVING_HYPH_CODES) > 0 {
         let codes = (0u8..=u8::MAX).filter_map(|code| {
@@ -86,7 +31,7 @@ fn install_patterns(
         });
         stores.save_hyphenation_codes(language, codes.collect::<Vec<_>>());
     }
-    Ok(diagnostics)
+    Ok(())
 }
 
 pub(crate) fn pattern_capacity_error(
@@ -98,41 +43,18 @@ pub(crate) fn pattern_capacity_error(
     ))
 }
 
-/// TeX82's analogous `new_hyph_exceptions` word application for
-/// `\hyphenation`, shared with canonical main control; see [`apply_patterns`].
-pub(crate) fn apply_hyphenation_exceptions(
-    stores: &mut Universe,
-    words: Vec<Vec<char>>,
-) -> Vec<HyphenationApplyDiagnostic> {
-    install_hyphenation_exceptions(stores, words, true)
-}
-
 /// Installs exception words the canonical live scanner already normalized, so
 /// §935's `Not a letter` was reported where §82 could still show the offending
 /// character (`tex_command::ScannedHyphenationData`).
 pub(crate) fn apply_scanned_hyphenation_exceptions(stores: &mut Universe, words: Vec<Vec<char>>) {
-    let diagnostics = install_hyphenation_exceptions(stores, words, false);
-    debug_assert!(diagnostics.is_empty());
-}
-
-fn install_hyphenation_exceptions(
-    stores: &mut Universe,
-    words: Vec<Vec<char>>,
-    normalize: bool,
-) -> Vec<HyphenationApplyDiagnostic> {
     let language = current_language(stores);
-    let mut diagnostics = Vec::new();
     for word in words {
-        let (exception, not_letters) = parse_exception_word(stores, language, &word, normalize);
-        diagnostics.extend(std::iter::repeat_n(
-            HyphenationApplyDiagnostic::NotALetter,
-            not_letters,
-        ));
+        let (exception, not_letters) = parse_exception_word(stores, language, &word, false);
+        debug_assert_eq!(not_letters, 0);
         if let Some(exception) = exception {
             stores.add_hyphenation_exception_for_language(language, exception);
         }
     }
-    diagnostics
 }
 
 #[cfg(any())]
@@ -617,35 +539,6 @@ fn permitted_word_terminator(nodes: &[Node], mut index: usize) -> bool {
         }
     }
     true
-}
-
-pub(crate) fn parse_pattern_word(stores: &Universe, word: &[char]) -> (PatternSpec, usize) {
-    let mut letters = Vec::new();
-    let mut values = vec![0u8];
-    let mut digit_sensed = false;
-    let mut nonletters = 0;
-    for &ch in word {
-        if !digit_sensed && ch.is_ascii_digit() {
-            let digit = ch.to_digit(10).expect("ASCII digit has a value");
-            *values.last_mut().expect("values is non-empty") = digit as u8;
-            digit_sensed = true;
-        } else {
-            let normalized = if ch == '.' {
-                '.'
-            } else {
-                normalized_lccode(stores, ch).unwrap_or_else(|| {
-                    nonletters += 1;
-                    '.'
-                })
-            };
-            if letters.len() < 63 {
-                letters.push(normalized);
-                values.push(0);
-                digit_sensed = false;
-            }
-        }
-    }
-    (PatternSpec { letters, values }, nonletters)
 }
 
 fn parse_exception_word(

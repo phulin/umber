@@ -658,12 +658,11 @@ therefore restores the complete future input state after every structured scan.
 
 `tex-exec::CanonicalMainControl` is the only production executor-facing command driver.
 It may classify `CurrentCommand::meaning()` and apply completed typed values,
-but it must not accept or construct `tex_lex::InputStack`, call raw-token
-delivery, or inspect a raw token carried by a delivered command. The legacy
-executor remains an independent migration surface and may still depend on
-`tex-lex`/`tex-expand`; that temporary dependency does not grant the replay
-adapter a second input path. The `tex-exec` architecture test enforces this
-source-level boundary, while replay tests exercise typed scanner rollback and
+but it must not construct an independent input stack, call raw-token delivery,
+or inspect a raw token carried by a delivered command. The retired executor,
+lexer, expander, scanner fronts, and replay adapters have been deleted; the
+`tex-exec` architecture test enforces that absence across compiled and dormant
+source, while canonical tests exercise typed scanner rollback and
 registered nested input. Canonical INITEX replay installs the static TeX82
 primitive registries before source registration. Prefix collection, bounded
 classical-register recovery, `\globaldefs` resolution, integer/dimension/glue
@@ -3311,8 +3310,8 @@ This is the closure inventory for Beads
 delivery and expansion, while §1030 and its mode tables own the consumer.
 The pinned pdfTeX 1.40.29 source boundary is
 [`pdftex_primitives.md`](pdftex_primitives.md), not the former executor. A
-legacy `Executor`/`InputStack` occurrence is therefore only a deletion and
-entry-point-migration checklist; it is never a behavioral oracle. Routing
+retired executor/input-stack occurrence is therefore a regression; it is never
+a behavioral oracle. Routing
 direct, CLI, virtual, editor, and incremental callers is deliberately outside
 this matrix and remains Beads `.4.2`.
 
@@ -3337,9 +3336,10 @@ order even though Umber constructs the hyphenated sequence before its pure
 line-break pass; an out-of-range §923 hyphen character still produces neither
 a node nor a warning.
 
-The architecture test in `crates/tex-exec/tests/it.rs` rejects raw
-`InputStack` delivery and executor dispatch in `CanonicalMainControl`, requires
-the typed `CurrentCommand::meaning()` dispatch boundary, and fixes one
+The architecture test in `crates/tex-exec/tests/it.rs` rejects retired command
+crates, alternate input-stack delivery, executor dispatch, and compatibility
+fronts across the tex-exec tree. It requires the typed
+`CurrentCommand::meaning()` dispatch boundary and fixes one
 aggregate snapshot/rollback implementation. The rollback snapshot includes
 command state, fresh discardable runtime, mode nest, Universe, active
 box/alignment/output state, artifacts, and effect roots. `ObservationBuffer`
@@ -3780,9 +3780,9 @@ Every supported runtime reaches that boundary without a command-path selector:
 - the WebAssembly `CompilerSession` is a representation adapter over
   `VirtualCompileSession`.
 
-Retired crate and uncompiled legacy-source deletion is tracked separately by
-the `umber2-swm9` epic. Those files are not a runtime fallback and must not be
-used as an oracle or reintroduced as a selectable path.
+The `umber2-swm9` cutover deleted the retired crates and uncompiled legacy
+tex-exec source. Those files are not a runtime fallback and must not be used as
+an oracle or reintroduced as a selectable path.
 
 ## 34. End-state invariants
 

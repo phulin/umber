@@ -2,7 +2,7 @@
 //!
 //! This intentionally owns only typed execution mutations. Raw delivery,
 //! expansion, macro calls, input nesting, and operand collection remain in
-//! `tex-command`; no `InputStack` is accepted here.
+//! `tex-command`; no independent source stack is accepted here.
 
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -19853,10 +19853,6 @@ fn command_error(error: CommandError) -> ExecError {
     }
 }
 
-#[cfg(any())]
-#[path = "command_replay/tests.rs"]
-mod tests;
-
 #[cfg(test)]
 mod discretionary_hyphen_tests {
     use super::*;
@@ -20007,11 +20003,3 @@ mod page_output_receipt_tests {
         );
     }
 }
-
-#[cfg(any())]
-#[path = "effects/tests.rs"]
-mod effects_tests;
-
-#[cfg(any())]
-#[path = "whatsits/tests.rs"]
-mod whatsits_tests;

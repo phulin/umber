@@ -944,10 +944,6 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "detached_page_episode_replays_before_output_fire_up"
-        },
-        {
           "path": "crates/tex-exec/src/page_builder/tests.rs",
           "test": "page_state_freezes_specs_and_tracks_sorted_insertion_records"
         },
@@ -1176,14 +1172,6 @@
         {
           "path": "crates/tex-exec/src/canonical_page_output.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_records_penalty_marks_boundary_and_packages_box255"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_nonvoid_box255_recovery_discards_before_packaging"
         }
       ],
       "status": "covered",
@@ -1221,16 +1209,7 @@
       ],
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_distributes_selected_insertions_into_class_boxes"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "fire_up_split_remainder_heldover_and_holding_inserts_boundaries_match_tex82"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-gxpk"
     },
@@ -1262,24 +1241,7 @@
       ],
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/tests/core.rs",
-          "test": "canonical_dead_cycle_escape_ships_the_selected_residual_page"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_selection_enters_one_user_output_group_below_deadcycle_limit"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_default_path_prepends_heldovers_ships_and_voids_box255"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_deadcycle_limit_reports_and_uses_default_path"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.185"
     },
@@ -1312,20 +1274,7 @@
       ],
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_tears_down_group_mode_and_page_state_canonically"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_orders_output_material_heldovers_and_contributions"
-        },
-        {
-          "path": "crates/tex-exec/src/output/tests.rs",
-          "test": "output_resume_recovers_unbalanced_tokens_and_nonvoid_box255"
-        }
-      ],
+      "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-johp.234"
     },
@@ -1358,17 +1307,9 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "output_stream_table_initializes_numbered_and_fallback_selectors_closed"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "output_stream_final_cleanup_closes_only_live_numbered_files"
-        }
-      ],
-      "status": "covered"
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4"
     },
     {
       "id": "tex82.whatsits.primitive-and-dispatch",
@@ -1406,14 +1347,10 @@
         {
           "path": "crates/tex-command/src/command/tests.rs",
           "test": "unknown_extension_selector_fails_loudly_at_dispatch"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "extension_commands_dispatch_in_each_mode_with_canonical_stream_fallbacks"
         }
       ],
-      "status": "covered",
-      "gap_bead": null
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4"
     },
     {
       "id": "tex82.whatsits.construction-and-ownership",
@@ -1454,30 +1391,9 @@
       ],
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "base_whatsit_scanners_construct_each_canonical_subtype"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "base_whatsit_copy_free_and_zero_dimension_ownership_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "replay_closeout_stream_selector_committed_microfixture"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "write_whatsit_stream_clamping_and_malformed_scan_recovery_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "whatsit_copy_free_display_and_default_output_name_are_subtype_complete"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4"
     },
     {
       "id": "tex82.whatsits.list-visitation",
@@ -1511,22 +1427,9 @@
       ],
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "whatsit_consumers_each_apply_only_their_primary_visit_action"
-        },
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "contentless_whatsits_preserve_page_and_vertical_break_boundaries"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "mixed_hlist_traversal_and_special_byte_lengths_match_tex82"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4"
     },
     {
       "id": "tex82.effects.special-output",
@@ -1562,14 +1465,6 @@
           "test": "specials_emit_xxx1_and_xxx4_at_anchor_positions"
         },
         {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "special_out_synchronizes_position_and_preserves_stored_payload_bytes"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "mixed_hlist_traversal_and_special_byte_lengths_match_tex82"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": ["special-whatsit passing semantic case"]
@@ -1593,20 +1488,7 @@
       "stimulus": [
         "Vary meanings between scan and shipout, selectors 0/16/17, newlinechar, copied boxes, and balanced/unbalanced braces in the structured Phase 2 units below and fixture `deferred-write-boundaries.tex`."
       ],
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "frozen_endwrite_is_internal_but_source_endwrite_stays_undefined"
-        },
-        {
-          "path": "crates/tex-exec/src/tests/io.rs",
-          "test": "frozen_write_registration_preserves_sibling_sentinel_boundaries"
-        }
-      ],
+      "planned_coverage": [],
       "expected_observations": [
         "Expansion time, output selector, exact line bytes, and input-list retirement match §§1369–1372."
       ],
@@ -1621,26 +1503,9 @@
       ],
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit",
-      "coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_expands_at_shipout_time_and_retires_stopper_input"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_unbalanced_recovery_stops_at_endwrite"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_balanced_and_nested_groups_do_not_trigger_recovery"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "deferred_write_stream_selector_and_newline_boundaries_match_tex82"
-        }
-      ],
-      "status": "covered",
-      "gap_bead": null
+      "coverage": [],
+      "status": "gap",
+      "gap_bead": "umber2-swm9.3.4"
     },
     {
       "id": "tex82.effects.open-write-close-dispatch",
@@ -1672,38 +1537,6 @@
       "semantic_owner": "tex-exec::effects",
       "test_level": "rust-unit",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_open_write_close_updates_numbered_stream_state_canonically"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "immediate_recognized_default_extension_and_unrecognized_backup_paths_match_tex82"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_retries_unavailable_openout_with_a_replacement_name"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "out_what_preserves_leader_stream_suppression_before_open_retry"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "immediate_and_deferred_stream_effects_share_commit_order_and_identity"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "immediate_and_deferred_writes_preserve_expanded_tokens_exactly"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "closed_and_normalized_output_selectors_publish_no_close_effect"
-        },
-        {
-          "path": "crates/tex-exec/src/effects/tests.rs",
-          "test": "each_real_stream_transition_is_observed_exactly_once"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
@@ -1746,10 +1579,6 @@
       "semantic_owner": "tex-exec::whatsits",
       "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/whatsits/tests.rs",
-          "test": "fix_language_and_setlanguage_append_with_captured_hyphen_minima"
-        },
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"

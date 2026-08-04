@@ -1,12 +1,10 @@
 //! Source-free leader payload and contribution runtime.
 
 use tex_state::Universe;
-use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::GlueId;
 use tex_state::meaning::UnexpandablePrimitive;
 use tex_state::node::{GlueKind, LeaderPayload, Node};
 
-use crate::canonical_box_runtime::hmode::infinite_glue;
 use crate::vertical::build_page_if_outer_vertical;
 
 use super::append_node_to_current_list;
@@ -35,24 +33,6 @@ pub(crate) fn leader_glue_kind(primitive: UnexpandablePrimitive) -> GlueKind {
         UnexpandablePrimitive::CLeaders => GlueKind::Cleaders,
         UnexpandablePrimitive::XLeaders => GlueKind::Xleaders,
         _ => unreachable!("caller restricts leader primitives"),
-    }
-}
-
-pub(crate) fn infinite_glue_for_skip_primitive(primitive: UnexpandablePrimitive) -> GlueSpec {
-    match primitive {
-        UnexpandablePrimitive::HFil | UnexpandablePrimitive::VFil => {
-            infinite_glue(Order::Fil, false, false)
-        }
-        UnexpandablePrimitive::HFill | UnexpandablePrimitive::VFill => {
-            infinite_glue(Order::Fill, false, false)
-        }
-        UnexpandablePrimitive::HSs | UnexpandablePrimitive::VSs => {
-            infinite_glue(Order::Fil, false, true)
-        }
-        UnexpandablePrimitive::HFilNeg | UnexpandablePrimitive::VFilNeg => {
-            infinite_glue(Order::Fil, true, false)
-        }
-        _ => unreachable!("caller restricts fill glue primitives"),
     }
 }
 

@@ -705,18 +705,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_prefixed_command_skips_relax_and_preserves_group_scope"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_illegal_prefix_reports_and_replays_the_command_once"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "canonical_relax_inside_prefix_collection_does_not_fire_afterassignment"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [

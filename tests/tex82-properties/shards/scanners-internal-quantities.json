@@ -647,18 +647,6 @@
         {
           "path": "crates/tex-command/src/scanners/structured/tests.rs",
           "test": "restricted_input_stream_consumers_recover_out_of_range_to_zero"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "restricted_math_operand_diagnostics_cover_every_primitive_variant"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "restricted_math_family_diagnostics_recover_locally_and_globally_to_family_zero"
-        },
-        {
-          "path": "crates/tex-exec/src/command_replay/tests.rs",
-          "test": "restricted_register_diagnostics_cover_all_six_register_families"
         }
       ],
       "planned_coverage": [],

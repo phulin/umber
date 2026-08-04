@@ -12,33 +12,12 @@ use tex_state::{PrintSink, Universe};
 use crate::mode::ignored_depth;
 use crate::node_dump::{DumpConfig, dump_node_list, dump_node_slice};
 
-/// TeX82 §510's `<Terminate the current conditional and skip to \fi>` for an
-/// `\or`/`\else`/`\fi` that matches no live `\if`.
-pub(crate) fn report_extra_conditional(stores: &mut Universe, name: &str) -> Result<(), ExecError> {
-    let context = show_context(stores, stores.input_summary());
-    crate::error_report::report_error(
-        stores,
-        &format!("Extra \\{name}"),
-        &["I'm ignoring this; it doesn't match any \\if."],
-        context,
-    )?;
-    Ok(())
-}
-
 /// e-TeX's `\interactionmode` case of TeX82 §1243's `alter_integer`.
 ///
 /// The parenthesized value is §91's `int_error`, which prints it as part of
 /// the message line rather than as a second report.
-pub(crate) fn report_bad_interaction_mode(
-    stores: &mut Universe,
-    value: i32,
-) -> Result<(), ExecError> {
-    let context = show_context(stores, stores.input_summary());
-    report_bad_interaction_mode_with_context(stores, value, context)
-}
-
-/// Canonical-command variant of [`report_bad_interaction_mode`], carrying
-/// the command processor's live input context across the scan/apply boundary.
+/// Reports a bad interaction mode with the command processor's live input
+/// context carried across the scan/apply boundary.
 pub(crate) fn report_bad_interaction_mode_with_context(
     stores: &mut Universe,
     value: i32,
@@ -85,18 +64,6 @@ pub(crate) fn report_missing_character_warning(
         .print(&font_name)
         .print_char('!');
     diagnostic.end(false);
-}
-
-/// [`report_illegal_case_with_context`] for a caller whose input stack is the
-/// gullet's rather than the canonical command core's.
-pub(crate) fn report_illegal_case(
-    stores: &mut Universe,
-    token: Token,
-    mode: Mode,
-) -> Result<(), ExecError> {
-    let context = show_context(stores, stores.input_summary());
-    report_illegal_case_with_context(stores, token, mode, Some(context))?;
-    Ok(())
 }
 
 /// TeX82 §1049's `you_cant` message followed by §1050's `report_illegal_case`.
@@ -229,24 +196,6 @@ pub(crate) fn report_misplaced_alignment_command(
     }
     report.error().jump_out()?;
     Ok(())
-}
-
-pub(crate) fn execute_showgroups(stores: &mut Universe) {
-    let kinds = stores.group_kinds().collect::<Vec<_>>();
-    let mut text = String::new();
-    text.push('\n');
-    for (index, kind) in kinds.iter().enumerate().rev() {
-        let level = index + 1;
-        text.push_str("### ");
-        text.push_str(group_kind_text(*kind));
-        text.push_str(" (level ");
-        text.push_str(&level.to_string());
-        text.push_str(") (");
-        text.push_str(kind.start_text());
-        text.push_str(")\n");
-    }
-    text.push_str("### bottom level\n\n! OK.\n");
-    write_diagnostic(stores, &text);
 }
 
 /// Detached e-TeX [49.1292] rendering record for one save level.
@@ -650,15 +599,6 @@ pub(crate) fn report_dimension_diagnostic(stores: &mut Universe, diagnostic: Dim
         | DimensionDiagnostic::IncompatibleMagnification { .. } => {
             write_diagnostic(stores, &format!("\n! {diagnostic}.\n"));
         }
-    }
-}
-
-pub(crate) fn report_dimension_diagnostics(
-    stores: &mut Universe,
-    diagnostics: impl IntoIterator<Item = DimensionDiagnostic>,
-) {
-    for diagnostic in diagnostics {
-        report_dimension_diagnostic(stores, diagnostic);
     }
 }
 

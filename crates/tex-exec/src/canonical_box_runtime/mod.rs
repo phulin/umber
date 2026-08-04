@@ -1,8 +1,7 @@
 //! Source-free box and horizontal-mode runtime surface.
 //!
 //! Canonical command control consumes only these typed mutation, material,
-//! packing, and migration operations. Expansion-driven box/hmode scanners
-//! remain private to the legacy assignment front.
+//! packing, and migration operations.
 
 pub(crate) mod hmode;
 mod leaders;
@@ -23,16 +22,8 @@ pub(crate) use hmode::{
     commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
     flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
 };
-#[cfg(any())]
-pub(crate) use leaders::infinite_glue_for_skip_primitive;
 pub(crate) use leaders::{
     append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,
-};
-#[cfg(any())]
-pub(crate) use material::execute_scanned_unbox;
-#[cfg(any())]
-pub(crate) use material::{
-    acquire_box_register, append_box_register, assign_box_dimension, box_dimension_for_primitive,
 };
 pub(crate) use material::{
     append_box_node_to_current_list, apply_box_shift_delta, execute_delete_last,

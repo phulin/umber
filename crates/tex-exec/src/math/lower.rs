@@ -398,23 +398,6 @@ impl MathLayoutSink for LoweredMathSink<'_> {
     }
 }
 
-pub(crate) fn finish_math_lists(
-    stores: &mut Universe,
-    nodes: &[Node],
-    insert_penalties: bool,
-) -> Vec<Node> {
-    let mut out = Vec::with_capacity(nodes.len());
-    for node in nodes {
-        match node {
-            Node::MathList(list) => {
-                out.extend(finish_math_list_node(stores, *list, insert_penalties))
-            }
-            node => out.push(node.clone()),
-        }
-    }
-    out
-}
-
 pub(crate) fn finish_math_lists_owned(
     stores: &mut Universe,
     nodes: Vec<Node>,
