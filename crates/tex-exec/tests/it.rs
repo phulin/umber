@@ -7,6 +7,64 @@ use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
 
 #[test]
+fn paragraph_start_page_build_reports_backed_up_context_before_help() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(
+                br"\topskip=0pt \vsize=100pt \setbox1=\hbox{}\copy1 \vskip0pt minus 1fil$x$\end"
+                    .as_slice(),
+            ),
+        ))
+        .expect("page-error source registers");
+
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("page-error source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    let error = transcript
+        .find("! Infinite glue shrinkage found on current page.")
+        .expect("error line");
+    let context = transcript[error..]
+        .find("<to be read again>")
+        .map(|offset| error + offset)
+        .unwrap_or_else(|| panic!("live command context: {transcript:?}"));
+    let help = transcript[error..]
+        .find("The page about to be output contains some infinitely")
+        .map(|offset| error + offset)
+        .expect("page-error help");
+    assert!(error < context && context < help, "{transcript:?}");
+}
+
+#[test]
 fn text_accent_in_math_reports_before_scanning_its_character() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);

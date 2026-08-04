@@ -18118,7 +18118,13 @@ fn start_canonical_paragraph(
     stores: &mut Universe,
     indent: bool,
 ) -> Result<(), ExecError> {
-    crate::canonical_paragraph_end::start_canonical_paragraph(modes, stores, indent)?;
+    let error_context = command.output_open_context(&stores.command_context());
+    crate::canonical_paragraph_end::start_canonical_paragraph(
+        modes,
+        stores,
+        indent,
+        &error_context,
+    )?;
     let everypar = stores.tok_param(TokParam::EVERY_PAR);
     if !stores.tokens(everypar).is_empty() {
         let origin = stores.bootstrap_origin();

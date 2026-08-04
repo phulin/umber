@@ -664,10 +664,18 @@ pub(crate) fn report_dimension_diagnostics(
 
 /// TeX82 §1004's `<Update the current page measurements with respect to the
 /// glue or kern specified by node p>`.
-pub(crate) fn report_page_infinite_shrinkage(stores: &mut Universe) -> Result<(), ExecError> {
-    // The page builder runs between commands, so §82's display comes from the
-    // published summary rather than a live stack the caller could hand over.
-    let context = show_context(stores, stores.input_summary());
+pub(crate) fn report_page_infinite_shrinkage(
+    stores: &mut Universe,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
+    // TeX82 §1004 reaches §82's `error` while the command that contributed
+    // this glue still owns the live input stack. Callers at that boundary
+    // supply its display; input-free continuations retain the published
+    // summary fallback.
+    let context = error_context.map_or_else(
+        || show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
     crate::error_report::report_error(
         stores,
         "Infinite glue shrinkage found on current page",

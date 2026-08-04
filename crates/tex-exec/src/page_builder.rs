@@ -201,11 +201,11 @@ fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node)?;
+                    let node = update_glue_or_kern(stores, &node, error_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
                     let _ = spec;
-                    let node = update_glue_or_kern(stores, &node)?;
+                    let node = update_glue_or_kern(stores, &node, error_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -219,10 +219,10 @@ fn build_page_cold(stores: &mut Universe, error_context: Option<&str>) -> Result
                     if stores.page_fire_up().is_some() {
                         return Ok(());
                     }
-                    let node = update_glue_or_kern(stores, &node)?;
+                    let node = update_glue_or_kern(stores, &node, error_context)?;
                     contribute_front_as(stores, node)?;
                 } else {
-                    let node = update_glue_or_kern(stores, &node)?;
+                    let node = update_glue_or_kern(stores, &node, error_context)?;
                     contribute_front_as(stores, node)?;
                 }
             }
@@ -546,13 +546,17 @@ fn prepare_box_or_rule(stores: &mut Universe, node: &Node) -> Result<(), ExecErr
     Ok(())
 }
 
-fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecError> {
+fn update_glue_or_kern(
+    stores: &mut Universe,
+    node: &Node,
+    error_context: Option<&str>,
+) -> Result<Node, ExecError> {
     let mut replacement = None;
     let width = match node {
         Node::Kern { amount, .. } => *amount,
         Node::Glue { spec, kind, leader } => {
             let spec = stores.glue(*spec);
-            let spec = finite_page_shrink(stores, spec)?;
+            let spec = finite_page_shrink(stores, spec, error_context)?;
             let finite_id = stores.intern_glue(spec);
             replacement = Some(Node::Glue {
                 spec: finite_id,
@@ -576,9 +580,13 @@ fn update_glue_or_kern(stores: &mut Universe, node: &Node) -> Result<Node, ExecE
     Ok(replacement.unwrap_or_else(|| node.clone()))
 }
 
-fn finite_page_shrink(stores: &mut Universe, mut spec: GlueSpec) -> Result<GlueSpec, ExecError> {
+fn finite_page_shrink(
+    stores: &mut Universe,
+    mut spec: GlueSpec,
+    error_context: Option<&str>,
+) -> Result<GlueSpec, ExecError> {
     if spec.shrink_order != Order::Normal && spec.shrink.raw() != 0 {
-        diagnostics::report_page_infinite_shrinkage(stores)?;
+        diagnostics::report_page_infinite_shrinkage(stores, error_context)?;
         spec.shrink_order = Order::Normal;
     }
     Ok(spec)

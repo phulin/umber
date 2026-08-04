@@ -952,6 +952,7 @@ pub(crate) fn start_canonical_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
     indent: bool,
+    error_context: &str,
 ) -> Result<(), ExecError> {
     match nest.current_mode() {
         crate::Mode::Vertical | crate::Mode::InternalVertical => {
@@ -967,7 +968,11 @@ pub(crate) fn start_canonical_paragraph(
                         leader: None,
                     },
                 );
-                build_page_if_outer_vertical(nest, stores)?;
+                crate::vertical::build_page_if_outer_vertical_with_error_context(
+                    nest,
+                    stores,
+                    error_context,
+                )?;
             }
             nest.push_at_line(crate::Mode::Horizontal, stores.current_input_line())?;
             stores.push_paragraph_start_line(stores.current_input_line());
