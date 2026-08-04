@@ -443,26 +443,30 @@ fn dump_math_noad(
 ) {
     match &noad.kind {
         NoadKind::Radical { delimiter } => {
-            dump_delimiter_command("\\radical", *delimiter, out);
+            append_escaped_name(stores, "radical", out);
+            dump_delimiter(*delimiter, out);
         }
         NoadKind::Accent { accent } => {
-            out.push_str("\\accent");
+            append_escaped_name(stores, "accent", out);
             dump_math_char_inline(*accent, out);
         }
         NoadKind::LeftDelimiter { delimiter } => {
-            dump_delimiter_command("\\left", *delimiter, out);
+            append_escaped_name(stores, "left", out);
+            dump_delimiter(*delimiter, out);
         }
         NoadKind::RightDelimiter { delimiter } => {
-            dump_delimiter_command("\\right", *delimiter, out);
+            append_escaped_name(stores, "right", out);
+            dump_delimiter(*delimiter, out);
         }
         NoadKind::MiddleDelimiter { delimiter } => {
-            dump_delimiter_command("\\middle", *delimiter, out);
+            append_escaped_name(stores, "middle", out);
+            dump_delimiter(*delimiter, out);
         }
-        _ => out.push_str(noad_name(&noad.kind)),
+        _ => append_escaped_name(stores, noad_name(&noad.kind), out),
     }
     match &noad.kind {
-        NoadKind::Operator(LimitType::Limits) => out.push_str("\\limits"),
-        NoadKind::Operator(LimitType::NoLimits) => out.push_str("\\nolimits"),
+        NoadKind::Operator(LimitType::Limits) => append_escaped_name(stores, "limits", out),
+        NoadKind::Operator(LimitType::NoLimits) => append_escaped_name(stores, "nolimits", out),
         _ => {}
     }
     // TeX82 §692's `print_subsidiary_data` keeps nonempty math fields
@@ -530,22 +534,22 @@ fn dump_leader_payload(
 
 fn noad_name(kind: &NoadKind) -> &'static str {
     match kind {
-        NoadKind::Normal(NoadClass::Ord) => "\\mathord",
-        NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_) => "\\mathop",
-        NoadKind::Normal(NoadClass::Bin) => "\\mathbin",
-        NoadKind::Normal(NoadClass::Rel) => "\\mathrel",
-        NoadKind::Normal(NoadClass::Open) => "\\mathopen",
-        NoadKind::Normal(NoadClass::Close) => "\\mathclose",
-        NoadKind::Normal(NoadClass::Punct) => "\\mathpunct",
-        NoadKind::Normal(NoadClass::Inner) => "\\mathinner",
-        NoadKind::Radical { .. } => "\\radical",
-        NoadKind::Accent { .. } => "\\accent",
-        NoadKind::LeftDelimiter { .. } => "\\left",
-        NoadKind::RightDelimiter { .. } => "\\right",
-        NoadKind::MiddleDelimiter { .. } => "\\middle",
-        NoadKind::Underline => "\\underline",
-        NoadKind::Overline => "\\overline",
-        NoadKind::VCenter => "\\vcenter",
+        NoadKind::Normal(NoadClass::Ord) => "mathord",
+        NoadKind::Normal(NoadClass::Op) | NoadKind::Operator(_) => "mathop",
+        NoadKind::Normal(NoadClass::Bin) => "mathbin",
+        NoadKind::Normal(NoadClass::Rel) => "mathrel",
+        NoadKind::Normal(NoadClass::Open) => "mathopen",
+        NoadKind::Normal(NoadClass::Close) => "mathclose",
+        NoadKind::Normal(NoadClass::Punct) => "mathpunct",
+        NoadKind::Normal(NoadClass::Inner) => "mathinner",
+        NoadKind::Radical { .. } => "radical",
+        NoadKind::Accent { .. } => "accent",
+        NoadKind::LeftDelimiter { .. } => "left",
+        NoadKind::RightDelimiter { .. } => "right",
+        NoadKind::MiddleDelimiter { .. } => "middle",
+        NoadKind::Underline => "underline",
+        NoadKind::Overline => "overline",
+        NoadKind::VCenter => "vcenter",
     }
 }
 
@@ -676,9 +680,9 @@ fn delimiter_field(delimiter: u32) -> u32 {
 /// Print a noad whose diagnostic payload is TeX82 §696's packed delimiter
 /// field. Unlike §697's optional fraction delimiters, a noad remains visible
 /// when all four quarters are zero.
-fn dump_delimiter_command(command: &str, delimiter: u32, out: &mut String) {
+fn dump_delimiter(delimiter: u32, out: &mut String) {
     let delimiter = delimiter_field(delimiter);
-    dump_packed_delimiter(command, delimiter, out);
+    dump_packed_delimiter("", delimiter, out);
 }
 
 fn dump_packed_delimiter(prefix: &str, delimiter: u32, out: &mut String) {
@@ -1295,6 +1299,31 @@ mod unset_diagnostic_tests {
                 },
             ),
             "|glue(|lineskip) 0.0\n"
+        );
+    }
+
+    /// TeX82 §§63/696 routes both the noad name and its limit suffix through
+    /// `print_esc`, so each observes the live `\escapechar` independently.
+    #[test]
+    fn math_noad_names_use_live_escape_character() {
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        let list = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Operator(LimitType::Limits),
+            MathField::Empty,
+        ))]);
+
+        assert_eq!(
+            dump_node_list(
+                &stores,
+                list,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 5,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "|mathop|limits\n"
         );
     }
 }
