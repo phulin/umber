@@ -176,6 +176,7 @@ pub(crate) fn shipout_node_with_input_summary(
                 }),
                 revision_candidate: publication_candidate,
                 effects: 0..0,
+                effect_output_attempt: None,
             }));
         }
         stores.record_pure_memo_timing(
@@ -268,6 +269,7 @@ pub(crate) fn shipout_node_with_input_summary(
         }),
         revision_candidate: publication_candidate,
         effects: 0..0,
+        effect_output_attempt: None,
     }))
 }
 

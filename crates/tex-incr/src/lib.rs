@@ -338,6 +338,7 @@ pub struct PendingRevision {
     effect_sequences: Vec<tex_state::EffectSequence>,
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
+    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -418,6 +419,7 @@ struct AdvanceSetup {
     old_effect_sequences: Vec<tex_state::EffectSequence>,
     old_effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     old_effect_domains: Vec<tex_state::EffectDomain>,
+    old_effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
     old_artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     old_artifacts: Vec<CommittedArtifact>,
     old_pages: Vec<DviPagePlan>,
@@ -1034,6 +1036,7 @@ pub struct Session {
     effect_sequences: Vec<tex_state::EffectSequence>,
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
+    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -1190,6 +1193,7 @@ impl Session {
             effect_sequences: Vec::new(),
             effect_publications: Vec::new(),
             effect_domains: Vec::new(),
+            effect_semantic_record_ordinals: Vec::new(),
             artifact_publications: Vec::new(),
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
@@ -1496,6 +1500,7 @@ impl Session {
             old_effect_sequences: self.effect_sequences.clone(),
             old_effect_publications: self.effect_publications.clone(),
             old_effect_domains: self.effect_domains.clone(),
+            old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
             old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
@@ -1587,6 +1592,7 @@ impl Session {
             old_effect_sequences: self.effect_sequences.clone(),
             old_effect_publications: self.effect_publications.clone(),
             old_effect_domains: self.effect_domains.clone(),
+            old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
             old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
@@ -1868,6 +1874,12 @@ impl Session {
             .as_ref()
             .clone();
         let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
+        let effect_semantic_record_ordinals = candidate
+            .universe
+            .world()
+            .effect_semantic_record_ordinals()
+            .as_ref()
+            .clone();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
         let expansion_stats = ExpansionStats::default();
@@ -1917,6 +1929,7 @@ impl Session {
             effect_sequences,
             effect_publications,
             effect_domains,
+            effect_semantic_record_ordinals,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -2009,6 +2022,10 @@ impl Session {
         let live_effect_sequences = candidate.universe.world().effect_sequences();
         let live_effect_publications = candidate.universe.world().effect_publications();
         let live_effect_domains = candidate.universe.world().effect_domains();
+        let live_effect_semantic_record_ordinals =
+            candidate.universe.world().effect_semantic_record_ordinals();
+        let live_effect_publication_dispositions =
+            candidate.universe.world().effect_publication_dispositions();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let mut live_artifact_publications =
             candidate.universe.world().artifact_publications().to_vec();
@@ -2165,20 +2182,24 @@ impl Session {
                 let replayed_artifact_count = usize::try_from(paragraph_replay.hits).unwrap_or(0);
                 let (
                     candidate_effects,
-                    candidate_sequences,
+                    _candidate_sequences,
                     candidate_publications,
-                    candidate_domains,
+                    _candidate_domains,
+                    _candidate_semantic_record_ordinals,
                 ) = assemble_effect_ledger(
                     &setup.old_effects,
                     &setup.old_effect_sequences,
                     &setup.old_effect_publications,
                     &setup.old_effect_domains,
+                    &setup.old_effect_semantic_record_ordinals,
                     &effects,
                     &live_effect_sequences,
                     &live_effect_publications,
                     &live_effect_domains,
+                    &live_effect_semantic_record_ordinals,
                     anchor.effect_prefix,
                     &superseded_output_episodes,
+                    &live_effect_publication_dispositions,
                 );
                 let _ = replayed_artifact_count;
                 let current_artifact_origins = if broke_retained_paragraph {
@@ -2229,13 +2250,37 @@ impl Session {
                         retained_artifact_prefix,
                         &superseded_output_episodes,
                         &candidate_publications,
+                        &live_effect_publications,
+                        &live_effect_sequences,
                     );
+                let (
+                    joined_effects,
+                    candidate_sequences,
+                    candidate_publications,
+                    candidate_domains,
+                    candidate_semantic_record_ordinals,
+                ) = assemble_effect_ledger(
+                    &setup.old_effects,
+                    &setup.old_effect_sequences,
+                    &setup.old_effect_publications,
+                    &setup.old_effect_domains,
+                    &setup.old_effect_semantic_record_ordinals,
+                    &effects,
+                    &live_effect_sequences,
+                    &live_effect_publications,
+                    &live_effect_domains,
+                    &live_effect_semantic_record_ordinals,
+                    anchor.effect_prefix,
+                    &superseded_output_episodes,
+                    &live_effect_publication_dispositions,
+                );
                 assembled_effect_sidecars = Some((
                     candidate_sequences,
                     candidate_publications.clone(),
                     candidate_domains,
+                    candidate_semantic_record_ordinals,
                 ));
-                let joined_effects = candidate_effects;
+                let _ = candidate_effects;
                 live_artifact_publications = joined_artifact_publications;
                 (
                     joined_effects,
@@ -2283,18 +2328,23 @@ impl Session {
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
         reuse.splice_latency = splice_started.elapsed();
         reuse.trace_replay_latency = reuse.splice_latency;
-        let (effect_sequences, effect_publications, effect_domains) = assembled_effect_sidecars
-            .unwrap_or_else(|| {
-                (
-                    (1..=effects.len())
-                        .map(|sequence| tex_state::EffectSequence::new(sequence as u64))
-                        .collect(),
-                    vec![None; effects.len()],
-                    (1..=effects.len())
-                        .map(|domain| tex_state::EffectDomain::World(domain as u64))
-                        .collect(),
-                )
-            });
+        let (
+            effect_sequences,
+            effect_publications,
+            effect_domains,
+            effect_semantic_record_ordinals,
+        ) = assembled_effect_sidecars.unwrap_or_else(|| {
+            (
+                (1..=effects.len())
+                    .map(|sequence| tex_state::EffectSequence::new(sequence as u64))
+                    .collect(),
+                vec![None; effects.len()],
+                (1..=effects.len())
+                    .map(|domain| tex_state::EffectDomain::World(domain as u64))
+                    .collect(),
+                vec![tex_state::EffectSemanticRecordOrdinal::new(1); effects.len()],
+            )
+        });
         Ok(PendingRevision {
             session_output_id: self.output_id,
             base_revision: self.revision,
@@ -2308,6 +2358,7 @@ impl Session {
             effect_sequences,
             effect_publications,
             effect_domains,
+            effect_semantic_record_ordinals,
             artifact_publications: live_artifact_publications,
             artifacts,
             dvi_pages: pages,
@@ -3010,6 +3061,7 @@ impl Session {
         world.install_effect_sequences(&pending.effect_sequences);
         world.install_effect_publications(&pending.effect_publications);
         world.install_effect_domains(&pending.effect_domains);
+        world.install_effect_semantic_record_ordinals(&pending.effect_semantic_record_ordinals);
         Ok(world)
     }
 
@@ -3030,6 +3082,7 @@ impl Session {
             effect_sequences,
             effect_publications,
             effect_domains,
+            effect_semantic_record_ordinals,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -3127,6 +3180,7 @@ impl Session {
         self.effect_sequences = effect_sequences;
         self.effect_publications = effect_publications;
         self.effect_domains = effect_domains;
+        self.effect_semantic_record_ordinals = effect_semantic_record_ordinals;
         self.artifact_publications = artifact_publications;
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
@@ -3209,6 +3263,7 @@ impl Session {
         self.effect_sequences = run.effect_sequences;
         self.effect_publications = run.effect_publications;
         self.effect_domains = run.effect_domains;
+        self.effect_semantic_record_ordinals = run.effect_semantic_record_ordinals;
         self.artifact_publications = run.artifact_publications;
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
@@ -3313,6 +3368,7 @@ struct RevisionRun {
     effect_sequences: Vec<tex_state::EffectSequence>,
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
+    effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -3366,6 +3422,12 @@ fn finish_cold_candidate(
         .as_ref()
         .clone();
     let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
+    let effect_semantic_record_ordinals = candidate
+        .universe
+        .world()
+        .effect_semantic_record_ordinals()
+        .as_ref()
+        .clone();
     let artifacts = candidate.universe.world().committed_artifacts().to_vec();
     let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
@@ -3394,6 +3456,7 @@ fn finish_cold_candidate(
             effect_sequences,
             effect_publications,
             effect_domains,
+            effect_semantic_record_ordinals,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -3496,6 +3559,11 @@ fn execute_revision(
     let effect_sequences = universe.world().effect_sequences().as_ref().clone();
     let effect_publications = universe.world().effect_publications().as_ref().clone();
     let effect_domains = universe.world().effect_domains().as_ref().clone();
+    let effect_semantic_record_ordinals = universe
+        .world()
+        .effect_semantic_record_ordinals()
+        .as_ref()
+        .clone();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
     let substrate = universe.freeze_generation();
@@ -3510,6 +3578,7 @@ fn execute_revision(
         effect_sequences,
         effect_publications,
         effect_domains,
+        effect_semantic_record_ordinals,
         artifacts,
         dvi_pages,
         output_bytes,
@@ -4264,11 +4333,13 @@ struct EffectAssemblyRecord {
     sequence: tex_state::EffectSequence,
     publication: Option<tex_state::EffectPublicationId>,
     domain: tex_state::EffectDomain,
+    semantic_record_ordinal: tex_state::EffectSemanticRecordOrdinal,
+    output_attempt: Option<tex_state::EffectOutputAttemptId>,
     effects: Vec<EffectRecord>,
     origin: EffectRecordOrigin,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum EffectRecordOrigin {
     Accepted,
     Live,
@@ -4295,29 +4366,213 @@ fn materialize_effect_view(
         .collect()
 }
 
+type AssembledEffectLedger = (
+    Vec<EffectRecord>,
+    Vec<tex_state::EffectSequence>,
+    Vec<Option<tex_state::EffectPublicationId>>,
+    Vec<tex_state::EffectDomain>,
+    Vec<tex_state::EffectSemanticRecordOrdinal>,
+);
+
+fn map_publication_boundary_domain(
+    domain: tex_state::EffectDomain,
+    endpoint_replacements: &std::collections::BTreeMap<
+        tex_state::EffectPublicationId,
+        tex_state::EffectPublicationId,
+    >,
+    output_attempt_replacements: &std::collections::BTreeMap<
+        tex_state::EffectOutputAttemptId,
+        tex_state::EffectOutputAttemptId,
+    >,
+) -> tex_state::EffectDomain {
+    let tex_state::EffectDomain::PublicationBoundary {
+        left,
+        right,
+        output_attempt,
+    } = domain
+    else {
+        return domain;
+    };
+    tex_state::EffectDomain::PublicationBoundary {
+        left: left.map(|publication| {
+            endpoint_replacements
+                .get(&publication)
+                .copied()
+                .unwrap_or(publication)
+        }),
+        right: right.map(|publication| {
+            endpoint_replacements
+                .get(&publication)
+                .copied()
+                .unwrap_or(publication)
+        }),
+        output_attempt: output_attempt_replacements
+            .get(&output_attempt)
+            .copied()
+            .unwrap_or(output_attempt),
+    }
+}
+
+fn effect_semantic_record_key(
+    domain: tex_state::EffectDomain,
+    ordinal: tex_state::EffectSemanticRecordOrdinal,
+) -> (
+    tex_state::EffectDomain,
+    tex_state::EffectSemanticRecordOrdinal,
+) {
+    let domain = match domain {
+        tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
+        // The attempt is the typed owner used to arbitrate candidates, not
+        // part of the boundary record they compete to publish. Once the
+        // endpoint publications map into the accepted restart domain, the
+        // same endpoint gap and local ordinal are the canonical semantic
+        // identity even when a replacement transaction owns the live claim.
+        tex_state::EffectDomain::PublicationBoundary { left, right, .. } => {
+            tex_state::EffectDomain::PublicationBoundary {
+                left,
+                right,
+                output_attempt: tex_state::EffectOutputAttemptId::new(0),
+            }
+        }
+        domain => domain,
+    };
+    (domain, ordinal)
+}
+
+fn output_attempt_ancestry_mapping(
+    accepted_attempts: &std::collections::BTreeSet<tex_state::EffectOutputAttemptId>,
+    dispositions: &[tex_state::EffectPublicationDisposition],
+    domain_replacements: &std::collections::BTreeMap<
+        tex_state::EffectDomain,
+        tex_state::EffectDomain,
+    >,
+    map_owner_transactions: bool,
+) -> std::collections::BTreeMap<tex_state::EffectOutputAttemptId, tex_state::EffectOutputAttemptId>
+{
+    let has_recursive_replacement = dispositions
+        .iter()
+        .any(|disposition| disposition.rejected().is_some());
+    let recursive_replacement_roots = dispositions
+        .iter()
+        .filter(|disposition| disposition.rejected().is_some())
+        .filter_map(|disposition| disposition.recursive_receipt())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut accepted_episodes = std::collections::BTreeMap::new();
+    let mut accepted_recursive_roots = std::collections::BTreeMap::new();
+    let mut accepted_owner_attempts = std::collections::BTreeMap::new();
+    for disposition in dispositions {
+        let attempt = disposition.output_attempt();
+        if !accepted_attempts.contains(&attempt) {
+            continue;
+        }
+        if let Some(episode) = disposition.output_episode() {
+            accepted_episodes.insert(episode, attempt);
+            if disposition
+                .recursive_receipt()
+                .is_some_and(|receipt| receipt.identity() == episode.identity())
+            {
+                accepted_recursive_roots.insert(disposition.recursive_receipt(), attempt);
+            }
+        }
+        if has_recursive_replacement && map_owner_transactions {
+            accepted_owner_attempts.insert(
+                (
+                    disposition
+                        .output_owner()
+                        .iter()
+                        .map(|owner| owner.identity())
+                        .collect::<Vec<_>>(),
+                    disposition.output_owner_ordinal(),
+                ),
+                attempt,
+            );
+        }
+    }
+
+    dispositions
+        .iter()
+        .filter(|disposition| !accepted_attempts.contains(&disposition.output_attempt()))
+        .filter_map(|disposition| {
+            let mapped_owner = disposition
+                .output_owner()
+                .iter()
+                .map(|owner| {
+                    let live = tex_state::EffectDomain::Paragraph(owner.identity());
+                    match domain_replacements.get(&live).copied().unwrap_or(live) {
+                        tex_state::EffectDomain::Paragraph(identity) => identity,
+                        _ => unreachable!("paragraph owner maps only to a paragraph domain"),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let accepted = map_owner_transactions
+                .then_some(())
+                .and_then(|_| {
+                    disposition
+                        .recursive_receipt()
+                        .filter(|receipt| recursive_replacement_roots.contains(receipt))
+                        .and_then(|_| {
+                            accepted_owner_attempts
+                                .get(&(mapped_owner, disposition.output_owner_ordinal()))
+                                .copied()
+                        })
+                })
+                .or_else(|| {
+                    disposition
+                        .output_episode()
+                        .and_then(|episode| accepted_episodes.get(&episode).copied())
+                        .or_else(|| {
+                            accepted_recursive_roots
+                                .get(&disposition.recursive_receipt())
+                                .copied()
+                        })
+                })?;
+            Some((disposition.output_attempt(), accepted))
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assemble_effect_ledger(
     accepted: &[EffectRecord],
     accepted_sequences: &[tex_state::EffectSequence],
     accepted_publications: &[Option<tex_state::EffectPublicationId>],
     accepted_domains: &[tex_state::EffectDomain],
+    accepted_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
     live: &[EffectRecord],
     live_sequences: &[tex_state::EffectSequence],
     live_publications: &[Option<tex_state::EffectPublicationId>],
     live_domains: &[tex_state::EffectDomain],
+    live_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
     accepted_prefix: usize,
     superseded: &[tex_exec::SupersededPageOutputEpisode],
-) -> (
-    Vec<EffectRecord>,
-    Vec<tex_state::EffectSequence>,
-    Vec<Option<tex_state::EffectPublicationId>>,
-    Vec<tex_state::EffectDomain>,
-) {
+    effect_dispositions: &[tex_state::EffectPublicationDisposition],
+) -> AssembledEffectLedger {
     let mut rejected_accepted = std::collections::BTreeSet::new();
     let mut rejected_live = std::collections::BTreeSet::new();
     let mut inherited_live_sequences = std::collections::BTreeMap::new();
     let mut retained_winners = std::collections::BTreeSet::new();
     let mut selected_publications = std::collections::BTreeSet::new();
+    let mut selected_output_attempts = std::collections::BTreeSet::new();
+    let mut rejected_output_attempts = std::collections::BTreeSet::new();
+    let mut final_winners = std::collections::BTreeMap::new();
+    let mut rejected_publications = std::collections::BTreeSet::new();
+    for disposition in effect_dispositions {
+        if disposition.rejected().is_none() {
+            selected_output_attempts.insert(disposition.output_attempt());
+        } else {
+            rejected_output_attempts.insert(disposition.output_attempt());
+        }
+        if let Some(rejected) = disposition.rejected() {
+            rejected_publications.insert(rejected);
+            if let Some(scratch) = final_winners.insert(rejected, disposition.winner()) {
+                rejected_publications.insert(scratch);
+            }
+        } else {
+            selected_publications.insert(disposition.winner());
+        }
+    }
+    selected_output_attempts.retain(|attempt| !rejected_output_attempts.contains(attempt));
+    selected_publications.extend(final_winners.values().copied());
     let accepted_publication_ids = accepted_publications
         .iter()
         .copied()
@@ -4327,7 +4582,6 @@ fn assemble_effect_ledger(
         .iter()
         .filter_map(tex_exec::SupersededPageOutputEpisode::retained_publication)
         .collect::<std::collections::BTreeSet<_>>();
-    let mut publication_winners = std::collections::BTreeMap::new();
     for receipt in superseded {
         let Some(sealed) = seal_revision_output_publication(receipt) else {
             continue;
@@ -4356,9 +4610,8 @@ fn assemble_effect_ledger(
                 }
             }
         }
-        selected_publications.insert(sealed.identity);
-        if let Some(retained) = retained {
-            publication_winners.insert(retained, sealed.identity);
+        if !rejected_publications.contains(&sealed.identity) {
+            selected_publications.insert(sealed.identity);
         }
     }
     let pending_sequences = superseded
@@ -4392,7 +4645,8 @@ fn assemble_effect_ledger(
         })
         .collect::<std::collections::BTreeSet<_>>();
 
-    let accepted_paragraph_domains = ordered_paragraph_domains(accepted_domains);
+    let accepted_paragraph_domains =
+        ordered_paragraph_domains(&accepted_domains[accepted_prefix.min(accepted_domains.len())..]);
     let live_paragraph_domains = ordered_paragraph_domains(live_domains);
     let mut domain_replacements = live_paragraph_domains
         .into_iter()
@@ -4403,6 +4657,99 @@ fn assemble_effect_ledger(
             .into_iter()
             .zip(ordered_world_domains(accepted_domains)),
     );
+    let owner_domain_replacements = ordered_paragraph_domains(live_domains)
+        .into_iter()
+        .zip(ordered_paragraph_domains(accepted_domains))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let accepted_publications_by_semantic_record = accepted_domains
+        .iter()
+        .copied()
+        .zip(accepted_semantic_record_ordinals.iter().copied())
+        .zip(accepted_publications.iter().copied())
+        .filter_map(|((domain, ordinal), publication)| {
+            publication
+                .map(|publication| (effect_semantic_record_key(domain, ordinal), publication))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut mapped_publications = final_winners.clone();
+    for ((domain, ordinal), publication) in live_domains
+        .iter()
+        .copied()
+        .zip(live_semantic_record_ordinals.iter().copied())
+        .zip(live_publications.iter().copied())
+    {
+        let Some(publication) = publication else {
+            continue;
+        };
+        let domain = domain_replacements.get(&domain).copied().unwrap_or(domain);
+        if let Some(accepted) = accepted_publications_by_semantic_record
+            .get(&effect_semantic_record_key(domain, ordinal))
+        {
+            mapped_publications.entry(publication).or_insert(*accepted);
+        }
+    }
+    let accepted_boundary_attempts = accepted_domains
+        .iter()
+        .copied()
+        .filter_map(|domain| {
+            let tex_state::EffectDomain::PublicationBoundary { output_attempt, .. } = domain else {
+                return None;
+            };
+            Some(output_attempt)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut mapped_output_attempts = output_attempt_ancestry_mapping(
+        &accepted_boundary_attempts,
+        effect_dispositions,
+        &owner_domain_replacements,
+        true,
+    );
+    for (live, accepted) in output_attempt_ancestry_mapping(
+        &accepted_boundary_attempts,
+        effect_dispositions,
+        &owner_domain_replacements,
+        false,
+    ) {
+        mapped_output_attempts.entry(live).or_insert(accepted);
+    }
+    let mapped_accepted_output_attempts = mapped_output_attempts
+        .values()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let dispositions_by_attempt = effect_dispositions
+        .iter()
+        .map(|disposition| (disposition.output_attempt(), disposition))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (&live_attempt, &accepted_attempt) in &mapped_output_attempts {
+        let (Some(live), Some(accepted)) = (
+            dispositions_by_attempt.get(&live_attempt),
+            dispositions_by_attempt.get(&accepted_attempt),
+        ) else {
+            continue;
+        };
+        mapped_publications.insert(
+            live.rejected().unwrap_or_else(|| live.winner()),
+            accepted.winner(),
+        );
+    }
+    domain_replacements.extend(live_domains.iter().copied().filter_map(|domain| {
+        let mapped =
+            map_publication_boundary_domain(domain, &mapped_publications, &mapped_output_attempts);
+        (mapped != domain).then_some((domain, mapped))
+    }));
+    let accepted_semantic_sequences = accepted_domains
+        .iter()
+        .copied()
+        .zip(accepted_semantic_record_ordinals.iter().copied())
+        .zip(accepted_sequences.iter().copied())
+        .map(|((domain, ordinal), sequence)| {
+            let domain = match domain {
+                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
+                domain => domain,
+            };
+            ((domain, ordinal), sequence)
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     let live_domains_set = live_domains
         .iter()
         .copied()
@@ -4417,12 +4764,22 @@ fn assemble_effect_ledger(
         accepted_sequences,
         accepted_publications,
         accepted_domains,
-        |index, _sequence, publication, domain| {
+        accepted_semantic_record_ordinals,
+        |index, _sequence, publication, domain, _ordinal| {
             index < accepted_prefix
                 || publication.is_some_and(|id| retained_winners.contains(&id))
                 || matches!(domain, tex_state::EffectDomain::TerminalPublication { .. })
-                || publication.is_none() && !live_domains_set.contains(&domain)
+                || publication.is_none()
+                    && (!live_domains_set.contains(&domain)
+                        || matches!(
+                            domain,
+                            tex_state::EffectDomain::PublicationBoundary {
+                                output_attempt,
+                                ..
+                            } if mapped_accepted_output_attempts.contains(&output_attempt)
+                        ))
         },
+        &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         &std::collections::BTreeMap::new(),
         EffectRecordOrigin::Accepted,
@@ -4433,19 +4790,28 @@ fn assemble_effect_ledger(
         live_sequences,
         live_publications,
         live_domains,
-        |_, sequence, publication, _domain| {
+        live_semantic_record_ordinals,
+        |_, sequence, publication, domain, ordinal| {
+            let semantic_domain = match domain {
+                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
+                domain => domain,
+            };
             publication.is_none_or(|id| {
                 !rejected_live.contains(&id)
-                    && !retained_prefix_publication_sequences.contains(&sequence)
-                    && (superseded.is_empty() || selected_live_publications.contains(&id))
+                    && !rejected_publications.contains(&id)
+                    && ((!effect_dispositions.is_empty()
+                        && selected_publications.contains(&id)
+                        && accepted_semantic_sequences.contains_key(&(semantic_domain, ordinal)))
+                        || !retained_prefix_publication_sequences.contains(&sequence)
+                            && (superseded.is_empty() || selected_live_publications.contains(&id)))
             })
         },
         &inherited_live_sequences,
         &domain_replacements,
+        &accepted_semantic_sequences,
         EffectRecordOrigin::Live,
     );
-    let mut publications_by_semantic_record = std::collections::BTreeMap::new();
-    let mut unowned = Vec::new();
+    let mut candidates_by_semantic_record = std::collections::BTreeMap::new();
     let mut terminal_candidates = Vec::new();
     for record in records {
         if let tex_state::EffectDomain::TerminalPublication {
@@ -4458,18 +4824,22 @@ fn assemble_effect_ledger(
             terminal_candidates.push(record);
             continue;
         }
-        let Some(publication) = record.publication else {
-            unowned.push(record);
-            continue;
-        };
-        let key = record.sequence;
-        publications_by_semantic_record
+        let key = effect_semantic_record_key(record.domain, record.semantic_record_ordinal);
+        candidates_by_semantic_record
             .entry(key)
             .and_modify(|current: &mut EffectAssemblyRecord| {
-                let record_selected = selected_publications.contains(&publication);
-                let current_selected = current
-                    .publication
-                    .is_some_and(|id| selected_publications.contains(&id));
+                let is_selected = |candidate: &EffectAssemblyRecord| {
+                    candidate.publication.map_or_else(
+                        || {
+                            candidate
+                                .output_attempt
+                                .is_none_or(|attempt| selected_output_attempts.contains(&attempt))
+                        },
+                        |publication| selected_publications.contains(&publication),
+                    )
+                };
+                let record_selected = is_selected(&record);
+                let current_selected = is_selected(current);
                 if record_selected && !current_selected
                     || record_selected == current_selected
                         && record.origin == EffectRecordOrigin::Live
@@ -4480,117 +4850,20 @@ fn assemble_effect_ledger(
             })
             .or_insert(record);
     }
-    let selected_records = publications_by_semantic_record
+    let selected_records = candidates_by_semantic_record
         .into_values()
-        .collect::<Vec<_>>();
-    let mut selected_order = selected_records
-        .iter()
-        .filter_map(|record| record.publication.map(|id| (record.sequence, id)))
-        .collect::<Vec<_>>();
-    selected_order.sort_unstable();
-    let selected_predecessors = selected_order
-        .iter()
-        .enumerate()
-        .map(|(index, (_, id))| {
-            (
-                *id,
-                index
-                    .checked_sub(1)
-                    .map(|previous| selected_order[previous].1),
-            )
-        })
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let selected_sequences = selected_order
-        .iter()
-        .map(|(sequence, id)| (*id, *sequence))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let non_boundary_sequences = unowned
-        .iter()
         .filter(|record| {
-            !matches!(
-                record.domain,
-                tex_state::EffectDomain::PublicationBoundary { .. }
+            record.publication.map_or_else(
+                || {
+                    effect_dispositions.is_empty()
+                        || record
+                            .output_attempt
+                            .is_none_or(|attempt| selected_output_attempts.contains(&attempt))
+                },
+                |publication| selected_publications.contains(&publication),
             )
         })
-        .map(|record| record.sequence)
-        .collect::<std::collections::BTreeSet<_>>();
-    unowned.retain_mut(|record| {
-        let tex_state::EffectDomain::PublicationBoundary { left, right } = record.domain else {
-            return true;
-        };
-        let left = left.map(|id| publication_winners.get(&id).copied().unwrap_or(id));
-        let right = right.map(|id| publication_winners.get(&id).copied().unwrap_or(id));
-        match right {
-            Some(right) => {
-                let Some(expected_left) = selected_predecessors.get(&right).copied() else {
-                    return false;
-                };
-                if expected_left.is_none() && left.is_some() {
-                    return false;
-                }
-                if left != expected_left
-                    && expected_left
-                        .and_then(|left| selected_sequences.get(&left).copied())
-                        .is_some_and(|left_sequence| {
-                            left_sequence < record.sequence
-                                && non_boundary_sequences
-                                    .range((
-                                        std::ops::Bound::Excluded(left_sequence),
-                                        std::ops::Bound::Excluded(record.sequence),
-                                    ))
-                                    .next()
-                                    .is_some()
-                        })
-                {
-                    return false;
-                }
-                record.domain = tex_state::EffectDomain::PublicationBoundary {
-                    left: expected_left,
-                    right: Some(right),
-                };
-                if let Some((sequence, _)) = selected_order.iter().find(|(_, id)| *id == right) {
-                    record.sequence = *sequence;
-                }
-                true
-            }
-            None => left.is_some_and(|left| selected_predecessors.contains_key(&left)),
-        }
-    });
-    let mut boundaries = std::collections::BTreeMap::new();
-    let mut non_boundaries = std::collections::BTreeMap::new();
-    for record in unowned {
-        let tex_state::EffectDomain::PublicationBoundary { left, right } = record.domain else {
-            let semantic_domain = match record.domain {
-                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
-                domain => domain,
-            };
-            non_boundaries
-                .entry((record.sequence, semantic_domain))
-                .and_modify(|current: &mut EffectAssemblyRecord| {
-                    if record.origin == EffectRecordOrigin::Live
-                        && current.origin == EffectRecordOrigin::Accepted
-                    {
-                        *current = record.clone();
-                    }
-                })
-                .or_insert(record);
-            continue;
-        };
-        boundaries
-            .entry((left, right))
-            .and_modify(|current: &mut EffectAssemblyRecord| {
-                if record.origin == EffectRecordOrigin::Live
-                    && current.origin == EffectRecordOrigin::Accepted
-                {
-                    let mut replacement = record.clone();
-                    replacement.sequence = current.sequence;
-                    *current = replacement;
-                }
-            })
-            .or_insert(record);
-    }
-    let mut unowned = non_boundaries.into_values().collect::<Vec<_>>();
-    unowned.extend(boundaries.into_values());
+        .collect::<Vec<_>>();
     let mut terminal = std::collections::BTreeMap::new();
     for record in terminal_candidates {
         let tex_state::EffectDomain::TerminalPublication {
@@ -4616,7 +4889,7 @@ fn assemble_effect_ledger(
             })
             .or_insert(record);
     }
-    let mut records = unowned;
+    let mut records = Vec::new();
     records.extend(terminal.into_values());
     records.extend(selected_records);
     records.sort_by_key(|record| {
@@ -4625,21 +4898,30 @@ fn assemble_effect_ledger(
             record.publication.is_some(),
             record.publication,
             record.domain,
+            record.semantic_record_ordinal,
         )
     });
     let mut effects = Vec::new();
     let mut sequences = Vec::new();
     let mut publications = Vec::new();
     let mut domains = Vec::new();
+    let mut semantic_record_ordinals = Vec::new();
     for record in records {
         for effect in record.effects {
             effects.push(effect);
             sequences.push(record.sequence);
             publications.push(record.publication);
             domains.push(record.domain);
+            semantic_record_ordinals.push(record.semantic_record_ordinal);
         }
     }
-    (effects, sequences, publications, domains)
+    (
+        effects,
+        sequences,
+        publications,
+        domains,
+        semantic_record_ordinals,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4654,6 +4936,8 @@ fn assemble_artifact_ledger(
     accepted_prefix: usize,
     superseded: &[tex_exec::SupersededPageOutputEpisode],
     selected_effect_publications: &[Option<tex_state::EffectPublicationId>],
+    live_effect_publications: &[Option<tex_state::EffectPublicationId>],
+    live_effect_sequences: &[tex_state::EffectSequence],
 ) -> (
     Vec<CommittedArtifact>,
     Vec<tex_state::ArtifactPublicationRecord>,
@@ -4668,6 +4952,14 @@ fn assemble_artifact_ledger(
     let mut rejected_accepted = std::collections::BTreeSet::new();
     let mut rejected_live = std::collections::BTreeSet::new();
     let mut retained_winners = std::collections::BTreeSet::new();
+    let effect_sequences = live_effect_publications
+        .iter()
+        .copied()
+        .zip(live_effect_sequences.iter().copied())
+        .filter_map(|(publication, sequence)| {
+            publication.map(|publication| (publication, sequence))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
     let mut inherited = std::collections::BTreeMap::new();
     for receipt in superseded {
         let Some(sealed) = seal_revision_output_publication(receipt) else {
@@ -4695,24 +4987,29 @@ fn assemble_artifact_ledger(
                 }
             }
             tex_state::OutputEpisodePublicationOutcome::Regenerated => {
-                for retained in retained {
-                    rejected_accepted.insert(retained);
-                }
+                let _ = retained;
                 let retained_records = receipt
                     .accepted_artifacts()
                     .clone()
                     .filter_map(|index| accepted_records.get(index))
                     .copied()
                     .collect::<Vec<_>>();
+                let replacement_effects = receipt
+                    .committed_publication()
+                    .map(tex_state::PageOutputPublicationReceipt::effect)
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>();
                 let regenerated_records = receipt
                     .committed_publication()
                     .into_iter()
                     .flat_map(tex_state::PageOutputPublicationReceipt::artifacts);
                 for regenerated in regenerated_records {
-                    let sequence = retained_records
-                        .iter()
-                        .find(|retained| retained.intra_order() == regenerated.intra_order())
-                        .map_or_else(|| regenerated.sequence(), |retained| retained.sequence());
+                    let sequence = artifact_winner_sequence(
+                        &retained_records,
+                        &replacement_effects,
+                        *regenerated,
+                        &effect_sequences,
+                    );
                     inherited.insert(regenerated.publication(), sequence);
                 }
             }
@@ -4725,6 +5022,57 @@ fn assemble_artifact_ledger(
         .copied()
         .flatten()
         .collect::<std::collections::BTreeSet<_>>();
+    let accepted_replacement_records = superseded
+        .iter()
+        .filter(|receipt| {
+            seal_revision_output_publication(receipt).is_none_or(|sealed| {
+                sealed.outcome == tex_state::OutputEpisodePublicationOutcome::Regenerated
+            })
+        })
+        .flat_map(|receipt| receipt.accepted_artifacts().clone())
+        .filter_map(|index| accepted_records.get(index).copied())
+        .collect::<Vec<_>>();
+    let live_replacement_publications = superseded
+        .iter()
+        .filter_map(tex_exec::SupersededPageOutputEpisode::committed_publication)
+        .flat_map(tex_state::PageOutputPublicationReceipt::artifacts)
+        .map(|record| record.publication())
+        .collect::<std::collections::BTreeSet<_>>();
+    let live_replacement_records = live_records
+        .iter()
+        .copied()
+        .filter(|record| live_replacement_publications.contains(&record.publication()))
+        .collect::<Vec<_>>();
+    let retained_replacement_prefix = accepted_replacement_records
+        .len()
+        .saturating_sub(live_replacement_records.len());
+    retained_winners.extend(
+        accepted_replacement_records[..retained_replacement_prefix]
+            .iter()
+            .map(|record| record.publication()),
+    );
+    let accepted_replacement_records = accepted_replacement_records
+        .into_iter()
+        .rev()
+        .take(live_replacement_records.len())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev();
+    if !live_replacement_publications.is_empty() {
+        rejected_live.extend(
+            live_records
+                .iter()
+                .map(|record| record.publication())
+                .filter(|publication| !live_replacement_publications.contains(publication)),
+        );
+    }
+    for (retained, regenerated) in accepted_replacement_records
+        .into_iter()
+        .zip(live_replacement_records)
+    {
+        rejected_accepted.insert(retained.publication());
+        inherited.insert(regenerated.publication(), retained.sequence());
+    }
     let mut accepted_effect_mapping = std::collections::BTreeMap::new();
     for receipt in superseded {
         let Some(sealed) = seal_revision_output_publication(receipt) else {
@@ -4822,6 +5170,32 @@ fn assemble_artifact_ledger(
     (artifacts, records, pages)
 }
 
+fn artifact_winner_sequence(
+    retained: &[tex_state::ArtifactPublicationRecord],
+    replacement_effects: &std::collections::BTreeSet<tex_state::EffectPublicationId>,
+    regenerated: tex_state::ArtifactPublicationRecord,
+    effect_sequences: &std::collections::BTreeMap<
+        tex_state::EffectPublicationId,
+        tex_state::EffectSequence,
+    >,
+) -> tex_state::EffectSequence {
+    regenerated
+        .effect_publication()
+        .filter(|effect| replacement_effects.contains(effect))
+        .and_then(|_| {
+            retained
+                .iter()
+                .find(|record| record.intra_order() == regenerated.intra_order())
+        })
+        .map(|record| record.sequence())
+        .or_else(|| {
+            regenerated
+                .effect_publication()
+                .and_then(|publication| effect_sequences.get(&publication).copied())
+        })
+        .unwrap_or_else(|| regenerated.sequence())
+}
+
 fn publication_sequence_set(
     sequences: &[tex_state::EffectSequence],
     publications: &[Option<tex_state::EffectPublicationId>],
@@ -4849,11 +5223,13 @@ fn collect_effect_assembly_records(
     sequences: &[tex_state::EffectSequence],
     publications: &[Option<tex_state::EffectPublicationId>],
     domains: &[tex_state::EffectDomain],
+    semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
     keep: impl Fn(
         usize,
         tex_state::EffectSequence,
         Option<tex_state::EffectPublicationId>,
         tex_state::EffectDomain,
+        tex_state::EffectSemanticRecordOrdinal,
     ) -> bool,
     inherited_sequences: &std::collections::BTreeMap<
         tex_state::EffectPublicationId,
@@ -4863,17 +5239,20 @@ fn collect_effect_assembly_records(
         tex_state::EffectDomain,
         tex_state::EffectDomain,
     >,
+    inherited_semantic_sequences: &std::collections::BTreeMap<
+        (
+            tex_state::EffectDomain,
+            tex_state::EffectSemanticRecordOrdinal,
+        ),
+        tex_state::EffectSequence,
+    >,
     origin: EffectRecordOrigin,
 ) {
     let mut index = 0;
     while index < effects.len() {
         let publication = publications.get(index).copied().flatten();
-        let end = publication.map_or(index + 1, |publication| {
-            (index + 1..effects.len())
-                .find(|next| publications.get(*next).copied().flatten() != Some(publication))
-                .unwrap_or(effects.len())
-        });
-        let sequence = publication
+        let end = index + 1;
+        let raw_sequence = publication
             .and_then(|id| inherited_sequences.get(&id).copied())
             .or_else(|| sequences.get(index).copied())
             .unwrap_or_else(|| tex_state::EffectSequence::new(u64::MAX));
@@ -4881,12 +5260,49 @@ fn collect_effect_assembly_records(
             .get(index)
             .copied()
             .unwrap_or(tex_state::EffectDomain::World(u64::MAX));
+        let output_attempt = match domain {
+            tex_state::EffectDomain::PublicationBoundary { output_attempt, .. } => {
+                Some(output_attempt)
+            }
+            _ => None,
+        };
         let domain = domain_replacements.get(&domain).copied().unwrap_or(domain);
-        if keep(index, sequence, publication, domain) {
+        let semantic_record_ordinal = semantic_record_ordinals
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| tex_state::EffectSemanticRecordOrdinal::new(u64::MAX));
+        let semantic_domain = match domain {
+            tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
+            domain => domain,
+        };
+        let sequence = inherited_semantic_sequences
+            .get(&(semantic_domain, semantic_record_ordinal))
+            .copied()
+            .or_else(|| {
+                inherited_semantic_sequences
+                    .range(
+                        (
+                            semantic_domain,
+                            tex_state::EffectSemanticRecordOrdinal::new(0),
+                        )..=(semantic_domain, semantic_record_ordinal),
+                    )
+                    .next_back()
+                    .map(|(_, sequence)| *sequence)
+            })
+            .unwrap_or(raw_sequence);
+        if keep(
+            index,
+            sequence,
+            publication,
+            domain,
+            semantic_record_ordinal,
+        ) {
             destination.push(EffectAssemblyRecord {
                 sequence,
                 publication,
                 domain,
+                semantic_record_ordinal,
+                output_attempt,
                 effects: effects[index..end].to_vec(),
                 origin,
             });

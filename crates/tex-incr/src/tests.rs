@@ -7,6 +7,338 @@ fn all_memo_layers() -> tex_state::PureMemoConfig {
     }
 }
 
+#[test]
+fn publication_boundaries_reconcile_only_by_mapped_domain_and_exact_ordinal() {
+    let accepted_left = tex_state::EffectPublicationId::new(3);
+    let accepted_right = tex_state::EffectPublicationId::new(5);
+    let live_left = tex_state::EffectPublicationId::new(31);
+    let live_right = tex_state::EffectPublicationId::new(51);
+    let accepted_domain = tex_state::EffectDomain::PublicationBoundary {
+        left: Some(accepted_left),
+        right: Some(accepted_right),
+        output_attempt: tex_state::EffectOutputAttemptId::new(5),
+    };
+    let live_domain = tex_state::EffectDomain::PublicationBoundary {
+        left: Some(live_left),
+        right: Some(live_right),
+        output_attempt: tex_state::EffectOutputAttemptId::new(51),
+    };
+    let replacements = [(live_left, accepted_left), (live_right, accepted_right)]
+        .into_iter()
+        .collect();
+
+    let mapped_live = map_publication_boundary_domain(
+        live_domain,
+        &replacements,
+        &[(
+            tex_state::EffectOutputAttemptId::new(51),
+            tex_state::EffectOutputAttemptId::new(5),
+        )]
+        .into_iter()
+        .collect(),
+    );
+
+    assert_eq!(mapped_live, accepted_domain);
+    assert_eq!(
+        effect_semantic_record_key(mapped_live, tex_state::EffectSemanticRecordOrdinal::new(2)),
+        effect_semantic_record_key(
+            accepted_domain,
+            tex_state::EffectSemanticRecordOrdinal::new(2)
+        )
+    );
+    assert_ne!(
+        effect_semantic_record_key(mapped_live, tex_state::EffectSemanticRecordOrdinal::new(2)),
+        effect_semantic_record_key(
+            accepted_domain,
+            tex_state::EffectSemanticRecordOrdinal::new(3)
+        ),
+        "interspersed boundaries in the same publication gap remain distinct"
+    );
+
+    let replacement_owned_domain = tex_state::EffectDomain::PublicationBoundary {
+        left: Some(accepted_left),
+        right: Some(accepted_right),
+        output_attempt: tex_state::EffectOutputAttemptId::new(99),
+    };
+    assert_eq!(
+        effect_semantic_record_key(
+            replacement_owned_domain,
+            tex_state::EffectSemanticRecordOrdinal::new(2),
+        ),
+        effect_semantic_record_key(
+            accepted_domain,
+            tex_state::EffectSemanticRecordOrdinal::new(2),
+        ),
+        "transaction ownership selects the winner but does not split the mapped boundary identity",
+    );
+}
+
+#[test]
+fn rejected_output_attempt_does_not_acquire_the_retained_boundary_identity() {
+    let retained = tex_state::EffectPublicationId::new(2);
+    let rejected_attempt = tex_state::EffectPublicationId::new(19);
+    let accepted_right = tex_state::EffectPublicationId::new(10);
+    let live_right = tex_state::EffectPublicationId::new(22);
+    let accepted = tex_state::EffectDomain::PublicationBoundary {
+        left: Some(retained),
+        right: Some(accepted_right),
+        output_attempt: tex_state::EffectOutputAttemptId::new(2),
+    };
+    let rejected = tex_state::EffectDomain::PublicationBoundary {
+        left: Some(rejected_attempt),
+        right: Some(live_right),
+        output_attempt: tex_state::EffectOutputAttemptId::new(19),
+    };
+    let endpoint_replacements = [(rejected_attempt, retained), (live_right, accepted_right)]
+        .into_iter()
+        .collect();
+
+    let mapped_rejected = map_publication_boundary_domain(
+        rejected,
+        &endpoint_replacements,
+        &std::collections::BTreeMap::new(),
+    );
+
+    assert_ne!(mapped_rejected, accepted);
+    assert_eq!(
+        mapped_rejected,
+        tex_state::EffectDomain::PublicationBoundary {
+            left: Some(retained),
+            right: Some(accepted_right),
+            output_attempt: tex_state::EffectOutputAttemptId::new(19),
+        },
+        "endpoint mapping does not erase the rejected transaction owner"
+    );
+}
+
+#[test]
+fn receipt_lineage_boundaries_compete_in_the_unified_semantic_record_arbitration() {
+    let boundary = |attempt: u64| tex_state::EffectDomain::PublicationBoundary {
+        left: None,
+        right: None,
+        output_attempt: tex_state::EffectOutputAttemptId::new(attempt),
+    };
+    let effect = |label: String| tex_state::EffectRecord::StreamWrite {
+        sink: tex_state::PrintSink::TerminalAndLog,
+        text: label,
+    };
+    let disposition = |attempt: u64, owner: u64, owner_ordinal: u64, rejected: bool| {
+        tex_state::EffectPublicationDisposition::new(
+            rejected.then(|| tex_state::EffectPublicationId::new(attempt)),
+            tex_state::EffectPublicationId::new(if rejected { 7 } else { attempt }),
+            tex_state::EffectOutputAttemptId::new(attempt),
+            Some(tex_state::PageOutputEpisodeId::new(attempt)),
+            (attempt >= 19).then(|| tex_state::PageOutputPublicationReceiptId::new(2)),
+            std::sync::Arc::from([tex_state::ParagraphRegionOwner::new(owner)]),
+            owner_ordinal,
+        )
+    };
+
+    let mut accepted_effects = vec![effect("accepted-owner".to_owned())];
+    accepted_effects.extend((7..=18).map(|attempt| effect(format!("accepted-{attempt}"))));
+    let mut accepted_domains = vec![tex_state::EffectDomain::Paragraph(2)];
+    accepted_domains.extend((7..=18).map(boundary));
+    let accepted_ordinals = vec![tex_state::EffectSemanticRecordOrdinal::new(1); 13];
+    let accepted_sequences = (1..=13)
+        .map(tex_state::EffectSequence::new)
+        .collect::<Vec<_>>();
+
+    let mut live_effects = vec![effect("live-owner".to_owned())];
+    live_effects.extend((19..=24).map(|attempt| effect(format!("live-{attempt}"))));
+    let mut live_domains = vec![tex_state::EffectDomain::Paragraph(4)];
+    live_domains.extend((19..=24).map(boundary));
+    let live_ordinals = vec![tex_state::EffectSemanticRecordOrdinal::new(1); 7];
+    let live_sequences = (20..=26)
+        .map(tex_state::EffectSequence::new)
+        .collect::<Vec<_>>();
+
+    let mut dispositions = (7..=18)
+        .map(|attempt| disposition(attempt, 2, attempt - 6, false))
+        .collect::<Vec<_>>();
+    dispositions
+        .extend((19..=24).map(|attempt| disposition(attempt, 4, attempt - 18, attempt == 19)));
+
+    let (effects, _, _, domains, _) = assemble_effect_ledger(
+        &accepted_effects,
+        &accepted_sequences,
+        &vec![None; accepted_effects.len()],
+        &accepted_domains,
+        &accepted_ordinals,
+        &live_effects,
+        &live_sequences,
+        &vec![None; live_effects.len()],
+        &live_domains,
+        &live_ordinals,
+        0,
+        &[],
+        &dispositions,
+    );
+    let boundary_labels = effects
+        .iter()
+        .zip(domains)
+        .filter(|(_, domain)| matches!(domain, tex_state::EffectDomain::PublicationBoundary { .. }))
+        .map(|(effect, _)| match effect {
+            tex_state::EffectRecord::StreamWrite { text, .. } => text.as_str(),
+            _ => unreachable!(),
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert!(
+        boundary_labels.contains("accepted-7"),
+        "boundary winners: {boundary_labels:?}"
+    );
+    for attempt in 20..=24 {
+        assert!(boundary_labels.contains(format!("live-{attempt}").as_str()));
+    }
+    for attempt in 13..=18 {
+        assert!(boundary_labels.contains(format!("accepted-{attempt}").as_str()));
+    }
+    assert_eq!(boundary_labels.len(), 12);
+}
+
+#[test]
+fn recursive_output_attempts_map_by_episode_ancestry_not_encounter_order() {
+    let disposition = |attempt: u64, episode: u64, receipt: u64, rejected: bool| {
+        tex_state::EffectPublicationDisposition::new(
+            rejected.then(|| tex_state::EffectPublicationId::new(attempt)),
+            tex_state::EffectPublicationId::new(if rejected { 2 } else { attempt }),
+            tex_state::EffectOutputAttemptId::new(attempt),
+            Some(tex_state::PageOutputEpisodeId::new(episode)),
+            Some(tex_state::PageOutputPublicationReceiptId::new(receipt)),
+            std::sync::Arc::from([]),
+            attempt,
+        )
+    };
+    let mut dispositions = vec![disposition(2, 2, 2, false)];
+    dispositions.extend((13..=18).map(|attempt| disposition(attempt, attempt, attempt, false)));
+    dispositions.push(disposition(19, 2, 2, true));
+    dispositions.extend((20..=24).map(|attempt| disposition(attempt, attempt - 1, 2, false)));
+    let accepted = [tex_state::EffectOutputAttemptId::new(2)]
+        .into_iter()
+        .collect();
+
+    let mapping = output_attempt_ancestry_mapping(
+        &accepted,
+        &dispositions,
+        &std::collections::BTreeMap::new(),
+        false,
+    );
+
+    assert_eq!(mapping.len(), 6);
+    for attempt in 19..=24 {
+        assert_eq!(
+            mapping.get(&tex_state::EffectOutputAttemptId::new(attempt)),
+            Some(&tex_state::EffectOutputAttemptId::new(2))
+        );
+    }
+    for attempt in 13..=18 {
+        assert!(!mapping.contains_key(&tex_state::EffectOutputAttemptId::new(attempt)));
+    }
+}
+
+fn artifact_publication_record(
+    artifact: u64,
+    receipt: u64,
+    effect: u64,
+    sequence: u64,
+    intra_order: u32,
+) -> tex_state::ArtifactPublicationRecord {
+    tex_state::ArtifactPublicationRecord::new(
+        tex_state::ArtifactPublicationId::new(artifact),
+        tex_state::PageOutputPublicationReceiptId::new(receipt),
+        Some(tex_state::EffectPublicationId::new(effect)),
+        tex_state::EffectSequence::new(sequence),
+        tex_state::EffectDomain::World(receipt),
+        intra_order,
+    )
+}
+
+#[test]
+fn regenerated_receipt_inherits_sequence_only_for_matching_retained_intra_record() {
+    let retained = [artifact_publication_record(1, 2, 1, 2, 0)];
+    let regenerated = (0_u32..6)
+        .map(|intra| {
+            artifact_publication_record(
+                19_u64 + u64::from(intra),
+                2,
+                19_u64 + u64::from(intra),
+                2,
+                intra,
+            )
+        })
+        .collect::<Vec<_>>();
+    let effect_sequences = (0_u32..6)
+        .map(|intra| {
+            (
+                tex_state::EffectPublicationId::new(19 + u64::from(intra)),
+                tex_state::EffectSequence::new(20 + u64::from(intra)),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let replacement_effects = [tex_state::EffectPublicationId::new(19)]
+        .into_iter()
+        .collect();
+
+    let sequences = regenerated
+        .iter()
+        .copied()
+        .map(|record| {
+            artifact_winner_sequence(&retained, &replacement_effects, record, &effect_sequences)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        sequences,
+        [2, 21, 22, 23, 24, 25].map(tex_state::EffectSequence::new)
+    );
+}
+
+#[test]
+fn regenerated_receipt_maps_multiple_retained_intra_records_independently() {
+    let retained = [
+        artifact_publication_record(1, 7, 1, 3, 0),
+        artifact_publication_record(2, 7, 2, 11, 1),
+    ];
+    let regenerated = (0_u32..4)
+        .map(|intra| {
+            artifact_publication_record(
+                40_u64 + u64::from(intra),
+                7,
+                60_u64 + u64::from(intra),
+                3,
+                intra,
+            )
+        })
+        .collect::<Vec<_>>();
+    let effect_sequences = (0_u32..4)
+        .map(|intra| {
+            (
+                tex_state::EffectPublicationId::new(60 + u64::from(intra)),
+                tex_state::EffectSequence::new(30 + u64::from(intra)),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let replacement_effects = [
+        tex_state::EffectPublicationId::new(60),
+        tex_state::EffectPublicationId::new(61),
+    ]
+    .into_iter()
+    .collect();
+
+    let sequences = regenerated
+        .iter()
+        .copied()
+        .map(|record| {
+            artifact_winner_sequence(&retained, &replacement_effects, record, &effect_sequences)
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        sequences,
+        [3, 11, 32, 33].map(tex_state::EffectSequence::new)
+    );
+}
+
 use tex_state::RootSpanId;
 
 const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

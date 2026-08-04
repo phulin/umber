@@ -82,9 +82,17 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         stores: &mut Universe,
         emit_dvi: bool,
         publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+        effect_candidate: Option<tex_state::EffectPublicationCandidate>,
         receipt: Option<tex_state::PageOutputPublicationReceiptId>,
     ) -> Result<Option<CommittedPagePublication>, ExecError> {
-        transaction::stage_canonical_page(
+        let prior_attempt = stores.world().active_effect_output_attempt();
+        let output_episode = stores.world().active_output_episode();
+        let output_attempt =
+            prior_attempt.unwrap_or_else(|| stores.world_mut().allocate_effect_output_attempt());
+        stores
+            .world_mut()
+            .set_active_effect_output_attempt(Some(output_attempt));
+        let publication = transaction::stage_canonical_page(
             node,
             input_summary,
             origin,
@@ -94,7 +102,34 @@ impl<'a> CanonicalShipoutTransaction<'a> {
             self.replay,
             publication_candidate,
             receipt,
-        )
+        );
+        stores
+            .world_mut()
+            .set_active_effect_output_attempt(prior_attempt);
+        let mut publication = publication?;
+        if let Some(publication) = publication.as_mut() {
+            publication.effect_output_attempt = Some(output_attempt);
+        }
+        if let Some(publication) = publication.as_ref() {
+            let live = publication.artifact.effect();
+            match effect_candidate {
+                Some(candidate) => stores.world_mut().commit_effect_publication_winner(
+                    Some(live),
+                    candidate.retained(),
+                    output_attempt,
+                    output_episode,
+                    receipt,
+                ),
+                None => stores.world_mut().commit_effect_publication_winner(
+                    None,
+                    live,
+                    output_attempt,
+                    output_episode,
+                    receipt,
+                ),
+            }
+        }
+        Ok(publication)
     }
 
     pub(crate) fn stage_form(

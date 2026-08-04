@@ -746,6 +746,7 @@ pub struct CanonicalParagraphRegion {
     output_effect_episode_owners: Arc<Vec<Option<tex_state::PageOutputEpisodeId>>>,
     output_effect_publications: Arc<Vec<Option<tex_state::EffectPublicationId>>>,
     effect_domains: Arc<Vec<tex_state::EffectDomain>>,
+    effect_semantic_record_ordinals: Arc<Vec<tex_state::EffectSemanticRecordOrdinal>>,
     starting_provenance: ProvenanceStats,
     ending_provenance: ProvenanceStats,
     dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
@@ -775,6 +776,11 @@ impl CanonicalParagraphRegion {
     #[must_use]
     pub fn effect_domains(&self) -> &[tex_state::EffectDomain] {
         &self.effect_domains
+    }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn effect_semantic_record_ordinals(&self) -> &[tex_state::EffectSemanticRecordOrdinal] {
+        &self.effect_semantic_record_ordinals
     }
     pub(crate) fn materialize_owned_input_into(&mut self, destination: &mut Universe) {
         let (summary, mut inputs) = self.owned_input.materialize_with_paragraphs(destination);
@@ -1274,6 +1280,8 @@ impl CanonicalParagraphRecorder {
                 region.output_effect_episode_owners = Arc::clone(&effect_owners);
                 region.output_effect_publications = Arc::clone(&effect_publications);
                 region.effect_domains = stores.world().effect_domains();
+                region.effect_semantic_record_ordinals =
+                    stores.world().effect_semantic_record_ordinals();
             }
         }
     }
@@ -1379,6 +1387,7 @@ impl CanonicalParagraphRecorder {
             output_effect_episode_owners: Arc::new(Vec::new()),
             output_effect_publications: Arc::new(Vec::new()),
             effect_domains: stores.world().effect_domains(),
+            effect_semantic_record_ordinals: stores.world().effect_semantic_record_ordinals(),
             starting_provenance: self
                 .starting_provenance
                 .take()
@@ -4202,6 +4211,7 @@ impl CanonicalMainControl {
                         self.activate_page_output_receipt(active_episode, episode.is_some());
                     }
                     stores.world_mut().set_active_output_episode(active_episode);
+                    stores.world_mut().set_active_effect_output_owner(&owners);
                     stores.world_mut().set_active_artifact_publication_group(
                         episode.as_ref().and_then(|episode| {
                             Some((
@@ -4227,11 +4237,17 @@ impl CanonicalMainControl {
                     };
                     let publication_candidate =
                         replacement.as_ref().map(|(_, _, _, candidate)| *candidate);
+                    let effect_candidate = episode.as_ref().and_then(|episode| {
+                        episode
+                            .publication
+                            .map(tex_state::EffectPublicationCandidate::replacing)
+                    });
                     let publication = shipout_replay_box(
                         page,
                         stores,
                         &mut command,
                         publication_candidate,
+                        effect_candidate,
                         self.active_page_output_receipt,
                     )?;
                     if episode.is_none()
@@ -4257,7 +4273,7 @@ impl CanonicalMainControl {
                     }
                     if let (
                         Some((
-                            replacement,
+                            _replacement,
                             inherited_effect_count,
                             retained_effect_root_mounted,
                             _,
@@ -4266,11 +4282,7 @@ impl CanonicalMainControl {
                         Some(publication),
                     ) = (replacement, episode, publication)
                     {
-                        let _ = (
-                            replacement,
-                            inherited_effect_count,
-                            retained_effect_root_mounted,
-                        );
+                        let _ = (inherited_effect_count, retained_effect_root_mounted);
                         if let Some(cursor) = episode.ending_cursor {
                             stores.world_mut().restore_output_episode_cursor(cursor);
                         }
@@ -4300,6 +4312,7 @@ impl CanonicalMainControl {
                         }
                     }
                     stores.world_mut().set_active_output_episode(None);
+                    stores.world_mut().set_active_effect_output_owner(&[]);
                     // TeX82 §§1014--1025 complete this invocation of
                     // `build_page` after the default `ship_out`. Umber defers
                     // that synchronous fire-up to the command-step tail, so
@@ -13430,6 +13443,7 @@ fn shipout_replay_box(
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
     publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    effect_candidate: Option<tex_state::EffectPublicationCandidate>,
     receipt: Option<tex_state::PageOutputPublicationReceiptId>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
@@ -13589,6 +13603,7 @@ fn shipout_replay_box(
         stores,
         emit_dvi,
         publication_candidate,
+        effect_candidate,
         receipt,
     )?;
     let command = command_cell.into_inner();
@@ -13615,6 +13630,9 @@ fn shipout_replay_box(
             pending_end..marker_start,
             marker_start,
             publication.artifact.effect(),
+            publication
+                .effect_output_attempt
+                .expect("canonical shipout assigns output-attempt ownership"),
         );
         publication.effects = marker_start..stores.world().effect_records().len();
         stores
@@ -17479,7 +17497,7 @@ fn apply_scanned_step(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                if let Some(receipt) = shipout_replay_box(node, stores, command, None, None)?
+                if let Some(receipt) = shipout_replay_box(node, stores, command, None, None, None)?
                     .and_then(|publication| publication.dvi)
                 {
                     push_prepared_dvi_page(prepared_dvi_pages, receipt);
@@ -18813,7 +18831,7 @@ fn box_end(
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut => {
             if let Some(node) = node
-                && let Some(receipt) = shipout_replay_box(node, stores, command, None, None)?
+                && let Some(receipt) = shipout_replay_box(node, stores, command, None, None, None)?
                     .and_then(|publication| publication.dvi)
             {
                 push_prepared_dvi_page(prepared_dvi_pages, receipt);

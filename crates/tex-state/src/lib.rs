@@ -178,16 +178,18 @@ pub use world::ProfilingTimer;
 pub use world::{
     ArtifactOrigin, ArtifactPublicationId, ArtifactPublicationRecord,
     ArtifactPublicationReservation, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity,
-    EffectDomain, EffectPos, EffectPublicationId, EffectRecord, EffectRetrySafety,
-    EffectRootIdentity, EffectSequence, ExecutionTraceEvent, FileContent, FileModificationDate,
-    InputDependency, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputRecord,
-    InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput,
-    OutputArtifactPublicationCandidate, OutputEpisodePublicationOutcome, OutputEpisodeStart,
-    PageOutputPublicationReceipt, PageOutputPublicationReceiptId, PrintSink, ReadTarget,
-    RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
-    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot,
-    TerminalInputPosition, TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact,
-    World, WorldCommitMode, WorldError, WorldSnapshot,
+    EffectDomain, EffectOutputAttemptId, EffectPos, EffectPublicationCandidate,
+    EffectPublicationDisposition, EffectPublicationId, EffectRecord, EffectRetrySafety,
+    EffectRootIdentity, EffectSemanticRecordOrdinal, EffectSequence, ExecutionTraceEvent,
+    FileContent, FileModificationDate, InputDependency, InputDependencyAccess,
+    InputDependencyOutcome, InputOrigin, InputRecord, InputRecordId, JobClock,
+    MAX_INPUT_DEPENDENCIES, MemoryOutput, OutputArtifactPublicationCandidate,
+    OutputEpisodePublicationOutcome, OutputEpisodeStart, PageOutputPublicationReceipt,
+    PageOutputPublicationReceiptId, PrintSink, ReadTarget, RenderOriginIter, RenderOrigins,
+    RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState, ShellEscapePolicy,
+    ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot, TerminalInputPosition,
+    TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact, World, WorldCommitMode,
+    WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

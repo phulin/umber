@@ -294,6 +294,16 @@ checkpoint capture.
 
 ## Effects and artifacts across shipout
 
+Effect reconciliation uses a snapshot-owned semantic record ordinal allocated
+inside a typed restart domain. Publication-boundary records map their left and
+right publication endpoints into the accepted restart domain before competing
+with retained records. Their output-attempt identity remains typed candidate
+ownership for final transaction-winner arbitration; it is deliberately not
+part of the mapped boundary record key. Thus a replacement attempt can displace
+the exact retained boundary with the same mapped endpoints and local ordinal,
+while distinct ordinals and unrelated endpoint gaps remain separate records.
+Neither effect values nor ledger positions participate in this identity.
+
 Batch mode keeps the existing eager rule from `core_state.md` §8: shipout
 materializes the committed effect prefix, records the content-addressed
 artifact, drops the flushed effect records, and releases unretained page-local

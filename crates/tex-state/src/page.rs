@@ -210,12 +210,12 @@ pub struct PageFireUp {
 
 /// Opaque execution identity for the paragraph that produced page material.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ParagraphRegionOwner(u64);
 
 /// Stable identity of one page-output effect/artifact episode.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PageOutputEpisodeId(u64);
 
 impl PageOutputEpisodeId {

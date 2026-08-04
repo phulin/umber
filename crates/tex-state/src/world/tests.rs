@@ -1685,3 +1685,82 @@ fn provisional_page_output_receipts_clone_rollback_and_continue_ordered_group() 
     assert!(fork.provisional_page_output_receipt(receipt).is_none());
     assert!(world.provisional_page_output_receipt(receipt).is_some());
 }
+
+#[test]
+fn effect_semantic_record_ordinals_survive_clone_rollback_and_install() {
+    let mut world = World::memory();
+    let domain = EffectDomain::Paragraph(17);
+    world.set_active_effect_domain(Some(domain));
+    world.record_special("test", b"one".to_vec());
+    world.record_special("test", b"two".to_vec());
+    let snapshot = world.snapshot();
+    let mut fork = world.clone();
+
+    world.record_special("test", b"discarded".to_vec());
+    world.rollback(&snapshot);
+    world.record_special("test", b"replacement".to_vec());
+    fork.record_special("test", b"fork".to_vec());
+
+    let expected = [
+        EffectSemanticRecordOrdinal::new(1),
+        EffectSemanticRecordOrdinal::new(2),
+        EffectSemanticRecordOrdinal::new(3),
+    ];
+    assert_eq!(world.effect_semantic_record_ordinals().as_slice(), expected);
+    assert_eq!(fork.effect_semantic_record_ordinals().as_slice(), expected);
+
+    let mut installed = World::memory();
+    installed.record_special("test", b"one".to_vec());
+    installed.record_special("test", b"two".to_vec());
+    installed.record_special("test", b"three".to_vec());
+    installed.install_effect_domains(&[domain; 3]);
+    installed.install_effect_semantic_record_ordinals(&expected);
+    assert_eq!(
+        installed.effect_semantic_record_ordinals().as_slice(),
+        expected
+    );
+}
+
+#[test]
+fn installed_publication_boundary_claim_restarts_its_local_ordinals() {
+    let mut world = World::memory();
+    let left = EffectPublicationId::new(7);
+    let right = EffectPublicationId::new(11);
+    world.record_special("test", b"left".to_vec());
+    world.claim_effect_publication(0..1, left);
+    world.record_special("test", b"first boundary record".to_vec());
+    world.record_special("test", b"second boundary record".to_vec());
+    world.record_special("test", b"right".to_vec());
+    world.claim_effect_publication(3..4, right);
+    let output_attempt = world.allocate_effect_output_attempt();
+    world.claim_effect_publication_boundary(1..3, 3, right, output_attempt);
+
+    let installed = world.effect_semantic_record_ordinals();
+    let boundary_domain = EffectDomain::PublicationBoundary {
+        left: Some(left),
+        right: Some(right),
+        output_attempt,
+    };
+    assert_eq!(world.effect_domains()[1..3], [boundary_domain; 2]);
+    assert_eq!(
+        installed[1..3],
+        [
+            EffectSemanticRecordOrdinal::new(1),
+            EffectSemanticRecordOrdinal::new(2),
+        ]
+    );
+
+    world.install_effect_semantic_record_ordinals(&installed);
+    world.claim_effect_publication_boundary(1..3, 3, right, output_attempt);
+
+    assert_eq!(
+        world.effect_semantic_record_ordinals()[1..3],
+        installed[1..3],
+        "replaying one typed boundary claim preserves exact record identity"
+    );
+    assert_ne!(
+        world.effect_semantic_record_ordinals()[1],
+        world.effect_semantic_record_ordinals()[2],
+        "legitimate records within one boundary claim remain distinct"
+    );
+}

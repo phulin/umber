@@ -46,6 +46,7 @@ pub(crate) struct CommittedPagePublication {
     pub(crate) dvi: Option<PreparedDviPage>,
     pub(crate) revision_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
     pub(crate) effects: std::ops::Range<usize>,
+    pub(crate) effect_output_attempt: Option<tex_state::EffectOutputAttemptId>,
 }
 
 impl PreparedDviPage {
