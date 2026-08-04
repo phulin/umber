@@ -154,7 +154,7 @@ fn stage_form_inner(
     ))
 }
 
-#[allow(clippy::too_many_arguments)] // Transitional legacy/canonical replay capabilities are explicit.
+#[allow(clippy::too_many_arguments)] // Shipout staging capabilities remain explicit at this seam.
 pub(crate) fn stage_shipout(
     node: Node,
     input_summary: tex_state::InputSummary,

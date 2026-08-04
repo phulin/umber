@@ -4,9 +4,8 @@ Status: authoritative target architecture for Beads epic `umber2-johp`.
 
 ## 1. Purpose
 
-Umber will replace the current `tex-lex` and `tex-expand` pipeline with one
-command-processing subsystem whose semantic structure follows TeX82, e-TeX
-2.6, and pdfTeX 1.40.29 directly.
+Umber implements one `tex-command` command-processing subsystem whose semantic
+structure follows TeX82, e-TeX 2.6, and pdfTeX 1.40.29 directly.
 
 The central architectural fact is that TeX does not have a clean semantic
 boundary between lexical input and expansion. TeX's `get_next` reads physical
@@ -16,9 +15,9 @@ intercepts alignment delimiters. Its real downstream boundary is the delivery
 of an unexpandable current command to main control.
 
 `tex-exec::MainControl` is the production main-control seam for that boundary:
-it accepts no `InputStack`, obtains each `CurrentCommand` and every assignment
-operand through `CommandProcessor`, then applies only the completed typed
-structural mutation after the processor borrow ends. Macro calls and
+it accepts no raw input cursor, obtains each `CurrentCommand` and every
+assignment operand through `CommandProcessor`, then applies only the completed
+typed structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
@@ -124,8 +123,8 @@ node. Group-local definitions and recovery remain live command/Universe state;
 the group's `\aftergroup` payload is backed up like any other group's (§33.9),
 because §1120's `build_discretionary` opens with a bare `unsave`. This
 aggregate operation remains under one rollback
-snapshot: it must not recreate an `InputStack` or expose raw group delimiters
-to the executor.
+snapshot: it must not recreate parallel command/input state or expose raw group
+delimiters to the executor.
 
 During the command-owned preamble scan, TeX82 §760 removes catcode-10 spacer
 commands only while collecting the beginning of each u-template; a v-template
@@ -354,7 +353,8 @@ exhausted command-fuel budget publishes no termination.
 
 Canonical `\shipout` replay likewise crosses the executor only as a completed
 box. The artifact kernel receives an already-published detached input summary;
-it must not construct a `tex_lex::InputStack` as a publication fallback.
+it never constructs or resumes a command/input machine as a publication
+fallback.
 TeX82 §1293's `show_whatever` follows the same seam: `\show` consumes and
 renders its raw operand, while `\showthe` and `\showbox` complete their
 expanded/internal scans in `tex-command`; replay writes only the frozen
@@ -3895,7 +3895,7 @@ Direct fresh and format-loaded jobs acquire their root through the active
 operations. Resource policy sees only typed input, font, and image needs plus a
 borrow-scoped `World` capability. It returns immutable matching
 registrations; aggregate rollback owns retry. The host never receives command
-state, an `InputStack`, or an expanded-token delivery API.
+state, a raw input cursor, or an expanded-token delivery API.
 
 Completion publishes one authoritative `RunResult` from committed receipts:
 effects from the session's effect cursor, artifact hashes and bytes from its

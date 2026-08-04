@@ -90,7 +90,7 @@ global-state interference; diagnose the owner rather than weakening bounds.
 - `rg` for bounded ownership and call-site audits.
 - `git show` and commit-specific binaries for behavioral bisection.
 - Per-row `outcome.json`, corpus receipts, and exact artifact hashes.
-- Temporary semantic state probes and resolved `InputStack` frame dumps.
+- Temporary semantic state probes and resolved `tex-command` input-level dumps.
 - Provenance/accounting views such as `ProvenanceStats` and `OriginKeyRuns`.
 - Focused Rust regressions followed by serial workspace gates.
 - Beads comments and related closed issues for prior evidence.

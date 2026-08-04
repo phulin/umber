@@ -239,10 +239,10 @@ impl From<tex_exec::ExecError> for SessionError {
 
 /// Standalone retained engine contract.
 ///
-/// Unlike the legacy composition bridge, this type has no `InputStack`,
-/// `Executor`, `ExecutionContext`, or file-resolver dependency. Its only
-/// mutable engine input is the shared aggregate `Universe`; all source and
-/// resource bytes enter through retained typed registrations.
+/// This type accepts no raw input cursor, execution-context bridge, or
+/// file-resolver dependency. Its only mutable engine input is the shared
+/// aggregate `Universe`; all source and resource bytes enter through retained
+/// typed registrations.
 pub struct EngineSession<'a> {
     stores: &'a mut Universe,
     control: MainControl,

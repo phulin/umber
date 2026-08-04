@@ -1713,7 +1713,7 @@ Cargo conformance tests do not launch Umber as a subprocess. Story and Gentle
 call the engine directly through the staged fixture callback. The ignored
 `e2e_conformance_trip_canonical` probe uses retained
 `EngineSession`, `World` roots, and typed resource fulfillment for
-both phases without an `Executor`/`InputStack` fallback; TRIP and e-TRIP share
+both phases without an alternate command/input fallback; TRIP and e-TRIP share
 the surrounding two-phase fixture helper.
 `scripts/check-and-test.sh` preflights the gitignored e2e oracles before
 starting the workspace gate and warns that absent ones will fail their gates.

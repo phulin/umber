@@ -149,8 +149,8 @@ Recovery inserts a closer for the actual current group rather than restoring a
 different cell (§1064). pdfTeX.web preserves these rules at §§288--303,
 §§1395--1397, §§947--974, and §1240; its extended save-stack records do not
 change ordinary equivalent restoration. In Umber, `Env` meaning cells and
-journal records implement `eqtb` and the save stack, while alignment template
-delivery and group entry/exit remain `tex-expand`/`tex-exec` responsibilities.
+journal records implement `eqtb` and the save stack, while `tex-command` owns
+alignment template delivery and `tex-exec` owns execution-group entry and exit.
 The group-exit boundary also carries the journal walk's ordered old-value
 restore/retain records so `Universe` can render TeX82 §283
 `\tracingrestores` through §245's shared diagnostic selector.

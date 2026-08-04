@@ -48,7 +48,7 @@ gitignored `third_party/trip/` and verifies their SHA-256 hashes. The ignored
 registered assets through the conformance gate, which fails rather than
 silently skipping when an asset is absent. It uses retained
 `EngineSession`, `World` roots, and typed resource fulfillment for
-format creation and the format-loaded run, with no `Executor`/`InputStack`
+format creation and the format-loaded run, with no alternate command/input
 fallback. The shared conformance library gates the pinned semantic channels
 and retains advisory geometry comparison in both phases. Successful recipe-owned `\dump`
 construction is a structured integration gate, so its allocator, string-pool,

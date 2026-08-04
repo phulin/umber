@@ -358,8 +358,8 @@ Performance gates must demonstrate:
 - eviction returns journal segments and survivor roots to the expected
   baseline.
 
-Run focused `tex-state` normal/shadow/replay suites, `tex-expand` and `tex-exec`
-checkpoint/group tests, `cargo test --tests`, `scripts/check.sh`,
+Run focused `tex-state` normal/shadow/replay suites, `tex-command` and
+`tex-exec` checkpoint/group tests, `cargo test --tests`, `scripts/check.sh`,
 the snapshot budget gate, and relevant Gentle/corpus parity before enabling the
 new boundary policy.
 
