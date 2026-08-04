@@ -4252,6 +4252,22 @@ fn unavailable_font_and_tfm_answers_use_tex_missing_font_semantics() {
 }
 
 #[test]
+fn active_font_definition_uses_tex82_synthetic_recorded_identifier() {
+    // TeX82 §1257 synthesizes `FONT<char>` for an active font target and
+    // records it at §1257's `common_ending`; §267's font rendering must use
+    // that identifier rather than the bare active character.
+    let mut session = session(r"\catcode`\?=13 \font?=cmr10 ?\showthe\font \end");
+    session
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("TFM fixture");
+    let CompileAttemptResult::Complete(output) = session.compile_attempt() else {
+        panic!("the bundled TFM should compile");
+    };
+    let terminal = String::from_utf8(output.terminal).expect("terminal UTF-8");
+    assert!(terminal.contains("> \\FONT? ."), "{terminal}");
+}
+
+#[test]
 fn malformed_tfm_bytes_use_recoverable_null_font_behavior() {
     let mut session = session("\\font\\broken=broken \\message{FONT=[\\fontname\\broken]} \\end");
     let requested = requests(session.compile_attempt());

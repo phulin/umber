@@ -34,7 +34,7 @@ use tex_state::code_tables::{DelCode, LcCode, MathCode, SfCode, UcCode};
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam, TokParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::{FontId, GlueId, NodeListId, TokenListId};
-use tex_state::interner::Symbol;
+use tex_state::interner::{ControlSequenceKind, Symbol, SymbolId};
 use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::math::{
     FractionThickness, LimitType, MathChar, MathChoice, MathField, MathFontSize, MathFraction,
@@ -14587,6 +14587,11 @@ fn apply_scanned_step(
             resource,
             global,
         } => {
+            // TeX82 §1257 records `font_id_text(f):=t` at `common_ending`,
+            // including the `f=null_font` recovery path. Active targets use
+            // the synthesized string `FONT<char>` rather than their bare
+            // control-sequence text.
+            let identifier = font_identifier_for_definition(stores, request.target);
             let bind_null_font = |stores: &mut Universe| {
                 if global {
                     stores.set_meaning_global(
@@ -14596,6 +14601,7 @@ fn apply_scanned_step(
                 } else {
                     stores.set_meaning(request.target, Meaning::Font(tex_state::font::NULL_FONT));
                 }
+                stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, identifier);
             };
             // TeX82 §1258/§1259 report an illegal `at`/`scaled` size and
             // continue with the replaced value; §1257 then loads the font
@@ -14653,7 +14659,7 @@ fn apply_scanned_step(
                 }
                 Err(error) => return Err(error),
             };
-            let id = match stores.try_intern_font_with_identifier(loaded, request.target) {
+            let id = match stores.try_intern_font_with_identifier(loaded, identifier) {
                 Ok(id) => id,
                 Err(
                     tex_state::FontParameterError::TooManyFonts { .. }
@@ -18664,7 +18670,13 @@ fn report_font_parameter_recovery(
     font: tex_state::ids::FontId,
     context: String,
 ) -> Result<(), ExecError> {
-    let name = stores.font_name(font).to_owned();
+    // TeX82 §579 prints `font_id_text(f)`, which §1257 replaces whenever
+    // a font definition (even a failed one naming `null_font`) reaches
+    // `common_ending`. The physical TFM name is not the diagnostic identity.
+    let name = stores.font_identifier_symbol(font).map_or_else(
+        || stores.font_name(font),
+        |symbol| stores.resolve(symbol).to_owned(),
+    );
     let count = i32::try_from(stores.font_parameter_count(font)).unwrap_or(i32::MAX);
     let mut report = stores.print_err("Font ");
     report
@@ -18679,6 +18691,18 @@ fn report_font_parameter_recovery(
     report.context(context);
     report.error().jump_out()?;
     Ok(())
+}
+
+/// Returns TeX82 §1257's string `t` for a new font definition.
+fn font_identifier_for_definition(stores: &mut Universe, target: Symbol) -> SymbolId {
+    let text = match stores.control_sequence_kind(target) {
+        ControlSequenceKind::ActiveCharacter => format!("FONT{}", stores.resolve(target)),
+        ControlSequenceKind::Null => "FONT".to_owned(),
+        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
+            stores.resolve(target).to_owned()
+        }
+    };
+    stores.intern(&text)
 }
 
 /// Reports TeX82 §433-§437's `print_err`/`help2`/`int_error` recovery text.
