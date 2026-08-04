@@ -74,20 +74,7 @@ pub fn assert_compile_fail(
     )
     .unwrap_or_else(|error| panic!("failed to write compile-fail manifest: {error}"));
 
-    let output = Command::new(cargo_command())
-        // CI commonly forces colored Cargo output. ANSI escapes can split the
-        // diagnostic substrings this harness intentionally matches.
-        .env("CARGO_TERM_COLOR", "never")
-        .arg("check")
-        .arg("--quiet")
-        // Compile-fail fixtures are part of the hermetic correctness tier.
-        // Their dependencies have already been resolved while building the
-        // owning test, so Cargo must not refresh registry metadata here.
-        .arg("--offline")
-        .arg("--manifest-path")
-        .arg(crate_dir.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(shared_target_dir())
+    let output = compile_fail_command(&crate_dir)
         .output()
         .unwrap_or_else(|error| panic!("failed to run compile-fail check: {error}"));
 
@@ -108,6 +95,35 @@ pub fn assert_compile_fail(
         "compile-fail fixture {test_name} missed expected stderr substrings:\n{}\n\nstderr:\n{stderr}",
         missing.join("\n")
     );
+}
+
+fn compile_fail_command(crate_dir: &Path) -> Command {
+    let mut command = Command::new(cargo_command());
+    command
+        // CI commonly forces colored Cargo output. ANSI escapes can split the
+        // diagnostic substrings this harness intentionally matches.
+        .env("CARGO_TERM_COLOR", "never")
+        // This process is a new build root, not work delegated by the Cargo
+        // invocation that launched the test binary. Inheriting that parent's
+        // jobserver would let the parent wait for this test while this child
+        // waits for a token still owned by the parent's test processes.
+        .env_remove("CARGO_MAKEFLAGS")
+        .env_remove("MAKEFLAGS")
+        .arg("check")
+        .arg("--quiet")
+        // Compile-fail tests themselves remain parallel. Give each independent
+        // Cargo root one local worker so cold probes cannot multiply the outer
+        // suite's build parallelism.
+        .args(["--jobs", "1"])
+        // Compile-fail fixtures are part of the hermetic correctness tier.
+        // Their dependencies have already been resolved while building the
+        // owning test, so Cargo must not refresh registry metadata here.
+        .arg("--offline")
+        .arg("--manifest-path")
+        .arg(crate_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(shared_target_dir());
+    command
 }
 
 fn shared_target_dir() -> PathBuf {
@@ -170,4 +186,28 @@ fn sanitize_package_name(name: &str) -> String {
 
 fn toml_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compile_fail_command;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn nested_cargo_owns_a_fresh_single_worker_jobserver() {
+        let command = compile_fail_command(std::path::Path::new("fixture"));
+        let arguments: Vec<_> = command.get_args().collect();
+        assert!(arguments.windows(2).any(|pair| pair == ["--jobs", "1"]));
+
+        for inherited in ["CARGO_MAKEFLAGS", "MAKEFLAGS"] {
+            assert_eq!(
+                command
+                    .get_envs()
+                    .find(|(name, _)| *name == OsStr::new(inherited))
+                    .map(|(_, value)| value),
+                Some(None),
+                "nested Cargo must not join the outer test invocation's jobserver"
+            );
+        }
+    }
 }

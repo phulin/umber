@@ -27,7 +27,7 @@ Keep reusable test harness code here when multiple crates or integration tests n
 - `AGENTS.md`: crate-specific guidance, boundaries, validation notes, and this file map.
 - `Cargo.toml`: crate manifest, host-side fixture dependencies, and workspace lint settings.
 - `tests/tex82_catalogue.rs`: hermetic TeX82 property-catalogue completeness, citation, ownership, and exact test-link gate.
-- `src/compile_fail.rs`: Shared offline Cargo-check harness that gives each compile-fail fixture an independent temporary crate, points every crate at one reusable target directory, and checks stable stderr substrings.
+- `src/compile_fail.rs`: Shared offline Cargo-check harness that gives each compile-fail fixture an independent temporary crate, points every crate at one reusable target directory, detaches nested Cargo from the outer test jobserver, and checks stable stderr substrings.
 - `src/corpus.rs`: shared committed-corpus discovery and support-file copy helpers.
 - `src/dvi.rs`: shared DVI fixture setup, preamble-comment normalization, exact comparison, and byte-difference context.
 - `src/lib.rs`: public fixture assertion/read helpers, checked runtime-checkout asset reads, TeX/reference log normalizers, and PL font parsing utilities.
