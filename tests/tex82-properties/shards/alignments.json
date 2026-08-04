@@ -488,12 +488,12 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/preamble/tests.rs",
-          "test": "alignment_scan_spec_consumes_brace_after_keyword_backups"
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "alignment_preamble_opening_scans_the_scan_spec_clause"
         },
         {
-          "path": "crates/tex-exec/src/align/preamble/tests.rs",
-          "test": "alignment_initial_mode_matrix"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_halign_in_unrestricted_horizontal_ends_paragraph_before_alignment"
         }
       ],
       "status": "covered",
@@ -534,8 +534,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/preamble/tests.rs",
-          "test": "preamble_tabskip_span_expansion_and_delimiter_identity"
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "alignment_preamble_tabskip_assignment_preserves_the_prior_boundary"
         }
       ],
       "status": "covered",
@@ -572,8 +572,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/preamble/tests.rs",
-          "test": "scan_u_v_templates_empty_nested_and_malformed"
+          "path": "crates/tex-command/src/scanners/structured/tests.rs",
+          "test": "alignment_preamble_discards_leading_spaces_from_each_u_template_only"
         }
       ],
       "status": "covered",
@@ -609,8 +609,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "align_peek_selects_noalign_finish_crcr_or_row"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "tex82_alignment_lookahead_expands_macros_before_replay"
         }
       ],
       "status": "covered",
@@ -646,8 +646,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "init_row_switches_mode_and_copies_leading_tabskip"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_alignment_cell_modes_are_observer_independent_and_finite"
         }
       ],
       "status": "covered",
@@ -687,10 +687,6 @@
       "status": "gap",
       "gap_bead": "umber2-hq8l",
       "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "init_span_sets_mode_aux_and_cur_span"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
@@ -774,12 +770,12 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "fin_col_delimiter_matrix_and_periodic_extension"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "periodic_preamble_replays_its_u_template_before_retirement"
         },
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "fin_col_extra_tab_recovers_to_cr"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_alignment_finalizes_rows_into_the_enclosing_list"
         }
       ],
       "status": "covered",
@@ -906,10 +902,6 @@
       "gap_bead": "umber2-fr3l",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "fin_row_packages_modes_adjustments_every_cr_and_peek"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -950,16 +942,8 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "align_peek_selects_noalign_finish_crcr_or_row"
-        },
-        {
           "path": "crates/tex-exec/src/align/widths/tests.rs",
           "test": "fin_align_orders_groups_packing_pop_and_insertion"
-        },
-        {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
@@ -1211,8 +1195,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "insert_finished_alignment_list_dispatches_by_enclosing_mode"
+          "path": "crates/tex-exec/src/align/widths/tests.rs",
+          "test": "fin_align_orders_groups_packing_pop_and_insertion"
         }
       ],
       "status": "covered",
@@ -1299,12 +1283,7 @@
       "coverage": [],
       "status": "gap",
       "gap_bead": "umber2-rt66",
-      "planned_coverage": [
-        {
-          "path": "crates/tex-exec/src/align/execution/tests.rs",
-          "test": "do_endv_validates_template_and_group_matrix"
-        }
-      ]
+      "planned_coverage": []
     },
     {
       "id": "tex82.align.missing-cr-before-close",
@@ -1381,10 +1360,6 @@
       "gap_bead": "umber2-usol",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/align/noalign/tests.rs",
-          "test": "noalign_close_resumes_row_lookahead_in_both_modes"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1425,8 +1400,8 @@
       "test_level": "planned-rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/math/tests.rs",
-          "test": "display_alignment_finish_assignments_delimiters_and_spacing"
+          "path": "crates/tex-exec/src/command_replay/tests.rs",
+          "test": "canonical_display_alignment_discards_a_preceding_formula"
         }
       ],
       "status": "covered",

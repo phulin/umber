@@ -1,10 +1,6 @@
 //! Source-free canonical math validation, lowering, and display packaging.
 
 pub(crate) mod display;
-#[cfg(any())]
-pub(crate) mod legacy_front;
-#[cfg(any())]
-mod legacy_scan;
 mod lower;
 mod support;
 

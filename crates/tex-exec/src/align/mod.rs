@@ -2,20 +2,8 @@
 
 mod canonical_execution;
 pub(crate) use canonical_execution::{FinishedAlignment, append_finished_alignment};
-#[cfg(any())]
-pub(crate) mod legacy_execution;
-#[cfg(any())]
-pub(crate) mod legacy_front;
 
-#[cfg(any())]
-mod noalign;
 pub(crate) mod packaging;
-#[cfg(any())]
-mod preamble;
-#[cfg(any())]
-mod support;
-#[cfg(any())]
-mod template;
 mod transitions;
 pub(crate) mod widths;
 

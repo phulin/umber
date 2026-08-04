@@ -1356,10 +1356,6 @@
           "test": "canonical_init_math_never_pairs_shifts_in_restricted_horizontal_mode"
         },
         {
-          "path": "crates/tex-exec/src/math/tests.rs",
-          "test": "tex82_math_entry_display_probe_and_eqno_mode_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1421,10 +1417,6 @@
           "test": "canonical_non_ord_mathchar_fields_discard_the_class_nibble"
         },
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "math_scalar_family_and_delimiter_field_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1474,10 +1466,6 @@
           "test": "math_delimiter_and_mu_requests_recover_and_consume_units"
         },
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "tex82_radical_accent_style_and_limits_request_matrix"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1522,10 +1510,6 @@
           "test": "production_driver_math_choice_inside_alignment_cell_retires_cleanly"
         },
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "tex82_mathchoice_four_group_order_scope_and_retirement"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1566,10 +1550,6 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_math_script_field_is_observed_like_every_other_episode"
-        },
-        {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "tex82_script_attachment_dummy_noad_and_duplicate_matrix"
         },
         {
           "path": "crates/tex-exec/src/tests/math.rs",
@@ -1652,10 +1632,6 @@
           "test": "canonical_math_replay_finalizes_fields_and_delimiter_groups_before_parent_source"
         },
         {
-          "path": "crates/tex-exec/src/math/scan/tests.rs",
-          "test": "math_recovery_diagnostics_are_exact_and_continue"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1720,10 +1696,6 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_eqno_inside_display_math_is_unaffected"
-        },
-        {
-          "path": "crates/tex-exec/src/math/tests.rs",
-          "test": "finish_display_math_packages_width_equation_number_and_migration_matrix"
         },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",

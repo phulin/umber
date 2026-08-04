@@ -1122,7 +1122,6 @@ fn canonical_alignment_family_has_no_legacy_dependencies() {
         source_root.join("mod.rs"),
         source_root.join("canonical_execution.rs"),
         source_root.join("packaging.rs"),
-        source_root.join("support.rs"),
         source_root.join("transitions.rs"),
     ];
     canonical.extend(production_rust_sources(&source_root.join("widths")));
