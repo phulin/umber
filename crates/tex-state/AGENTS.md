@@ -158,7 +158,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 
 - Do not expose raw substores, raw checkpoint/restore hooks, raw word decoders, or opaque handle constructors outside crate-private or test-only APIs.
 - Do not let downstream crates mutate state directly; keep the live-store boundary production-like, including under `shadow`.
-- Do not place expansion or execution policy here when it belongs in `tex-expand` or `tex-exec`; state should provide the substrate and invariants.
+- Do not place expansion or execution policy here when it belongs in `tex-command` or `tex-exec`; state should provide the substrate and invariants.
 - Keep all host I/O and effectful facts behind `World`; engine crates should not reach for `std::fs`, clocks, random sources, or shell execution directly.
 - Validate symbol-keyed or handle-keyed writes against the owning interner/store liveness before accepting them.
 

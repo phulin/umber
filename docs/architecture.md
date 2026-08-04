@@ -39,8 +39,6 @@ detached output only after the relevant transaction commits.
   effects, source/provenance data, node arenas, and snapshots.
 - `tex-command`: line normalization, tokenization, input levels, token replay,
   expansion, conditionals, scanners, and raw command delivery.
-- `tex-expand`: retired forwarding facade for canonical primitive
-  registration; command behavior remains in `tex-command`.
 - `tex-exec`: stomach execution, mode nest, assignments, page building,
   output routines, and committed shipout lowering.
 - `tex-typeset`: pure packing, line breaking, alignment planning, vertical

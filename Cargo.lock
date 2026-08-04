@@ -1215,13 +1215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tex-expand"
-version = "0.1.0"
-dependencies = [
- "tex-command",
-]
-
-[[package]]
 name = "tex-fonts"
 version = "0.1.0"
 dependencies = [

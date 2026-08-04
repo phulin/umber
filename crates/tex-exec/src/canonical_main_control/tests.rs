@@ -1252,7 +1252,7 @@ fn terminal_write_uses_live_line_width_and_breaks_after_message() {
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
     tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     register_source(
         &mut control,
@@ -2408,8 +2408,8 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
     // command type and equivalent are identical. A global definition still
     // commits, so the two controls distinguish the shortcut from filtering.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -3808,8 +3808,8 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
     // e-TeX 2.6 `etex.ch` [26.424]: `find_effective_tail` returns -1 for an
     // empty list, otherwise the e-TRIP node code of the real current tail.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -3846,8 +3846,8 @@ fn etex_lastnodetype_covers_every_node_code() {
     // the alignment row is observed from `\noalign`, where it is an unset
     // node until `fin_align` resolves it.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -3896,8 +3896,8 @@ fn etex_lastnodetype_covers_every_node_code() {
 #[test]
 fn etex_lastnodetype_code_seven_after_unboxing_ligature() {
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -3917,7 +3917,7 @@ fn outer_vertical_kern_joins_contributions_without_running_page_builder() {
     // vertical material lives in the page contribution queue rather than the
     // otherwise-empty root mode list.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::TEX82);
     register_source(&mut control, br"\kern-50pt");
@@ -3942,8 +3942,8 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
     // number before TeX82 §1101's expanded mark text and appends the node in
     // every mode. Invalid selectors recover to class zero before the text.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -4163,7 +4163,7 @@ fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
     // the action mutates the selected font or the global map/ToUnicode state.
     let mut stores = Universe::new_with_plain_catcodes();
     crate::install_unexpandable_primitives(&mut stores);
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     stores
         .world_mut()
         .set_memory_file(
@@ -6531,8 +6531,8 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
     // locally assigns the value already present. The negative controls pin
     // that a changed local value and an identical global value still commit.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6586,8 +6586,8 @@ fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
     // oracle observes the sparse assignment boundary even when its value is
     // the default; dense identical assignments retain their shortcut.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6623,8 +6623,8 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
     // chosen register-zero sentinel distinct so an eight-bit recovery cannot
     // masquerade as a state-restoration failure.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6827,8 +6827,8 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     // assignment must not create a save-stack entry that can roll back over
     // the later global assignment.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6908,8 +6908,8 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
     // Separately scanned equal nonzero literals remain distinct pointers and
     // are the negative control.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6956,8 +6956,8 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
     // and a global assignment are controls: all allocate or define and remain
     // observable.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -6996,8 +6996,8 @@ fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
     // still completes the sparse assignment boundary, unlike §§277-278's
     // dense `eq_define` shortcut.
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -9914,8 +9914,8 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
 
 fn run_canonical_etex(source: &[u8]) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -10058,8 +10058,8 @@ fn interactionmode_reads_and_assigns_globally() {
 #[test]
 fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
     let mut stores = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
-    tex_expand::install_etex_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
+    tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);

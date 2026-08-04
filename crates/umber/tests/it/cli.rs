@@ -1457,11 +1457,7 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
         manifest.contains("profiling = [\"tex-state/profiling\"]"),
         "Umber profiling must forward only to the tex-state axis owner"
     );
-    for retired in [
-        "tex-exec/profiling",
-        "tex-expand/profiling",
-        "tex-lex/profiling",
-    ] {
+    for retired in ["tex-exec/profiling", "tex-lex/profiling"] {
         assert!(
             !manifest.contains(retired),
             "Umber profiling must not forward through legacy dependency {retired}"

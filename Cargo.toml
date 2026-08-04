@@ -28,7 +28,6 @@ default-members = [
   "crates/tex-command",
   "crates/tex-content",
   "crates/tex-exec",
-  "crates/tex-expand",
   "crates/tex-fonts",
   "crates/tex-incr",
   "crates/tex-oracle",

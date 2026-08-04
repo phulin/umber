@@ -32,7 +32,7 @@ fn invalid_delimiter_pushback_preserves_traced_origin() {
 #[test]
 fn delimiter_command_scans_all_twenty_seven_bits() {
     let mut stores = crate::test_harness::universe();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     let mut input = InputStack::new(MemoryInput::new(r#"\delimiter"7FFFFFF "#));
 
@@ -54,7 +54,7 @@ fn math_nest() -> ModeNest {
 
 fn math_stores() -> Universe {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut stores);
+    tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     stores
 }

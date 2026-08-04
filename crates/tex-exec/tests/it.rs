@@ -1291,11 +1291,6 @@ fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
         bridge.matches("tex_lex::next_semantic_raw_token").count(),
         1
     );
-    let expand =
-        fs::read_to_string(test_support::repository_root().join("crates/tex-expand/src/lib.rs"))
-            .expect("read expansion public surface");
-    assert!(!expand.contains("pub fn next_semantic_raw_token("));
-    assert!(!expand.contains("pub fn get_token("));
 }
 
 #[test]
@@ -1857,8 +1852,6 @@ fn profiling_feature_forwards_only_to_the_axis_owner() {
         manifest.contains("profiling = [\"tex-state/profiling\"]"),
         "tex-exec profiling must forward only to the tex-state axis owner"
     );
-    assert!(!manifest.contains("tex-expand/profiling"));
-    assert!(!manifest.contains("tex-lex/profiling"));
 }
 
 #[test]

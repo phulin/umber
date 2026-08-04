@@ -599,7 +599,7 @@ pub(crate) fn expandable_primitive_identity(
         P::ETeXRevision => ("convert".into(), Some(5)),
         // Never constructed: `\eTeXversion` is installed as
         // `Meaning::InternalInteger`, not this variant (see
-        // `crates/tex-expand/src/lib.rs`'s e-TeX table). Kept only for
+        // `primitives/registry.rs`'s e-TeX table). Kept only for
         // exhaustiveness.
         P::ETeXVersion => (
             "last_item".into(),

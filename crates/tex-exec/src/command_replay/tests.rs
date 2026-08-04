@@ -2051,10 +2051,10 @@ fn assert_font_definition_retry_observations(
 ) {
     let source = br"\font\f=cmr10\hyphenchar\f=45\end";
     let mut retried_universe = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut retried_universe);
+    tex_command::install_tex82_expandable_primitives(&mut retried_universe);
     crate::install_unexpandable_primitives(&mut retried_universe);
     if profile.capabilities().supports_etex() {
-        tex_expand::install_etex_expandable_primitives(&mut retried_universe);
+        tex_command::install_etex_expandable_primitives(&mut retried_universe);
         crate::install_etex_unexpandable_primitives(&mut retried_universe);
     }
     let mut retried = CanonicalMainControl::prepared_initex(profile);
@@ -2085,10 +2085,10 @@ fn assert_font_definition_retry_observations(
     assert!(matches!(retried_universe.meaning(f), Meaning::Font(_)));
 
     let mut fresh_universe = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut fresh_universe);
+    tex_command::install_tex82_expandable_primitives(&mut fresh_universe);
     crate::install_unexpandable_primitives(&mut fresh_universe);
     if profile.capabilities().supports_etex() {
-        tex_expand::install_etex_expandable_primitives(&mut fresh_universe);
+        tex_command::install_etex_expandable_primitives(&mut fresh_universe);
         crate::install_etex_unexpandable_primitives(&mut fresh_universe);
     }
     let mut fresh = CanonicalMainControl::prepared_initex(profile);
@@ -2307,8 +2307,8 @@ fn canonical_read_pseudo_sources_preserve_pending_endinput_for_parent_file() {
     for raw_catcodes in [false, true] {
         let mut universe = Universe::new_with_plain_catcodes();
         let mut control = if raw_catcodes {
-            tex_expand::install_expandable_primitives(&mut universe);
-            tex_expand::install_etex_expandable_primitives(&mut universe);
+            tex_command::install_tex82_expandable_primitives(&mut universe);
+            tex_command::install_etex_expandable_primitives(&mut universe);
             crate::install_unexpandable_primitives(&mut universe);
             crate::install_etex_unexpandable_primitives(&mut universe);
             CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26)
@@ -3540,7 +3540,7 @@ fn format_loaded_canonical_job_replays_everyjob_before_root_input() {
 
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("load format");
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(&mut control, br"\count8=\count7 \end");
@@ -7727,8 +7727,8 @@ impl CommandObserver for ObservationRecorder {
 #[test]
 fn readline_observes_only_committed_macro_mutations_across_group_rollback() {
     let mut universe = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut universe);
-    tex_expand::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
@@ -9842,7 +9842,7 @@ fn restricted_integer_error_is_profile_and_observation_invariant() {
                 crate::test_harness::universe_with_plain_catcodes()
             };
             let mut control = if loaded {
-                tex_expand::register_expandable_primitives(&mut universe);
+                tex_command::register_tex82_expandable_primitives(&mut universe);
                 crate::register_unexpandable_primitives(&mut universe);
                 CanonicalMainControl::with_profile(CommandProfile::TEX82)
             } else {
@@ -12042,7 +12042,7 @@ fn loaded_zero_parshape_stays_silent_when_early_restricted_hbox_closes() {
     let format = initex.dump_format().expect("empty parshape format dumps");
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12079,7 +12079,7 @@ fn loaded_ten_line_parshape_restores_before_retried_eqno() {
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12130,7 +12130,7 @@ fn loaded_output_resets_paragraph_state_at_the_opening_brace_boundary() {
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12263,7 +12263,7 @@ fn loaded_output_cycle_restores_ten_line_shape_to_resumed_paragraph() {
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12360,7 +12360,7 @@ fn loaded_trip_display_alignment_history_restores_shape_before_resumed_paragraph
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12416,7 +12416,7 @@ fn loaded_trip_output_body_restores_shape_before_resumed_eqno() {
     let format = initex.dump_format().expect("empty parshape format dumps");
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_source(
@@ -12592,8 +12592,8 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
     // primitive fetches the live interaction scalar in an integer scan and
     // assigns a scanned replacement when delivered by main control.
     let mut universe = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut universe);
-    tex_expand::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
@@ -12614,8 +12614,8 @@ fn canonical_etex_interaction_mode_is_both_internal_and_assignable() {
 #[test]
 fn canonical_bad_interaction_mode_reports_the_live_scan_context() {
     let mut universe = Universe::new_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut universe);
-    tex_expand::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
@@ -12640,8 +12640,8 @@ fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
     // TeX82 §1335 releases the page builder's transient `last_glue` before
     // `store_fmt_file`; neither saved-discard list belongs to the format.
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut universe);
-    tex_expand::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::prepared_initex(tex_command::CommandProfile::ETEX26);
@@ -12701,8 +12701,8 @@ fn canonical_etex_saved_vertical_discards_do_not_block_format_dump() {
 
 fn run_canonical_etex_saved_discards(source: &[u8], page: Vec<Node>, split: Vec<Node>) -> Universe {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
-    tex_expand::install_expandable_primitives(&mut universe);
-    tex_expand::install_etex_expandable_primitives(&mut universe);
+    tex_command::install_tex82_expandable_primitives(&mut universe);
+    tex_command::install_etex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
     for node in page {
@@ -13102,7 +13102,7 @@ fn display_resumption_enters_output_before_the_next_command() {
     let mut universe =
         Universe::from_format(tex_state::World::memory(), &format).expect("format loads");
     universe.enable_geometry_observation();
-    tex_expand::register_expandable_primitives(&mut universe);
+    tex_command::register_tex82_expandable_primitives(&mut universe);
     crate::register_unexpandable_primitives(&mut universe);
     let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
     register_math_fonts(&mut control, &mut universe);
