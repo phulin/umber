@@ -91,6 +91,11 @@ and a versioned pdfTeX INITEX resource DTO. The string-pool record carries
 the profile's `max_strings`/`pool_size`; typed control-sequence, filename, and
 hyphenation owners retain their own bytes and publish only `make_string`-style
 accounting transitions to this record.
+TeX82 §1334's main-memory statistic is instead a live projection of the
+typed node and token arena extents under the pinned Web2C capacity profile
+(tex.web §§125--126). Immutable glue-value interning is deliberately outside
+that projection: it is not a third WEB allocator and remains ordinary store
+state across format dump/load.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.

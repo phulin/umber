@@ -694,7 +694,9 @@ fn print_usage_statistics(stores: &mut Universe) {
     print_usize(&mut printer, usage.string_character_capacity);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.memory_words);
-    printer.print(" words of memory out of 30000").print_nl(" ");
+    printer.print(" words of memory out of ");
+    print_usize(&mut printer, usage.memory_word_capacity);
+    printer.print_nl(" ");
     print_usize(&mut printer, usage.control_sequences);
     printer
         .print(" multiletter control sequences out of 2100")

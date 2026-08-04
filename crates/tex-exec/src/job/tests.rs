@@ -332,7 +332,7 @@ fn finish_job_prints_tex82_usage_report_only_to_log_before_dvi_tail() {
         assert!(log.starts_with(report));
         assert!(log.contains(" strings out of 13973\n"));
         assert!(log.contains(" string characters out of 18159\n"));
-        assert!(log.contains(" words of memory out of 30000\n"));
+        assert!(log.contains(" words of memory out of 250000\n"));
         assert!(log.contains(" multiletter control sequences out of 2100\n"));
         assert!(log.contains(" words of font info for 0 fonts, out of 20000 for 75\n"));
         assert!(log.contains(" hyphenation exceptions out of 307\n"));

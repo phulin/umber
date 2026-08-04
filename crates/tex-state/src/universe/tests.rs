@@ -33,16 +33,29 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 #[test]
-fn engine_usage_statistics_retain_typed_store_high_water_across_rollback() {
+fn engine_usage_statistics_retain_monotone_usage_but_report_live_memory_across_rollback() {
     let mut universe = Universe::new();
     let baseline = universe.snapshot();
     let before = universe.engine_usage_statistics();
+    assert_eq!(before.memory_words, 17);
+    assert_eq!(before.memory_word_capacity, 250_000);
     universe.intern("allocator-high-water-probe");
+    universe.intern_token_list(&[Token::Char {
+        ch: 'x',
+        cat: crate::token::Catcode::Other,
+    }]);
     let peak = universe.engine_usage_statistics();
     assert!(peak.strings > before.strings);
     assert!(peak.string_characters > before.string_characters);
     universe.rollback(&baseline);
-    assert_eq!(universe.engine_usage_statistics(), peak);
+    let rolled_back = universe.engine_usage_statistics();
+    assert_eq!(rolled_back.strings, peak.strings);
+    assert_eq!(rolled_back.string_characters, peak.string_characters);
+    assert_eq!(rolled_back.memory_words, before.memory_words);
+    assert_eq!(
+        rolled_back.memory_word_capacity,
+        before.memory_word_capacity
+    );
 }
 
 #[test]

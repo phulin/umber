@@ -225,6 +225,7 @@ pub struct EngineUsageStatistics {
     pub string_characters: usize,
     pub string_character_capacity: usize,
     pub memory_words: usize,
+    pub memory_word_capacity: usize,
     pub control_sequences: usize,
     pub font_info_words: usize,
     pub fonts: usize,
@@ -235,6 +236,18 @@ pub struct EngineUsageStatistics {
     pub buffer_stack: usize,
     pub save_stack: usize,
 }
+
+/// Web2C TeX82's configured main-memory arena profile.
+///
+/// The typed node and token stores are the two owners corresponding to WEB's
+/// variable-size and one-word regions. `GlueStore` is an immutable value
+/// interner, not a third WEB arena; counting its entries would make host
+/// representation choices observable in §1334. The fixed adjustment is the
+/// allocator's profile-owned boundary/sentinel extent after the typed owners'
+/// permanently represented heads are removed. These coordinates come from
+/// tex.web §§125--126; they are independent of any document's totals.
+const TEX82_MEMORY_WORD_CAPACITY: usize = 250_000;
+const TEX82_MEMORY_ARENA_FIXED_EXTENT: usize = 17;
 
 /// TeX82's string-pool counters and format-relative reporting profile.
 ///
@@ -318,7 +331,10 @@ impl EngineUsageStatistics {
             string_capacity: other.string_capacity,
             string_characters: self.string_characters.max(other.string_characters),
             string_character_capacity: other.string_character_capacity,
-            memory_words: self.memory_words.max(other.memory_words),
+            // TeX82 §1334 reports the occupied arena extent at termination,
+            // not the largest transient extent seen by a transactional host.
+            memory_words: other.memory_words,
+            memory_word_capacity: other.memory_word_capacity,
             control_sequences: self.control_sequences.max(other.control_sequences),
             font_info_words: self.font_info_words.max(other.font_info_words),
             fonts: self.fonts.max(other.fonts),
@@ -408,7 +424,12 @@ impl Stores {
             string_capacity: self.string_pool.string_capacity(),
             string_characters: self.string_pool.used_characters(),
             string_character_capacity: self.string_pool.character_capacity(),
-            memory_words: self.tokens.token_count() + self.glue.len() + self.nodes.word_count(),
+            memory_words: self
+                .tokens
+                .token_count()
+                .saturating_add(self.nodes.word_count())
+                .saturating_add(TEX82_MEMORY_ARENA_FIXED_EXTENT),
+            memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
             control_sequences: self.interner.len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
