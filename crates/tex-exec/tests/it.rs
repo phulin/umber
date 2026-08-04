@@ -7,6 +7,58 @@ use tex_exec::{CanonicalMainControl, MainControlStep};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
 
 #[test]
+fn restricted_horizontal_hrule_reports_source_before_rule_spec_lookahead() {
+    // TeX82 §1095 diagnoses this command in `head_for_vmode`, before §463
+    // scans a rule specification. §82 must therefore display the physical
+    // source line, not a token level created by keyword lookahead.
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(b"\\setbox0=\\hbox{\n\\hrule\n}\\end".as_slice()),
+        ))
+        .expect("restricted-horizontal rule source registers");
+
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("restricted-horizontal rule source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    let diagnostic = transcript
+        .find("! You can't use `\\hrule' here except with leaders.")
+        .unwrap_or_else(|| panic!("TeX82 §1095 diagnostic: {transcript:?}"));
+    let context = &transcript[diagnostic..];
+    assert!(context.contains("l.2 \\hrule"), "{transcript:?}");
+    assert!(!context.contains("<to be read again>"), "{transcript:?}");
+}
+
+#[test]
 fn alignment_closing_brace_reports_inserted_cr_and_followup_brace() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);

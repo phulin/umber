@@ -6391,6 +6391,7 @@ enum ScannedStep {
         depth: Option<Scaled>,
         horizontal: bool,
     },
+    HRuleHereExceptLeaders,
     Message {
         tokens: TracedTokenList,
         error: bool,
@@ -9195,6 +9196,15 @@ fn scan_command(
                 .recover_stop_for_vertical_mode(command)
                 .map_err(command_error)?;
             Ok(ScannedStep::Continue)
+        }
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HRule)
+            if mode == Mode::RestrictedHorizontal =>
+        {
+            // TeX82 §1095's negative-mode `head_for_vmode` diagnoses this
+            // command immediately. In particular, §463 must not scan a rule
+            // specification first: its keyword lookahead would replace the
+            // source-line error context with a backed-up token level.
+            Ok(ScannedStep::HRuleHereExceptLeaders)
         }
         Meaning::UnexpandablePrimitive(
             primitive @ (UnexpandablePrimitive::HRule | UnexpandablePrimitive::VRule),
@@ -12025,6 +12035,7 @@ fn applied_mutation_observation(
         | ScannedStep::AfterGroup(..)
         | ScannedStep::AfterAssignment(..)
         | ScannedStep::Rule { .. }
+        | ScannedStep::HRuleHereExceptLeaders
         | ScannedStep::Message { .. }
         | ScannedStep::DisplayDiagnostic(..)
         | ScannedStep::ShowBox { .. }
@@ -15484,6 +15495,21 @@ fn apply_scanned_step(
             depth,
             horizontal,
         } => apply_scanned_rule(command, modes, stores, width, height, depth, horizontal),
+        ScannedStep::HRuleHereExceptLeaders => {
+            let context = command.state.output_open_context(&stores.command_context());
+            report_escaped_error(
+                stores,
+                "You can't use `",
+                "hrule",
+                "' here except with leaders",
+                &[
+                    "To put a horizontal rule in an hbox or an alignment,",
+                    "you should use \\leaders or \\hrulefill (see The TeXbook).",
+                ],
+                context,
+            )?;
+            Ok(ReplayStep::Continue)
+        }
         ScannedStep::Message { tokens, error } => {
             // TeX82 §1279's `issue_message` renders the scanned list through
             // `token_show` into one string and then hands it to §1280 or
@@ -17914,24 +17940,9 @@ fn apply_scanned_rule(
                     command.fuel,
                 )?;
             }
-            Mode::RestrictedHorizontal => {
-                // TeX82 §1095's `head_for_vmode`: an `\hrule` in restricted
-                // horizontal mode is the one command there that does not go
-                // through `off_save`.
-                let context = command.state.output_open_context(&stores.command_context());
-                report_escaped_error(
-                    stores,
-                    "You can't use `",
-                    "hrule",
-                    "' here except with leaders",
-                    &[
-                        "To put a horizontal rule in an hbox or an alignment,",
-                        "you should use \\leaders or \\hrulefill (see The TeXbook).",
-                    ],
-                    context,
-                )?;
-                return Ok(ReplayStep::Continue);
-            }
+            Mode::RestrictedHorizontal => unreachable!(
+                "TeX82 §1095 diagnoses restricted-horizontal hrule before rule scanning"
+            ),
             mode => {
                 return Err(ExecError::UnimplementedTypesetting {
                     mode,
