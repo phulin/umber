@@ -2009,7 +2009,22 @@ impl CommandProcessor<'_> {
         if matches!(recovery.status, ScannerStatus::Absorbing(_)) {
             self.outer_recovered_while_absorbing = true;
         }
-        self.back_input(command.copy_for_backup())?;
+        // TeX82 §336 deliberately does not back up an outer control
+        // sequence delivered by a `\read` pseudo-file (`name=1..17`).  The
+        // one-line source remains live until §483's `end_file_reading`, so
+        // the recovery context must continue to name that read frame rather
+        // than manufacture a `<to be read again>` token-list level.
+        let delivered_by_read = self.command.input.levels.iter().any(|level| {
+            matches!(
+                level,
+                InputLevel::Source(source)
+                    if source.identity.0 == command.delivery_stamp().input_level()
+                        && matches!(source.name_class, SourceNameClass::ReadStream(_))
+            )
+        });
+        if !delivered_by_read {
+            self.back_input(command.copy_for_backup())?;
+        }
         self.install_outer_recovery(recovery, false)?;
         command.recover_as_space();
         Ok(())

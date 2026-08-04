@@ -2643,9 +2643,11 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
 
 #[test]
 fn read_toks_outer_recovery_pseudoprints_end_match_and_partial_body() {
-    // TeX82 §§482/306: `read_toks` seeds `def_ref` with `end_match_token`,
+    // TeX82 §§482/306/336: `read_toks` seeds `def_ref` with `end_match_token`,
     // and `runaway` pseudoprints that live list when an outer command ends
-    // the read. The sentinel therefore renders as `->` before the body.
+    // the read. The sentinel therefore renders as `->` before the body. An
+    // outer command delivered from `name=1..17` is not backed up, so the live
+    // context remains the read-stream line rather than a token-list replay.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
@@ -2672,6 +2674,12 @@ fn read_toks_outer_recovery_pseudoprints_end_match_and_partial_body() {
         ),
         "{diagnostics:?}"
     );
+    let context = match diagnostics.first() {
+        Some(crate::CommandSemanticDiagnostic::Recoverable { context, .. }) => context,
+        other => panic!("expected outer-recovery diagnostic, got {other:?}"),
+    };
+    assert!(context.contains("<read 1> x\\stop"), "{context:?}");
+    assert!(!context.contains("<to be read again>"), "{context:?}");
 }
 
 #[test]
