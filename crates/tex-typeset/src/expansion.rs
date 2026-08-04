@@ -1,7 +1,7 @@
 //! Pure pdfTeX font-expansion arithmetic.
 //!
 //! This module mirrors the arithmetic split between `read_expand_font`,
-//! `try_break`, and `hpack` in pdfTeX 1.40.27. It does not allocate generated
+//! `try_break`, and `hpack` in pdfTeX 1.40.29. It does not allocate generated
 //! fonts; execution applies the returned discrete ratios at the mutation
 //! boundary after line breaking.
 

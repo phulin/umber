@@ -737,7 +737,7 @@ fn canonical_pdf_font_control(stores: &mut Universe) -> CanonicalMainControl {
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
     stores.set_int_param_global(tex_state::env::banks::IntParam::PDF_OUTPUT, 1);
-    CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027)
+    CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14029)
 }
 
 fn register_canonical_source(control: &mut CanonicalMainControl, bytes: &[u8]) {

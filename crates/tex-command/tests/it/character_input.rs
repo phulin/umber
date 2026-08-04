@@ -25,7 +25,7 @@ const CANONICAL_MATRIX: &str = concat!(
 const ETEX_CANONICAL_MATRIX: &str =
     include_str!("../../../../tests/etex26-oracle/semantic-event-matrix.txt");
 const PDFTEX_CANONICAL_MATRIX: &str =
-    include_str!("../../../../tests/pdftex14027-oracle/semantic-event-matrix.txt");
+    include_str!("../../../../tests/pdftex14029-oracle/semantic-event-matrix.txt");
 
 fn fixture_body() -> &'static [u8] {
     let start_marker = b"\\long\\def\\physicaltokens{";
@@ -121,7 +121,7 @@ fn exact_profiles_match_the_pinned_tex82_source_token_fixture() {
     for dialect in [
         CommandDialect::Tex82,
         CommandDialect::Etex26,
-        CommandDialect::Pdftex14027,
+        CommandDialect::Pdftex14029,
     ] {
         assert_eq!(
             canonical_token_projection(CommandProfile::exact(dialect)),
@@ -208,7 +208,7 @@ fn raw_delivery_matches_the_pinned_fixture_through_the_single_processor_loop() {
     for dialect in [
         CommandDialect::Tex82,
         CommandDialect::Etex26,
-        CommandDialect::Pdftex14027,
+        CommandDialect::Pdftex14029,
     ] {
         let profile = CommandProfile::exact(dialect);
         assert_eq!(

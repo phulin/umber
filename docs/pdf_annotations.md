@@ -3,7 +3,7 @@
 This document fixes the implementation contract for `\pdfannot`,
 `\pdfstartlink`, `\pdfendlink`, `\pdfrunninglinkon`,
 `\pdfrunninglinkoff`, `\pdflastannot`, `\pdflastlink`, and
-`\pdflinkmargin`. The reference is pdfTeX 1.40.27 from TeX Live 2025. The
+`\pdflinkmargin`. The reference is pdfTeX 1.40.29 from TeX Live 2026. The
 primary sources are the annotation and linking sections plus the formal
 grammar in the pdfTeX manual, the 1.40.22 NEWS entry, and the public-domain
 `tests/15-startlink-boxing` and `tests/16-nolink-special` regression cases.
@@ -17,7 +17,7 @@ either `reserveobjnum`, which only reserves an object and updates
 general text. Omitted dimensions are _running_, not zero. A normal annotation
 allocates its object while scanning and appends a whatsit; it is emitted only
 if that whatsit reaches shipout. `useobjnum` must consume a compatible reserved
-object and must not allocate a replacement. A focused 1.40.27 probe observes
+object and must not allocate a replacement. A focused 1.40.29 probe observes
 initial `\pdflastannot=0`, reservation changing it to 1, and later use of that
 reservation leaving it at 1.
 
@@ -137,7 +137,7 @@ references, arrays, and operators are never assembled as raw PDF syntax in
 The committed `annotations_running` corpus separates scanner/diagnostic
 observations from PDF output parity. Its two pages pin `/Annots` encounter
 order, unique page ownership, general annotation geometry, running-link page
-splitting, and shipout-time margin changes against pdfTeX 1.40.27. Exact Umber
+splitting, and shipout-time margin changes against pdfTeX 1.40.29. Exact Umber
 bytes pin the typed serializer and deterministic allocation; the committed
 Poppler grayscale render and renderer attestation pin page geometry. Ordinary
 tests consume only these committed artifacts. Focused unit tests additionally

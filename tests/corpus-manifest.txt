@@ -32,4 +32,4 @@ license LicenseRef-Gentle-redistributable
 redistributable true
 format_source plain.tex
 expected_ref_dvi_sha256 cdaa3304bd578a450bbc5fb71424e790cc6e4bb4372f2e53d46bad43a5c51884
-notes CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025) DVI output with SOURCE_DATE_EPOCH=1783604160, FORCE_SOURCE_DATE=1, and only the preamble banner comment normalized; gentle.tex writes \\today and \\time, so the pinned job clock is part of the reference environment.
+notes CTAN records gentle as a free license not otherwise listed, and the gentle.tex header says users should feel free to photocopy and/or distribute the manual if it remains in one piece. The expected DVI hash is from pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026) DVI output with SOURCE_DATE_EPOCH=1783604160, FORCE_SOURCE_DATE=1, and only the preamble banner comment normalized; gentle.tex writes \\today and \\time, so the pinned job clock is part of the reference environment.

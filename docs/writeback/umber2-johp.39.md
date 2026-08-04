@@ -1,7 +1,7 @@
 # umber2-johp.39 — current-group right-brace dispatch
 
 Authority: TeX82 `tex.web` §§274, 1016, and 1068 (`new_save_level`, output
-routine entry, and `handle_right_brace`), confirmed unchanged by pdfTeX 1.40.27
+routine entry, and `handle_right_brace`), confirmed unchanged by pdfTeX 1.40.29
 `pdftex.web` §§274, 1016, and 1068.
 
 `handle_right_brace` selects its action from the live `cur_group`; it does not

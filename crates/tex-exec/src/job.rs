@@ -42,13 +42,13 @@ use tex_state::{EngineUsageStatistics, Universe};
 /// `docs/job_framing.md`), so this is the reference engine's banner, not
 /// Umber's name -- the same string `umber::pdf_output` writes as the PDF
 /// `PTEX.Fullbanner`/`PTEX_Fullbanner` key.
-pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025)";
+pub const BANNER: &str = "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026)";
 
 /// tex.web §2's TeX82 start-up banner, with the pinned distribution suffix.
-pub const TEX82_BANNER: &str = "This is TeX, Version 3.141592653 (TeX Live 2025)";
+pub const TEX82_BANNER: &str = "This is TeX, Version 3.141592653 (TeX Live 2026)";
 
 /// etex.ch §2's e-TeX 2.6 start-up banner, with the pinned distribution suffix.
-pub const ETEX26_BANNER: &str = "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2025)";
+pub const ETEX26_BANNER: &str = "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2026)";
 
 /// Immutable identity of the executable whose canonical framing is emitted.
 ///
@@ -58,7 +58,7 @@ pub const ETEX26_BANNER: &str = "This is e-TeX, Version 3.141592653-2.6 (TeX Liv
 pub enum EngineBinaryIdentity {
     Tex82,
     Etex26,
-    Pdftex14027,
+    Pdftex14029,
 }
 
 impl EngineBinaryIdentity {
@@ -66,7 +66,7 @@ impl EngineBinaryIdentity {
         match self {
             Self::Tex82 => TEX82_BANNER,
             Self::Etex26 => ETEX26_BANNER,
-            Self::Pdftex14027 => BANNER,
+            Self::Pdftex14029 => BANNER,
         }
     }
 
@@ -78,7 +78,7 @@ impl EngineBinaryIdentity {
             (self, profile.dialect()),
             (Self::Tex82, CommandDialect::Tex82)
                 | (Self::Etex26, CommandDialect::Tex82 | CommandDialect::Etex26)
-                | (Self::Pdftex14027, _)
+                | (Self::Pdftex14029, _)
         )
     }
 }
@@ -224,7 +224,7 @@ impl FormatDumpReceipt {
 /// reads the format file, so `format_ident` is still `0` here and the name
 /// comes from the command line rather than from the dump. It therefore
 /// carries **no dump date** -- which is exactly what the pinned pdfTeX
-/// 1.40.27 oracle emits.
+/// 1.40.29 oracle emits.
 ///
 /// INITEX is the other way round: §1337 sets `format_ident:=" (INITEX)"`
 /// while its own tables are still loading, so by the time §61 runs the

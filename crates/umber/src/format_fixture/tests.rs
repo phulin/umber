@@ -254,13 +254,13 @@ fn raw_etex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
 
 #[test]
 fn production_pdftex_cache_reuse_reloads_exact_live_registry_into_fresh_runtime_state() {
-    // pdfTeX 1.40.27 change file §8 installs the e-TeX extensions before the
+    // pdfTeX 1.40.29 change file §8 installs the e-TeX extensions before the
     // pdfTeX additions. This checks one immutable loaded base and concrete
     // live witnesses from all three registry layers without admitting any
     // construction episode state.
     let cache_root = TempDir::new().expect("cache");
     let cache = FormatCacheStore::new(cache_root.path());
-    let recipe = FormatRecipe::production_pdftex14027();
+    let recipe = FormatRecipe::production_pdftex14029();
     let first = ensure_format(&cache, &recipe).expect("production pdfTeX construction");
     let second = ensure_format(&cache, &recipe).expect("production pdfTeX cache hit");
     assert_eq!(first.image(), second.image());

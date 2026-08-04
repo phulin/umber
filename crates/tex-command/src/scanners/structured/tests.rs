@@ -1602,7 +1602,7 @@ fn special_shipout_probe_is_owned_only_by_the_pdftex_profile() {
     }
 
     // TeX82 §473 enters `scan_toks` directly; e-TeX does not acquire
-    // pdfTeX 1.40.27 §1534's optional `shipout` syntax.
+    // pdfTeX 1.40.29 §1534's optional `shipout` syntax.
     let (deferred, events) = scan(crate::CommandProfile::ETEX26, b"{x}");
     assert!(!deferred);
     assert!(matches!(
@@ -1618,7 +1618,7 @@ fn special_shipout_probe_is_owned_only_by_the_pdftex_profile() {
             })
     ));
 
-    let (deferred, _) = scan(crate::CommandProfile::PDFTEX14027, b"shipout{x}");
+    let (deferred, _) = scan(crate::CommandProfile::PDFTEX14029, b"shipout{x}");
     assert!(deferred);
 }
 
@@ -2810,7 +2810,7 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
     // pdftex.web §§1548 and 1623: `\immediate` performs its expanded command
     // lookahead, then the recursive `\pdfxform` case checks output mode before
     // allocating a form or scanning attr/resources/the box register.
-    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
@@ -2883,7 +2883,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
     // lookahead, then the recursive `\pdfximage` case checks output mode
     // before image allocation or any dimension, attr, page, box, or file
     // scan.
-    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
@@ -2953,7 +2953,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
 
 #[test]
 fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
-    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+    let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
@@ -3002,7 +3002,7 @@ fn pdf_image_filename_uses_canonical_quoted_unquoted_and_grouped_boundaries() {
         ("figure.png !", "figure.png", '!'),
         ("{figure.png}!", "figure.png", '!'),
     ] {
-        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14027);
+        let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
         let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
@@ -3573,7 +3573,7 @@ fn register_definition_uses_the_profile_register_bound() {
 
     for profile in [
         crate::CommandProfile::ETEX26,
-        crate::CommandProfile::PDFTEX14027,
+        crate::CommandProfile::PDFTEX14029,
     ] {
         let (extended, diagnostic) = scan(profile, "2002");
         assert_eq!(extended, 2002);

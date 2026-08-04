@@ -666,12 +666,12 @@ impl<'a> CanonicalEngineSession<'a> {
             return;
         }
         let banner = match self.command_profile().dialect() {
-            CommandDialect::Tex82 => "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)",
+            CommandDialect::Tex82 => "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)",
             CommandDialect::Etex26 => {
-                "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2025) (INITEX)"
+                "This is e-TeX, Version 3.141592653-2.6 (TeX Live 2026) (INITEX)"
             }
-            CommandDialect::Pdftex14027 => {
-                "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)"
+            CommandDialect::Pdftex14029 => {
+                "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)"
             }
         };
         Printer::new(self.stores, Selector::TermOnly)
@@ -1866,7 +1866,7 @@ mod tests {
             first,
             &tex_state::EffectRecord::StreamWrite {
                 sink: tex_state::PrintSink::Terminal,
-                text: "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)".into(),
+                text: "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)".into(),
             },
             "TeX82 §1332 writes the process headline to the terminal before main_control"
         );
@@ -1904,7 +1904,7 @@ mod tests {
                 .expect("bounded root completes");
 
             let expected_terminal = if initex {
-                "This is TeX, Version 3.141592653 (TeX Live 2025) (INITEX)\n(./trip.tex )"
+                "This is TeX, Version 3.141592653 (TeX Live 2026) (INITEX)\n(./trip.tex )"
             } else {
                 "(./trip.tex )"
             };
@@ -2210,7 +2210,7 @@ mod tests {
             .set_memory_file("image.png", b"world-selected image")
             .expect("image is seeded");
         let mut image_session =
-            CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14027);
+            CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14029);
         image_session
             .register_authored_root("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
             .expect("image root registers");

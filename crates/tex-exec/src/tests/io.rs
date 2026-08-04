@@ -1494,7 +1494,7 @@ fn ordinary_and_shipout_specials_preserve_timing_order_copy_and_format() {
         b"\\def\\value{first}\\setbox0=\\hbox{\
           \\special{O-\\value-1}\\special shipout{L-\\value-2}} ",
         &[],
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
     )
     .expect("special box builds");
 
@@ -1506,7 +1506,7 @@ fn ordinary_and_shipout_specials_preserve_timing_order_copy_and_format() {
         b"\\def\\value{second}\\shipout\\copy0\
           \\def\\value{third}\\shipout\\copy0\\end",
         &[],
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
     )
     .expect("copied special boxes ship");
 
@@ -1548,7 +1548,7 @@ fn special_scan_at_generated_source_tail_preserves_box_closer() {
             b"\\setbox0=\\hbox{\\special{ordinary}}".as_slice(),
         ),
         (
-            CommandProfile::PDFTEX14027,
+            CommandProfile::PDFTEX14029,
             b"\\setbox0=\\hbox{\\special shipout{deferred}}".as_slice(),
         ),
     ] {

@@ -54,7 +54,7 @@ fn fixture_root_follows_the_runtime_checkout() {
 #[allow(clippy::disallowed_methods)] // Host-only audit of committed oracle sources.
 fn every_oracle_close_effect_omits_stale_file_name_globals() {
     let repository = crate::repository_root();
-    for dialect in ["tex82", "etex26", "pdftex14027"] {
+    for dialect in ["tex82", "etex26", "pdftex14029"] {
         let change = std::fs::read_to_string(
             repository
                 .join("tests")

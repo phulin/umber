@@ -7,13 +7,12 @@ external document corpus and share the same strict final-DVI oracle as Story
 and Gentle. Run them with:
 
 ```bash
-scripts/fetch-conformance-inputs.sh
-scripts/fetch-conformance-inputs.sh --offline
+python3 scripts/provision.py worktree .
+python3 scripts/provision.py worktree . --offline
 cargo test -p umber --features instrumentation --test it e2e_conformance_trip_canonical -- --ignored --nocapture
 cargo test -p umber --features instrumentation --test it e2e_conformance_etrip -- --ignored --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
-scripts/setup-conformance-tests.sh
 scripts/trip.sh
 ```
 
@@ -43,7 +42,7 @@ pre-break list empty without a warning; an in-range character missing from the
 current font goes through §581's `new_character`, emits `char_warning`, and
 still leaves that list empty.
 
-`scripts/fetch-conformance-inputs.sh` fetches official CTAN bytes into
+`python3 scripts/provision.py worktree .` fetches official CTAN bytes into
 gitignored `third_party/trip/` and verifies their SHA-256 hashes. The ignored
 `e2e_conformance_trip_canonical` Cargo integration probe reaches its
 registered assets through the conformance gate, which fails rather than
@@ -104,7 +103,7 @@ hashes.
 
 The locally generated `tests/corpus/e2e/trip.expected.dvi` is not the official
 `trip.dvi` above. It is generated locally from the pinned `trip.tex` and
-`trip.tfm` by pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025), using the
+`trip.tfm` by pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), using the
 two-phase INITEX/format-loaded workflow. Its raw SHA-256 is
 `a48cec413b485403e11d35e24122aa747b3e3863a151c257fcec026580a78bf9`;
 after preamble-comment normalization it is
@@ -124,7 +123,7 @@ that DVI byte-for-byte after the standard preamble-comment normalization.
 Official transcript, terminal-photo, DVItype, and output-file comparisons
 remain part of the broader e-TRIP harness task.
 
-The special reference engine comes from the TeX Live 2025 source snapshot
+The special reference engine comes from the TeX Live 2026 source snapshot
 `texlive-20250308-source.tar.xz`, fetched from the University of Utah historic
 archive and pinned by SHA-512
 `0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702`.

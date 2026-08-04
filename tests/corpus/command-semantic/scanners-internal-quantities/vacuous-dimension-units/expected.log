@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=production <DUMP-DATE>) <HOST-CLOCK>
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=production <DUMP-DATE>) <HOST-CLOCK>
 **vacuous-dimension-units.tex
 (./vacuous-dimension-units.tex
 ! Missing number, treated as zero.
@@ -25,7 +25,7 @@ look up `weird error' in the index to The TeXbook.)
 l.2 \dimen1=x
               pt
 Dimensions can be in units of em, ex, in, pt, pc,
-cm, mm, dd, cc, bp, or sp; but yours is a new one!
+cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!
 I'll assume that you meant to say pt, for printer's points.
 To recover gracefully from this error, it's best to
 delete the erroneous units; e.g., type `2' to delete

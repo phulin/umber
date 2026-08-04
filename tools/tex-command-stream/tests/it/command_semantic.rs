@@ -77,7 +77,7 @@ fn every_loaded_command_route_has_only_the_generic_provider_owner() {
     for owner in [
         "execute_raw_tex82_loaded",
         "execute_raw_etex26_loaded",
-        "execute_production_pdftex14027_loaded",
+        "execute_production_pdftex14029_loaded",
     ] {
         assert_eq!(dispatch.matches(owner).count(), 1, "dispatch owns {owner}");
         let body = rust_function_body(source, owner);
@@ -169,7 +169,7 @@ fn declared_command_semantic_cases_match() {
     let routes = [
         ExecutionRoute::RawTex82Loaded,
         ExecutionRoute::RawEtex26Loaded,
-        ExecutionRoute::ProductionPdftex14027Loaded,
+        ExecutionRoute::ProductionPdftex14029Loaded,
     ];
     let identities: Vec<_> = routes
         .into_iter()
@@ -468,7 +468,7 @@ fn ordinary_raw_tex82_batch_declares_exact_loaded_route_and_job_contracts() {
     let production_loaded: BTreeSet<_> = by_name
         .iter()
         .filter_map(|(name, case)| {
-            (case.profile.execution_route() == ExecutionRoute::ProductionPdftex14027Loaded)
+            (case.profile.execution_route() == ExecutionRoute::ProductionPdftex14029Loaded)
                 .then_some(name.as_str())
         })
         .collect();
@@ -796,7 +796,7 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
     assert_eq!(
         channels.stream(StreamChannel::Terminal),
         concat!(
-            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) ",
             "(preloaded format=production)\n",
             "(./raw-loaded-empty-terminal-read.tex )\n",
             "No pages of output.\n",
@@ -807,7 +807,7 @@ fn raw_tex82_loaded_supplies_the_oracle_default_terminal_line() {
     assert_eq!(
         channels.stream(StreamChannel::Log),
         concat!(
-            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) ",
             "(preloaded format=production 2026.3.1)  1 JAN 1970 00:00\n",
             "**raw-loaded-empty-terminal-read.tex\n",
             "(./raw-loaded-empty-terminal-read.tex\n",
@@ -857,7 +857,7 @@ fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
     assert_eq!(
         channels.stream(StreamChannel::Terminal),
         concat!(
-            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) ",
             "(preloaded format=production)\n",
             "(./raw-loaded-declared-input.tex (./child.tex) )\n",
             "No pages of output.\n",
@@ -868,7 +868,7 @@ fn raw_tex82_loaded_reapplies_declared_job_input_with_resolved_name() {
     assert_eq!(
         channels.stream(StreamChannel::Log),
         concat!(
-            "This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) ",
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) ",
             "(preloaded format=production 2026.3.1)  1 JAN 1970 00:00\n",
             "**raw-loaded-declared-input.tex\n",
             "(./raw-loaded-declared-input.tex (./child.tex) )\n",
@@ -922,8 +922,8 @@ fn raw_tex82_loaded_reapplies_declared_job_tfm() {
             format!("{:x}", Sha256::digest(channels.stream(StreamChannel::Dvi))),
         ),
         (
-            "018a58ed865382e7c2cf187b0e91dfad7bf8078f453fe0b81a322165b3cae721".to_owned(),
-            "c522687d11c774bd068e414620a35459eef0528f3679839c681de5bcac52c681".to_owned(),
+            "e8a5805201a08281aa19be9ef2c78066d76bb0f3dd06b7eaebbfe25991aa54a6".to_owned(),
+            "4f7fbc043fb18c924056de974a555218f57692d9fe1e24d68a88efd7efd340a3".to_owned(),
             "07c3e696d0a55c9e9beec4c55efb22417ecffa8d3381d696608d87f41b3cf7bc".to_owned(),
         )
     );

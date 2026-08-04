@@ -157,12 +157,12 @@ fn configure_latex_expandable_primitives(universe: &mut Universe, install: bool)
     }
 }
 
-/// Installs pdfTeX 1.40.27's implemented expandable identity surface.
+/// Installs pdfTeX 1.40.29's implemented expandable identity surface.
 pub fn install_pdftex_expandable_primitives(universe: &mut Universe) {
     configure_pdftex_expandable_primitives(universe, true);
 }
 
-/// Reconstructs pdfTeX 1.40.27's expandable primitive lookup table after a format load.
+/// Reconstructs pdfTeX 1.40.29's expandable primitive lookup table after a format load.
 pub fn register_pdftex_expandable_primitives(universe: &mut Universe) {
     configure_pdftex_expandable_primitives(universe, false);
 }

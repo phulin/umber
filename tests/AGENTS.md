@@ -3,12 +3,13 @@
 `tests/corpus` holds committed inputs and expected reference outputs for
 fast differential tests.
 
-`tests/native-test-assets.lock` is the explicit SHA-256 allowlist of
-gitignored inputs that `scripts/native-test-assets.py` may copy from the
-primary checkout into an isolated Git worktree during slot setup. Rust tests
-only consume these assets. The allowlist contains files only, never
-directories; update it when audited conformance regeneration intentionally
-changes an input or oracle.
+`tests/texlive-source.lock` pins the official TeX Live 2026 source archive and
+selected extracted files. `tests/conformance-texlive.lock` maps runtime files
+from the authenticated hosted 2026 snapshot to their repository destinations.
+`tests/native-test-assets.lock` includes those runtime records and is the
+explicit SHA-256 allowlist that `scripts/provision.py worktree` copies from the
+primary checkout into an isolated linked worktree. Rust tests only consume
+these files; source archives and trees are symlinked from the primary checkout.
 
 `tests/tex82-properties/` contains the generated 1,380-module pinned `tex.web` inventory, generated default deferrals and domain-local reviewed disposition/property shards. The routine `test-support` catalogue gate validates completeness, citations, ownership, status, and exact Rust test links.
 
@@ -73,11 +74,11 @@ Acquisition and builds run only through `scripts/regen-fixtures.sh --oracle
 etex26 --profile compatibility+extended-eight-bit`; Cargo correctness tests
 never invoke the live oracle.
 
-`tests/pdftex14027-oracle-manifest.txt` pins canonical pdfTeX 1.40.27,
+`tests/pdftex14029-oracle-manifest.txt` pins canonical pdfTeX 1.40.29,
 the ordered Web2C and configured SyncTeX changes, translator inputs, the
 repository-owned shared, extension, and state final-change seams, smoke
 programs, focused extension/state programs, and exact primitive audit.
-`tests/pdftex14027-oracle/` contains font-independent DVI and deterministic PDF
+`tests/pdftex14029-oracle/` contains font-independent DVI and deterministic PDF
 smoke inputs, focused shared-command transition inputs and an executable
 semantic-event matrix, an exact-eight-bit expansion/scanner extension matrix,
 an exact cross-profile matrix that runs shared e-TeX grammar boundaries both
@@ -91,7 +92,7 @@ generated-effect transparency. Expansion-matrix rows name their exact owning
 primitive. Smoke and state PDFs additionally pass an allocation-insensitive
 Hayro structure projection independent of both pdfTeX variants and the command
 trace. Acquisition and builds run only through `scripts/regen-fixtures.sh
---oracle pdftex14027 --profile initex-etex-eight-bit`; Cargo correctness tests
+--oracle pdftex14029 --profile initex-etex-eight-bit`; Cargo correctness tests
 never invoke the live oracle.
 
 `tests/oracle-regeneration-manifest.txt` pins the schema versions, exact
@@ -139,7 +140,7 @@ all 18 alignment, 34 math, and 30 page-output cases.
 The latter excludes `hyphenation-data`, `hyphenation-errors`, and
 `final-cleanup-end-or-dump`.
 
-Each case also declares a `channels` block accounting for every observable its run produces -- `events`, `status`, `terminal`, `log`, `dvi`, and `effects` -- because a projection asserts one observable and is not coverage of the run. A case with no block fails validation; the only exemption is a case whose run does not complete, and it is granted only to a case already pinned as `xfail`. **The authority rule above governs `expected` (the projection), and the same rule now governs the channel bytes too.** Every applicable fixture-local `expected.<channel>` file holds the pinned instrumented pdfTeX 1.40.27 oracle's own bytes, for `file` and `xfail` alike (`umber2-alfh.1`/`umber2-alfh.7`): a channel where Umber does not yet match those bytes is `xfail` with a `mismatch` pinning the first divergence and a `bug` -- or `xfail-diagnostics` with a `bug` alone, when the divergence is confined to §82's error reports and the rest of the channel still matches -- never a self-pin against Umber's own output. `StreamDisposition` carries no `authority` field, because there is now exactly one place a committed channel's bytes can have come from; reading a green `file` channel as canonical evidence needs no further check.
+Each case also declares a `channels` block accounting for every observable its run produces -- `events`, `status`, `terminal`, `log`, `dvi`, and `effects` -- because a projection asserts one observable and is not coverage of the run. A case with no block fails validation; the only exemption is a case whose run does not complete, and it is granted only to a case already pinned as `xfail`. **The authority rule above governs `expected` (the projection), and the same rule now governs the channel bytes too.** Every applicable fixture-local `expected.<channel>` file holds the pinned instrumented pdfTeX 1.40.29 oracle's own bytes, for `file` and `xfail` alike (`umber2-alfh.1`/`umber2-alfh.7`): a channel where Umber does not yet match those bytes is `xfail` with a `mismatch` pinning the first divergence and a `bug` -- or `xfail-diagnostics` with a `bug` alone, when the divergence is confined to §82's error reports and the rest of the channel still matches -- never a self-pin against Umber's own output. `StreamDisposition` carries no `authority` field, because there is now exactly one place a committed channel's bytes can have come from; reading a green `file` channel as canonical evidence needs no further check.
 
 A `mismatch` records only _where_ a channel first diverges, which is enough to
 tell that a case is wrong and never enough to tell what to change. To see both
@@ -328,7 +329,7 @@ the other DVI corpora; keep cases primitive-only.
 directories. Each co-locates its `source.tex`, pinned pdfTeX reference PDF,
 exact Umber PDF, canonical structure projections, grayscale PGM renders,
 renderer/hash attestations, and every exact font, encoding, PK, or included-PDF
-input it opens. Regeneration uses pdfTeX 1.40.27
+input it opens. Regeneration uses pdfTeX 1.40.29
 and Poppler `pdftoppm` 25.08.0 only through `scripts/regen-fixtures.sh`; cargo
 tests remain hermetic by rebuilding Umber bytes and checking the committed
 structure, byte, render, and digest chain without invoking either tool. The
@@ -343,7 +344,7 @@ fallback font selection, physical ligature output, nested font changes, and
 cross-page state together with exact Poppler extraction and raster parity.
 The `annotations_running` case pins general annotation geometry, two-page
 running-link continuation, per-page link margins, unique annotation ownership,
-and `/Annots` encounter order against pdfTeX 1.40.27.
+and `/Annots` encounter order against pdfTeX 1.40.29.
 The `form_xobjects` case pins nested Form XObject dictionaries and decoded
 streams, attributes/resources, h/v/math placement, reuse, saved positions and
 form-local snapping. Its exact-byte and retained-session replay gates consume
@@ -388,8 +389,9 @@ unexecuted byte-exact comparison. The gitignored entries in the repository
 `scripts/check-and-test.sh` preflight both bind to; adding a fifth oracle
 requires registering a fifth gate. See "End-to-End Conformance Gate Contract"
 in `docs/testing_infrastructure.md`. Run
-`scripts/setup-conformance-tests.sh` to acquire the pinned third-party inputs
-that are not already cached and generate all four oracles with pdfTeX. The
+`python3 scripts/provision.py worktree .` in the primary checkout to acquire
+the pinned third-party inputs and generate all four oracles with the
+instrumented pdfTeX 1.40.29 build. The
 script delegates regeneration to `scripts/regen-fixtures.sh`; TRIP uses its
 two-phase pdfTeX workload and never copies `third_party/trip/trip.dvi`.
 e-TRIP reuses the pinned `trip.tfm` directly and requires exact DVI parity;
@@ -450,12 +452,12 @@ fixtures and must run without TeX tools on `PATH`; keep warmed
 `docs/testing_infrastructure.md`. `scripts/check.sh` is the broader local
 quality gate that includes formatting and clippy.
 
-Font metric parity tests use an optional local TFM corpus under
-`third_party/fonts/`, which is gitignored. Populate it from an ambient TeX
-installation with:
+Font metric parity tests use a locked local TFM corpus under
+`third_party/fonts/`, which is gitignored. Populate it from the authenticated
+TeX Live 2026 runtime with:
 
 ```bash
-scripts/fetch-conformance-inputs.sh
+python3 scripts/provision.py worktree .
 ```
 
 The live `tftopl` corpus cross-check runs through
@@ -469,7 +471,7 @@ rather than committed. Acquire and verify the corpus, the required TeX Live
 support files, and all local end-to-end DVI oracles with:
 
 ```bash
-scripts/setup-conformance-tests.sh
+python3 scripts/provision.py worktree .
 ```
 
 Setup builds `tools/corpus-sync`, writes exact fetched support
@@ -512,7 +514,7 @@ opcode without using the external corpus.
 
 The official Knuth TeX82 TRIP and e-TeX V2 e-TRIP conformance materials are
 pinned separately in `tests/trip-manifest.txt`. They are fetched into
-gitignored `third_party/trip/` by `scripts/fetch-conformance-inputs.sh`; do not
+gitignored `third_party/trip/` by `scripts/provision.py worktree`; do not
 commit the fetched CTAN files. The registered Cargo gate fails with
 materialization instructions when a required source, TFM, or oracle is absent.
 The ignored `e2e_conformance_trip_canonical` direct-profile probe and

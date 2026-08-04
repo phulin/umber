@@ -1,47 +1,48 @@
 #!/usr/bin/env bash
+# Canonical TeX Live 2026 pdfTeX 1.40.29 oracle builder.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-manifest="tests/pdftex14027-oracle-manifest.txt"
-source_name="texlive-20250308-source.tar.xz"
-cache_root="${UMBER_REF_TEXLIVE_SOURCE:-third_party/texlive-source}"
-[[ "$cache_root" == /* ]] || cache_root="${repo_root}/${cache_root}"
+manifest="tests/pdftex14029-oracle-manifest.txt"
+source_lock="tests/texlive-source.lock"
+source_name="$(awk '$1 == "archive" { print $2 }' "$source_lock")"
+cache_root="${repo_root}/third_party/texlive-source"
 source_tar="${cache_root}/${source_name}"
 source_dir="${cache_root}/src"
-build_dir="${cache_root}/build-pdftex14027"
+build_dir="${cache_root}/build-pdftex14029-20260301"
 web_source_dir="${source_dir}/texk/web2c"
 web_build_dir="${build_dir}/texk/web2c"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
-out_dir="${target_dir}/pdftex14027-oracle"
+out_dir="${target_dir}/pdftex14029-oracle"
 bin_dir="${out_dir}/bin"
-instrumentation_change="${UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/instrumentation.ch}"
-extension_instrumentation_change="${UMBER_PDFTEX14027_EXTENSION_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/extension-instrumentation.ch}"
-state_instrumentation_change="${UMBER_PDFTEX14027_STATE_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14027-oracle/state-instrumentation.ch}"
-dvi_input="${repo_root}/tests/pdftex14027-oracle/smoke-dvi.tex"
-pdf_input="${repo_root}/tests/pdftex14027-oracle/smoke-pdf.tex"
-transition_input="${repo_root}/tests/pdftex14027-oracle/transitions.tex"
-transition_child="${repo_root}/tests/pdftex14027-oracle/transitions-child.tex"
-case_shift_input="${repo_root}/tests/pdftex14027-oracle/case-shift.tex"
-semantic_event_matrix="${repo_root}/tests/pdftex14027-oracle/semantic-event-matrix.txt"
-extension_input="${repo_root}/tests/pdftex14027-oracle/extensions.tex"
-extension_bytes_input="${repo_root}/tests/pdftex14027-oracle/extensions-bytes.txt"
-extension_event_matrix="${repo_root}/tests/pdftex14027-oracle/extension-event-matrix.txt"
-etex_profile_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundaries.tex"
-etex_profile_compatibility_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-compatibility.tex"
-etex_profile_recovery_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-recovery.tex"
-etex_profile_hyph_format_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-hyph-format.tex"
-etex_profile_hyph_input="${repo_root}/tests/pdftex14027-oracle/etex-profile-hyph.tex"
-etex_profile_matrix="${repo_root}/tests/pdftex14027-oracle/etex-profile-boundary-matrix.txt"
-state_input="${repo_root}/tests/pdftex14027-oracle/state.tex"
-state_event_matrix="${repo_root}/tests/pdftex14027-oracle/state-event-matrix.txt"
+instrumentation_change="${UMBER_PDFTEX14029_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14029-oracle/instrumentation.ch}"
+extension_instrumentation_change="${UMBER_PDFTEX14029_EXTENSION_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14029-oracle/extension-instrumentation.ch}"
+state_instrumentation_change="${UMBER_PDFTEX14029_STATE_INSTRUMENTATION_CHANGE:-${repo_root}/tests/pdftex14029-oracle/state-instrumentation.ch}"
+dvi_input="${repo_root}/tests/pdftex14029-oracle/smoke-dvi.tex"
+pdf_input="${repo_root}/tests/pdftex14029-oracle/smoke-pdf.tex"
+transition_input="${repo_root}/tests/pdftex14029-oracle/transitions.tex"
+transition_child="${repo_root}/tests/pdftex14029-oracle/transitions-child.tex"
+case_shift_input="${repo_root}/tests/pdftex14029-oracle/case-shift.tex"
+semantic_event_matrix="${repo_root}/tests/pdftex14029-oracle/semantic-event-matrix.txt"
+extension_input="${repo_root}/tests/pdftex14029-oracle/extensions.tex"
+extension_bytes_input="${repo_root}/tests/pdftex14029-oracle/extensions-bytes.txt"
+extension_event_matrix="${repo_root}/tests/pdftex14029-oracle/extension-event-matrix.txt"
+etex_profile_input="${repo_root}/tests/pdftex14029-oracle/etex-profile-boundaries.tex"
+etex_profile_compatibility_input="${repo_root}/tests/pdftex14029-oracle/etex-profile-compatibility.tex"
+etex_profile_recovery_input="${repo_root}/tests/pdftex14029-oracle/etex-profile-recovery.tex"
+etex_profile_hyph_format_input="${repo_root}/tests/pdftex14029-oracle/etex-profile-hyph-format.tex"
+etex_profile_hyph_input="${repo_root}/tests/pdftex14029-oracle/etex-profile-hyph.tex"
+etex_profile_matrix="${repo_root}/tests/pdftex14029-oracle/etex-profile-boundary-matrix.txt"
+state_input="${repo_root}/tests/pdftex14029-oracle/state.tex"
+state_event_matrix="${repo_root}/tests/pdftex14029-oracle/state-event-matrix.txt"
 state_font_input="${web_source_dir}/tests/cmr10.tfm"
-state_map_input="${repo_root}/tests/pdftex14027-oracle/pdftex.map"
-extension_primitive_audit="${repo_root}/tests/pdftex14027-oracle/extension-primitive-audit.txt"
+state_map_input="${repo_root}/tests/pdftex14029-oracle/pdftex.map"
+extension_primitive_audit="${repo_root}/tests/pdftex14029-oracle/extension-primitive-audit.txt"
 pdf_normalizer="${target_dir}/debug/pdf-normalize"
-wide_tangle="${out_dir}/tangle-pdftex14027"
+wide_tangle="${out_dir}/tangle-pdftex14029"
 cflags="-O2"
 cxxflags="-O2"
 source_date_epoch="${SOURCE_DATE_EPOCH:-1783604160}"
@@ -49,15 +50,15 @@ offline=0
 
 usage() {
   cat <<'EOF'
-usage: scripts/build-pdftex14027-oracle.sh [--offline]
+usage: scripts/build-pdftex14029-oracle.sh [--offline]
 
-Acquire and verify the pinned TeX Live 2025 source snapshot, then build
-canonical pdfTeX 1.40.27 clean and instrumented eight-bit Web2C executables.
+Acquire and verify the pinned TeX Live 2026 source snapshot, then build
+canonical pdfTeX 1.40.29 clean and instrumented eight-bit Web2C executables.
 The repository-owned final change is applied only to the latter and emits the
 shared schema-v1 command trace.
 
 Outputs and a complete identity record are written under
-target/pdftex14027-oracle. After the first acquisition, --offline performs no
+target/pdftex14029-oracle. After the first acquisition, --offline performs no
 network I/O.
 EOF
 }
@@ -66,13 +67,13 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --offline) offline=1 ;;
     --help|-h) usage; exit 0 ;;
-    *) printf 'build-pdftex14027-oracle: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+    *) printf 'build-pdftex14029-oracle: unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
 fail() {
-  printf 'build-pdftex14027-oracle: %s\n' "$*" >&2
+  printf 'build-pdftex14029-oracle: %s\n' "$*" >&2
   exit 1
 }
 
@@ -87,33 +88,14 @@ sha_digest() {
   fi
 }
 
-archive_url="$(awk '$1 == "archive" { print $2 }' "$manifest")"
-archive_sha512="$(awk '$1 == "archive" { print $3 }' "$manifest")"
-[[ -n "$archive_url" && -n "$archive_sha512" ]] ||
-  fail "missing archive pin in $manifest"
-
-verify_archive() {
-  local actual
-  actual="$(sha_digest 512 "$source_tar")"
-  [[ "$actual" == "$archive_sha512" ]] ||
-    fail "sha512 mismatch for $source_tar: expected $archive_sha512, got $actual"
-}
+archive_url="$(awk '$1 == "archive" { print $5 }' "$source_lock")"
+archive_sha512="$(awk '$1 == "archive" { print $4 }' "$source_lock")"
+[[ -n "$source_name" && -n "$archive_url" && -n "$archive_sha512" ]] || fail "invalid $source_lock"
 
 fetch_source() {
-  mkdir -p "$cache_root"
-  if [[ -f "$source_tar" ]]; then
-    verify_archive
-    printf 'verified %s\n' "$source_tar" >&2
-    return
-  fi
-  [[ "$offline" -eq 0 ]] || fail "missing $source_tar while running --offline"
-  [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] ||
-    fail "selected TeX Live cache is incomplete: $cache_root"
-  local tmp="${source_tar}.tmp"
-  printf 'fetching %s\n' "$archive_url" >&2
-  curl -fL "$archive_url" -o "$tmp"
-  mv "$tmp" "$source_tar"
-  verify_archive
+  local arguments=(source "$repo_root")
+  [[ "$offline" -eq 0 ]] || arguments+=(--offline)
+  python3 scripts/provision.py "${arguments[@]}" >/dev/null
 }
 
 verify_inputs() {
@@ -124,11 +106,6 @@ verify_inputs() {
 }
 
 extract_source() {
-  if [[ ! -f "${source_dir}/configure" ]]; then
-    rm -rf "$source_dir"
-    mkdir -p "$source_dir"
-    tar -xJf "$source_tar" -C "$source_dir" --strip-components=1
-  fi
   verify_inputs
 }
 
@@ -149,7 +126,7 @@ configure_tools() {
 }
 
 build_wide_tangle() {
-  local generated="${out_dir}/tangle-pdftex14027.c"
+  local generated="${out_dir}/tangle-pdftex14029.c"
   local source="${web_build_dir}/tangle.c"
   local replacements stack_replacements byte_replacements
   mkdir -p "$out_dir"
@@ -250,7 +227,7 @@ build_variant() {
 
 profile_executable() {
   local profile="$1"
-  printf '%s/umber-pdftex14027-oracle-%s' "$bin_dir" "$profile"
+  printf '%s/umber-pdftex14029-oracle-%s' "$bin_dir" "$profile"
 }
 
 normalize_pdf() {
@@ -263,11 +240,11 @@ run_smoke() {
   local run_dir="${out_dir}/smoke/${profile}-${mode}"
   input="$dvi_input"
   output="smoke-dvi.dvi"
-  marker="UMBER-PDFTEX14027-ORACLE-DVI-SMOKE"
+  marker="UMBER-PDFTEX14029-ORACLE-DVI-SMOKE"
   [[ "$mode" == dvi ]] || {
     input="$pdf_input"
     output="smoke-pdf.pdf"
-    marker="UMBER-PDFTEX14027-ORACLE-PDF-SMOKE"
+    marker="UMBER-PDFTEX14029-ORACLE-PDF-SMOKE"
   }
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
@@ -283,11 +260,11 @@ run_smoke() {
   [[ "$status" -eq 0 ]] || fail "$profile/$mode smoke exited with status $status"
   printf '%s\n' "$status" >"${run_dir}/status.txt"
   [[ -f "${run_dir}/${output}" ]] || fail "$profile/$mode smoke did not write $output"
-  grep -q 'pdfTeX, Version 3.141592653-2.6-1.40.27' "${run_dir}/smoke-${mode}.log" ||
-    fail "$profile/$mode did not identify canonical pdfTeX 1.40.27"
+  grep -q 'pdfTeX, Version 3.141592653-2.6-1.40.29' "${run_dir}/smoke-${mode}.log" ||
+    fail "$profile/$mode did not identify canonical pdfTeX 1.40.29"
   grep -q "$marker" "${run_dir}/smoke-${mode}.log" ||
     fail "$profile/$mode smoke marker is absent"
-  grep -q 'PDFTEX=14027' "${run_dir}/smoke-${mode}.log" ||
+  grep -q 'PDFTEX=14029' "${run_dir}/smoke-${mode}.log" ||
     fail "$profile/$mode pdfTeX version primitive marker is absent"
   grep -q 'ETEX=2.6' "${run_dir}/smoke-${mode}.log" ||
     fail "$profile/$mode e-TeX version primitive marker is absent"
@@ -378,7 +355,7 @@ run_extensions() {
     fail "$profile extension run did not write extensions.dvi"
   [[ -f "${run_dir}/extensions-effects.out" ]] ||
     fail "$profile extension run did not write extension effects"
-  grep -q 'UMBER-PDFTEX14027-COMMAND-EXTENSIONS' \
+  grep -q 'UMBER-PDFTEX14029-COMMAND-EXTENSIONS' \
     "${run_dir}/extensions.log" ||
     fail "$profile extension marker is absent"
   grep -q 'EXPANDED=AEXPANDEDB' "${run_dir}/extensions.log" ||
@@ -390,9 +367,9 @@ run_extensions() {
   grep -q 'ABSNUM-TRUE' "${run_dir}/extensions.log" &&
     grep -q 'ABSDIM-TRUE' "${run_dir}/extensions.log" ||
     fail "$profile absolute-comparison results are absent"
-  grep -q 'IDENTITY=140,27' "${run_dir}/extensions.log" ||
+  grep -q 'IDENTITY=140,29' "${run_dir}/extensions.log" ||
     fail "$profile exact pdfTeX profile identity is absent"
-  grep -q 'Version 3.141592653-2.6-1.40.27' "${run_dir}/extensions.log" ||
+  grep -q 'Version 3.141592653-2.6-1.40.29' "${run_dir}/extensions.log" ||
     fail "$profile canonical pdfTeX banner identity is absent"
   sed '1s/)  .*$/) <HOST-CLOCK>/' "${run_dir}/extensions.log" \
     >"${run_dir}/ordinary.log"
@@ -402,10 +379,10 @@ run_etex_profile_boundaries() {
   local executable="$1" profile="$2" status=0 input marker
   local run_dir="${out_dir}/etex-profile/${profile}"
   input="$etex_profile_input"
-  marker=UMBER-PDFTEX14027-ETEX-BOUNDARIES
+  marker=UMBER-PDFTEX14029-ETEX-BOUNDARIES
   if [[ "$profile" == *-compatibility ]]; then
     input="$etex_profile_compatibility_input"
-    marker=UMBER-PDFTEX14027-ETEX-COMPATIBILITY-ABSENT
+    marker=UMBER-PDFTEX14029-ETEX-COMPATIBILITY-ABSENT
   fi
   rm -rf "$run_dir"
   mkdir -p "$run_dir"
@@ -496,8 +473,8 @@ run_etex_profile_saved_hyph_codes() {
   ) || setup_status="$?"
   [[ "$setup_status" -eq 0 ]] ||
     fail "$profile saved-hyphen-code format run exited with status $setup_status"
-  if [[ -f "${run_dir}/pdftex14027-events.jsonl" ]]; then
-    mv "${run_dir}/pdftex14027-events.jsonl" \
+  if [[ -f "${run_dir}/pdftex14029-events.jsonl" ]]; then
+    mv "${run_dir}/pdftex14029-events.jsonl" \
       "${run_dir}/format-events.jsonl"
   fi
   (
@@ -511,7 +488,7 @@ run_etex_profile_saved_hyph_codes() {
   [[ "$status" -eq 0 ]] ||
     fail "$profile saved-hyphen-code loaded run exited with status $status"
   printf '%s\n' "$status" >"${run_dir}/status.txt"
-  grep -q 'UMBER-PDFTEX14027-SAVED-HYPH-CODES' \
+  grep -q 'UMBER-PDFTEX14029-SAVED-HYPH-CODES' \
     "${run_dir}/etex-profile-hyph.log" &&
     grep -q '@\\discretionary' "${run_dir}/etex-profile-hyph.log" &&
     grep -q 'SAVED-HYPH-CODES-PARAGRAPH-COMPLETE' \
@@ -546,7 +523,7 @@ run_state() {
     fail "$profile state run did not write state.pdf"
   [[ -f "${run_dir}/state-effects.out" ]] ||
     fail "$profile state run did not write state effects"
-  grep -q 'UMBER-PDFTEX14027-COMMAND-STATE' "${run_dir}/state.log" ||
+  grep -q 'UMBER-PDFTEX14029-COMMAND-STATE' "${run_dir}/state.log" ||
     fail "$profile state marker is absent"
   grep -q 'PDFTEX-TIMER-AVAILABLE' "${run_dir}/state.log" ||
     fail "$profile timer enquiry marker is absent"
@@ -570,8 +547,8 @@ write_build_record() {
   local record="${out_dir}/build-record.txt"
   local linker_path path tool tool_path profile executable mode output
   {
-    printf 'identity pdftex14027-oracle-web2c-texlive-2025\n'
-    printf 'engine pdfTeX\nengine-version 1.40.27\n'
+    printf 'identity pdftex14029-oracle-web2c-texlive-2026\n'
+    printf 'engine pdfTeX\nengine-version 1.40.29\n'
     printf 'etex-version 2.6\ncharacter-profile eight-bit-exact\n'
     printf 'invocation-profile INITEX-with-etex-extensions\n'
     printf 'archive-url %s\narchive-sha512 %s\n' "$archive_url" "$archive_sha512"
@@ -618,10 +595,10 @@ write_build_record() {
       "$(sha_digest 256 "$pdf_normalizer")"
     printf 'tool-sha256 tie %s\n' "$(sha_digest 256 "${web_build_dir}/tie")"
     printf 'tool-sha256 tangle %s\n' "$(sha_digest 256 "${web_build_dir}/tangle")"
-    printf 'tool-sha256 tangle-pdftex14027 %s\n' \
+    printf 'tool-sha256 tangle-pdftex14029 %s\n' \
       "$(sha_digest 256 "$wide_tangle")"
-    printf 'generated-tangle-pdftex14027-source-sha256 %s\n' \
-      "$(sha_digest 256 "${out_dir}/tangle-pdftex14027.c")"
+    printf 'generated-tangle-pdftex14029-source-sha256 %s\n' \
+      "$(sha_digest 256 "${out_dir}/tangle-pdftex14029.c")"
     printf 'tool-sha256 web2c %s\n' \
       "$(sha_digest 256 "${web_build_dir}/web2c/web2c")"
     for tool in make cc c++; do
@@ -700,11 +677,11 @@ write_build_record() {
         "$(sha_digest 256 "${out_dir}/state/${profile}/state-effects.out")"
       if [[ "$profile" == instrumented ]]; then
         printf 'transition-trace-sha256 %s %s\n' "$profile" \
-          "$(sha_digest 256 "${out_dir}/transitions/${profile}/pdftex14027-events.jsonl")"
+          "$(sha_digest 256 "${out_dir}/transitions/${profile}/pdftex14029-events.jsonl")"
         printf 'extension-trace-sha256 %s %s\n' "$profile" \
-          "$(sha_digest 256 "${out_dir}/extensions/${profile}/pdftex14027-events.jsonl")"
+          "$(sha_digest 256 "${out_dir}/extensions/${profile}/pdftex14029-events.jsonl")"
         printf 'state-trace-sha256 %s %s\n' "$profile" \
-          "$(sha_digest 256 "${out_dir}/state/${profile}/pdftex14027-events.jsonl")"
+          "$(sha_digest 256 "${out_dir}/state/${profile}/pdftex14029-events.jsonl")"
       fi
     done
   } > "$record"
@@ -839,7 +816,7 @@ compare_channels "pdfTeX-profile saved-hyphen-code oracle" \
 compare_channels "independently normalized PDF state oracle" \
   "${out_dir}/state/clean" "${out_dir}/state/instrumented" \
   normalized-pdf.txt
-trace="${out_dir}/transitions/instrumented/pdftex14027-events.jsonl"
+trace="${out_dir}/transitions/instrumented/pdftex14029-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$trace"
 while IFS='|' read -r family boundary fixture seam pattern extra; do
   [[ -z "$family" || "$family" == \#* ]] && continue
@@ -849,7 +826,7 @@ while IFS='|' read -r family boundary fixture seam pattern extra; do
   grep -Fq "$pattern" "$trace" ||
     fail "trace is missing $family/$boundary from $fixture at $seam"
 done <"$semantic_event_matrix"
-extension_trace="${out_dir}/extensions/instrumented/pdftex14027-events.jsonl"
+extension_trace="${out_dir}/extensions/instrumented/pdftex14029-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$extension_trace"
 while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
   [[ -z "$family" || "$family" == \#* ]] && continue
@@ -859,11 +836,11 @@ while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
   grep -Fq "$pattern" "$extension_trace" ||
     fail "extension trace is missing $family/$primitive/$boundary from $fixture at $seam"
 done <"$extension_event_matrix"
-etex_profile_trace="${out_dir}/etex-profile/instrumented-extended/pdftex14027-events.jsonl"
+etex_profile_trace="${out_dir}/etex-profile/instrumented-extended/pdftex14029-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_trace"
-etex_profile_recovery_trace="${out_dir}/etex-profile/instrumented-recovery/pdftex14027-events.jsonl"
+etex_profile_recovery_trace="${out_dir}/etex-profile/instrumented-recovery/pdftex14029-events.jsonl"
 etex_profile_hyph_format_trace="${out_dir}/etex-profile/instrumented-saved-hyph-codes/format-events.jsonl"
-etex_profile_hyph_trace="${out_dir}/etex-profile/instrumented-saved-hyph-codes/pdftex14027-events.jsonl"
+etex_profile_hyph_trace="${out_dir}/etex-profile/instrumented-saved-hyph-codes/pdftex14029-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_recovery_trace"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_hyph_format_trace"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$etex_profile_hyph_trace"
@@ -876,13 +853,13 @@ while IFS='|' read -r family boundary pattern compatibility extra; do
     "$etex_profile_recovery_trace" "$etex_profile_hyph_format_trace" \
     "$etex_profile_hyph_trace" ||
     fail "pdfTeX extended profile is missing $family/$boundary"
-  if [[ -f "${out_dir}/etex-profile/instrumented-compatibility/pdftex14027-events.jsonl" ]]; then
+  if [[ -f "${out_dir}/etex-profile/instrumented-compatibility/pdftex14029-events.jsonl" ]]; then
     ! grep -Fq "$pattern" \
-      "${out_dir}/etex-profile/instrumented-compatibility/pdftex14027-events.jsonl" ||
+      "${out_dir}/etex-profile/instrumented-compatibility/pdftex14029-events.jsonl" ||
       fail "pdfTeX compatibility profile unexpectedly emitted $family/$boundary"
   fi
 done <"$etex_profile_matrix"
-state_trace="${out_dir}/state/instrumented/pdftex14027-events.jsonl"
+state_trace="${out_dir}/state/instrumented/pdftex14029-events.jsonl"
 cargo run -q -p tex-oracle --bin tex-oracle-validate -- "$state_trace"
 while IFS='|' read -r family primitive boundary fixture seam pattern extra; do
   [[ -z "$family" || "$family" == \#* ]] && continue
@@ -915,38 +892,38 @@ compare_channels "repeated instrumented transition oracle" \
   "${out_dir}/transitions/instrumented" \
   "${out_dir}/transitions/instrumented-repeat" \
   terminal.txt ordinary.log status.txt transitions.dvi transitions-effects.out \
-  pdftex14027-events.jsonl
+  pdftex14029-events.jsonl
 compare_channels "repeated instrumented extension oracle" \
   "${out_dir}/extensions/instrumented" \
   "${out_dir}/extensions/instrumented-repeat" \
   terminal.txt ordinary.log status.txt extensions.dvi extensions-effects.out \
-  pdftex14027-events.jsonl
+  pdftex14029-events.jsonl
 compare_channels "repeated instrumented state oracle" \
   "${out_dir}/state/instrumented" \
   "${out_dir}/state/instrumented-repeat" \
   terminal.txt ordinary.log status.txt state.pdf normalized-pdf.txt state-effects.out \
-  pdftex14027-events.jsonl
+  pdftex14029-events.jsonl
 compare_channels "repeated extended pdfTeX-profile e-TeX boundary oracle" \
   "${out_dir}/etex-profile/instrumented-extended" \
   "${out_dir}/etex-profile/instrumented-repeat-extended" \
   terminal.txt status.txt etex-profile-boundaries.log \
   etex-profile-boundaries.dvi etex-profile-boundaries-effects.out \
-  pdftex14027-events.jsonl
+  pdftex14029-events.jsonl
 compare_channels "repeated compatibility pdfTeX-profile boundary oracle" \
   "${out_dir}/etex-profile/instrumented-compatibility" \
   "${out_dir}/etex-profile/instrumented-repeat-compatibility" \
   terminal.txt status.txt etex-profile-compatibility.log \
-  etex-profile-compatibility.dvi pdftex14027-events.jsonl
+  etex-profile-compatibility.dvi pdftex14029-events.jsonl
 compare_channels "repeated pdfTeX-profile e-TeX recovery oracle" \
   "${out_dir}/etex-profile/instrumented-recovery" \
   "${out_dir}/etex-profile/instrumented-repeat-recovery" \
   terminal.txt status.txt etex-profile-recovery.log \
   etex-profile-recovery.dvi etex-profile-recovery-effects.out \
-  pdftex14027-events.jsonl
+  pdftex14029-events.jsonl
 compare_channels "repeated pdfTeX-profile saved-hyphen-code oracle" \
   "${out_dir}/etex-profile/instrumented-saved-hyph-codes" \
   "${out_dir}/etex-profile/instrumented-repeat-saved-hyph-codes" \
   terminal.txt status.txt etex-profile-hyph.log etex-profile-hyph.dvi \
-  format-events.jsonl pdftex14027-events.jsonl
+  format-events.jsonl pdftex14029-events.jsonl
 write_build_record
 printf '%s\n' "$bin_dir"

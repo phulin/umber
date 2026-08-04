@@ -4,8 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 trip_root="${repo_root}/third_party/trip"
-source_root="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}"
-[[ "$source_root" == /* ]] || source_root="${repo_root}/${source_root}"
+source_root="${repo_root}/third_party/texlive-source"
 texmfcnf="${source_root}/src/texk/web2c/triptrap"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
@@ -13,10 +12,10 @@ oracle_bin="${target_dir}/etex26-oracle/bin"
 
 [[ -f "${trip_root}/etrip.tex" && -f "${trip_root}/trip.tfm" &&
   -f "${trip_root}/tripos.tex" ]] || {
-  printf 'test-etex26-trip-observer: missing pinned e-TRIP inputs; run scripts/fetch-conformance-inputs.sh\n' >&2
+  printf 'test-etex26-trip-observer: missing pinned e-TRIP inputs; run python3 scripts/provision.py worktree .\n' >&2
   exit 1
 }
-scripts/build-etex26-oracle.sh --offline >/dev/null
+python3 scripts/provision.py oracle etex26 --offline >/dev/null
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-etex26-trip-observer.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
 

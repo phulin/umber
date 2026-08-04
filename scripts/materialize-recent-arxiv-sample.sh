@@ -2,7 +2,6 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-selector="$repo_root/scripts/profile-pdftex-arxiv.sh"
 candidates=${1:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
 destination=${2:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
 output=${3:?usage: $0 CANDIDATES_TSV DESTINATION OUTPUT_TSV LOCK_TSV [EXCLUSIONS_TSV]}
@@ -36,6 +35,21 @@ download() {
   curl -L --fail --show-error --silent --retry 4 --retry-all-errors \
     -o "$archive.part" "https://export.arxiv.org/e-print/$identifier"
   mv "$archive.part" "$archive"
+}
+
+entrypoint() {
+  local directory=$1 candidate
+  local documentclass='^[[:space:]]*\\documentclass([[:space:]]|\[|\{|$)'
+  for candidate in main.tex manuscript.tex arxiv_version.tex paper.tex ms.tex; do
+    if [[ -f "$directory/$candidate" ]] && rg -q "$documentclass" "$directory/$candidate"; then
+      printf '%s\n' "$directory/$candidate"
+      return
+    fi
+  done
+  rg -l "$documentclass" "$directory" -g '*.tex' \
+    | rg -v '/(supp|supplement|appendix)[^/]*\.tex$' \
+    | sort \
+    | head -1
 }
 
 is_excluded() {
@@ -89,7 +103,7 @@ while IFS=$'\t' read -r identifier categories submitted digest; do
       "$identifier" "$submitted" "$digest" >"$destination/audit/$key.tsv"
     continue
   fi
-  entrypoint="$($selector select-entrypoint "$source_directory" || true)"
+  entrypoint="$(entrypoint "$source_directory" || true)"
   if [[ -z $entrypoint ]]; then
     printf '%s\t%s\t%s\tno live documentclass\n' \
       "$identifier" "$submitted" "$digest" >"$destination/audit/$key.tsv"

@@ -147,9 +147,9 @@ that same command to forbid network access. `--validate-only` checks the
 cross-engine contract, source-manifest shape, repository-owned input hashes,
 event schema, and engine/profile identity without building.
 
-Set `UMBER_REF_TEXLIVE_SOURCE` only to select an equivalent cache containing
-the pinned archive, extracted `src`, and configured `build` directories. Set
-`CARGO_TARGET_DIR` to relocate outputs.
+Source acquisition always uses the primary checkout's pinned archive and
+extracted tree; linked worktrees symlink those inputs and keep their configured
+build directories local. Set `CARGO_TARGET_DIR` to relocate outputs.
 `UMBER_TEX82_INSTRUMENTATION_CHANGE` may select another final change file; the
 build record captures its path and hash.
 

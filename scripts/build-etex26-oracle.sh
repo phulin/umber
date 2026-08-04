@@ -5,12 +5,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 manifest="tests/etex26-oracle-manifest.txt"
-source_name="texlive-20250308-source.tar.xz"
-cache_root="${UMBER_REF_TEXLIVE_SOURCE:-third_party/texlive-source}"
-[[ "$cache_root" == /* ]] || cache_root="${repo_root}/${cache_root}"
+source_lock="tests/texlive-source.lock"
+source_name="$(awk '$1 == "archive" { print $2 }' "$source_lock")"
+cache_root="${repo_root}/third_party/texlive-source"
 source_tar="${cache_root}/${source_name}"
 source_dir="${cache_root}/src"
-build_dir="${cache_root}/build"
+build_dir="${cache_root}/build-etex26-20260301"
 web_source_dir="${source_dir}/texk/web2c"
 web_build_dir="${build_dir}/texk/web2c"
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -38,7 +38,7 @@ usage() {
   cat <<'EOF'
 usage: scripts/build-etex26-oracle.sh [--offline]
 
-Acquire and verify the pinned TeX Live 2025 source snapshot, then build
+Acquire and verify the pinned TeX Live 2026 source snapshot, then build
 canonical e-TeX 2.6 clean and instrumented executables. Each build is
 published under separately named compatibility and extended-mode profiles.
 The profiles differ by the canonical INITEX invocation: extended mode consumes
@@ -76,33 +76,14 @@ sha_digest() {
   fi
 }
 
-archive_url="$(awk '$1 == "archive" { print $2 }' "$manifest")"
-archive_sha512="$(awk '$1 == "archive" { print $3 }' "$manifest")"
-[[ -n "$archive_url" && -n "$archive_sha512" ]] ||
-  fail "missing archive pin in $manifest"
-
-verify_archive() {
-  local actual
-  actual="$(sha_digest 512 "$source_tar")"
-  [[ "$actual" == "$archive_sha512" ]] ||
-    fail "sha512 mismatch for $source_tar: expected $archive_sha512, got $actual"
-}
+archive_url="$(awk '$1 == "archive" { print $5 }' "$source_lock")"
+archive_sha512="$(awk '$1 == "archive" { print $4 }' "$source_lock")"
+[[ -n "$source_name" && -n "$archive_url" && -n "$archive_sha512" ]] || fail "invalid $source_lock"
 
 fetch_source() {
-  mkdir -p "$cache_root"
-  if [[ -f "$source_tar" ]]; then
-    verify_archive
-    printf 'verified %s\n' "$source_tar" >&2
-    return
-  fi
-  [[ "$offline" -eq 0 ]] || fail "missing $source_tar while running --offline"
-  [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] ||
-    fail "selected TeX Live cache is incomplete: $cache_root"
-  local tmp="${source_tar}.tmp"
-  printf 'fetching %s\n' "$archive_url" >&2
-  curl -fL "$archive_url" -o "$tmp"
-  mv "$tmp" "$source_tar"
-  verify_archive
+  local arguments=(source "$repo_root")
+  [[ "$offline" -eq 0 ]] || arguments+=(--offline)
+  python3 scripts/provision.py "${arguments[@]}" >/dev/null
 }
 
 verify_inputs() {
@@ -111,11 +92,6 @@ verify_inputs() {
 }
 
 extract_source() {
-  if [[ ! -f "${source_dir}/configure" ]]; then
-    rm -rf "$source_dir"
-    mkdir -p "$source_dir"
-    tar -xJf "$source_tar" -C "$source_dir" --strip-components=1
-  fi
   verify_inputs
 }
 
@@ -391,7 +367,7 @@ write_build_record() {
   local record="${out_dir}/build-record.txt"
   local linker_path path tool tool_path build_profile engine_profile executable
   {
-    printf 'identity etex26-oracle-web2c-texlive-2025\n'
+    printf 'identity etex26-oracle-web2c-texlive-2026\n'
     printf 'engine e-TeX\nengine-version 2.6\ncharacter-profile eight-bit-exact\n'
     printf 'archive-url %s\narchive-sha512 %s\n' "$archive_url" "$archive_sha512"
     printf 'manifest-sha256 %s\n' "$(sha_digest 256 "$manifest")"

@@ -1,4 +1,4 @@
-% pdfTeX 1.40.27 command-extension observation layered after instrumentation.ch.
+% pdfTeX 1.40.29 command-extension observation layered after instrumentation.ch.
 % The transport and schema helpers are owned by the preceding change file.
 
 @x [18] Track the one volatile enquiry whose numeric result is host-timed.
@@ -318,13 +318,13 @@ else write(umber_trace_file,'stream:',channel:1);
 @x [18] Initialize the volatile-enquiry guard.
 umber_alignment_depth:=0; umber_mutation_command:=false;
 umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
-  rewrite(umber_trace_file,'pdftex14027-events.jsonl');
+  rewrite(umber_trace_file,'pdftex14029-events.jsonl');
 @y
 umber_alignment_depth:=0; umber_mutation_command:=false;
 umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
 umber_pdf_timer_enquiry:=false;
 umber_pdf_object_tokens:=false;
-  rewrite(umber_trace_file,'pdftex14027-events.jsonl');
+  rewrite(umber_trace_file,'pdftex14029-events.jsonl');
 @z
 
 @x [25] Observe the operand consumed by \pdfprimitive.
@@ -466,12 +466,12 @@ pdf_creation_date_code:
 
 @x [27] Observe text and file MD5 results without helper identity.
     b := pool_ptr;
-    getmd5sum(s, bool);
+    getmd5sum(s, booltemp);
     link(garbage) := str_toks(b);
     flush_str(s);
 @y
     b := pool_ptr;
-    getmd5sum(s, bool);
+    getmd5sum(s, booltemp);
     link(garbage) := str_toks(b);
     umber_trace_token_list(1,22,link(temp_head),null);
     flush_str(s);
@@ -492,12 +492,12 @@ pdf_creation_date_code:
 
 @x [27] Observe the regular-expression result.
     b := pool_ptr;
-    matchstrings(s, t, i, bool);
+    matchstrings(s, t, i, booltemp);
     link(garbage) := str_toks(b);
     flush_str(t);
 @y
     b := pool_ptr;
-    matchstrings(s, t, i, bool);
+    matchstrings(s, t, i, booltemp);
     link(garbage) := str_toks(b);
     umber_trace_token_list(1,24,link(temp_head),null);
     flush_str(t);

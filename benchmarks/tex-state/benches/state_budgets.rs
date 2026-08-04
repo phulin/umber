@@ -1247,7 +1247,7 @@ fn canonical_source_case(input: String, needs_control_sequences: bool) -> Canoni
 fn canonical_source_command(
     input: String,
 ) -> (CommandState, CommandRuntime, CommandHostCapabilities) {
-    let profile = CommandProfile::unicode_extended(CommandDialect::Pdftex14027);
+    let profile = CommandProfile::unicode_extended(CommandDialect::Pdftex14029);
     let mut command = CommandState::new(profile);
     let source = command
         .register_source(SourceRegistration::new(

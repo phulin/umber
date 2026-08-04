@@ -185,7 +185,7 @@ fn etex_loaded_framing_is_recognized() {
     assert_eq!(
         classify(
             StreamChannel::Terminal,
-            "This is pdfTeX, Version 3.141592653-2.6-1.40.27\n",
+            "This is pdfTeX, Version 3.141592653-2.6-1.40.29\n",
             ""
         ),
         Some(DivergenceClass::EtexLoadedFraming)

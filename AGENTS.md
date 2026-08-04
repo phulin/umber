@@ -108,7 +108,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - **Provision conformance assets when creating or allocating a worktree.** The
   byte-exact DVI oracles, TRIP inputs, and shared font/hyphenation inputs are
   gitignored for licensing reasons. Before running tests in a linked worktree,
-  run `python3 scripts/native-test-assets.py <worktree>`. It copies only the
+  run `python3 scripts/provision.py worktree <worktree>`. It copies only the
   `tests/native-test-assets.lock` allowlist from the primary checkout, verifies
   every SHA-256 on both sides, and leaves the copies ignored. Rust tests never
   provision their own inputs. Do not manually link or broadly copy
@@ -119,11 +119,13 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   primary checkout, not in a worktree:
 
   ```bash
-  scripts/setup-conformance-tests.sh
+  python3 scripts/provision.py worktree .
   ```
 
-  That is the only setup a new clone needs; linked worktrees still run the
-  provisioner above. An environment that genuinely
+  That command downloads the pinned TeX Live 2026 source and runtime inputs,
+  builds the instrumented pdfTeX 1.40.29 oracle, and generates the locked
+  fixtures. Linked worktrees symlink the primary source archive/tree and copy
+  only the locked native assets. An environment that genuinely
   cannot host the oracles opts out explicitly with
   `UMBER_CONFORMANCE_ORACLES=optional`, which downgrades the byte-exact gates
   to a loud notice rather than letting an absent oracle read as a pass.

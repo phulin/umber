@@ -1,4 +1,4 @@
-# Required schema-v1 pdfTeX 1.40.27 command-core expansion observations.
+# Required schema-v1 pdfTeX 1.40.29 command-core expansion observations.
 # Columns: family|primitive|boundary|fixture|final-change seam|fixed JSON fragment
 token_list|expanded|expanded construction|extensions.tex|conv_toks expanded return|"purpose":"pdf_expanded"
 token_list|pdfescapestring|escaped string conversion|extensions.tex|conv_toks pdf_escape_string return|"purpose":"pdf_escape_string"

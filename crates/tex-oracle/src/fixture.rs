@@ -304,7 +304,7 @@ fn validate_profile(manifest: &FixtureManifest) -> Result<(), FixtureError> {
     let expected = match manifest.oracle.engine.dialect {
         EngineDialect::Tex82 => ("initex", "eight_bit_exact"),
         EngineDialect::Etex26 => ("initex_compatibility_or_extended", "eight_bit_exact"),
-        EngineDialect::Pdftex14027 => ("initex_with_etex_extensions", "eight_bit_exact"),
+        EngineDialect::Pdftex14029 => ("initex_with_etex_extensions", "eight_bit_exact"),
     };
     if (
         manifest.profile.invocation.as_str(),

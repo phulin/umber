@@ -28,7 +28,7 @@
       },
       "expected": [
         "command:leader_ship:99",
-        "artifact:37354fc8ab77030169766679963a522304da48ca1d3c3f74745ad9cd15b27701"
+        "artifact:9b3dbc505ade60cfceb155987bc2c22087e9dd5a5e7bac542bda56695190605e"
       ],
       "channels": {
         "events": 671,

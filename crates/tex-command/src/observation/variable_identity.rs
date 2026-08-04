@@ -37,7 +37,7 @@
 //!
 //! Only two links in that chain are build-specific, and both are pinned by
 //! the same oracle this repository's committed traces come from
-//! (`scripts/build-tex82-oracle.sh`, TeX Live 2025 `tex.web` + `tex.ch` +
+//! (`scripts/build-tex82-oracle.sh`, TeX Live 2026 `tex.web` + `tex.ch` +
 //! the encTeX change files):
 //!
 //! - `int_base` is `char_sub_code_base+256`, not tex.web's
@@ -64,7 +64,7 @@
 //!
 //! The immutable command profile selects one complete layout. TeX82 follows
 //! tex.web §§224/230/236/247; e-TeX 2.6's `etex.ch` inserts `\everyeof`, four
-//! penalty-list cells, and its integer block; pdfTeX 1.40.27's
+//! penalty-list cells, and its integer block; pdfTeX 1.40.29's
 //! `pdftexdir/pdftex.web` §§5406, 5714-5727, and 9804-9829 additionally
 //! inserts four pdf token parameters, 37 pdf integer parameters, and fourteen
 //! read-only integer selectors. Umber-only hidden cells return `None`; no
@@ -164,7 +164,7 @@ pub(crate) fn int_parameter_code(dialect: CommandDialect, slot: u16) -> Option<i
         61 => etex_int_base(dialect)? + 3, // \tracingscantokens
         62 => {
             etex_int_base(dialect)?
-                + if matches!(dialect, CommandDialect::Pdftex14027) {
+                + if matches!(dialect, CommandDialect::Pdftex14029) {
                     10
                 } else {
                     9
@@ -178,7 +178,7 @@ pub(crate) fn int_parameter_code(dialect: CommandDialect, slot: u16) -> Option<i
         68 => etex_int_base(dialect)? + 7, // \savingvdiscards
         69 => etex_int_base(dialect)? + 6, // \lastlinefit
         70 => etex_int_base(dialect)? + 8, // \savinghyphcodes
-        72..=109 if matches!(dialect, CommandDialect::Pdftex14027) => match slot {
+        72..=109 if matches!(dialect, CommandDialect::Pdftex14029) => match slot {
             72 => 55,   // \pdfoutput
             73 => 56,   // \pdfcompresslevel
             74 => 76,   // \pdfobjcompresslevel
@@ -235,7 +235,7 @@ const fn etex_int_base(dialect: CommandDialect) -> Option<i64> {
         // The pinned Web2C change chain inserts three MLTeX and four encTeX
         // parameters first, so its effective `etex_int_base` is 62.
         CommandDialect::Etex26 => Some(62),
-        CommandDialect::Pdftex14027 => Some(92),
+        CommandDialect::Pdftex14029 => Some(92),
     }
 }
 
@@ -244,7 +244,7 @@ pub(crate) const fn int_base(dialect: CommandDialect) -> i64 {
         + match dialect {
             CommandDialect::Tex82 => 0,
             CommandDialect::Etex26 => 5,
-            CommandDialect::Pdftex14027 => 9,
+            CommandDialect::Pdftex14029 => 9,
         }
 }
 
@@ -256,7 +256,7 @@ pub(crate) const fn count_base(dialect: CommandDialect) -> i64 {
             // encTeX changes; synctex-e-mem.ch1 appends `\synctex` as the
             // seventy-third before tex.web §236 derives `count_base`.
             CommandDialect::Etex26 => 73,
-            CommandDialect::Pdftex14027 => 110,
+            CommandDialect::Pdftex14029 => 110,
         }
 }
 
@@ -273,7 +273,7 @@ pub(crate) const fn toks_base(dialect: CommandDialect) -> i64 {
         + match dialect {
             CommandDialect::Tex82 => 0,
             CommandDialect::Etex26 => 1,
-            CommandDialect::Pdftex14027 => 5,
+            CommandDialect::Pdftex14029 => 5,
         }
 }
 
@@ -316,12 +316,12 @@ pub(crate) fn glue_parameter_code(slot: u16) -> Option<i64> {
 pub(crate) fn token_parameter_address(dialect: CommandDialect, slot: u16) -> Option<i64> {
     match slot {
         0..=8 => Some(OUTPUT_ROUTINE_LOC + i64::from(slot)),
-        9..=12 if matches!(dialect, CommandDialect::Pdftex14027) => {
+        9..=12 if matches!(dialect, CommandDialect::Pdftex14029) => {
             Some(LOCAL_BASE + 10 + i64::from(slot - 9))
         }
         13 if !matches!(dialect, CommandDialect::Tex82) => Some(
             EVERY_EOF_LOC
-                + if matches!(dialect, CommandDialect::Pdftex14027) {
+                + if matches!(dialect, CommandDialect::Pdftex14029) {
                     4
                 } else {
                     0
@@ -483,7 +483,7 @@ pub(crate) fn internal_integer_code(
 }
 
 const fn pdf_last_item_base(dialect: CommandDialect) -> Option<i64> {
-    if matches!(dialect, CommandDialect::Pdftex14027) {
+    if matches!(dialect, CommandDialect::Pdftex14029) {
         Some(6)
     } else {
         None
@@ -494,7 +494,7 @@ const fn etex_last_item_base(dialect: CommandDialect) -> Option<i64> {
     match dialect {
         CommandDialect::Tex82 => None,
         CommandDialect::Etex26 => Some(6),
-        CommandDialect::Pdftex14027 => Some(20),
+        CommandDialect::Pdftex14029 => Some(20),
     }
 }
 
@@ -631,7 +631,7 @@ mod tests {
             );
             assert_eq!(
                 parameter_mutation_key_for_dialect(
-                    CommandDialect::Pdftex14027,
+                    CommandDialect::Pdftex14029,
                     ParameterClass::Integer,
                     slot,
                 ),
@@ -660,7 +660,7 @@ mod tests {
                 (25_068, 27_172, 27_245, 27_757, 27_778),
             ),
             (
-                CommandDialect::Pdftex14027,
+                CommandDialect::Pdftex14029,
                 (25_072, 27_176, 27_286, 27_798, 27_819),
             ),
         ] {
@@ -697,7 +697,7 @@ mod tests {
         for (dialect, parameter_base) in [
             (CommandDialect::Tex82, 27_741_i64),
             (CommandDialect::Etex26, 27_757),
-            (CommandDialect::Pdftex14027, 27_798),
+            (CommandDialect::Pdftex14029, 27_798),
         ] {
             for slot in 0_u16..=20 {
                 assert_eq!(
@@ -727,12 +727,12 @@ mod tests {
         );
         for (slot, address) in (9_u16..=12).zip(25_067_i64..=25_070) {
             assert_eq!(
-                token_parameter_address(CommandDialect::Pdftex14027, slot),
+                token_parameter_address(CommandDialect::Pdftex14029, slot),
                 Some(address)
             );
         }
         assert_eq!(
-            token_parameter_address(CommandDialect::Pdftex14027, 13),
+            token_parameter_address(CommandDialect::Pdftex14029, 13),
             Some(25_071)
         );
     }
@@ -740,13 +740,13 @@ mod tests {
     #[test]
     fn every_pdf_integer_parameter_uses_its_pdftex_code() {
         let mut codes: Vec<_> = (72_u16..=108)
-            .map(|slot| int_parameter_code(CommandDialect::Pdftex14027, slot))
+            .map(|slot| int_parameter_code(CommandDialect::Pdftex14029, slot))
             .collect();
         codes.sort_unstable();
         assert_eq!(codes, (55_i64..=91).map(Some).collect::<Vec<_>>());
         assert_eq!(int_parameter_code(CommandDialect::Etex26, 72), None);
         assert_eq!(
-            int_parameter_code(CommandDialect::Pdftex14027, 109),
+            int_parameter_code(CommandDialect::Pdftex14029, 109),
             Some(101)
         );
     }
@@ -782,7 +782,7 @@ mod tests {
             assert_eq!(internal_integer_code(CommandDialect::Tex82, integer), tex);
             assert_eq!(internal_integer_code(CommandDialect::Etex26, integer), etex);
             assert_eq!(
-                internal_integer_code(CommandDialect::Pdftex14027, integer),
+                internal_integer_code(CommandDialect::Pdftex14029, integer),
                 pdftex
             );
         }

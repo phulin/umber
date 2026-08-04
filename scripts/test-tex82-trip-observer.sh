@@ -5,8 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 trip_root="${repo_root}/third_party/trip"
-source_root="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}"
-[[ "$source_root" == /* ]] || source_root="${repo_root}/${source_root}"
+source_root="${repo_root}/third_party/texlive-source"
 texmfcnf="${source_root}/src/texk/web2c/triptrap"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
@@ -30,11 +29,11 @@ done
 
 [[ -f "${trip_root}/trip.tex" && -f "${trip_root}/trip.tfm" &&
   -f "${trip_root}/tripos.tex" ]] || {
-  printf 'test-tex82-trip-observer: missing pinned TRIP inputs; run scripts/fetch-conformance-inputs.sh\n' >&2
+  printf 'test-tex82-trip-observer: missing pinned TRIP inputs; run python3 scripts/provision.py worktree .\n' >&2
   exit 1
 }
 
-scripts/build-tex82-oracle.sh --offline >/dev/null
+python3 scripts/provision.py oracle tex82 --offline >/dev/null
 
 work_root="$(mktemp -d "${TMPDIR:-/tmp}/umber-tex82-trip-observer.XXXXXX")"
 trap 'rm -rf "$work_root"' EXIT
@@ -200,7 +199,7 @@ mkdir -p "$work_root/clean" "$work_root/profile-a" "$work_root/profile-b" \
   "$work_root/geometry-a" "$work_root/geometry-b" \
   "$work_root/full-initex-a" "$work_root/full-initex-b"
 if [[ "$geometry_only" -eq 1 ]]; then
-  python3 scripts/native-test-assets.py . --target-dir "$target_dir"
+  python3 scripts/provision.py worktree . --target-dir "$target_dir"
   run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \
     "$work_root/geometry-a" geometry
   run_phase "${oracle_bin}/umber-tex82-oracle-trip-geometry-profile" \

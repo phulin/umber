@@ -86,10 +86,10 @@ fn canonical_and_unicode_profiles_are_immutable_distinct_identities() {
     let profiles = [
         CommandProfile::TEX82,
         CommandProfile::ETEX26,
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
         CommandProfile::unicode_extended(CommandDialect::Tex82),
         CommandProfile::unicode_extended(CommandDialect::Etex26),
-        CommandProfile::unicode_extended(CommandDialect::Pdftex14027),
+        CommandProfile::unicode_extended(CommandDialect::Pdftex14029),
     ];
 
     for profile in profiles {
@@ -165,12 +165,12 @@ fn capabilities_are_semantic_and_validated_during_decode() {
     assert!(!etex_unicode.supports_pdftex());
     assert!(etex_unicode.supports_unicode());
 
-    let pdftex = CommandProfile::PDFTEX14027.capabilities();
+    let pdftex = CommandProfile::PDFTEX14029.capabilities();
     assert!(pdftex.supports_etex());
     assert!(pdftex.supports_pdftex());
     assert!(!pdftex.supports_unicode());
 
-    let mut invalid = CommandProfile::PDFTEX14027.to_stable_bytes();
+    let mut invalid = CommandProfile::PDFTEX14029.to_stable_bytes();
     invalid[3] = 0;
     assert_eq!(
         CommandProfile::from_stable_bytes(invalid),
@@ -186,7 +186,7 @@ fn control_sequence_capacity_is_profile_derived_and_survives_stable_projection()
     for (profile, hash_size, hash_extra) in [
         (CommandProfile::TEX82, 15_000, 0),
         (CommandProfile::ETEX26, 15_000, 600_000),
-        (CommandProfile::PDFTEX14027, 15_000, 600_000),
+        (CommandProfile::PDFTEX14029, 15_000, 600_000),
     ] {
         let restored = CommandProfile::from_stable_bytes(profile.to_stable_bytes())
             .expect("stable profile loads");

@@ -19,7 +19,7 @@ oracle_dir="${target_dir}/tex82-oracle"
 instrumentable_executable="${oracle_dir}/bin/umber-tex82-oracle-instrumentable"
 clean_executable="${oracle_dir}/bin/umber-tex82-oracle"
 build_record="${oracle_dir}/build-record.txt"
-texmfcnf="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}/src/texk/web2c/triptrap"
+texmfcnf="${repo_root}/third_party/texlive-source/src/texk/web2c/triptrap"
 document_root="${repo_root}/tests/tex82-documents"
 fixture_root="${repo_root}/tests/corpus/command/tex82-documents"
 contract="${repo_root}/tests/tex82-document-trace-manifest.txt"
@@ -43,8 +43,8 @@ document (plain, story, gentle) is regenerated; the contract is only rewritten
 when every document is regenerated, so a partial run must not be published.
 
 Requires scripts/build-tex82-oracle.sh to have produced
-target/tex82-oracle/bin, and scripts/setup-conformance-tests.sh (or
-scripts/fetch-conformance-inputs.sh) to have populated third_party/corpus,
+target/tex82-oracle/bin, and python3 scripts/provision.py worktree . to have
+populated third_party/corpus,
 third_party/hyphen, and third_party/fonts. It performs no network I/O.
 
 Exit statuses. No status means "nothing to do": a run that generates no trace
@@ -58,7 +58,7 @@ confuse "regenerated every document" with "regenerated none".
   2  the command line is wrong
   3  a prerequisite is absent, so nothing ran. This is the expected status on
      a fresh checkout; run scripts/build-tex82-oracle.sh and
-     scripts/setup-conformance-tests.sh, then rerun. It is separated from 1
+     python3 scripts/provision.py worktree ., then rerun. It is separated from 1
      so a caller can tell "not set up yet" from "set up, and broken"
 EOF
 }
@@ -267,7 +267,7 @@ build_document() {
   missing_prerequisite "missing ${build_record}; run scripts/build-tex82-oracle.sh first"
 [[ -d "$texmfcnf" ]] || missing_prerequisite "missing pinned web2c configuration: ${texmfcnf}"
 [[ -f "$hyphen" && -d "$fonts" ]] ||
-  missing_prerequisite 'missing external inputs; run scripts/setup-conformance-tests.sh first'
+  missing_prerequisite 'missing external inputs; run python3 scripts/provision.py worktree . first'
 
 publish_contract=1
 if [[ "${#selected[@]}" -eq 0 ]]; then

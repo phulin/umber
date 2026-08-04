@@ -39,7 +39,7 @@ fn unicode_registration_rejects_the_exact_malformed_range_before_allocation() {
 fn incomplete_unicode_sequence_reports_through_end_of_backing() {
     let error = RegisteredSource::register(
         SourceId::new(4),
-        CommandProfile::unicode_extended(crate::CommandDialect::Pdftex14027),
+        CommandProfile::unicode_extended(crate::CommandDialect::Pdftex14029),
         SourceRegistration::new(
             RegisteredSourceKind::EditorFragment,
             Arc::<[u8]>::from(&b"a\xe2\x82"[..]),
@@ -80,7 +80,7 @@ fn exact_byte_registration_preserves_every_byte() {
     let bytes: Arc<[u8]> = (u8::MIN..=u8::MAX).collect::<Vec<_>>().into();
     let registered = RegisteredSource::register(
         SourceId::new(9),
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
         SourceRegistration::new(RegisteredSourceKind::ReadLine, Arc::clone(&bytes)),
     )
     .expect("exact-byte registration never decodes");

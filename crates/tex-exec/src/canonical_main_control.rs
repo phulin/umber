@@ -1909,8 +1909,8 @@ impl CanonicalMainControl {
             .unwrap_or_else(|| match self.command_profile().dialect() {
                 tex_command::CommandDialect::Tex82 => crate::job::EngineBinaryIdentity::Tex82,
                 tex_command::CommandDialect::Etex26 => crate::job::EngineBinaryIdentity::Etex26,
-                tex_command::CommandDialect::Pdftex14027 => {
-                    crate::job::EngineBinaryIdentity::Pdftex14027
+                tex_command::CommandDialect::Pdftex14029 => {
+                    crate::job::EngineBinaryIdentity::Pdftex14029
                 }
             });
         let etex = self.command_profile() == CommandProfile::ETEX26;

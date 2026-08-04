@@ -41,7 +41,7 @@ for every primitive and parameter in the family.
 
 `\eTeXversion`, `\eTeXrevision`, `\ifdefined`, non-creating `\ifcsname`, and
 `\iffontchar` are implemented with focused V2 tests. The later live-name-scan
-enquiry `\ifincsname` is a pdfTeX 1.40.27 primitive and remains undefined in
+enquiry `\ifincsname` is a pdfTeX 1.40.29 primitive and remains undefined in
 the e-TeX 2.6 profile. `\currentgrouplevel`,
 `\currentgrouptype`, `\currentiflevel`, `\currentiftype`, and
 `\currentifbranch` read exact resumable group/conditional state.

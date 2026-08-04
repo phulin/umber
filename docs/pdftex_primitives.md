@@ -1,4 +1,4 @@
-# pdfTeX 1.40.27 Primitive Checklist
+# pdfTeX 1.40.29 Primitive Checklist
 
 This document inventories the primitive control sequences added by pdfTeX on
 top of TeX82 and the original e-TeX change file. Beads is the source of truth
@@ -10,10 +10,10 @@ the completeness gate.
 The authoritative source is `texk/web2c/pdftexdir/pdftex.web` at official
 TeX Live source commit
 [`1664cf0ab3f6ce3b80db649bc6723f54ab12016c`](https://github.com/TeX-Live/texlive-source/blob/1664cf0ab3f6ce3b80db649bc6723f54ab12016c/texk/web2c/pdftexdir/pdftex.web).
-That file declares pdfTeX 3.141592653-2.6-1.40.27 and has SHA-256
+That file declares pdfTeX 3.141592653-2.6-1.40.29 and has SHA-256
 `5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04`.
 The repository's local parity oracle and committed corpus metadata pin the
-same engine version (TeX Live 2025).
+same engine version (TeX Live 2026).
 
 The inventory takes the unique names registered by `primitive(...)` in that
 file, then subtracts the unique names registered by the matching TeX82
@@ -31,7 +31,7 @@ aliases that a manual organized by user-facing features can omit.
 The prerequisite count is nominal control-sequence coverage; its behavioral
 gates remain the TeX and e-TeX corpora. `umber run --pdftex` and the native or
 WASM session option `engine: "pdftex"` select this layer and its truthful
-1.40.27 identity. All 158 names are registered in that mode; names whose
+1.40.29 identity. All 158 names are registered in that mode; names whose
 semantics were implemented by the dependency-ordered checklist have no
 unsupported-placeholder meanings.
 
@@ -41,7 +41,7 @@ graphics and navigation actions, external images, and the detached PDF output
 backend.
 The supported LaTeX-DVI compatibility layer intentionally keeps `\expanded`.
 Plain e-TeX 2.6 defines neither `\expanded` nor `\ifincsname`; both are
-installed at their source-derived pdfTeX 1.40.27 command and operand in
+installed at their source-derived pdfTeX 1.40.29 command and operand in
 pdfTeX mode. The source-set gate therefore requires all 158 names in pdfTeX
 mode and isolates the other 157 from earlier modes.
 Umber also exposes the engine-neutral names `\creationdate`, `\filesize`,
@@ -255,7 +255,7 @@ positive and inactive negative prepend/append kerns, interword width/stretch/
 shrink adjustment, protrusion margin kern placement, and expansion diagnostics.
 The pinned PDF `embedded_subset_type1`, `embedded_subset_omit`, and
 `embedded_subset_controls_negative` fixtures prove positive and nonpositive
-ToUnicode generation and zero/nonzero CharSet omission against pdfTeX 1.40.27.
+ToUnicode generation and zero/nonzero CharSet omission against pdfTeX 1.40.29.
 The font dictionaries and CMaps continue to serialize only through the
 canonical `pdf_writer` adapter. Child issue 7.2.1 completes PK output with a
 bounded, host-neutral decoder and checkpointed typed resource provider. The
@@ -264,7 +264,7 @@ driver resolves the frozen `\pdfpkresolution` and `\pdfpkmode`, selects exact
 matrices, widths, bounding boxes, and image-mask CharProcs. The vendored
 `pdf_writer` content API owns the typed inline-image dictionary and all
 `BI`/`ID`/`EI` framing. Real `cmr10` PK-only fixtures at 300 and 600 DPI match
-pdfTeX 1.40.27 structure, extracted text, and rendered pixels. Focused tests
+pdfTeX 1.40.29 structure, extracted text, and rendered pixels. Focused tests
 pin the zero sentinel to the host-provided driver DPI, clamp nonzero values to
 `72..=8000`, and cover negative values through the same lower bound.
 
@@ -301,7 +301,7 @@ JPEG sample precision; included PDFs report the source document's total page
 count and zero color depth. `\pdfrefximage` leaves both values unchanged, as
 does a resource-acquisition retry before the image has been decoded. The
 checkpointed external-image metadata carries these values through rollback,
-semantic hashing, and retained native/WASM compilation. The live 1.40.27
+semantic hashing, and retained native/WASM compilation. The live 1.40.29
 oracle fixture `tests/corpus/tex_exec/pdf_ximage_enquiries` generates its
 three-page input exclusively through the vendored typed `pdf_writer` API.
 
@@ -319,10 +319,10 @@ sentinel is fully live: pdfTeX also uses its current value for vertical-list
 sentinel away from its `-1000pt` default; TeX and original e-TeX retain their
 fixed `-1000pt` constant.
 
-The identity utility slice matches pdfTeX 1.40.27's token-level identity:
+The identity utility slice matches pdfTeX 1.40.29's token-level identity:
 `\pdftexversion` is the internal integer 140, while `\pdftexrevision` and
 `\pdftexbanner` expand to other-character tokens (and ordinary space tokens)
-for patch level `27` and the pinned TeX Live 2025 banner. A dotted release
+for patch level `27` and the pinned TeX Live 2026 banner. A dotted release
 display therefore joins `\pdftexversion`, a literal `.`, and
 `\pdftexrevision`. Original primitive
 meanings live in an immutable driver registry outside grouping and format
@@ -337,7 +337,7 @@ spell preserved control sequences with the live `\escapechar`, and operate on
 pdfTeX bytes rather than Rust text ordering. Their results use space catcode
 for byte 32 and other catcode for every other byte. Hex output is uppercase;
 hex input ignores non-hex bytes and pads an unmatched final high nibble with
-zero, matching the pinned pdfTeX 1.40.27 oracle.
+zero, matching the pinned pdfTeX 1.40.29 oracle.
 `\pdfmatch` implements POSIX extended regular expressions over those same byte
 strings, including `icase`, leftmost-longest matching, C-string NUL
 termination, and the `subcount` capture limit. `\pdflastmatch` reports decimal
@@ -370,7 +370,7 @@ integer scanner, silently normalizes a negative operand, and commits one typed
 ungrouped job-state replacement. It therefore preserves scanner recovery and
 the following token, rejects TeX assignment prefixes, and resets the exact
 stream subsequently consumed by both random-deviate conversions. Focused
-pdfTeX 1.40.27 oracle cases pin the sequence, grouping, overflow recovery, and
+pdfTeX 1.40.29 oracle cases pin the sequence, grouping, overflow recovery, and
 prefix replay; World tests pin checkpoint rollback and format-session
 replacement.
 Creation time comes from the immutable job clock. File size, modification
@@ -388,7 +388,7 @@ operations leave `\pdfretval` unchanged. It starts at zero and
 an invalid `\pdfobj useobjnum` sets the session-global value to sticky `-1`
 before allocating the fallback object. The value participates in checkpoint
 hashing and rollback, but format images intentionally omit it so a loaded
-session starts again at zero, matching pdfTeX 1.40.27. Referenced and
+session starts again at zero, matching pdfTeX 1.40.29. Referenced and
 immediate objects, document dictionary fragments, trailer fragments, and
 custom trailer IDs are lowered only through the `pdf_writer` adapter; raw
 syntax is confined to writer-framed object bodies or dictionary extension
@@ -431,7 +431,7 @@ font-program names remain logical resource names: native and WASM frontends
 must acquire their bytes through the existing typed resource boundary.
 Checkpointed append-only mutations give snapshot rollback and semantic hashes
 the same exact suffix discipline as PDF object allocation. Map-line lookup
-matches the pinned 1.40.27 observations: unprefixed and `+` duplicates preserve
+matches the pinned 1.40.29 observations: unprefixed and `+` duplicates preserve
 the first entry, `=` replaces it, and `-` removes it. Duplicate warning
 presentation is owned by child issue 17.1. Embedded dictionaries and custom
 encoding vectors are serialized only through the canonical vendored
@@ -524,7 +524,7 @@ compatibility controls:
 The audit above is tied to the pinned TeX Live source, rather than inferred
 from parameter names. The exact producer map is:
 
-| Control                       | Pinned pdfTeX 1.40.27 producer                    | Executable evidence                                                                        |
+| Control                       | Pinned pdfTeX 1.40.29 producer                    | Executable evidence                                                                        |
 | ----------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `\quitvmode`                  | `pdftex.web:29876-29898` (`start_par`, subtype 2) | `pdf_compatibility_controls` covers vertical, horizontal, and math modes                   |
 | `\ignoreprimitiveerror`       | `pdftex.web:27668-27688` (low bit in `\vsplit`)   | `pdf_compatibility_controls` covers ordinary and ignored recovery                          |
@@ -541,7 +541,7 @@ from parameter names. The exact producer map is:
 
 ## Beads epic decomposition
 
-Create an epic titled **Implement the complete pdfTeX 1.40.27 primitive
+Create an epic titled **Implement the complete pdfTeX 1.40.29 primitive
 layer**. Its acceptance criteria are: all 158 exact names are visible only in
 the pdfTeX engine mode; every row above is done; focused reference fixtures
 cover success, grouping, expansion, diagnostics, and mode errors; a
@@ -619,7 +619,7 @@ checklist and include focused pdfTeX-oracle fixtures:
 19. **Implement pdfTeX mode normalization and compatibility controls.** Cover
     `\quitvmode`, `\ignoreprimitiveerror`, and every compatibility/no-op
     candidate with oracle evidence. Depends on issues 5 through 9.
-20. **Close the pdfTeX 1.40.27 full-parity gate.** Run the source-set audit,
+20. **Close the pdfTeX 1.40.29 full-parity gate.** Run the source-set audit,
     primitive micro-corpus, representative pdfTeX package/LaTeX corpus, PDF
     structural/rendering comparison, DVI regression, workspace tests, and
     WASM gates. Depends on all implementation issues.

@@ -20,14 +20,10 @@ cd "$repo_root"
 source "$repo_root/scripts/optional-check-runner.sh"
 
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-tools.sh \
-  arxiv-sample arxiv-entrypoint arxiv-corpus arxiv-census oracle-regeneration \
+  arxiv-corpus arxiv-census oracle-regeneration \
   parity-harness corpus-sync fixturegen texlive-wasm-publish \
   clippy-reference-tools clippy-profiling-runner clippy-dvi-tools
 
-optional_check_step_requiring awk arxiv-sample \
-  scripts/profile-pdftex-arxiv.sh check-sample
-optional_check_step_requiring "rg mktemp" arxiv-entrypoint \
-  scripts/profile-pdftex-arxiv.sh check-entrypoint
 optional_check_step_requiring "python3 tar gzip" arxiv-corpus \
   scripts/test-arxiv-corpus.sh
 optional_check_step_requiring "python3 tar gzip" arxiv-census \
@@ -47,7 +43,7 @@ optional_check_step parity-harness \
 # ran nowhere at all before umber2-johp.211.
 check_corpus_sync() {
   cargo test -q --tests --manifest-path tools/corpus-sync/Cargo.toml &&
-    scripts/test-fetch-conformance-inputs.sh
+    python3 scripts/test-provision.py
 }
 optional_check_step corpus-sync check_corpus_sync
 optional_check_step fixturegen \

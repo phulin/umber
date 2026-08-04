@@ -5,7 +5,7 @@ Status: repository contract v1 for canonical command-core fixtures.
 ## Authority and boundary
 
 Committed command fixtures are expectations produced only by pinned,
-transparently instrumented TeX82, e-TeX 2.6, or pdfTeX 1.40.27 builds. Umber
+transparently instrumented TeX82, e-TeX 2.6, or pdfTeX 1.40.29 builds. Umber
 never generates, rewrites, or blesses their expected values. Live reference
 execution occurs only through `scripts/regen-fixtures.sh`; Cargo correctness
 tests load committed files and require no TeX-family executable, source tree,

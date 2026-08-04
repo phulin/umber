@@ -1,4 +1,4 @@
-# Shared e-TeX boundaries exercised specifically through pdfTeX 1.40.27.
+# Shared e-TeX boundaries exercised specifically through pdfTeX 1.40.29.
 # Implementation behavior remains owned by umber2-e51h.74-.87; this matrix
 # owns only pdfTeX-profile presence and compatibility-profile absence.
 # Columns: family|boundary|fixed extended-profile JSON fragment|compatibility

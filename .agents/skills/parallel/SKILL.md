@@ -37,7 +37,7 @@ every issue a fresh branch at an explicit base commit.
    ```bash
    git -C {REPO_ROOT} worktree add {SLOT_PATH} --detach {BASE_REF}
    git -C {SLOT_PATH} switch -c {ISSUE_BRANCH} {BASE_REF}
-   python3 {REPO_ROOT}/scripts/native-test-assets.py {SLOT_PATH}
+   python3 {REPO_ROOT}/scripts/provision.py worktree {SLOT_PATH}
    ```
 
 4. Record the slot, branch, and base on the Beads issue. If no slot is free,
@@ -62,11 +62,12 @@ If a gitignored asset is missing, check the primary checkout and its owning
 workflow. Do not improvise symlinks or regenerate shared evidence.
 ```
 
-Run `native-test-assets.py` whenever a slot is allocated. It verifies existing
-files and copies only the pinned allowlist from the primary checkout. Rust tests
-never provision their own inputs. Never symlink or broadly copy `third_party/`.
-Run `scripts/setup-conformance-tests.sh` only in the primary checkout when its
-source assets are absent.
+Run `scripts/provision.py worktree` whenever a slot is allocated. It verifies
+existing files, copies only the pinned runtime allowlist from the primary
+checkout, and symlinks the immutable TeX Live source archive and tree owned by
+the primary checkout. Rust tests never provision their own inputs. Never
+symlink or broadly copy `third_party/`. If the primary checkout is missing
+assets, run the same command with the primary checkout as its target first.
 
 For canonical-command divergence work, follow
 `docs/canonical_divergence_workflow.md` for extra asset, tracer, stream, and

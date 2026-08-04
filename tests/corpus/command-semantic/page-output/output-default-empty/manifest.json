@@ -27,7 +27,7 @@
         "include_artifact_hashes": true
       },
       "expected": [
-        "artifact:e0481dcb7c69b6986d0216c7733f037b2eddbb8d1154e5fd8165ddaa33825358"
+        "artifact:94bb73500b42716b671f2a5e97f29f213dca0cfb5c22b4d8eb0755877279d116"
       ],
       "channels": {
         "events": 345,

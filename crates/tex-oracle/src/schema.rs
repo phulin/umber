@@ -50,7 +50,7 @@ pub const LATEST_SCHEMA_VERSION: u32 = SchemaVersion::V3.number();
 pub enum EngineDialect {
     Tex82,
     Etex26,
-    Pdftex14027,
+    Pdftex14029,
 }
 
 /// Reproducible identity of one canonical reference build.

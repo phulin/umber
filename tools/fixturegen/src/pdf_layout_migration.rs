@@ -103,8 +103,8 @@ fn inventories(repository: &Path) -> Result<BTreeMap<String, BTreeMap<String, Ve
         .context("decode committed CMU Serif WOFF2")?
         .bytes()
         .to_vec();
-    let pdftexspace_tfm = locate_kpse_bytes("pdftexspace.tfm")?;
-    let pdftexspace_pfb = locate_kpse_bytes("pdftexspace.pfb")?;
+    let pdftexspace_tfm = provisioned_texlive_bytes(repository, "pdftexspace.tfm")?;
+    let pdftexspace_pfb = provisioned_texlive_bytes(repository, "pdftexspace.pfb")?;
 
     for case in CASES {
         let mut files = BTreeMap::new();
@@ -219,15 +219,14 @@ fn git_files(repository: &Path, root: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-fn locate_kpse_bytes(name: &str) -> Result<Vec<u8>> {
-    let output = Command::new("kpsewhich")
-        .arg(name)
-        .output()
-        .with_context(|| format!("locate {name}"))?;
-    ensure!(output.status.success(), "kpsewhich did not locate {name}");
-    let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
-    ensure!(path.is_file(), "kpsewhich returned no file for {name}");
-    fs::read(path).with_context(|| format!("read {name}"))
+fn provisioned_texlive_bytes(repository: &Path, name: &str) -> Result<Vec<u8>> {
+    let path = repository.join("third_party/fonts").join(name);
+    fs::read(&path).with_context(|| {
+        format!(
+            "read provisioned TeX Live input {}; run python3 scripts/provision.py worktree .",
+            path.display()
+        )
+    })
 }
 
 fn is_font_case(case: &str) -> bool {

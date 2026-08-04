@@ -57,12 +57,12 @@ fn canonical_candidate_control(
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(
             options.profile.dialect(),
-            tex_command::CommandDialect::Etex26 | tex_command::CommandDialect::Pdftex14027
+            tex_command::CommandDialect::Etex26 | tex_command::CommandDialect::Pdftex14029
         ) {
             tex_command::install_etex_expandable_primitives(universe);
             tex_exec::install_etex_unexpandable_primitives(universe);
         }
-        if options.profile.dialect() == tex_command::CommandDialect::Pdftex14027 {
+        if options.profile.dialect() == tex_command::CommandDialect::Pdftex14029 {
             tex_command::install_pdftex_expandable_primitives(universe);
         }
     }

@@ -1,0 +1,4 @@
+# Canonical pdfTeX 1.40.29 oracle upstream archive identity, consumed through texlive.py.
+# Format:
+#   archive URL SHA-512
+archive https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2026/texlive-20260301-source.tar.xz c2ea189fee82475e3013e5e6d7bdbbeef80fe33d3636b99b35bf7c8d0ff06b48dcc54d12f4c3959a0fc9e24b80f9c4878a417d4b55ef4880ff238aefbcf189a3

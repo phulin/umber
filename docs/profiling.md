@@ -153,7 +153,7 @@ cargo run --profile profiling -p umber --bin gentle-profile \
 ```
 
 The runner requires the same external inputs as Gentle conformance. Populate
-them with `scripts/setup-conformance-tests.sh` if necessary. At startup it
+them with `python3 scripts/provision.py worktree .` if necessary. At startup it
 loads `gentle.tex`, `plain.tex`, `hyphen.tex`, and the available Computer Modern
 TFM files into a memory-backed `World`. Seeded bytes are structurally shared by
 fresh runs; measured iterations include ordinary engine opening, hashing,

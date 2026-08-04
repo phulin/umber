@@ -1,6 +1,6 @@
 # pdfTeX destinations, outlines, and article threads
 
-Status: implementation contract for the pdfTeX 1.40.27 navigation slice.
+Status: implementation contract for the pdfTeX 1.40.29 navigation slice.
 
 ## Upstream boundary and oracle method
 
@@ -9,7 +9,7 @@ Behavior is pinned to `pdftex.web` at TeX Live source commit
 the same boundary as `pdftex_primitives.md`. The source checksum is
 `5a105669acc1b49aedb7560d4d15cb2e23467cb16d895eb0031c8dd9fea32f04`.
 The executable oracle is pdfTeX
-3.141592653-2.6-1.40.27 from TeX Live 2025, run in INITEX mode with
+3.141592653-2.6-1.40.29 from TeX Live 2026, run in INITEX mode with
 `pdftex -ini -interaction=nonstopmode`.
 
 The owning source sections and routines are:
@@ -26,7 +26,7 @@ The owning source sections and routines are:
 - `Output name tree`, `Output outlines`, `Output article threads`, and
   `Output the catalog object` for the final PDF graph.
 
-There is no `\pdfthreadname` primitive in pdfTeX 1.40.27 or in the pinned
+There is no `\pdfthreadname` primitive in pdfTeX 1.40.29 or in the pinned
 158-name inventory. A thread is identified by the `name <general text>` arm of
 `\pdfthread` or `\pdfstartthread`. When no bead supplies `attr`, pdfTeX derives
 the thread dictionary's default `/I << /Title (...) >>` from that identifier.
@@ -292,7 +292,7 @@ substitute for a missing navigation API.
 ## Fixture matrix
 
 All live-reference regeneration goes through `scripts/regen-fixtures.sh`.
-The `tex_exec` rows run pdfTeX 1.40.27 in INITEX mode and normalize diagnostics;
+The `tex_exec` rows run pdfTeX 1.40.29 in INITEX mode and normalize diagnostics;
 the `pdf` rows pin reference PDF, normalized graph, exact Umber bytes, Poppler
 render, digest chain, and retained-session replay.
 

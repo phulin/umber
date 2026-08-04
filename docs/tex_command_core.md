@@ -6,7 +6,7 @@ Status: authoritative target architecture for Beads epic `umber2-johp`.
 
 Umber will replace the current `tex-lex` and `tex-expand` pipeline with one
 command-processing subsystem whose semantic structure follows TeX82, e-TeX
-2.6, and pdfTeX 1.40.27 directly.
+2.6, and pdfTeX 1.40.29 directly.
 
 The central architectural fact is that TeX does not have a clean semantic
 boundary between lexical input and expansion. TeX's `get_next` reads physical
@@ -176,7 +176,7 @@ Compatibility behavior is derived in this order:
 
 1. Knuth's TeX82 `tex.web`;
 2. e-TeX 2.6 and its canonical change files;
-3. pdfTeX 1.40.27 and its canonical change files;
+3. pdfTeX 1.40.29 and its canonical change files;
 4. reference behavior from pinned, transparently instrumented builds of those
    engines;
 5. explicit Umber extension contracts for behavior outside their domains.
@@ -1068,7 +1068,7 @@ The exact compatibility profiles are:
 ```text
 TeX82         + EightBitExact
 e-TeX 2.6     + EightBitExact
-pdfTeX 1.40.27 + EightBitExact
+pdfTeX 1.40.29 + EightBitExact
 ```
 
 `UnicodeExtended` is an Umber extension. It may combine e-TeX or pdfTeX
@@ -1141,7 +1141,7 @@ Code-table queries use `CharacterCode` and the active profile. A profile
 conversion cannot occur during a job.
 
 The implemented immutable `CommandProfile` has exact TeX82, e-TeX 2.6, and
-pdfTeX 1.40.27 eight-bit constants plus explicit Unicode-extension
+pdfTeX 1.40.29 eight-bit constants plus explicit Unicode-extension
 construction. Dialect facilities (e-TeX and pdfTeX families) and Unicode
 semantics are derived capabilities, not host capabilities. Its versioned
 stable bytes feed a fixed domain-separated FNV-1a-64 profile fingerprint;
@@ -3012,10 +3012,10 @@ the extended profile exercises the same base boundaries under e-TeX's
 canonical primitive installation. Cargo correctness tests never acquire or
 execute this live oracle.
 
-For pdfTeX 1.40.27, `scripts/regen-fixtures.sh --oracle pdftex14027 --profile
+For pdfTeX 1.40.29, `scripts/regen-fixtures.sh --oracle pdftex14029 --profile
 initex-etex-eight-bit`
 owns acquisition and delegates to the reproducible workflow documented in
-[`pdftex14027_oracle.md`](pdftex14027_oracle.md). It emits separately named
+[`pdftex14029_oracle.md`](pdftex14029_oracle.md). It emits separately named
 clean and instrumented exact-eight-bit executables from the pinned
 canonical WEB program, ordered Web2C/SyncTeX stack, and archive-owned library
 inputs. Ordered repository-owned final changes port the complete shared
@@ -3307,7 +3307,7 @@ only the next attempt's capability set.
 This is the closure inventory for Beads
 `umber2-johp.8.5.1.1.1.4.1.7`. TeX82 is the semantic authority: §§24--25 own
 delivery and expansion, while §1030 and its mode tables own the consumer.
-The pinned pdfTeX 1.40.27 source boundary is
+The pinned pdfTeX 1.40.29 source boundary is
 [`pdftex_primitives.md`](pdftex_primitives.md), not the former executor. A
 legacy `Executor`/`InputStack` occurrence is therefore only a deletion and
 entry-point-migration checklist; it is never a behavioral oracle. Routing
@@ -3324,7 +3324,7 @@ this matrix and remains Beads `.4.2`.
 | Alignment preamble, cells, templates, recovery, and final packing                                  | TeX82 §§760--780; §1131 recovery                                                                                     | Command-owned `AlignmentDelivery`; `canonical_alignment_*`, `command_owned_endv_*`, `nested_alignment_*`, `noalign_*`, and committed TeX82 alignment fixtures.                                                                                                                                                |
 | Input, font, and image resources                                                                   | TeX82 §529 (`start_input`/filename scan), §1254; pdfTeX `scan_image`/`scan_pdf_box_spec`                             | Immutable typed suspension only; `missing_canonical_input_*`, `canonical_missing_font_*`, `canonical_openin_*`, `canonical_pdfximage_*`, and `canonical_pdf_resource_retry_*`. Host-byte fulfillment is a deliberate modern envelope, not a TeX82 semantic substitute.                                        |
 | Page building, output routines, DVI/PDF lowering, streams, effects, and artifacts                  | TeX82 §46, §§608--642, §§1006--1028, §1071, §§1337--1338; pdfTeX `pdf_ship_out`, `hlist_out`/`vlist_out`, `out_what` | Typed page/output lifecycle and detached receipts; `canonical_*shipout*`, `canonical_stream_effects_*`, `canonical_pdf_whatsits_*`, and `tex-out` artifact/DVI tests.                                                                                                                                         |
-| pdfTeX extension registry and PDF semantic families                                                | pdfTeX 1.40.27 registration blocks and routines pinned by `pdftex_primitives.md` (158 exact names)                   | One static profile dispatch over the same command machine; source-derived 158-name inventory, `pdftex::*`, `pdf_output::*`, graphics/navigation/font fixtures, and typed image retry coverage. Engine-neutral aliases are documented there; no new extension boundary is introduced here.                     |
+| pdfTeX extension registry and PDF semantic families                                                | pdfTeX 1.40.29 registration blocks and routines pinned by `pdftex_primitives.md` (158 exact names)                   | One static profile dispatch over the same command machine; source-derived 158-name inventory, `pdftex::*`, `pdf_output::*`, graphics/navigation/font fixtures, and typed image retry coverage. Engine-neutral aliases are documented there; no new extension boundary is introduced here.                     |
 | Fresh/format-loaded session and observer equivalence                                               | TeX82 INITEX/format model; §§24--25 and §1030+                                                                       | `fresh_and_format_sessions_pin_the_same_command_profile`, `canonical_fresh_and_format_loaded_sessions_execute_the_same_root`, and observed/unobserved paragraph/math/retry tests. Observers buffer only committed records from the same processor episode; they do not replay or synthesize command delivery. |
 
 Paragraph hyphenation preserves TeX82 §929's `new_character(hf,hyf_char)`
@@ -3761,7 +3761,7 @@ The 2026-07-29 audit after the direct canonical session integrations found
 these exact normal-dependency edges:
 
 - `tex-expand -> tex-lex` remains the retired expansion engine's own input
-  path. Its TeX82, e-TeX 2.6, and pdfTeX 1.40.27 expandable primitive
+  path. Its TeX82, e-TeX 2.6, and pdfTeX 1.40.29 expandable primitive
   installation entry points now forward to `tex-command`; the identity tables
   and fresh-INITEX/format-restore policy no longer have a second owner. Its
   legacy expansion-session fuel remains only a compatibility-path guard;

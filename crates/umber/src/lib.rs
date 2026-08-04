@@ -1504,7 +1504,7 @@ pub fn run_input_collecting_artifacts(
 ///
 /// Primitive/state preparation and command-profile selection are separate host
 /// responsibilities. In particular, a pdfTeX store must be paired with
-/// [`CommandProfile::PDFTEX14027`] so shipout finalizes PDF-only deferred nodes as
+/// [`CommandProfile::PDFTEX14029`] so shipout finalizes PDF-only deferred nodes as
 /// PDF rather than applying the exact DVI-mode rejection.
 pub fn run_input_collecting_artifacts_with_profile(
     stores: &mut Universe,
@@ -2027,10 +2027,10 @@ mod tests {
             super::RetainedRootRequest::authored(
                 "profile-boundary",
                 source.as_bytes(),
-                CommandProfile::PDFTEX14027,
+                CommandProfile::PDFTEX14029,
             ),
             &mut host,
-            CommandProfile::PDFTEX14027,
+            CommandProfile::PDFTEX14029,
         )
         .expect("pdfTeX profile accepts deferred PDF nodes in PDF mode");
         assert_eq!(result.committed_artifacts.len(), 1);

@@ -1,4 +1,4 @@
-# Canonical pdfTeX 1.40.27 extension primitive audit.
+# Canonical pdfTeX 1.40.29 extension primitive audit.
 # The build derives the 391 shared TeX/e-TeX rows from canonical-etex.web and
 # requires these 158 rows to be the exact set difference from pdftex.web.
 # Columns: primitive|owner|phase|executable gate|canonical seam

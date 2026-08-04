@@ -1,6 +1,6 @@
 # pdfTeX graphics state, positions, timer, and random state
 
-Status: implementation contract for the pdfTeX 1.40.27 graphics-state slice.
+Status: implementation contract for the pdfTeX 1.40.29 graphics-state slice.
 
 ## Upstream boundary and oracle method
 
@@ -14,7 +14,7 @@ relevant ownership boundaries:
   positions, and defines timer and random-seed enquiries.
 - `utils.c` owns color-stack page/form state, matrix and save/restore stacks,
   matrix validation, and shipout-balance diagnostics.
-- the executable oracle is pdfTeX 3.141592653-2.6-1.40.27 from TeX Live 2025,
+- the executable oracle is pdfTeX 3.141592653-2.6-1.40.29 from TeX Live 2026,
   run with `pdftex -ini -interaction=nonstopmode`.
 
 The source checksum for `pdftex.web` is
@@ -75,7 +75,7 @@ glyph codes, graphics operations, font resources, and tagged spacing follow
 the same normalized traversal as pages. Form origins are always zero. Saved
 positions publish `(cur_h, height + depth - cur_v)` and form snapping begins
 from its own zero reference, without importing or replacing the page grid.
-Color stacks use their independent form projection; matching pdfTeX 1.40.27,
+Color stacks use their independent form projection; matching pdfTeX 1.40.29,
 that projection persists between successful form traversals while never
 mutating the page projection. A failed transactional traversal publishes no
 artifact or saved-position suffix and rolls its color changes back.
@@ -203,7 +203,7 @@ state persists across page shipouts. When page-start restoration is enabled,
 the current page value is emitted before page material except when it is the
 default `0 g 0 G`; an empty value emits nothing. Form state also persists
 across successive form shipouts and does not mutate page state. This last
-detail is an observable 1.40.27 quirk: `utils.c` contains a form-initial-value
+detail is an observable 1.40.29 quirk: `utils.c` contains a form-initial-value
 reset helper, but the release's shipout call and guard combination does not
 execute that reset. A form that sets a stack to `FORM-ONE` therefore causes a
 later form's `current` operation to emit `FORM-ONE`, not the allocation's
@@ -324,7 +324,7 @@ nodes in `\hbox`/`\vbox`, and ships them. For example, a page containing
 before first-page material and again before second-page material. A
 `\pdfsavepos` 10pt from the left on an explicit 100pt page with zero origins
 publishes x `655360` and y `6553600`. These observations were reproduced with
-the pinned TeX Live 2025 executable during this audit.
+the pinned TeX Live 2026 executable during this audit.
 
 All ordinary tests remain hermetic. Fixture regeneration is the only step
 that invokes pdfTeX; committed tests compare normalized content operators,

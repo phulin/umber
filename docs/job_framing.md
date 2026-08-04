@@ -8,10 +8,10 @@ framing across §534's `open_log_file`, §537's `start_input`, §362's file
 exhaustion, §642's `finish_dvi`, and §1333's `close_files_and_terminate`.
 
 Umber emitted none of it. A `\showbox` run's transcript began at the `>␣\box0=`
-line and ended there, while the same source through pdfTeX 1.40.27 produced:
+line and ended there, while the same source through pdfTeX 1.40.29 produced:
 
 ```
-This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (INITEX)  9 JUL 2026 13:36
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  9 JUL 2026 13:36
 **show-box.tex
 (./show-box.tex
 > \box0=

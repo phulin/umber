@@ -1522,7 +1522,7 @@ impl CommandProcessor<'_> {
                 return Ok((DimensionUnit::Physical(unit), magnification));
             }
         }
-        // TeX82 §458 proceeds directly from `cc` to `sp`. pdfTeX 1.40.27's
+        // TeX82 §458 proceeds directly from `cc` to `sp`. pdfTeX 1.40.29's
         // corresponding change inserts `nd` and `nc` between them, so these
         // probes (including their observable failed-keyword backups) belong
         // only to the pdfTeX command profile.
@@ -1853,7 +1853,7 @@ impl CommandProcessor<'_> {
     }
 
     /// TeX82 §459's unit recovery for ordinary dimensions, extended only in
-    /// the pdfTeX profile with pdfTeX 1.40.27's `nd`/`nc` help text.
+    /// the pdfTeX profile with pdfTeX 1.40.29's `nd`/`nc` help text.
     fn illegal_unit_pt_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self

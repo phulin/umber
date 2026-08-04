@@ -25,7 +25,7 @@
 //! `def_code`/`def_family`/`make_box`/`set_box_dimen` identities whose
 //! selector is a real eqtb address or mode-shifted constant rather than a
 //! small literal, from a live run of the pinned instrumented TeX82 oracle
-//! (`scripts/build-tex82-oracle.sh`) built from the same pinned TeX Live 2025
+//! (`scripts/build-tex82-oracle.sh`) built from the same pinned TeX Live 2026
 //! source this repository's committed fixtures are generated against. Those
 //! probed values are cited by their probe below rather than by section,
 //! since they are build-specific eqtb addresses rather than portable
@@ -42,7 +42,7 @@
 //! registry (`tests/corpus/command/tex82`) replays the plain TeX82 INITEX
 //! dialect exclusively. Their identities below are BEST-EFFORT: chosen to be
 //! architecturally plausible (pdfTeX is not known to add any top-level
-//! command code beyond TeX82/e-TeX's 117; see `tests/pdftex14027-oracle/
+//! command code beyond TeX82/e-TeX's 117; see `tests/pdftex14029-oracle/
 //! instrumentation.ch`'s `umber_trace_command_name`, which is byte-identical
 //! to TeX82's and e-TeX's) and internally distinguishable, but not verified
 //! against a live pdfTeX reference. Expect some of them to be the exact
@@ -74,7 +74,7 @@ const DEPTH_OFFSET: i64 = 2;
 const fn def_code_base(dialect: CommandDialect) -> i64 {
     match dialect {
         CommandDialect::Etex26 => 25_636,
-        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 25_631,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14029 => 25_631,
     }
 }
 
@@ -88,7 +88,7 @@ const fn def_code_base(dialect: CommandDialect) -> i64 {
 const fn del_code_base(dialect: CommandDialect) -> i64 {
     match dialect {
         CommandDialect::Etex26 => 27_501,
-        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 27_485,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14029 => 27_485,
     }
 }
 
@@ -101,7 +101,7 @@ const fn del_code_base(dialect: CommandDialect) -> i64 {
 const fn math_font_base(dialect: CommandDialect) -> i64 {
     match dialect {
         CommandDialect::Etex26 => 25_588,
-        CommandDialect::Tex82 | CommandDialect::Pdftex14027 => 25_583,
+        CommandDialect::Tex82 | CommandDialect::Pdftex14029 => 25_583,
     }
 }
 
@@ -109,7 +109,7 @@ const fn math_font_base(dialect: CommandDialect) -> i64 {
 ///
 /// e-TeX 2.6 changes [17.230] and [49.1248] install each penalty-array
 /// primitive with its region-4 eqtb address as `cur_chr`; the pinned Web2C
-/// change stack places `inter_line_penalties_loc` at 25324. pdfTeX 1.40.27
+/// change stack places `inter_line_penalties_loc` at 25324. pdfTeX 1.40.29
 /// inserts its four token-list parameters before `every_eof_loc`, so its
 /// corresponding base is four cells later. TeX82 does not install these
 /// primitives, but retaining the e-TeX base makes an explicitly constructed
@@ -117,7 +117,7 @@ const fn math_font_base(dialect: CommandDialect) -> i64 {
 const fn penalty_array_base(dialect: CommandDialect) -> i64 {
     match dialect {
         CommandDialect::Tex82 | CommandDialect::Etex26 => 25_324,
-        CommandDialect::Pdftex14027 => 25_328,
+        CommandDialect::Pdftex14029 => 25_328,
     }
 }
 
@@ -425,7 +425,7 @@ pub(crate) fn unexpandable_primitive_identity(
         // committed fixture in this repository (see the module
         // documentation): the wired registry replays TeX82 INITEX only.
         // pdfTeX is architecturally known not to add any top-level command
-        // code beyond TeX82/e-TeX's 117 (`tests/pdftex14027-oracle/
+        // code beyond TeX82/e-TeX's 117 (`tests/pdftex14029-oracle/
         // instrumentation.ch`'s `umber_trace_command_name` table is
         // byte-identical to TeX82's and e-TeX's own), so every whatsit-like
         // pdfTeX primitive below reuses the `extension` family with a
@@ -530,7 +530,7 @@ pub(crate) fn expandable_primitive_identity(
             Some(match dialect {
                 CommandDialect::Tex82 => 5,
                 CommandDialect::Etex26 => 6,
-                CommandDialect::Pdftex14027 => 33,
+                CommandDialect::Pdftex14029 => 33,
             }),
         ),
         P::The => ("the".into(), Some(0)),
@@ -606,7 +606,7 @@ pub(crate) fn expandable_primitive_identity(
             Some(match dialect {
                 CommandDialect::Tex82 => return ("last_item".into(), None),
                 CommandDialect::Etex26 => 6,
-                CommandDialect::Pdftex14027 => 20,
+                CommandDialect::Pdftex14029 => 20,
             }),
         ),
         // pdftex.web §583: expanded_code=etex_convert_codes=6.

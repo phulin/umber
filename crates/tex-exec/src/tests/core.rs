@@ -4897,7 +4897,7 @@ fn run_canonical_extended_profile(source: &str, profile: CommandProfile) -> Univ
     install_etex_unexpandable_primitives(&mut stores);
     match profile {
         CommandProfile::ETEX26 => {}
-        CommandProfile::PDFTEX14027 => {
+        CommandProfile::PDFTEX14029 => {
             install_pdftex_expandable_primitives(&mut stores);
         }
         _ => panic!("extended-profile helper requires e-TeX or pdfTeX"),
@@ -4994,7 +4994,7 @@ fn disabled_text_directions_diagnose_exactly_without_consuming_or_mutating() {
     // passes through `eTeX_enabled`, whose false branch reports exactly one
     // Improper diagnostic with help1 and appends no direction node.
     const PRIMITIVES: [(&str, usize); 4] = [("beginL", 2), ("endL", 1), ("beginR", 1), ("endR", 1)];
-    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14029] {
         let stores = run_canonical_extended_profile(
             r"\nonstopmode
               \TeXXeTstate=0 \count0=0

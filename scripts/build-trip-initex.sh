@@ -5,11 +5,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 manifest="tests/trip-reference-manifest.txt"
-source_name="texlive-20250308-source.tar.xz"
+source_lock="tests/texlive-source.lock"
+source_name="$(awk '$1 == "archive" { print $2 }' "$source_lock")"
 cache_root="third_party/texlive-source"
 source_tar="${cache_root}/${source_name}"
 source_dir="${cache_root}/src"
-build_dir="${cache_root}/build"
+build_dir="${cache_root}/build-trip-20260301"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
 out_dir="${target_dir}/trip-initex"
@@ -22,7 +23,7 @@ usage() {
   cat <<'EOF'
 usage: scripts/build-trip-initex.sh [--offline]
 
-Build the pinned TeX Live 2025 classic TeX and TeXware programs used for the
+Build the pinned TeX Live 2026 classic TeX and TeXware programs used for the
 official TRIP reference phase. The archive and every relevant in-archive input
 are hash-verified. After the first download, --offline performs no network I/O.
 
@@ -53,29 +54,14 @@ sha_digest() {
   fi
 }
 
-archive_url="$(awk '$1 == "archive" { print $2 }' "$manifest")"
-archive_sha512="$(awk '$1 == "archive" { print $3 }' "$manifest")"
-[[ -n "$archive_url" && -n "$archive_sha512" ]] || fail "missing archive pin in $manifest"
-
-verify_archive() {
-  local actual
-  actual="$(sha_digest 512 "$source_tar")"
-  [[ "$actual" == "$archive_sha512" ]] || fail "sha512 mismatch for $source_tar: expected $archive_sha512, got $actual"
-}
+archive_url="$(awk '$1 == "archive" { print $5 }' "$source_lock")"
+archive_sha512="$(awk '$1 == "archive" { print $4 }' "$source_lock")"
+[[ -n "$source_name" && -n "$archive_url" && -n "$archive_sha512" ]] || fail "invalid $source_lock"
 
 fetch_source() {
-  mkdir -p "$cache_root"
-  if [[ -f "$source_tar" ]]; then
-    verify_archive
-    printf 'verified %s\n' "$source_tar" >&2
-    return
-  fi
-  [[ "$offline" -eq 0 ]] || fail "missing $source_tar while running --offline"
-  local tmp="${source_tar}.tmp"
-  printf 'fetching %s\n' "$archive_url" >&2
-  curl -fL "$archive_url" -o "$tmp"
-  mv "$tmp" "$source_tar"
-  verify_archive
+  local arguments=(source "$repo_root")
+  [[ "$offline" -eq 0 ]] || arguments+=(--offline)
+  python3 scripts/provision.py "${arguments[@]}" >/dev/null
 }
 
 verify_inputs() {
@@ -90,11 +76,6 @@ verify_inputs() {
 }
 
 extract_source() {
-  if [[ ! -f "${source_dir}/configure" ]]; then
-    rm -rf "$source_dir"
-    mkdir -p "$source_dir"
-    tar -xJf "$source_tar" -C "$source_dir" --strip-components=1
-  fi
   verify_inputs
 }
 

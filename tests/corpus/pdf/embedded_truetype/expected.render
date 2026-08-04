@@ -4,7 +4,7 @@ arguments -r 72 -gray -singlefile
 comparison max-gray-delta 2
 extractor pdftotext version 25.08.0
 extraction exact-utf8
-reference-pdf-sha256 ff160ba3f61701f5ac6cbb8f123c6badd55a3f26812d497a7d0bd9d05767ad23
-umber-pdf-sha256 6b2abc329c9cc81757550f75479e146d55a5c33bacb6df46e068d81d0cb9a597
+reference-pdf-sha256 4dbc17c5ef52b5e2ee444ba86bcf033086db431dbd0b86b4d696d903eea717a1
+umber-pdf-sha256 f5ada864422d6ce224894fe729d2885b852c1412439dbffff7902cbd0f9f8c27
 pgm-sha256 83057b7be2665ebbe3be03d2a0b3e52a1bcf33b968c3f186f692953e4aa0f43c
 extract-sha256 38c1fa48766f977893e1caa817a0d59271f4ea84c29cd4cc74d3159ebd9e4205

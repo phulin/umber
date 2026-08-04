@@ -1,0 +1,12 @@
+# Immutable identity of the TeX Live source shared by every reference-engine
+# build. The archive is owned by the primary checkout; linked worktrees use
+# symlinks for the archive and extracted src tree while retaining local builds.
+distribution texlive-20260301-source
+archive texlive-20260301-source.tar.xz 99377088 c2ea189fee82475e3013e5e6d7bdbbeef80fe33d3636b99b35bf7c8d0ff06b48dcc54d12f4c3959a0fc9e24b80f9c4878a417d4b55ef4880ff238aefbcf189a3 https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2026/texlive-20260301-source.tar.xz
+source configure 897617 7c5e381d0d2d1f98bc9b346a4e81b26bf9997613f48e837ed6b7e15bb4c660f5
+source texk/web2c/tex.web 1031999 c62ab513ef167e93f71a23bd34f311e243210afd7c7a0f9b779614b71e398324
+source texk/web2c/pdftexdir/pdftex.web 1578332 38537f10300d66d790a39ed3e55bda01fb5daf1155c2ed6d5925e7983a419c07
+source texk/web2c/etexdir/etex.ch 225206 b102df60c3c2535711e384be7aafe1f6b4e3bd0558864bb5b67c88e17120e02e
+source texk/web2c/bibtex.web 384455 04c15be36dce19be38361617f139b1b8a70aa21f97def5cdc478622941398fa0
+source texk/web2c/bibtex.ch 58872 56d1047c1934d24013363308f1151996498be20a55522adf02fae66808c173ea
+source texk/kpathsea/texmf.cnf 43630 a2e9447fc8b6dfa407fa8d0d710e59b039e22598e3f17de0bdf54daba478742c

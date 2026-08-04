@@ -1,7 +1,7 @@
 # umber2-johp.38 — nested output-box group closure
 
 Authority: TeX82 `tex.web` §§1016, 1025, and 1026 (`fire_up`, output-routine
-entry, and page-builder resumption), confirmed unchanged by pdfTeX 1.40.27
+entry, and page-builder resumption), confirmed unchanged by pdfTeX 1.40.29
 `pdftex.web` §§1016, 1025, and 1026.
 
 `fire_up` enters `output_group`, starts the output token list, and consumes its

@@ -261,7 +261,7 @@ that the default map, encoding, and font-program path no longer depends on a
 host font tree. The authored browser resolver exports the identical production
 URL and digest.
 
-`scripts/build-texlive-snapshot.sh` now performs verified builds for both
+`python3 scripts/provision.py snapshot` performs verified builds for both
 `latex.fmt` and `pdflatex.fmt`. It derives their 61-key common and 64-key PDF
 closures from `tests/latex-source.lock`, stages the two repository-local
 configuration inputs as a pinned auxiliary TEXMF root, and publishes both
@@ -273,8 +273,8 @@ When the pinned source tree is unavailable, materialize an authenticated local
 subset directly from the immutable hosted publication:
 
 ```sh
-scripts/materialize-texlive-snapshot.py --format latex --format pdflatex
-scripts/materialize-texlive-snapshot.py --format latex --format pdflatex --offline
+python3 scripts/provision.py materialize --format latex --format pdflatex
+python3 scripts/provision.py materialize --format latex --format pdflatex --offline
 ```
 
 The command preserves the exact `manifest-v3.json` trust root, downloads only
@@ -341,9 +341,8 @@ reaching their comparison phases and is not hidden by weakening those gates.
 ### Production shard selection and publication evidence
 
 The 2026 snapshot uses 256 shards (`shardBits = 8`). Future corpus-based shard
-measurements use `scripts/pdftex-arxiv-recent-sample-100.tsv`;
-`scripts/profile-pdftex-arxiv.sh` defaults to that sample and captures both
-primitive usage and file access. `scripts/measure-sharded-manifest.py`
+measurements use `scripts/pdftex-arxiv-recent-sample-100.tsv`.
+`scripts/measure-sharded-manifest.py`
 reconstructs candidate roots and package-complete shards in memory from a
 schema-1 staging manifest without changing or uploading content.
 

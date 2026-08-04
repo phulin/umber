@@ -26,10 +26,10 @@
 //! (e.g. with `cmp` or `sha256sum`). The locator requires
 //! `third_party/corpus/plain.tex`, `third_party/corpus/<name>.tex`, and
 //! `third_party/hyphen/hyphen.tex` (fetched by
-//! `scripts/setup-conformance-tests.sh` or `scripts/fetch-conformance-inputs.sh`),
+//! `python3 scripts/provision.py worktree .`),
 //! plus the plain-format Computer Modern/`manfnt` TFMs, resolved from the
 //! committed `crates/tex-fonts/tests/fixtures/cm` fixtures, the gitignored
-//! `third_party/fonts` cache, or `kpsewhich` on `PATH` (in that order; see
+//! `third_party/fonts` cache (see
 //! `parity_harness::locate_tfm`).
 //!
 //! On success it reports the number of artifacts and DVI pages produced. On
@@ -78,7 +78,7 @@ fn main() -> ExitCode {
         if !path.is_file() {
             eprintln!(
                 "first_failure_locator: missing required external input {}; run \
-                 scripts/setup-conformance-tests.sh (or scripts/fetch-conformance-inputs.sh) first",
+                 python3 scripts/provision.py worktree . first",
                 path.display()
             );
             return ExitCode::from(2);
@@ -215,7 +215,7 @@ fn seed_memory_file(world: &mut World, name: &str, path: &Path) {
 
 fn seed_corpus_tfms(world: &mut World, root: &Path) {
     for name in parity_harness::PLAIN_PRELOAD_FONTS {
-        match parity_harness::locate_tfm(root, name, true) {
+        match parity_harness::locate_tfm(root, name) {
             Ok(Some(path)) => seed_memory_file(world, &format!("{name}.tfm"), &path),
             Ok(None) => eprintln!(
                 "first_failure_locator: warning: could not locate {name}.tfm; requests for it will be declined"

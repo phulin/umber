@@ -47,9 +47,9 @@ together. After acquisition, pass `--offline` to that same command to forbid
 network access. `--validate-only` checks identities and schemas without
 building.
 
-`UMBER_REF_TEXLIVE_SOURCE` may select an equivalent cache containing the
-pinned archive, extracted `src`, and configured `build` directories.
-`CARGO_TARGET_DIR` relocates outputs.
+Source acquisition always uses the primary checkout's pinned archive and
+extracted tree; linked worktrees symlink those inputs and keep their configured
+build directories local. `CARGO_TARGET_DIR` relocates outputs.
 `UMBER_ETEX26_INSTRUMENTATION_CHANGE` may select another final change file;
 the build record captures its path and hash.
 

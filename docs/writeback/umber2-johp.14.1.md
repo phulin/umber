@@ -1,6 +1,6 @@
 # umber2-johp.14.1 — extension registry ownership
 
-`tex-command` now owns the TeX82, e-TeX 2.6, and pdfTeX 1.40.27 expandable
+`tex-command` now owns the TeX82, e-TeX 2.6, and pdfTeX 1.40.29 expandable
 primitive identity tables and their fresh-INITEX versus format-restore
 installation policy. Canonical TeX, e-TeX, and pdfTeX session/profile setup
 calls that owner directly. The surviving named `tex-expand` APIs are
@@ -12,7 +12,7 @@ Focused registry coverage proves TeX82 does not acquire e-TeX or pdfTeX names,
 e-TeX does not acquire pdfTeX names, each positive profile installs its exact
 meaning, and format restoration reconstructs original-primitive identity
 without replacing a live restored meaning. This follows e-TeX `etex.ch` §3211
-and the pdfTeX 1.40.27 registration blocks catalogued in
+and the pdfTeX 1.40.29 registration blocks catalogued in
 [pdfTeX primitives](../pdftex_primitives.md).
 
 Validation after rebasing onto `e9986985`:

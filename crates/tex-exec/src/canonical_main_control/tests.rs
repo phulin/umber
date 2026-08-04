@@ -4097,7 +4097,7 @@ fn pdftex_random_control(stores: &mut Universe) -> CanonicalMainControl {
         set_seed,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_timer_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4106,7 +4106,7 @@ fn pdftex_timer_control(stores: &mut Universe) -> CanonicalMainControl {
         reset_timer,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4130,7 +4130,7 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_font_action_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4154,7 +4154,7 @@ fn pdftex_font_action_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -4281,7 +4281,7 @@ fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_graphics_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4296,7 +4296,7 @@ fn pdftex_graphics_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -4440,7 +4440,7 @@ fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
         outline,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfOutline),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4452,7 +4452,7 @@ fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4464,7 +4464,7 @@ fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4476,7 +4476,7 @@ fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn pdftex_image_control(stores: &mut Universe) -> CanonicalMainControl {
@@ -4488,7 +4488,7 @@ fn pdftex_image_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
@@ -5173,7 +5173,7 @@ fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -5347,7 +5347,7 @@ fn pdftex_destination_control(stores: &mut Universe) -> CanonicalMainControl {
         destination,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfDest),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14027)
+    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]

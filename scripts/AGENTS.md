@@ -11,9 +11,13 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 
 ## Directory Map
 
-- `fetch-conformance-inputs.sh`: shared acquisition for hyphenation, Computer Modern fonts, and hash-pinned TRIP/e-TRIP inputs.
-- `profile-pdftex-arxiv.sh`: disposable pinned pdfTeX primitive/file-access
-  tracer build for the deterministic recent arXiv sample.
+- `texlive.py`: import-only authenticated TeX Live 2026 source/runtime library;
+  it owns source extraction, linked-worktree source symlinks, selective hosted
+  snapshot materialization, and locked runtime staging.
+- `provision.py`: the sole provisioning CLI for primary/linked worktrees,
+  TeX Live source, reference oracles, hosted subsets, and publisher snapshots.
+- `test-provision.py`: hermetic source acquisition, replacement, offline, and
+  ordered TRIP-locator coverage for the shared library and CLI.
 - `measure-wasm-editor-memory.mjs`: deterministic self-contained retained-editor
   workload reporting WebAssembly linear-memory pages before construction, after
   compilation, and after disposal.
@@ -22,12 +26,9 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `measure-sharded-manifest.py`: read-only replay of normalized pdfTeX file traces over candidate schema-v2 shard counts.
 - `publish-texlive-r2.sh`: verified staged full or HTML-profile publication to distinct immutable Cloudflare R2 prefixes; HTML requires an explicit root pin and publishes `manifest-v4.json`; browser CORS policy lives beside it in `texlive-r2-cors.json`.
 - `test-publish-texlive-r2.sh`: hermetic mock-rclone/curl contract test for resumable, manifest-last R2 publication.
-- `native-test-assets.py`: verifies and copies the pinned gitignored native
-  test asset allowlist from the primary checkout into a linked worktree.
 - `test-native-test-assets.py`: hermetic linked-worktree coverage for asset
-  identity, isolation, idempotence, and unsafe-input rejection.
-- `test-fetch-conformance-inputs.sh`: hermetic ordered-locator, digest,
-  manifest-safety, and offline-cache contract for TRIP/e-TRIP acquisition.
+  identity, source symlinking, isolation, idempotence, and unsafe-input
+  rejection through `provision.py`.
 - `check-lint-passes.py`: the clippy gate's declared lint passes; verifies each
   pass's feature resolution against Cargo's own records, requires every
   workspace member to be linted and every declared feature's enabled state to
@@ -63,10 +64,6 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `run-stepwise-arxiv-census.sh`: stable entry point for the serial guarded arXiv census.
 - `stepwise-arxiv-census.py`: single-pass, row-atomic, resumable arXiv census runner and offline evidence verifier.
 - `test-stepwise-arxiv-census.sh`: hermetic single-pass, failure-attribution, resume, and verify-only census contract test.
-- `build-texlive-snapshot.sh`: deterministic full TeX Live runtime snapshot staging with package dependency hints and production inventory floors.
-- `materialize-texlive-snapshot.py`: digest-verifying selective local mirror of
-  the pinned hosted schema-3 snapshot, including requested format closures and
-  corpus keys, with strict offline reuse.
 - `build-html-r2.sh`: deterministic two-build staging for the immutable contract-v1 HTML-only R2 profile and curated font catalog.
 - `write-latex-wasm-publish-config.sh`: deterministic schema-3 publisher configuration for the focused LaTeX WASM bundle, pinned to the measured production 8-bit shard policy.
 - `build-wasm-package.sh`: builds the authored npm runtime with format fixtures
@@ -106,7 +103,7 @@ Read the repository-root `AGENTS.md` first. This file adds the directory map for
 - `test-etex26-extension-primitive-audit.sh`: hermetic microfixtures for
   accepted exact coverage and actionable missing, extra, and unowned
   command-core boundaries.
-- `build-pdftex14027-oracle.sh`: hash-pinned canonical pdfTeX 1.40.27 source,
+- `build-pdftex14029-oracle.sh`: hash-pinned canonical pdfTeX 1.40.29 source,
   ordered Web2C/SyncTeX changes, translator, and archive-owned library build;
   publishes separate clean and instrumented eight-bit executables, gates exact
   DVI/PDF smoke plus shared, expansion/scanner, and state/enquiry/effect

@@ -362,7 +362,7 @@ drift but not yet checked against anything. An `xfail` channel's committed
 file held Umber's own known-wrong bytes and the comparison was byte-identity
 against that self-pin -- indistinguishable from `file` except in name.
 `umber2-alfh.1` promoted every channel to the pinned instrumented pdfTeX
-1.40.27 oracle (`scripts/run-minifixture-oracle.sh --all`, which also builds
+1.40.29 oracle (`scripts/run-minifixture-oracle.sh --all`, which also builds
 the two profiles built past INITEX -- `etex-loaded` and `production` -- from
 a real `\dump`/`-fmt` roundtrip rather than skipping them) and deleted that
 unadjudicated origin from the Rust type, the JSON schema, and every manifest,
@@ -677,14 +677,14 @@ boundary.
 
 `scripts/regen-fixtures.sh` is the sole live-reference rewrite path. It builds
 `tools/fixturegen` for text/native and PDF fixture updates and `tools/refexec`
-for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.27 and
+for DVI fixture updates. Its `--area pdf` mode requires pdfTeX 1.40.29 and
 Poppler `pdftoppm` 25.08.0; its `--area fonts` mode owns the explicit live
 `tftopl` cross-check and does not rewrite fixtures.
 
 Its `--oracle tex82 --profile initex-eight-bit` and `--oracle etex26
 --profile compatibility+extended-eight-bit` modes own pinned live reference
 builds outside the correctness tier. Both reuse the hash-verified
-TeX Live 2025 source cache offline, record the source/change/tool/platform and
+TeX Live 2026 source cache offline, record the source/change/tool/platform and
 executable identities under `target/`, and compare clean with instrumented
 ordinary outputs. The e-TeX mode additionally verifies the distinct
 compatibility and leading-`*` extended INITEX profiles, validates the complete
@@ -705,8 +705,8 @@ without a live TeX executable.
 The focused source set includes separate legal and non-normal EOF programs so
 the hermetic bundle distinguishes every TeX82 scanner-status recovery.
 
-The `--oracle pdftex14027 --profile initex-etex-eight-bit` mode performs the
-corresponding pinned pdfTeX 1.40.27 build. It gates DVI/PDF smoke artifacts,
+The `--oracle pdftex14029 --profile initex-etex-eight-bit` mode performs the
+corresponding pinned pdfTeX 1.40.29 build. It gates DVI/PDF smoke artifacts,
 the shared command
 matrix, and a focused exact-eight-bit expansion/scanner matrix; proves the
 549-primitive inventory as 391 shared TeX/e-TeX declarations plus 158 audited
@@ -724,7 +724,7 @@ all three workflows and the live TeX82 fixture comparison pass.
 `--validate-only` performs the same hermetic identity, schema, and fixture
 audit preflight without acquiring or building tools.
 
-### Acquiring the pinned TeX Live 2025 source archive
+### Acquiring the pinned TeX Live 2026 source archive
 
 `scripts/build-tex82-oracle.sh` fetches the pinned
 `texlive-20250308-source.tar.xz` from the single host recorded in
@@ -736,7 +736,7 @@ curl: (60) unable to get local issuer certificate
 ```
 
 The same failure has been observed on `ctan.math.utah.edu` from
-`scripts/fetch-conformance-inputs.sh`. The byte-identical archive is served by
+`python3 scripts/provision.py worktree .`. The byte-identical archive is served by
 the Chemnitz TUG mirror:
 
 ```text
@@ -769,7 +769,7 @@ diagnostic expectations. The validation loop is expanded to 53 independent
 tests so one XPASS cannot hide later validation assertions.
 
 Classic BibTeX has a separate committed corpus under `tests/corpus/bibtex`.
-Its manifest pins the TeX Live 2025 archive, `bibtex.web`, `bibtex.ch`, merged
+Its manifest pins the TeX Live 2026 archive, `bibtex.web`, `bibtex.ch`, merged
 Pascal, WEB2C-generated C/header, kpathsea and build configuration, exact
 reference executable, inputs, status/history, BBL, BLG, and terminal bytes.
 Its inventory assigns implementation and test owners to all 4 AUX commands,
@@ -940,7 +940,7 @@ from `.gitignore`, the same single source the registry meta-test binds to, so
 the preflight cannot go stale when a gate is added.
 
 An isolated linked worktree must be provisioned during slot setup with
-`python3 scripts/native-test-assets.py <worktree>`. The script resolves the
+`python3 scripts/provision.py worktree <worktree>`. The script resolves the
 primary checkout from Git's shared worktree metadata and copies missing files
 from the explicit `tests/native-test-assets.lock` allowlist. The allowlist
 contains only the four oracles and their declared corpus, hyphenation, TFM, and
@@ -950,10 +950,10 @@ up.
 
 `crates/umber/tests/it/e2e_conformance/assets.rs`'s `with_gate` remains the
 single gate choke point, so an absent oracle cannot be confused with a passing
-gate. Its failure points linked worktrees at `native-test-assets.py`. When the
+gate. Its failure points linked worktrees at `provision.py worktree`. When the
 primary checkout itself lacks an asset there is nothing to copy from, and the
 provisioner names the missing paths and points at
-`scripts/setup-conformance-tests.sh`.
+`python3 scripts/provision.py worktree .`.
 
 Every source and destination must match its committed SHA-256. Provisioning
 uses an independently verified temporary copy followed by atomic rename, not a
@@ -963,7 +963,7 @@ files are rejected rather than replaced, missing primary assets produce an
 error naming that checkout and the setup command, and successful copies remain
 gitignored so `git status` stays clean. A primary-checkout run never searches
 another cache or downloads anything; it reports its exact missing allowlist and
-requires `scripts/setup-conformance-tests.sh`.
+requires `python3 scripts/provision.py worktree .`.
 
 Story and Gentle additionally verify their oracle against the
 `expected_ref_dvi_sha256` pin in `tests/corpus-manifest.txt` inside
@@ -983,7 +983,7 @@ SHA-256, license determination, and redistributability flag. Runnable documents
 also select a format source and pin the reference DVI SHA-256 after DVI preamble
 banner normalization.
 
-`scripts/setup-conformance-tests.sh` builds `tools/corpus-sync` to fetch or
+`python3 scripts/provision.py worktree .` builds `tools/corpus-sync` to fetch or
 verify those inputs under gitignored `third_party/corpus/`, then acquires the
 remaining local support files and generates all four end-to-end DVI oracles.
 Cached hash matches are a no-op. Fixture regeneration pins
@@ -1000,7 +1000,7 @@ cargo test -p umber --test it e2e_conformance_gentle -- --nocapture
 ```
 
 Populate the external inputs and all Story, Gentle, TRIP, and e-TRIP DVI oracles with
-`scripts/setup-conformance-tests.sh`. The generated `.expected.dvi` files are
+`python3 scripts/provision.py worktree .`. The generated `.expected.dvi` files are
 gitignored licensing-sensitive derivatives and are not repository fixtures.
 
 The shared `parity-harness` library stages inputs, calls the Cargo test's in-process Umber
@@ -1581,7 +1581,7 @@ failure:
   or a fixture bootstrap did not hold.
 - `2`: the command line is wrong.
 - `3`: a prerequisite is absent, so nothing ran. Run
-  `scripts/build-tex82-oracle.sh` and `scripts/setup-conformance-tests.sh`,
+  `scripts/build-tex82-oracle.sh` and `python3 scripts/provision.py worktree .`,
   then rerun. Separated from `1` so a caller can tell "not set up yet" from
   "set up, and broken".
 
@@ -1670,15 +1670,15 @@ they run when their local inputs and oracles are present and fail with an
 actionable report when they are not.
 
 ```bash
-scripts/fetch-conformance-inputs.sh
-scripts/fetch-conformance-inputs.sh --offline
+python3 scripts/provision.py worktree .
+python3 scripts/provision.py worktree . --offline
 cargo test -p umber --test it e2e_conformance_trip_canonical -- --ignored --nocapture
 cargo test -p umber --test it e2e_conformance_etrip -- --nocapture
 scripts/regen-fixtures.sh --case e2e/trip
 scripts/regen-fixtures.sh --case e2e/etrip
 ```
 
-`scripts/fetch-conformance-inputs.sh` acquires the shared hyphenation and font
+`python3 scripts/provision.py worktree .` acquires the shared hyphenation and font
 inputs, reads `tests/trip-manifest.txt`, tries each entry's locators in declared
 order, fetches exact official TRIP and e-TRIP bytes into gitignored
 `third_party/trip/`, and verifies every candidate against the entry SHA-256
@@ -1718,7 +1718,7 @@ The explicit LaTeX tier is split by boundary. `scripts/check-latex-corpus.sh`
 builds the pinned native format, runs the four base classes for three passes,
 compares DVI and auxiliary artifacts with TeX Live 2026, and verifies the
 30-input `tests/latex-runtime.lock` closure. This seed fixture is not the
-production distribution: `scripts/build-texlive-snapshot.sh` enforces full
+production distribution: `python3 scripts/provision.py snapshot` enforces full
 runtime inventory floors and package metadata hints. `scripts/check-latex-wasm.sh`
 publishes that closure with the format, builds the real WASM package, and
 exports that same format explicitly for the native run before requiring

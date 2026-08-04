@@ -6002,7 +6002,7 @@ fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
     }
 
     let tex82 = CommandProfile::exact(CommandDialect::Tex82);
-    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14027);
+    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14029);
     let tex_unknown_terminal = "! Illegal unit of measure (pt inserted).\n<to be read again> \n                   w\n<to be read again> 1w\n                     at=\n";
     let tex_unknown_log = format!(
         "{tex_unknown_terminal}\
@@ -6203,7 +6203,7 @@ fn pdftex_dimension_units_do_not_enter_tex82_keyword_probes() {
     }
 
     let tex82 = CommandProfile::exact(CommandDialect::Tex82);
-    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14027);
+    let pdftex = CommandProfile::exact(CommandDialect::Pdftex14029);
     let (tex82_sp, tex82_backups) = scan(tex82, "1sp=");
     let (pdftex_sp, pdftex_backups) = scan(pdftex, "1sp=");
     assert_eq!(tex82_sp.raw(), 1);

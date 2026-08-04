@@ -3086,12 +3086,12 @@ fn etex_macro_noalign_matches_direct_opening_group_order() {
 
 #[test]
 fn pdftex_direct_noalign_uses_its_etex_derived_opening_group_order() {
-    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14027, false);
+    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14029, false);
 }
 
 #[test]
 fn pdftex_macro_noalign_matches_direct_opening_group_order() {
-    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14027, true);
+    assert_etex_derived_noalign_observation_order(CommandProfile::PDFTEX14029, true);
 }
 
 /// e-TeX 2.6 change sections [37.785] and [37.791] replace TeX82's
@@ -3240,7 +3240,7 @@ fn alignment_character_boundaries(
 /// backed up and normally replayed above the selected u-template.
 #[test]
 fn etex_derived_fin_col_preserves_protected_macro_for_normal_replay() {
-    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14029] {
         for source in [
             &br"\protected\def\p{z}\halign{#&#\cr a&\p\cr}\end"[..],
             &br"\protected\def\p{z}\halign{#&#\cr a\span\p\cr}\end"[..],
@@ -3262,7 +3262,7 @@ fn etex_derived_fin_col_preserves_protected_macro_for_normal_replay() {
 /// post-row `align_peek`, before the ordinary first-cell replay.
 #[test]
 fn etex_derived_align_peek_preserves_protected_macro_for_normal_replay() {
-    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14029] {
         assert_eq!(
             alignment_command_boundaries(
                 profile,
@@ -3306,7 +3306,7 @@ fn alignment_lookahead_terminal_characters_are_profile_selected() {
         &br"\def\s{ }\halign{#&#\cr a&\s b\cr}\end"[..],
         &br"\def\s{ }\halign{#\cr a\cr\s b\cr}\end"[..],
     ] {
-        for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+        for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14029] {
             assert!(
                 alignment_character_boundaries(profile, source, ' ')
                     .iter()
@@ -5293,7 +5293,7 @@ fn protected_definition_observes_insertion_before_marked_meaning_mutation() {
             false,
         ),
         (
-            CommandProfile::PDFTEX14027,
+            CommandProfile::PDFTEX14029,
             br"\global\protected\def\p#1{A#1}\end".as_slice(),
             true,
         ),
@@ -5380,7 +5380,7 @@ fn ordinary_definitions_do_not_observe_or_store_protected_marker() {
     for profile in [
         CommandProfile::TEX82,
         CommandProfile::ETEX26,
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
     ] {
         let mut universe = Universe::new_with_plain_catcodes();
         tex_command::install_tex82_expandable_primitives(&mut universe);
@@ -5436,7 +5436,7 @@ fn ordinary_definitions_do_not_observe_or_store_protected_marker() {
 /// definition mutation, without synthesizing it from the target's spelling.
 #[test]
 fn let_observes_the_protected_marker_in_the_copied_macro_meaning() {
-    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14027] {
+    for profile in [CommandProfile::ETEX26, CommandProfile::PDFTEX14029] {
         let mut universe = Universe::new_with_plain_catcodes();
         tex_command::install_tex82_expandable_primitives(&mut universe);
         tex_command::install_etex_expandable_primitives(&mut universe);
@@ -9318,7 +9318,7 @@ fn pdftex_vadjust_pre_retains_marker_and_dumps_it() {
     tex_command::install_pdftex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14029);
     register_source(
         &mut control,
         br"\setbox0=\hbox{A\vadjust pre{\penalty321}B}\showbox0\end",
@@ -9353,7 +9353,7 @@ fn pdftex_vadjust_pre_migrates_before_its_line_and_post_after() {
     tex_command::install_pdftex_expandable_primitives(&mut universe);
     crate::install_unexpandable_primitives(&mut universe);
     crate::install_etex_unexpandable_primitives(&mut universe);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14027);
+    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::PDFTEX14029);
     register_source(
         &mut control,
         br"\setbox0=\vbox{\hsize=1000pt\parindent=0pt A\vadjust pre{\penalty111}\vadjust{\penalty222}B\par}\end",

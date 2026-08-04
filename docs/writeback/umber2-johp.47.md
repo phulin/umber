@@ -2,7 +2,7 @@
 
 Authority: TeX82 `tex.web` §1095 (`head_for_vmode` and `append_to_vlist` for
 `\hrule`, plus the horizontal-mode `end_graf` path), and §32 (`ship_out`
-serializes `count(0)` through `count(9)` after `bop`). pdfTeX 1.40.27
+serializes `count(0)` through `count(9)` after `bop`). pdfTeX 1.40.29
 `pdftex.web` retains the DVI route by dispatching `ship_out` to
 `dvi_ship_out` when PDF output is disabled.
 

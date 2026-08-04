@@ -26,7 +26,7 @@ endobj
 /Type /XObject
 /Subtype /Form
 /FormType 1
-/PTEX.FileName (./minimal_rule.expected.ref.pdf)
+/PTEX.FileName (/tmp/tmp.FCfyasVCRy/minimal_rule.expected.ref.pdf)
 /PTEX.PageNumber 1
 /PTEX.InfoDict 6 0 R
 /BBox [0 0 9.963 4.981]
@@ -44,12 +44,12 @@ endstream
 endobj
 6 0 obj
 <<
-/Producer (pdfTeX-1.40.27)
+/Producer (pdfTeX-1.40.29)
 /Creator (TeX)
 /CreationDate (D:20260709133600Z)
 /ModDate (D:20260709133600Z)
 /Trapped /False
-/PTEX.Fullbanner (This is pdfTeX, Version 3.141592653-2.6-1.40.27 \(TeX Live 2025\) kpathsea version 6.4.1)
+/PTEX.Fullbanner (This is pdfTeX, Version 3.141592653-2.6-1.40.29 \(TeX Live 2026\) kpathsea version 6.4.2)
 >>
 endobj
 2 0 obj
@@ -73,30 +73,30 @@ endobj
 endobj
 8 0 obj
 <<
-/Producer (pdfTeX-1.40.27)
+/Producer (pdfTeX-1.40.29)
 /Creator (TeX)
 /CreationDate (D:20260709133600Z)
 /ModDate (D:20260709133600Z)
 /Trapped /False
-/PTEX.Fullbanner (This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) kpathsea version 6.4.1)
+/PTEX.Fullbanner (This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) kpathsea version 6.4.2)
 >>
 endobj
 xref
 0 9
 0000000000 65535 f 
 0000000233 00000 n 
-0000000748 00000 n 
+0000000766 00000 n 
 0000000123 00000 n 
 0000000015 00000 n 
-0000000813 00000 n 
-0000000498 00000 n 
-0000000870 00000 n 
-0000000919 00000 n 
+0000000831 00000 n 
+0000000516 00000 n 
+0000000888 00000 n 
+0000000937 00000 n 
 trailer
 << /Size 9
 /Root 7 0 R
 /Info 8 0 R
 /ID [<8A1B5BE74EC23DF1A2BE826946B003E1> <8A1B5BE74EC23DF1A2BE826946B003E1>] >>
 startxref
-1167
+1185
 %%EOF

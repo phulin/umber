@@ -169,8 +169,8 @@ pub enum CommandDialect {
     Tex82 = 0,
     /// e-TeX 2.6.
     Etex26 = 1,
-    /// pdfTeX 1.40.27.
-    Pdftex14027 = 2,
+    /// pdfTeX 1.40.29.
+    Pdftex14029 = 2,
 }
 
 /// Character domain fixed for the complete lifetime of a job.
@@ -299,8 +299,8 @@ impl CommandProfile {
     pub const TEX82: Self = Self::exact(CommandDialect::Tex82);
     /// Exact e-TeX 2.6 compatibility profile.
     pub const ETEX26: Self = Self::exact(CommandDialect::Etex26);
-    /// Exact pdfTeX 1.40.27 compatibility profile.
-    pub const PDFTEX14027: Self = Self::exact(CommandDialect::Pdftex14027);
+    /// Exact pdfTeX 1.40.29 compatibility profile.
+    pub const PDFTEX14029: Self = Self::exact(CommandDialect::Pdftex14029);
 
     /// Constructs an exact eight-bit profile for a canonical dialect.
     #[must_use]
@@ -357,9 +357,9 @@ impl CommandProfile {
         CommandCapabilities {
             etex: matches!(
                 self.dialect,
-                CommandDialect::Etex26 | CommandDialect::Pdftex14027
+                CommandDialect::Etex26 | CommandDialect::Pdftex14029
             ),
-            pdftex: matches!(self.dialect, CommandDialect::Pdftex14027),
+            pdftex: matches!(self.dialect, CommandDialect::Pdftex14029),
             unicode: matches!(self.characters, CharacterMode::UnicodeExtended),
         }
     }
@@ -372,7 +372,7 @@ impl CommandProfile {
                 hash_size: 15_000,
                 hash_extra: 0,
             },
-            CommandDialect::Etex26 | CommandDialect::Pdftex14027 => ControlSequenceCapacity {
+            CommandDialect::Etex26 | CommandDialect::Pdftex14029 => ControlSequenceCapacity {
                 hash_size: 15_000,
                 hash_extra: 600_000,
             },
@@ -400,7 +400,7 @@ impl CommandProfile {
         let dialect = match bytes[1] {
             0 => CommandDialect::Tex82,
             1 => CommandDialect::Etex26,
-            2 => CommandDialect::Pdftex14027,
+            2 => CommandDialect::Pdftex14029,
             tag => return Err(CommandProfileEncodingError::UnknownDialect(tag)),
         };
         let characters = match bytes[2] {

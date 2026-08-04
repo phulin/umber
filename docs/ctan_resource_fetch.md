@@ -216,7 +216,7 @@ both JSON and digest-named objects; publications attach a one-year immutable
 cache policy. Browser GET/HEAD access uses the bucket CORS policy in
 `scripts/texlive-r2-cors.json`.
 
-`scripts/build-texlive-snapshot.sh` is the production staging entry point. It
+`python3 scripts/provision.py snapshot` is the production staging entry point. It
 publishes every runtime-requestable file below TeX Live's `tex/` tree, TFM
 metrics, maps, encodings, virtual fonts, and Type 1/OpenType/TrueType/PK/AFM
 font areas, plus the Umber-native LaTeX format. TeX Live documentation and

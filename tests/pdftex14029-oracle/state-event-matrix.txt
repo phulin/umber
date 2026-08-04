@@ -1,4 +1,4 @@
-# Required schema-v1 pdfTeX 1.40.27 command-state, enquiry, and effect observations.
+# Required schema-v1 pdfTeX 1.40.29 command-state, enquiry, and effect observations.
 # Columns: family|primitive|boundary|fixture|final-change seam|fixed JSON fragment
 mutation|pdfoutput|PDF mode disabled|state.tex|committed eqtb write|"value":"pdfoutput"},"value":{"type":"integer","value":0}
 mutation|pdfoutput|PDF mode enabled|state.tex|committed eqtb write|"value":"pdfoutput"},"value":{"type":"integer","value":1}

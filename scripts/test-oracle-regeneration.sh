@@ -11,7 +11,7 @@ scripts/regen-fixtures.sh --oracle tex82 --profile initex-eight-bit \
   --fixture tex82/command-transitions-v1 --validate-only
 scripts/regen-fixtures.sh --oracle etex26 \
   --profile compatibility+extended-eight-bit --validate-only
-scripts/regen-fixtures.sh --oracle pdftex14027 \
+scripts/regen-fixtures.sh --oracle pdftex14029 \
   --profile initex-etex-eight-bit --validate-only
 scripts/regen-fixtures.sh --oracle all --profile canonical --validate-only
 
@@ -53,7 +53,7 @@ assert_source_manifest_drift_is_actionable() {
   cp tests/oracle-regeneration-manifest.txt \
     tests/tex82-oracle-manifest.txt \
     tests/etex26-oracle-manifest.txt \
-    tests/pdftex14027-oracle-manifest.txt \
+    tests/pdftex14029-oracle-manifest.txt \
     "${tmp_root}/tests/"
   contract_row="$(awk -v engine="$engine" \
     '$1 == "engine" && $2 == engine { print }' \
@@ -116,8 +116,8 @@ assert_source_manifest_drift_is_actionable \
   compatibility+extended-eight-bit \
   etex26-oracle-manifest.txt
 assert_source_manifest_drift_is_actionable \
-  pdftex14027 \
+  pdftex14029 \
   initex-etex-eight-bit \
-  pdftex14027-oracle-manifest.txt
+  pdftex14029-oracle-manifest.txt
 
 printf '%s\n' 'oracle regeneration contract tests passed'

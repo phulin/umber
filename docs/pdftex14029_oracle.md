@@ -1,12 +1,12 @@
-# Canonical pdfTeX 1.40.27 Oracle
+# Canonical pdfTeX 1.40.29 Oracle
 
 Status: pinned build boundary for command-core conformance.
 
 ## Authority and identity
 
 The canonical pdfTeX oracle is built from `pdftexdir/pdftex.web` as
-distributed in the immutable TeX Live 2025 source archive. The archive is
-pinned by SHA-512 in `tests/pdftex14027-oracle-manifest.txt`, which is the one
+distributed in the immutable TeX Live 2026 source archive. The archive is
+pinned by SHA-512 in `tests/pdftex14029-oracle-manifest.txt`, which is the one
 identity the workflow verifies. Everything the build reads out of that archive
 -- the WEB source, the ordered Web2C and configured SyncTeX change stack, the
 translator inputs, the build description -- is already covered by the archive
@@ -17,20 +17,20 @@ Its command character profile is exact eight-bit input. The repository tooling
 publishes two names:
 
 ```text
-target/pdftex14027-oracle/bin/umber-pdftex14027-oracle-clean
-target/pdftex14027-oracle/bin/umber-pdftex14027-oracle-instrumented
+target/pdftex14029-oracle/bin/umber-pdftex14029-oracle-clean
+target/pdftex14029-oracle/bin/umber-pdftex14029-oracle-instrumented
 ```
 
 The clean executable uses only the declared upstream change stack. The
 instrumented executable appends
-`tests/pdftex14027-oracle/instrumentation.ch` and then
-`tests/pdftex14027-oracle/extension-instrumentation.ch` and
-`tests/pdftex14027-oracle/state-instrumentation.ch`. The first change ports
+`tests/pdftex14029-oracle/instrumentation.ch` and then
+`tests/pdftex14029-oracle/extension-instrumentation.ch` and
+`tests/pdftex14029-oracle/state-instrumentation.ch`. The first change ports
 the complete shared TeX82/e-TeX schema-v1 command trace; the second observes
 pdfTeX expansion/scanner extensions and names pdfTeX state semantically; the
 third observes the remaining state, enquiry, and PDF-facing effect seams.
 Neither edits canonical or generated upstream engine files. The detached
-trace is written to `pdftex14027-events.jsonl`.
+trace is written to `pdftex14029-events.jsonl`.
 
 Both executables are external Web2C reference tools. Neither is Umber, neither
 may resolve to the Umber CLI, and Cargo correctness tests neither acquire nor
@@ -41,7 +41,7 @@ execute them.
 Run the supported fixture-tooling entry point:
 
 ```bash
-scripts/regen-fixtures.sh --oracle pdftex14027 \
+scripts/regen-fixtures.sh --oracle pdftex14029 \
   --profile initex-etex-eight-bit
 ```
 
@@ -51,12 +51,13 @@ that same command to forbid network access. `--validate-only` checks the
 cross-engine contract, source-manifest shape, repository-owned hashes, event
 schema, and exact INITEX/e-TeX/eight-bit profile without building.
 
-`UMBER_REF_TEXLIVE_SOURCE` may select an equivalent cache containing the
-pinned archive and extracted `src` tree. The workflow uses a dedicated
-`build-pdftex14027` directory inside that cache so its configure state and
+Source acquisition always uses the primary checkout's pinned archive and
+extracted tree. Linked worktrees receive symlinks to those two immutable
+inputs. The workflow uses a checkout-local dedicated
+`build-pdftex14029-20260301` directory so its configure state and
 archive-owned libpng, zlib, xpdf, and kpathsea artifacts do not alias the
 TeX82/e-TeX oracle builds. `CARGO_TARGET_DIR` relocates outputs.
-`UMBER_PDFTEX14027_INSTRUMENTATION_CHANGE` may select another final change;
+`UMBER_PDFTEX14029_INSTRUMENTATION_CHANGE` may select another final change;
 the build record captures its path and hash.
 
 Every run verifies the archive before translation. It applies the exact configured TeX Live change order, including SyncTeX
@@ -77,7 +78,7 @@ translator, widens only those storage types and limits, and records both its
 source and executable identities. This private translator changes no WEB
 tokenization or pdfTeX source semantics.
 
-`target/pdftex14027-oracle/build-record.txt` records:
+`target/pdftex14029-oracle/build-record.txt` records:
 
 - engine, e-TeX extension, character, and invocation profiles;
 - archive, manifest, WEB source, ordered change, generated final-change, and
@@ -89,7 +90,7 @@ tokenization or pdfTeX source semantics.
 - transition, extension, and state terminal, normalized log, status, artifact,
   generated-write, and schema-v1 trace hashes.
 
-The smoke programs validate the canonical 1.40.27 banner and numeric
+The smoke programs validate the canonical 1.40.29 banner and numeric
 `\pdftexversion`, e-TeX 2.6 extended mode, expansion/arithmetic, and shipout.
 The DVI program emits a font-independent one-page DVI. The PDF program fixes
 the creation-information policy, trailer ID, and compression controls before
@@ -97,7 +98,7 @@ a font-independent one-page PDF. Terminal bytes, startup-clock-normalized log
 bytes, exit status, and DVI/PDF bytes must match between clean and instrumented
 executables.
 
-`tests/pdftex14027-oracle/semantic-event-matrix.txt` is the executable coverage
+`tests/pdftex14029-oracle/semantic-event-matrix.txt` is the executable coverage
 inventory for shared delivery, input lifecycle, backup and recovery, scanner
 status, macros, token-list construction, scanners, conditions, alignments,
 typed mutations, effects, and termination. The focused transition program
@@ -165,7 +166,7 @@ already-built instrumented executable above and captures every channel a
 case's run can produce: terminal text, the raw and host-clock-normalized log,
 the DVI/PDF page artifact, `status.txt` (exit code), any writer-effect file
 the source itself opens (via `\openout`/`\write`, discovered rather than
-assumed at a fixed name), and the schema-v1 `pdftex14027-events.jsonl` trace.
+assumed at a fixed name), and the schema-v1 `pdftex14029-events.jsonl` trace.
 It never builds the oracle and performs no network access.
 
 ```bash

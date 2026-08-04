@@ -136,7 +136,7 @@ math extension.
 `etex_primitives.md` is the extension-only e-TeX V2 primitive checklist and
 maps each family to its short-reference-manual contract and conformance gate.
 
-`pdftex_primitives.md` pins the pdfTeX 1.40.27 source-level primitive
+`pdftex_primitives.md` pins the pdfTeX 1.40.29 source-level primitive
 inventory, records exact-name coverage above TeX82/e-TeX, and defines the
 dependency-ordered completeness plan for the PDF engine layer.
 

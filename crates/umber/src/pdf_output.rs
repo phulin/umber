@@ -3434,7 +3434,7 @@ fn document_info_dictionary(
     stores: &Universe,
     parameters: PdfOutputParameters,
 ) -> Result<PdfDictionary, PdfModelError> {
-    const PRODUCER: &[u8] = b"pdfTeX-1.40.27";
+    const PRODUCER: &[u8] = b"pdfTeX-1.40.29";
 
     let mut info = PdfDictionary::new();
     info.insert("Producer", PdfValue::String(PRODUCER.to_vec()))?;
@@ -5014,10 +5014,10 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut image_resolver,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
         )
         .expect("image page ships")
     }
@@ -5035,10 +5035,10 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut image_resolver,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
         )
         .expect("image page ships")
     }
@@ -5594,7 +5594,7 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut image_resolver,
         )
@@ -5659,7 +5659,7 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 b"\\pdfoutput=1 \\pdfinclusionerrorlevel=1 \\pdfximage {page.pdf}\\end".as_slice(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut image_resolver,
         )
@@ -6833,10 +6833,10 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut host,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
         )
         .expect("minimal page ships")
     }
@@ -6851,10 +6851,10 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut host,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
         )
     }
 
@@ -6872,10 +6872,10 @@ mod tests {
             RetainedRootRequest::authored(
                 "pdf-test",
                 source.as_bytes(),
-                tex_command::CommandProfile::PDFTEX14027,
+                tex_command::CommandProfile::PDFTEX14029,
             ),
             &mut host,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
         )
     }
 
@@ -7659,7 +7659,7 @@ mod tests {
         let parsed = probe(&pdf);
         let info = info_dictionary(&parsed).expect("default Info dictionary");
         for (key, expected) in [
-            (b"Producer".as_slice(), b"pdfTeX-1.40.27".as_slice()),
+            (b"Producer".as_slice(), b"pdfTeX-1.40.29".as_slice()),
             (b"Creator".as_slice(), b"TeX".as_slice()),
             (b"CreationDate".as_slice(), b"D:20260709133607Z".as_slice()),
             (b"ModDate".as_slice(), b"D:20260709133607Z".as_slice()),

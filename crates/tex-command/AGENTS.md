@@ -145,7 +145,7 @@ print channel of its own outside the borrowed
   recover-to-zero belongs to the scan, never to the command consuming it.
 - `src/primitives/`: private static TeX82, e-TeX, LaTeX compatibility, and
   pdfTeX dispatch families. `registry.rs` owns the TeX82, e-TeX 2.6, Umber
-  LaTeX compatibility, and pdfTeX 1.40.27 expandable primitive identity tables
+  LaTeX compatibility, and pdfTeX 1.40.29 expandable primitive identity tables
   and the fresh-INITEX versus format-restore installation policy.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
   single test §1211's `prefixed_command`, §1270's `do_assignments`, and the
@@ -204,7 +204,7 @@ print channel of its own outside the borrowed
   differential tracer share one table rather than each keeping their own.
   See "Canonical observation vocabulary" below.
   Command identity is selected through the immutable `CommandProfile`:
-  `variable_identity.rs` owns the TeX82/e-TeX 2.6/pdfTeX 1.40.27 eqtb and
+  `variable_identity.rs` owns the TeX82/e-TeX 2.6/pdfTeX 1.40.29 eqtb and
   `last_item` layouts, while `primitive_identity.rs` owns profile-dependent
   conversion selectors. Never classify an observed command through a
   profile-free dialect approximation.

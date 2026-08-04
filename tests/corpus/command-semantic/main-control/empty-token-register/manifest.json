@@ -33,20 +33,12 @@
         "terminal": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 14,
-            "expected": "<*> empty-token-register.tex",
-            "actual": "? "
-          }
+          "mismatch": { "line": 14, "expected": "<*> empty-token-register.tex", "actual": "? " }
         },
         "log": {
           "kind": "xfail",
           "bug": "umber2-alfh.11",
-          "mismatch": {
-            "line": 16,
-            "expected": "<*> empty-token-register.tex",
-            "actual": "? "
-          }
+          "mismatch": { "line": 16, "expected": "<*> empty-token-register.tex", "actual": "? " }
         },
         "dvi": { "kind": "empty" },
         "effects": { "kind": "empty" }

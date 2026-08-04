@@ -64,13 +64,13 @@ reference/Umber status, BBL, and BLG bytes. Failures are preserved under
 
 `refexec` also wraps `tftopl` for the font metric check owned by `tools/fixturegen`. When running that tier, it locates `tftopl` on `PATH`; set `UMBER_REF_TFTOPL=/absolute/path/to/tftopl` to point regeneration at a specific TeX installation.
 
-`tools/corpus-sync` is the external document acquisition tool used by `scripts/setup-conformance-tests.sh`. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/corpus-sync/Cargo.toml`. It reads the line-oriented `tests/corpus-manifest.txt`, fetches exact support inputs and runnable documents into gitignored `third_party/corpus/`, verifies SHA-256, and treats cached hash matches as a no-op. Once setup is complete, conformance tests consume only local inputs and require no network access. Do not normalize line endings or commit fetched corpus files; licensing determinations live in the manifest notes.
+`tools/corpus-sync` is the external document acquisition tool run by `python3 scripts/provision.py worktree .` in the primary checkout. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/corpus-sync/Cargo.toml`. It reads the line-oriented `tests/corpus-manifest.txt`, fetches exact support inputs and runnable documents into gitignored `third_party/corpus/`, verifies SHA-256, and treats cached hash matches as a no-op. Once setup is complete, conformance tests consume only local inputs and require no network access. Do not normalize line endings or commit fetched corpus files; licensing determinations live in the manifest notes.
 
 `tools/texlive-wasm-publish` is a standalone release tool for browser TeX Live assets. It verifies every configured TEXMF root against a pinned tree digest, flattens lookup precedence deterministically, and writes an immutable manifest plus content-addressed objects. Build and test it explicitly with `cargo test --manifest-path tools/texlive-wasm-publish/Cargo.toml`; it must not join the root workspace or make ordinary tests scan a TeX Live installation.
 Its manifest model and canonical serialization come from the workspace
 `umber-distribution` crate; schema changes must keep the shared Rust/JavaScript
 fixtures green.
-Production snapshots use `scripts/build-texlive-snapshot.sh`, which scans the
+Production snapshots use `python3 scripts/provision.py snapshot`, which scans the
 full runtime-requestable TeX Live tree, derives bounded package hints from the
 pinned `texlive.tlpdb`, and enforces inventory floors. The smaller
 `build-wasm-latex-bundle.sh` remains a focused LaTeX seed/fixture builder and
@@ -177,9 +177,10 @@ committed registry fails with an actionable diagnostic. Only the explicit CLI
 runner loads `tex82-documents`; do not route automated tests through it or
 raise the ceilings to accommodate a full document.
 
-`scripts/fetch-conformance-inputs.sh` acquires the external hyphenation and
-Computer Modern font inputs and fetches and verifies the pinned official Knuth
-TeX82 TRIP and e-TeX V2 e-TRIP materials. Cargo integration tests execute the
+`python3 scripts/provision.py worktree .` acquires the external hyphenation and
+Computer Modern font inputs from the pinned TeX Live 2026 runtime and fetches
+and verifies the pinned official Knuth TeX82 TRIP and e-TeX V2 e-TRIP
+materials. Cargo integration tests execute the
 two-phase format workflow directly in Rust and reuse the pinned `trip.tfm` for
 e-TRIP. Fixture regeneration independently runs the two-phase reference
 workload with pdfTeX.

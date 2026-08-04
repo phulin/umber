@@ -33,7 +33,7 @@ fn templates() -> AlignmentCellTemplates {
 
 fn populated_quiescent_state() -> CommandState {
     let mut state = CommandState::new(CommandProfile::unicode_extended(
-        crate::CommandDialect::Pdftex14027,
+        crate::CommandDialect::Pdftex14029,
     ));
     let source = state
         .register_source(SourceRegistration::new(
@@ -453,10 +453,10 @@ fn format_and_checkpoint_profile_components_reject_mismatch() {
     let profiles = [
         CommandProfile::TEX82,
         CommandProfile::ETEX26,
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
         CommandProfile::unicode_extended(crate::CommandDialect::Tex82),
         CommandProfile::unicode_extended(crate::CommandDialect::Etex26),
-        CommandProfile::unicode_extended(crate::CommandDialect::Pdftex14027),
+        CommandProfile::unicode_extended(crate::CommandDialect::Pdftex14029),
     ];
 
     for profile in profiles {

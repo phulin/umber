@@ -392,7 +392,7 @@ pub(crate) fn canonical_current_command_identity_for_profile(
         CommandIdentity::Convert(selector) => {
             let operand = match (profile.dialect(), selector) {
                 (crate::CommandDialect::Etex26, crate::command::ConvertSelector::JobName) => 6,
-                (crate::CommandDialect::Pdftex14027, crate::command::ConvertSelector::JobName) => {
+                (crate::CommandDialect::Pdftex14029, crate::command::ConvertSelector::JobName) => {
                     33
                 }
                 _ => selector.operand(),
@@ -956,7 +956,7 @@ mod tests {
         for (profile, job_name) in [
             (CommandProfile::TEX82, 5),
             (CommandProfile::ETEX26, 6),
-            (CommandProfile::PDFTEX14027, 33),
+            (CommandProfile::PDFTEX14029, 33),
         ] {
             assert_eq!(
                 canonical_command_identity_for_profile(
@@ -968,21 +968,21 @@ mod tests {
         }
         assert_eq!(
             canonical_command_identity_for_profile(
-                CommandProfile::PDFTEX14027,
+                CommandProfile::PDFTEX14029,
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::PdfTeXRevision),
             ),
             ("convert".into(), Some(7))
         );
         assert_eq!(
             canonical_command_identity_for_profile(
-                CommandProfile::PDFTEX14027,
+                CommandProfile::PDFTEX14029,
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::Expanded),
             ),
             ("convert".into(), Some(6))
         );
         assert_eq!(
             canonical_command_identity_for_profile(
-                CommandProfile::PDFTEX14027,
+                CommandProfile::PDFTEX14029,
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::IfInCsName),
             ),
             ("if_test".into(), Some(20))
@@ -1047,7 +1047,7 @@ mod tests {
                 "e-TeX [17.230] and [49.1248] retain the penalty cell's eqtb address"
             );
             assert_eq!(
-                canonical_command_identity_for_profile(CommandProfile::PDFTEX14027, meaning),
+                canonical_command_identity_for_profile(CommandProfile::PDFTEX14029, meaning),
                 ("set_shape".into(), Some(25_328 + offset)),
                 "pdfTeX's four token-list parameters precede the e-TeX penalty cells"
             );
@@ -1060,7 +1060,7 @@ mod tests {
         for profile in [
             CommandProfile::TEX82,
             CommandProfile::ETEX26,
-            CommandProfile::PDFTEX14027,
+            CommandProfile::PDFTEX14029,
         ] {
             assert_eq!(
                 canonical_command_identity_for_profile(profile, meaning),
@@ -1201,7 +1201,7 @@ mod tests {
         );
         assert_eq!(
             canonical_command_identity_for_profile(
-                CommandProfile::PDFTEX14027,
+                CommandProfile::PDFTEX14029,
                 Meaning::SkipRegister(2_003)
             ),
             ("register".into(), None)

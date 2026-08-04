@@ -1,5 +1,5 @@
 //! Derives the per-channel contract for every committed minifixture against
-//! the pinned instrumented pdfTeX 1.40.27 oracle.
+//! the pinned instrumented pdfTeX 1.40.29 oracle.
 //!
 //! This is the regeneration path for the `command-semantic` corpus, invoked
 //! by `scripts/regen-fixtures.sh --area command-semantic`. It runs exactly
@@ -343,7 +343,7 @@ fn run(allowlist: Option<&Path>, accept_projection_changes: bool) -> Result<Stri
     }
 
     let mut summary = format!(
-        "derived channel contracts for {rewritten} self-contained cases against the pinned pdfTeX 1.40.27 oracle"
+        "derived channel contracts for {rewritten} self-contained cases against the pinned pdfTeX 1.40.29 oracle"
     );
     if !unrunnable.is_empty() {
         summary.push_str(&format!(
@@ -428,7 +428,7 @@ fn plan_case(
     if !case_dir.is_dir() {
         return Err(format!(
             "no oracle capture at {} -- run `scripts/run-minifixture-oracle.sh --all` first \
-             (build the oracle itself with scripts/build-pdftex14027-oracle.sh if its binary \
+             (build the oracle itself with python3 scripts/provision.py oracle pdftex14029 if its binary \
              is missing)",
             case_dir.display()
         ));

@@ -465,7 +465,7 @@ fn all_canonical_dialects_share_the_exact_byte_state_machine() {
     for dialect in [
         CommandDialect::Tex82,
         CommandDialect::Etex26,
-        CommandDialect::Pdftex14027,
+        CommandDialect::Pdftex14029,
     ] {
         let mut state = state_for_profile(b"^^7a", CommandProfile::exact(dialect));
         assert_eq!(

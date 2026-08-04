@@ -349,7 +349,7 @@ impl EngineMode {
             Self::Tex82 => tex_exec::EngineBinaryIdentity::Tex82,
             Self::ETex => tex_exec::EngineBinaryIdentity::Etex26,
             Self::PdfTex | Self::Latex | Self::PdfLatex => {
-                tex_exec::EngineBinaryIdentity::Pdftex14027
+                tex_exec::EngineBinaryIdentity::Pdftex14029
             }
         }
     }
@@ -360,7 +360,7 @@ impl EngineMode {
         match self {
             Self::Tex82 => tex_command::CommandProfile::TEX82,
             Self::ETex => tex_command::CommandProfile::ETEX26,
-            Self::PdfTex | Self::Latex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14027,
+            Self::PdfTex | Self::Latex | Self::PdfLatex => tex_command::CommandProfile::PDFTEX14029,
         }
     }
 
@@ -380,9 +380,9 @@ impl EngineMode {
         match self {
             Self::Tex82 => "3.141592653",
             Self::ETex => "2.6",
-            Self::PdfTex => "1.40.27",
+            Self::PdfTex => "1.40.29",
             Self::Latex => "1",
-            Self::PdfLatex => "1.40.27",
+            Self::PdfLatex => "1.40.29",
         }
     }
 

@@ -4,7 +4,7 @@
 //! Every gate compares Umber's assembled DVI against an oracle produced by a
 //! real reference engine. Those oracles are derived from third-party documents
 //! and are deliberately gitignored, so they exist only where someone ran
-//! `scripts/setup-conformance-tests.sh`. That is a licensing decision and it
+//! `python3 scripts/provision.py worktree .`. That is a licensing decision and it
 //! stands.
 //!
 //! What must not stand is a gate whose absence is indistinguishable from its
@@ -66,7 +66,7 @@ pub const GATES: &[ConformanceGate] = &[
             "third_party/corpus/plain.tex",
             "third_party/hyphen/hyphen.tex",
         ],
-        materialize: &["scripts/setup-conformance-tests.sh"],
+        materialize: &["python3 scripts/provision.py worktree ."],
     },
     ConformanceGate {
         name: "gentle",
@@ -75,7 +75,7 @@ pub const GATES: &[ConformanceGate] = &[
             "third_party/corpus/plain.tex",
             "third_party/hyphen/hyphen.tex",
         ],
-        materialize: &["scripts/setup-conformance-tests.sh"],
+        materialize: &["python3 scripts/provision.py worktree ."],
     },
     ConformanceGate {
         name: "trip",
@@ -85,7 +85,7 @@ pub const GATES: &[ConformanceGate] = &[
             "third_party/trip/tripos.tex",
         ],
         materialize: &[
-            "scripts/fetch-conformance-inputs.sh",
+            "python3 scripts/provision.py worktree .",
             "scripts/regen-fixtures.sh --case e2e/trip",
         ],
     },
@@ -97,7 +97,7 @@ pub const GATES: &[ConformanceGate] = &[
             "third_party/trip/tripos.tex",
         ],
         materialize: &[
-            "scripts/fetch-conformance-inputs.sh",
+            "python3 scripts/provision.py worktree .",
             "scripts/regen-fixtures.sh --case e2e/etrip",
         ],
     },
@@ -174,7 +174,7 @@ impl ConformanceGate {
         }
         report.push_str(
             "\nFor a linked worktree, copy the primary checkout's pinned assets with:\n  \
-             python3 scripts/native-test-assets.py .\n\nIf the primary checkout is also \
+             python3 scripts/provision.py worktree .\n\nIf the primary checkout is also \
              missing them, materialize them there with:\n",
         );
         for command in self.materialize {

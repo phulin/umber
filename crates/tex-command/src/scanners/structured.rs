@@ -2222,7 +2222,7 @@ impl CommandProcessor<'_> {
 
     /// Scans pdfTeX's `scan_image` request prefix.
     ///
-    /// The ordering follows pdfTeX 1.40.27's `scan_image`: a repeated rule
+    /// The ordering follows pdfTeX 1.40.29's `scan_image`: a repeated rule
     /// specification, optional `attr` general text, mutually exclusive
     /// `named` expanded general text or `page` integer, optional `colorspace`
     /// integer, then one page-box selector and the filename operand. The
@@ -3625,7 +3625,7 @@ impl CommandProcessor<'_> {
     /// can expand them against the state current when their box is shipped.
     pub fn scan_special(&mut self) -> Result<(bool, ScannedBalancedText), CommandError> {
         // TeX82 §473 enters `scan_toks` immediately. The preceding optional
-        // keyword probe belongs only to pdfTeX 1.40.27 §1534; in particular,
+        // keyword probe belongs only to pdfTeX 1.40.29 §1534; in particular,
         // an e-TeX job must enter `absorbing` before delivering the opening
         // brace instead of speculatively backing it up and replaying it.
         let deferred =

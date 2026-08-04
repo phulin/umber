@@ -10,8 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-MODULE_PATH = Path(__file__).with_name("native-test-assets.py")
-SPEC = importlib.util.spec_from_file_location("native_test_assets", MODULE_PATH)
+MODULE_PATH = Path(__file__).with_name("provision.py")
+SPEC = importlib.util.spec_from_file_location("provision", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 assets = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(assets)
@@ -41,15 +41,37 @@ def make_repository(directory: Path, entries: dict[str, bytes]) -> tuple[Path, P
     run("git", "config", "user.email", "test@example.invalid", cwd=primary)
     run("git", "config", "user.name", "Test", cwd=primary)
     write_lock(primary, entries)
+    archive = b"pinned source archive\n"
+    configure = b"configure\n"
+    tex_web = b"tex.web\n"
+    source_lock = primary / "tests/texlive-source.lock"
+    source_lock.write_text(
+        "distribution fixture-source\n"
+        f"archive fixture-source.tar.xz {len(archive)} {hashlib.sha512(archive).hexdigest()} https://example.invalid/fixture-source.tar.xz\n"
+        f"source configure {len(configure)} {hashlib.sha256(configure).hexdigest()}\n"
+        f"source texk/web2c/tex.web {len(tex_web)} {hashlib.sha256(tex_web).hexdigest()}\n"
+    )
     (primary / ".gitignore").write_text(
         "/target\n/third_party\n/tests/corpus/e2e/*.dvi\n"
     )
-    run("git", "add", ".gitignore", "tests/native-test-assets.lock", cwd=primary)
+    run(
+        "git",
+        "add",
+        ".gitignore",
+        "tests/native-test-assets.lock",
+        "tests/texlive-source.lock",
+        cwd=primary,
+    )
     run("git", "commit", "-q", "-m", "fixture", cwd=primary)
     for relative, content in entries.items():
         path = primary / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
+    source_cache = primary / "third_party/texlive-source"
+    (source_cache / "src/texk/web2c").mkdir(parents=True)
+    (source_cache / "fixture-source.tar.xz").write_bytes(archive)
+    (source_cache / "src/configure").write_bytes(configure)
+    (source_cache / "src/texk/web2c/tex.web").write_bytes(tex_web)
     worktree = directory / "worktree"
     run(
         "git",
@@ -83,9 +105,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as raw_directory:
         primary, worktree = make_repository(Path(raw_directory), entries)
 
-        copied = assets.provision(worktree)
+        copied = assets.provision_worktree(worktree)
         assert copied == len(entries)
-        assert assets.provision(worktree) == 0
+        assert assets.provision_worktree(worktree) == 0
+        assert (worktree / "third_party/texlive-source/src").is_symlink()
+        assert (worktree / "third_party/texlive-source/fixture-source.tar.xz").is_symlink()
         for relative, content in entries.items():
             destination = worktree / relative
             assert destination.read_bytes() == content
@@ -95,23 +119,23 @@ def main() -> None:
         assert run("git", "status", "--short", cwd=worktree) == ""
 
         completed = subprocess.run(
-            [sys.executable, str(MODULE_PATH), str(worktree)],
+            [sys.executable, str(MODULE_PATH), "worktree", str(worktree)],
             check=False,
             capture_output=True,
             text=True,
         )
         assert completed.returncode == 0, completed.stderr
-        assert "PASS: 0 asset(s) copied" in completed.stdout
+        assert "PASS: 0 asset(s) provisioned" in completed.stdout
 
         changed = worktree / "third_party/corpus/story.tex"
         changed.chmod(0o644)
         changed.write_bytes(b"changed\n")
-        expect_error(lambda: assets.provision(worktree), "existing asset")
+        expect_error(lambda: assets.provision_worktree(worktree), "existing asset")
 
     with tempfile.TemporaryDirectory() as raw_directory:
         primary, worktree = make_repository(Path(raw_directory), entries)
         namespaced_target = worktree / "target/audit-issue-target"
-        copied = assets.provision(worktree, namespaced_target)
+        copied = assets.provision_worktree(worktree, namespaced_target)
         assert copied == len(entries)
         for relative, content in entries.items():
             path = Path(relative)
@@ -123,22 +147,22 @@ def main() -> None:
             assert destination.read_bytes() == content
         assert not (worktree / "target/trip-oracles").exists()
         expect_error(
-            lambda: assets.provision(worktree, worktree.parent / "outside"),
-            "outside the destination worktree",
+            lambda: assets.provision_worktree(worktree, worktree.parent / "outside"),
+            "outside the worktree",
         )
 
     with tempfile.TemporaryDirectory() as raw_directory:
         primary, worktree = make_repository(Path(raw_directory), entries)
         (primary / "third_party/corpus/story.tex").unlink()
         expect_error(
-            lambda: assets.provision(worktree),
-            "Run scripts/setup-conformance-tests.sh there first",
+            lambda: assets.provision_worktree(worktree),
+            "Run python3 scripts/provision.py worktree",
         )
 
     with tempfile.TemporaryDirectory() as raw_directory:
         primary = Path(raw_directory)
         write_lock(primary, {"../escape": b"no"})
-        expect_error(lambda: assets.read_lock(primary), "unsafe or duplicate")
+        expect_error(lambda: assets.read_native_asset_lock(primary), "unsafe")
 
     print("test-native-test-assets: PASS")
 

@@ -13,7 +13,7 @@ Scope: working a semantic or byte-level divergence between Umber's canonical
 ## 1. Oracle hierarchy
 
 1. tex.web (TeX82), `etex.ch` (e-TeX 2.6), and pdfTeX's WEB/change files
-   (1.40.27) are the sole authority for correct behavior. Every fix cites a
+   (1.40.29) are the sole authority for correct behavior. Every fix cites a
    numbered section from one of them.
 2. Evidence for whether Umber matches that authority comes only from the
    pinned `tex-oracle` semantic command-transition traces (compared by
@@ -216,8 +216,8 @@ the front you're diagnosing, and compare its recorded OBSERVED output against
 a fresh run of the same command to confirm you're looking at the same
 divergence, not a new one.
 
-Reference DVI generation: `scripts/setup-conformance-tests.sh`, with real
-pdfTeX 1.40.25 on `PATH`; `UMBER_REF_TEX` selects a specific binary.
+Reference DVI generation: `python3 scripts/provision.py worktree .`, using the
+pinned instrumented pdfTeX 1.40.29 build from TeX Live 2026.
 
 ## 6. Never half-implement, never weaken to get green
 

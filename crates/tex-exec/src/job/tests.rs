@@ -140,7 +140,7 @@ fn begin_job_prints_the_banner_and_clock_stamped_first_line_on_each_channel() {
         true,
         None,
         JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14029,
             extended_mode: false,
         },
         "show-box.tex",
@@ -207,7 +207,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         true,
         None,
         JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14029,
             extended_mode: false,
         },
         "a.tex",
@@ -219,7 +219,7 @@ fn begin_job_called_twice_prints_the_banner_only_once() {
         true,
         None,
         JobEngineFraming {
-            binary: EngineBinaryIdentity::Pdftex14027,
+            binary: EngineBinaryIdentity::Pdftex14029,
             extended_mode: false,
         },
         "a.tex",
@@ -456,14 +456,14 @@ fn pdf_finalization_report_is_profile_aware_exact_and_one_shot() {
     let mut report = PdfJobFinalizationReport::new(17, 6, 2, 3, 41);
     finish_job(
         &mut stores,
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
         "doc",
         None,
         Some(&mut report),
     );
     finish_job(
         &mut stores,
-        CommandProfile::PDFTEX14027,
+        CommandProfile::PDFTEX14029,
         "doc",
         None,
         Some(&mut report),
@@ -492,7 +492,7 @@ fn tex_and_etex_profiles_never_render_a_pdf_finalization_report() {
 /// terminal (no dump date, because the banner precedes reading the format
 /// file), while §536's `slow_print(format_ident)` prints §1328's dumped
 /// string, which carries the date. Both spellings are what the pinned pdfTeX
-/// 1.40.27 oracle emits for `-fmt=etex-loaded`.
+/// 1.40.29 oracle emits for `-fmt=etex-loaded`.
 #[test]
 fn begin_job_frames_a_preloaded_format_with_a_dated_log_and_an_undated_terminal() {
     let clock = JobClock {
@@ -612,8 +612,8 @@ fn engine_binary_compatibility_is_a_superset_relation_not_a_dialect_alias() {
     assert!(!EngineBinaryIdentity::Tex82.supports(tex_command::CommandProfile::ETEX26));
     assert!(EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::TEX82));
     assert!(EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::ETEX26));
-    assert!(!EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::PDFTEX14027));
-    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::TEX82));
-    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::ETEX26));
-    assert!(EngineBinaryIdentity::Pdftex14027.supports(tex_command::CommandProfile::PDFTEX14027));
+    assert!(!EngineBinaryIdentity::Etex26.supports(tex_command::CommandProfile::PDFTEX14029));
+    assert!(EngineBinaryIdentity::Pdftex14029.supports(tex_command::CommandProfile::TEX82));
+    assert!(EngineBinaryIdentity::Pdftex14029.supports(tex_command::CommandProfile::ETEX26));
+    assert!(EngineBinaryIdentity::Pdftex14029.supports(tex_command::CommandProfile::PDFTEX14029));
 }

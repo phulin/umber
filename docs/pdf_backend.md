@@ -5,7 +5,7 @@ driver closure are governed by the normative
 [cross-output font system contract](cross_output_fonts.md). The curated hosted
 HTML catalog is not a PDF capability boundary.
 
-Status: phased implementation contract for the pdfTeX 1.40.27 backend.
+Status: phased implementation contract for the pdfTeX 1.40.29 backend.
 
 ## Boundary and invariants
 
@@ -300,7 +300,7 @@ This matches pdfTeX.web §§1548 and 1551--1552, where `\pdfximage` registers a
 PDF image and `\pdfrefximage` defers writing it until shipout, together with
 the pdfTeX manual §§4.9.1--4.9.2 requirement that included PDF pages retain
 self-contained color-space information and are written on first reference.
-The corresponding pdfTeX 1.40.27 `pdftoepdf.cc` source at TeX Live commit
+The corresponding pdfTeX 1.40.29 `pdftoepdf.cc` source at TeX Live commit
 `651721339efa033920bff37b16783f636239a4f4` copies resource streams in
 `copyObject` lines 602--613 from `getUndecodedStream` together with the complete
 stream dictionary; its included-page content path at lines 990--1015 likewise
@@ -323,14 +323,14 @@ has no such candidate and therefore copies the included graph for either value.
 ## Parity oracle
 
 `tests/corpus/tex_exec/pdf_output_policy` is regenerated with pinned pdfTeX
-1.40.27 in INITEX mode. It commits the output-control defaults, TeX grouping,
+1.40.29 in INITEX mode. It commits the output-control defaults, TeX grouping,
 first-write range recovery, warning text, and recovered version. Hermetic
 Umber tests pair that fixture with alias-cell, fatal setup, version header,
 object-stream/type-2-xref, decimal rounding, and DVI/PDF switching assertions.
 
 Committed `tests/corpus/pdf` fixtures are regenerated only through
 `scripts/regen-fixtures.sh --area pdf` or its `--case pdf/<case>` form. The
-reference producer is pinned pdfTeX 1.40.27 with the repository's deterministic
+reference producer is pinned pdfTeX 1.40.29 with the repository's deterministic
 clock policy. Structural comparison
 parses both files, removes byte-layout-only fields (offsets, xref spelling,
 compression containers, and permitted volatile metadata), resolves indirect

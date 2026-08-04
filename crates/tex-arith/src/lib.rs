@@ -469,7 +469,7 @@ pub enum PhysicalUnit {
     Cc,
     /// New didot points, standardized in 1978 as exactly 0.375 mm.
     ///
-    /// pdfTeX 1.40.27 adds `nd` and `nc` to tex.web §458's unit table with no
+    /// pdfTeX 1.40.29 adds `nd` and `nc` to tex.web §458's unit table with no
     /// compatibility switch, so they are part of the engine Umber
     /// reproduces in every dialect rather than a pdfTeX-only extension.
     Nd,

@@ -1,12 +1,12 @@
 # pdfTeX generated fonts and microtypography
 
-Status: implementation contract for pdfTeX 1.40.27 font construction,
+Status: implementation contract for pdfTeX 1.40.29 font construction,
 expansion, and character protrusion.
 
 ## Upstream boundary
 
 Behavior is pinned to `pdftex.web` at TeX Live source commit
-`1664cf0ab3f6ce3b80db649bc6723f54ab12016c`, the same pdfTeX 1.40.27
+`1664cf0ab3f6ce3b80db649bc6723f54ab12016c`, the same pdfTeX 1.40.29
 boundary as `pdftex_primitives.md`. The owning source routines are
 `letter_space_font`, `copy_font_info`, `read_expand_font`, `try_break`,
 `hpack`, `do_subst_font`, `total_pw`, and `post_line_break`.

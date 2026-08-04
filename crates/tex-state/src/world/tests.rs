@@ -706,7 +706,7 @@ fn pdftex_random_stream_matches_seeded_reference_sequence() {
 
 #[test]
 fn pdftex_uniform_deviate_matches_oracle_at_extreme_bounds() {
-    // pdftex.web lines 2514-2873 and §1587 in the pinned 1.40.27 oracle.
+    // pdftex.web lines 2514-2873 and §1587 in the pinned 1.40.29 oracle.
     let mut world = World::memory();
     for (bound, expected) in [
         (0, 0),

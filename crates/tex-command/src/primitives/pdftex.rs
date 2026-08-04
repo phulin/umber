@@ -1,1 +1,1 @@
-//! pdfTeX 1.40.27 primitive extensions.
+//! pdfTeX 1.40.29 primitive extensions.

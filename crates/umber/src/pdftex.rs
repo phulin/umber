@@ -1,4 +1,4 @@
-//! Pinned pdfTeX 1.40.27 engine-layer inventory and mode registration.
+//! Pinned pdfTeX 1.40.29 engine-layer inventory and mode registration.
 
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
@@ -491,7 +491,7 @@ mod tests {
         crate::run_memory_with_stores_and_profile(
             source,
             stores,
-            tex_command::CommandProfile::PDFTEX14027,
+            tex_command::CommandProfile::PDFTEX14029,
             false,
         )
     }

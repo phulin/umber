@@ -1,4 +1,4 @@
-# Required schema-v1 base command-core observations in canonical pdfTeX 1.40.27.
+# Required schema-v1 base command-core observations in canonical pdfTeX 1.40.29.
 # Columns: family|boundary|fixture|final-change seam|fixed JSON fragment
 command|raw delivery|transitions.tex|get_next return|"event":"command","data":{"delivery":"raw"
 command|expanded delivery|transitions.tex|get_x_token and x_token return|"event":"command","data":{"delivery":"expanded"

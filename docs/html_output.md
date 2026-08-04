@@ -365,7 +365,7 @@ mapped glyph coverage. The Chrome fixture allows a live browser up to 30
 seconds to publish its DevTools endpoint, while polling frequently enough to
 report an early browser exit immediately. Story, Gentle, TRIP, and e-TRIP
 remain conditional on the external inputs installed by
-`scripts/setup-conformance-tests.sh`. When present, their in-process runs lower
+`python3 scripts/provision.py worktree .`. When present, their in-process runs lower
 every committed artifact through the positioned HTML stream and compare it
 with the DVI coordinate oracle before the existing byte-level DVI comparison.
 

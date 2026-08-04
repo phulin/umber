@@ -1804,7 +1804,7 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
     let body_path = repo_root.join("third_party/corpus/gentle.tex");
     let body = fs::read_to_string(&body_path).map_err(|error| {
         format!(
-            "read required input {}: {error}; run scripts/setup-conformance-tests.sh",
+            "read required input {}: {error}; run python3 scripts/provision.py worktree .",
             body_path.display()
         )
     })?;
@@ -2182,7 +2182,7 @@ fn load_template(repo_root: &Path) -> Result<World, String> {
 fn seed_file(world: &mut World, source: &Path, name: &str) -> Result<(), String> {
     let bytes = fs::read(source).map_err(|error| {
         format!(
-            "read required input {}: {error}; run scripts/setup-conformance-tests.sh",
+            "read required input {}: {error}; run python3 scripts/provision.py worktree .",
             source.display()
         )
     })?;

@@ -802,7 +802,7 @@ fn malformed_unless_character_is_diagnosed_and_replayed_in_extended_profiles() {
     // leaves the operand as following input, and creates no condition frame.
     for profile in [
         crate::CommandProfile::ETEX26,
-        crate::CommandProfile::PDFTEX14027,
+        crate::CommandProfile::PDFTEX14029,
     ] {
         let mut command = CommandState::new(profile);
         let mut runtime = CommandRuntime::default();

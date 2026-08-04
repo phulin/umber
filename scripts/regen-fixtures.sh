@@ -13,7 +13,7 @@ bibtex_area=bibtex
 command_semantic_area=command-semantic
 tex82_oracle_area=tex82-oracle
 etex26_oracle_area=etex26-oracle
-pdftex14027_oracle_area=pdftex14027-oracle
+pdftex14029_oracle_area=pdftex14029-oracle
 oracle_regeneration_manifest=tests/oracle-regeneration-manifest.txt
 readonly bib_upstream_commit=74252e608e5f8115375c532eb25416430a9f52eb
 
@@ -77,7 +77,7 @@ Reference tools:
   The fonts live check requires tftopl on PATH, or
   UMBER_REF_TFTOPL=/absolute/path/to/tftopl.
 
-  PDF regeneration requires pdfTeX 1.40.27 and pdftoppm 25.08.0. Set
+  PDF regeneration requires pdfTeX 1.40.29 and pdftoppm 25.08.0. Set
   UMBER_REF_PDFTEX and UMBER_PDF_RENDERER to select their absolute paths.
 
   Regeneration pins SOURCE_DATE_EPOCH by default so Umber and the reference
@@ -89,12 +89,11 @@ Reference tools:
   exports commit 74252e608e5f8115375c532eb25416430a9f52eb directly from Git;
   the clone's checkout and working-tree modifications are ignored.
 
-  Classic BibTeX regeneration builds the hash-pinned TeX Live 2025 Web2C
+  Classic BibTeX regeneration builds the hash-pinned TeX Live 2026 Web2C
   source cached under third_party/texlive-source, verifies the merged
   bibtex.web+bibtex.ch program, configuration, and executable identities, and
-  runs the committed cases in an empty environment. Set
-  UMBER_REF_TEXLIVE_SOURCE to select an equivalent cache root containing the
-  pinned archive, src, and build directories.
+  runs the committed cases in an empty environment. Source acquisition always
+  uses the primary checkout's pinned archive and extracted tree.
 
   TeX82, e-TeX, and pdfTeX oracle regeneration build separate clean and
   instrumentation-capable executables, verify ordinary-output transparency, and
@@ -106,7 +105,7 @@ Reference tools:
   The supported explicit oracle selectors and profiles are:
     tex82       initex-eight-bit
     etex26      compatibility+extended-eight-bit
-    pdftex14027 initex-etex-eight-bit
+    pdftex14029 initex-etex-eight-bit
     all         canonical
   Each committed selector under tests/corpus/command/tex82 (one row per
   fixture in tests/oracle-regeneration-manifest.txt, e.g.
@@ -158,7 +157,7 @@ is_known_area() {
        "$1" == "$bib_area" || "$1" == "$bibtex_area" || \
        "$1" == "$command_semantic_area" || \
        "$1" == "$tex82_oracle_area" || "$1" == "$etex26_oracle_area" || \
-       "$1" == "$pdftex14027_oracle_area" || \
+       "$1" == "$pdftex14029_oracle_area" || \
        "$1" == "fonts" ]]
 }
 
@@ -391,11 +390,11 @@ regen_e2e_case() {
   case "$case" in
     story|gentle)
       [[ -f "${repo_root}/third_party/corpus/${case}.tex" ]] || \
-        die "missing third_party/corpus/${case}.tex; run scripts/setup-conformance-tests.sh"
+        die "missing third_party/corpus/${case}.tex; run python3 scripts/provision.py worktree ."
       [[ -f "${repo_root}/third_party/corpus/plain.tex" ]] || \
-        die "missing third_party/corpus/plain.tex; run scripts/setup-conformance-tests.sh"
+        die "missing third_party/corpus/plain.tex; run python3 scripts/provision.py worktree ."
       [[ -f "${repo_root}/third_party/hyphen/hyphen.tex" ]] || \
-        die "missing third_party/hyphen/hyphen.tex; run scripts/fetch-conformance-inputs.sh"
+        die "missing third_party/hyphen/hyphen.tex; run python3 scripts/provision.py worktree ."
       build_parity_harness_once
       run_command "Regenerating e2e/${case} reference DVI fixture" \
         "$parity_harness_bin" \
@@ -422,15 +421,12 @@ regen_trip_pdftex_fixture() {
   local pdftex="${UMBER_REF_PDFTEX:-}"
   local tmp_root
   local status
-  if [[ -z "$pdftex" ]]; then
-    pdftex="$(command -v pdftex || true)"
-  fi
   [[ -n "$pdftex" && -x "$pdftex" ]] || \
-    die "could not locate pdftex; set UMBER_REF_PDFTEX=/absolute/path/to/pdftex"
+    die "missing pinned pdfTeX 1.40.29 oracle; run python3 scripts/provision.py oracle pdftex14029 and set UMBER_REF_PDFTEX to its instrumented executable"
   [[ -f "${repo_root}/third_party/trip/trip.tex" ]] || \
-    die "missing third_party/trip/trip.tex; run scripts/fetch-conformance-inputs.sh"
+    die "missing third_party/trip/trip.tex; run python3 scripts/provision.py worktree ."
   [[ -f "${repo_root}/third_party/trip/trip.tfm" ]] || \
-    die "missing third_party/trip/trip.tfm; run scripts/fetch-conformance-inputs.sh"
+    die "missing third_party/trip/trip.tfm; run python3 scripts/provision.py worktree ."
 
   tmp_root="$(mktemp -d)"
   cp "${repo_root}/third_party/trip/trip.tex" "$tmp_root/trip.tex"
@@ -478,15 +474,12 @@ regen_etrip_pdftex_fixture() {
   local pdftex="${UMBER_REF_PDFTEX:-}"
   local tmp_root
   local status
-  if [[ -z "$pdftex" ]]; then
-    pdftex="$(command -v pdftex || true)"
-  fi
   [[ -n "$pdftex" && -x "$pdftex" ]] || \
-    die "could not locate pdftex; set UMBER_REF_PDFTEX=/absolute/path/to/pdftex"
+    die "missing pinned pdfTeX 1.40.29 oracle; run python3 scripts/provision.py oracle pdftex14029 and set UMBER_REF_PDFTEX to its instrumented executable"
   [[ -f "${repo_root}/third_party/trip/etrip.tex" ]] || \
-    die "missing third_party/trip/etrip.tex; run scripts/fetch-conformance-inputs.sh"
+    die "missing third_party/trip/etrip.tex; run python3 scripts/provision.py worktree ."
   [[ -f "${repo_root}/third_party/trip/trip.tfm" ]] || \
-    die "missing third_party/trip/trip.tfm; run scripts/fetch-conformance-inputs.sh"
+    die "missing third_party/trip/trip.tfm; run python3 scripts/provision.py worktree ."
 
   tmp_root="$(mktemp -d)"
   {
@@ -673,7 +666,7 @@ validate_oracle_contract() {
     { print FILENAME ":" FNR ": unknown contract record: " $1 > "/dev/stderr"; exit 1 }
   ' "$oracle_regeneration_manifest" ||
     die 'oracle regeneration contract contains an unknown record'
-  for engine in tex82 etex26 pdftex14027; do
+  for engine in tex82 etex26 pdftex14029; do
     [[ "$(awk -v engine="$engine" \
       '$1 == "engine" && $2 == engine { count++ } END { print count + 0 }' \
       "$oracle_regeneration_manifest")" -eq 1 ]] ||
@@ -686,9 +679,9 @@ validate_oracle_contract() {
     [[ -z "${extra:-}" ]] || die "unexpected field in ${engine} contract row"
     row_count=$((row_count + 1))
     case "${engine}:${profile}:${area}:${build_identity}" in
-      tex82:initex-eight-bit:tex82-oracle:tex82-oracle-web2c-texlive-2025 | \
-      etex26:compatibility+extended-eight-bit:etex26-oracle:etex26-oracle-web2c-texlive-2025 | \
-      pdftex14027:initex-etex-eight-bit:pdftex14027-oracle:pdftex14027-oracle-web2c-texlive-2025)
+      tex82:initex-eight-bit:tex82-oracle:tex82-oracle-web2c-texlive-2026 | \
+      etex26:compatibility+extended-eight-bit:etex26-oracle:etex26-oracle-web2c-texlive-2026 | \
+      pdftex14029:initex-etex-eight-bit:pdftex14029-oracle:pdftex14029-oracle-web2c-texlive-2026)
         ;;
       *)
         die "unsupported oracle identity/profile contract: ${engine}:${profile}"
@@ -790,9 +783,9 @@ validate_oracle_build_record() {
         grep -Fqx 'profile extended invocation-input *smoke.tex' "$record" ||
         die 'e-TeX build profile identity drift'
       ;;
-    pdftex14027)
+    pdftex14029)
       grep -Fqx 'engine pdfTeX' "$record" &&
-        grep -Fqx 'engine-version 1.40.27' "$record" &&
+        grep -Fqx 'engine-version 1.40.29' "$record" &&
         grep -Fqx 'etex-version 2.6' "$record" &&
         grep -Fqx 'character-profile eight-bit-exact' "$record" &&
         grep -Fqx 'invocation-profile INITEX-with-etex-extensions' "$record" ||
@@ -942,7 +935,7 @@ write_cross_engine_oracle_record() {
     printf 'contract-schema 2\n'
     printf 'event-schema 1\n'
     printf 'contract-sha256 %s\n' "$(sha256_file "$oracle_regeneration_manifest")"
-    for engine in tex82 etex26 pdftex14027; do
+    for engine in tex82 etex26 pdftex14029; do
       row="$(oracle_contract_row "$engine")"
       read -r _ _ profile area manifest_path manifest_digest build_identity <<<"$row"
       printf 'engine %s %s %s %s\n' \
@@ -968,7 +961,7 @@ regen_oracle() {
   case "$engine" in
     tex82) expected_profile=initex-eight-bit ;;
     etex26) expected_profile=compatibility+extended-eight-bit ;;
-    pdftex14027) expected_profile=initex-etex-eight-bit ;;
+    pdftex14029) expected_profile=initex-etex-eight-bit ;;
     all) expected_profile=canonical ;;
     *) die "unknown oracle engine: ${engine}" ;;
   esac
@@ -999,7 +992,7 @@ regen_oracle() {
   [[ "$offline" -eq 0 ]] || builder_args+=(--offline)
 
   if [[ "$engine" == all ]]; then
-    selected_engines=(tex82 etex26 pdftex14027)
+    selected_engines=(tex82 etex26 pdftex14029)
   else
     selected_engines=("$engine")
   fi
@@ -1007,7 +1000,7 @@ regen_oracle() {
     case "$engine" in
       tex82) area="$tex82_oracle_area" ;;
       etex26) area="$etex26_oracle_area" ;;
-      pdftex14027) area="$pdftex14027_oracle_area" ;;
+      pdftex14029) area="$pdftex14029_oracle_area" ;;
     esac
     run_command "Running ${engine} canonical transparency workflow" \
       "${repo_root}/scripts/build-${area}.sh" "${builder_args[@]}"
@@ -1093,10 +1086,13 @@ regen_bib_area() {
 }
 
 regen_bibtex_area() {
-  local cache_root="${UMBER_REF_TEXLIVE_SOURCE:-${repo_root}/third_party/texlive-source}"
+  local cache_root="${repo_root}/third_party/texlive-source"
   local source_dir="${cache_root}/src"
-  local build_dir="${cache_root}/build"
-  local archive="${cache_root}/texlive-20250308-source.tar.xz"
+  local build_dir="${cache_root}/build-trip-20260301"
+  local source_lock="${repo_root}/tests/texlive-source.lock"
+  local source_name
+  source_name="$(awk '$1 == "archive" { print $2 }' "$source_lock")"
+  local archive="${cache_root}/${source_name}"
   local executable="${build_dir}/texk/web2c/bibtex"
   local fixture_dir
   local candidate_root
@@ -1104,33 +1100,32 @@ regen_bibtex_area() {
   local case_dir
   local exit_status
   local manifest_tmp
-  local expected_archive_sha512="0837c935488b96cfc8dd79f1298f283b467ab68b4163cee9cb04b79e80195982fdc5ae8a80058dc7d3e99206bfda8b3bdd11340425b08f60cbef70d5a0e22702"
+  local expected_archive_sha512
+  expected_archive_sha512="$(awk '$1 == "archive" { print $4 }' "$source_lock")"
 
   command -v openssl >/dev/null || die 'openssl is required to hash classic BibTeX fixtures'
   command -v jq >/dev/null || die 'jq is required to update the classic BibTeX fixture manifest'
   if [[ ! -f "$archive" || ! -f "${source_dir}/configure" ]]; then
-    [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] || \
-      die "selected TeX Live cache is incomplete: ${cache_root}"
     run_command 'Acquiring pinned TeX Live source for classic BibTeX' \
-      "${repo_root}/scripts/build-trip-initex.sh"
+      python3 "${repo_root}/scripts/provision.py" source "$repo_root"
   fi
   [[ "$(sha512_file "$archive")" == "$expected_archive_sha512" ]] || \
     die "pinned TeX Live archive identity mismatch: ${archive}"
   [[ "$(sha256_file "${source_dir}/texk/web2c/bibtex.web")" == \
-      "38b9ba09fce5abb6f7ec135a2474b26c0d8c3a8b883df2d1c07072d33bc331ed" ]] || \
+      "04c15be36dce19be38361617f139b1b8a70aa21f97def5cdc478622941398fa0" ]] || \
     die 'bibtex.web identity mismatch'
   [[ "$(sha256_file "${source_dir}/texk/web2c/bibtex.ch")" == \
-      "9bffb931a113278d3c9304248a70b47f2576f7ee86fe6c1ae2160865ed0ea716" ]] || \
+      "56d1047c1934d24013363308f1151996498be20a55522adf02fae66808c173ea" ]] || \
     die 'bibtex.ch identity mismatch'
   [[ "$(sha256_file "${source_dir}/texk/kpathsea/texmf.cnf")" == \
-      "75cc5499ea9d15d1cf68722e75c846155fac55f1bbc2f0ca102ff5d423f49b29" ]] || \
+      "a2e9447fc8b6dfa407fa8d0d710e59b039e22598e3f17de0bdf54daba478742c" ]] || \
     die 'classic BibTeX texmf.cnf identity mismatch'
 
   if [[ ! -f "${build_dir}/texk/web2c/Makefile" ]]; then
     [[ "$cache_root" == "${repo_root}/third_party/texlive-source" ]] || \
       die "selected TeX Live cache has no configured Web2C build: ${cache_root}"
     run_command 'Configuring pinned Web2C build for classic BibTeX' \
-      "${repo_root}/scripts/build-trip-initex.sh" --offline
+      python3 "${repo_root}/scripts/provision.py" oracle trip --offline
   fi
   run_command 'Building pinned classic BibTeX reference' \
     make -C "${build_dir}/texk/web2c" bibtex
@@ -1387,7 +1382,7 @@ regen_bibtex_area() {
 }
 
 # Derives the per-channel contract for every declarative minifixture against
-# the pinned instrumented pdfTeX 1.40.27 oracle.
+# the pinned instrumented pdfTeX 1.40.29 oracle.
 #
 # This runs the same `tex_command_stream::semantic` code the gate runs, so a
 # regenerated contract cannot describe a run the gate would not reproduce.
@@ -1396,7 +1391,7 @@ regen_bibtex_area() {
 # by comparing Umber's own run against that capture. It therefore needs
 # `scripts/run-minifixture-oracle.sh --all` to have already populated
 # `target/minifixture-oracle` (which in turn needs
-# `scripts/build-pdftex14027-oracle.sh` and `UMBER_REF_TEXLIVE_SOURCE`) --
+# `python3 scripts/provision.py oracle pdftex14029`) --
 # this function does not run either script itself, and fails loudly, listing
 # every affected case, rather than silently regenerating against a missing or
 # stale capture.
@@ -1437,7 +1432,7 @@ regen_area() {
     regen_command_semantic_area "$command_semantic_profile" "$command_semantic_allowlist"
   elif [[ "$area" == "$tex82_oracle_area" || \
           "$area" == "$etex26_oracle_area" || \
-          "$area" == "$pdftex14027_oracle_area" ]]; then
+          "$area" == "$pdftex14029_oracle_area" ]]; then
     die "use --oracle ENGINE --profile PROFILE for oracle regeneration"
   else
     run_fonts_live_check
@@ -1490,8 +1485,8 @@ regen_case() {
     die '--case is not meaningful for the TeX82 oracle build'
   elif [[ "$area" == "$etex26_oracle_area" ]]; then
     die '--case is not meaningful for the e-TeX 2.6 oracle build'
-  elif [[ "$area" == "$pdftex14027_oracle_area" ]]; then
-    die '--case is not meaningful for the pdfTeX 1.40.27 oracle build'
+  elif [[ "$area" == "$pdftex14029_oracle_area" ]]; then
+    die '--case is not meaningful for the pdfTeX 1.40.29 oracle build'
   elif is_text_area "$area"; then
     printf 'Regenerating text area %s for requested case %s\n' "$area" "$case" >&2
     build_fixturegen_once

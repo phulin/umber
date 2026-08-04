@@ -1,6 +1,6 @@
 # PDF Tagged Spacing and Accessibility
 
-This document defines Umber's implementation boundary for pdfTeX 1.40.27's
+This document defines Umber's implementation boundary for pdfTeX 1.40.29's
 fake-interword-space controls. Durable task status lives in Beads under
 `umber2-kbz0.18`; this is the technical design and verification contract.
 
@@ -73,7 +73,7 @@ replace the already loaded document font.
 | Regression    | focused crate tests, PDF parity fixtures, full workspace tests, rustfmt, and clippy pass                             |
 
 The committed `pdf/embedded_tagged_spacing` corpus case is the pinned
-pdfTeX 1.40.27/Poppler 25.08.0 oracle for this matrix. It records reference and
+pdfTeX 1.40.29/Poppler 25.08.0 oracle for this matrix. It records reference and
 Umber structures separately because pdfTeX embeds its fallback Type-1 font
 while Umber deliberately creates the equivalent invisible Type-3 `/space`
 through `pdf_writer`; exact extraction and raster attestations remain shared.

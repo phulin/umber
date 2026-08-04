@@ -213,7 +213,7 @@ fn provider_fails_closed_for_cache_profile_backend_and_guards() {
     ));
 
     let pdf_fixture = provider
-        .prepare(&FormatRecipe::production_pdftex14027())
+        .prepare(&FormatRecipe::production_pdftex14029())
         .expect("prepare pdfTeX");
     let mut recorder = Recorder::default();
     let mut request = job(b"\\end\n", &mut recorder);

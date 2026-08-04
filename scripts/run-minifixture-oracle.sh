@@ -7,8 +7,8 @@ cd "$repo_root"
 corpus_root="tests/corpus/command-semantic"
 target_dir="${CARGO_TARGET_DIR:-target}"
 [[ "$target_dir" == /* ]] || target_dir="${repo_root}/${target_dir}"
-oracle_dir="${target_dir}/pdftex14027-oracle"
-executable="${UMBER_MINIFIXTURE_ORACLE_EXECUTABLE:-${oracle_dir}/bin/umber-pdftex14027-oracle-instrumented}"
+oracle_dir="${target_dir}/pdftex14029-oracle"
+executable="${UMBER_MINIFIXTURE_ORACLE_EXECUTABLE:-${oracle_dir}/bin/umber-pdftex14029-oracle-instrumented}"
 out_root="${target_dir}/minifixture-oracle"
 # Dumped formats for the two profiles built past INITEX (see
 # `ensure_format` below). One format per profile, shared by every case that
@@ -16,16 +16,14 @@ out_root="${target_dir}/minifixture-oracle"
 # declared `font_inputs` TFM is.
 format_source_dir="${out_root}/_formats"
 
-# The instrumented pdfTeX 1.40.27 executable is a Web2C program: it needs a
+# The instrumented pdfTeX 1.40.29 executable is a Web2C program: it needs a
 # kpathsea configuration (texmf.cnf) to find *any* file, including one in its
 # own working directory (verified: without TEXMFCNF it cannot even open the
 # fixture given on its command line). The oracle is built from a pinned
 # TeX Live source checkout that is too large to duplicate per git worktree,
-# so, exactly like scripts/build-pdftex14027-oracle.sh, the checkout is
-# selected by UMBER_REF_TEXLIVE_SOURCE and defaults to third_party/texlive-source
-# relative to this checkout.
-cache_root="${UMBER_REF_TEXLIVE_SOURCE:-third_party/texlive-source}"
-[[ "$cache_root" == /* ]] || cache_root="${repo_root}/${cache_root}"
+# so `provision.py source` symlinks it from the primary checkout into linked
+# worktrees rather than allowing an ambient source selection.
+cache_root="${repo_root}/third_party/texlive-source"
 source_dir="${cache_root}/src"
 texmfcnf_dir="${source_dir}/texk/kpathsea"
 
@@ -37,15 +35,15 @@ usage: scripts/run-minifixture-oracle.sh (--case DOMAIN/CASE-ID)... | --all
        scripts/run-minifixture-oracle.sh --profile PROFILE --allowlist FILE
 
 Run one or more tests/corpus/command-semantic minifixture sources through the
-pinned, already-built INSTRUMENTED pdfTeX 1.40.27 oracle
-(target/pdftex14027-oracle/bin/umber-pdftex14027-oracle-instrumented) and
+pinned, already-built INSTRUMENTED pdfTeX 1.40.29 oracle
+(target/pdftex14029-oracle/bin/umber-pdftex14029-oracle-instrumented) and
 capture every channel that fixture's manifest entry can produce: terminal
 text, the raw and host-clock-normalized log, the DVI/PDF page artifact,
 status.txt (exit code), any writer-effect files the source itself opens, and
-the schema-v1 pdftex14027-events.jsonl command trace.
+the schema-v1 pdftex14029-events.jsonl command trace.
 
 This script never builds the oracle (run
-scripts/build-pdftex14027-oracle.sh first if target/pdftex14027-oracle is
+python3 scripts/provision.py oracle pdftex14029 first if target/pdftex14029-oracle is
 missing) and performs no network access.
 
 Each selected case is staged and run under:
@@ -59,15 +57,7 @@ Options:
   --help, -h              Show this message.
 
 Environment:
-  UMBER_REF_TEXLIVE_SOURCE   Selects the extracted TeX Live 2025 source
-                             checkout used for TEXMFCNF (see
-                             scripts/build-pdftex14027-oracle.sh). Defaults to
-                             third_party/texlive-source relative to this
-                             checkout; that directory is gitignored and, in a
-                             fresh worktree, is normally not present, so this
-                             usually needs to point at the checkout that built
-                             the oracle.
-  CARGO_TARGET_DIR          Relocates target/pdftex14027-oracle and the output
+  CARGO_TARGET_DIR          Relocates target/pdftex14029-oracle and the output
                              directory the same way the build script does.
 EOF
 }
@@ -136,9 +126,9 @@ fi
 
 command -v jq >/dev/null || fail "jq is required"
 [[ -x "$executable" ]] ||
-  fail "instrumented oracle not built: $executable (run scripts/build-pdftex14027-oracle.sh)"
+  fail "instrumented oracle not built: $executable (run python3 scripts/provision.py oracle pdftex14029)"
 [[ -f "${texmfcnf_dir}/texmf.cnf" ]] ||
-  fail "missing kpathsea config at ${texmfcnf_dir}/texmf.cnf; set UMBER_REF_TEXLIVE_SOURCE to a checkout with an extracted texlive-source/src tree"
+  fail "missing kpathsea config at ${texmfcnf_dir}/texmf.cnf; run python3 scripts/provision.py source ."
 if [[ -n "$required_profile" ]]; then
   format_name="$required_profile"
   [[ "$required_profile" == raw-tex82-loaded ]] && format_name=production
@@ -152,7 +142,7 @@ fi
 #   etex-initex              -> `-ini -etex`       INITEX with e-TeX extensions
 #                                                   active; this is the exact
 #                                                   invocation the rest of
-#                                                   scripts/build-pdftex14027-oracle.sh
+#                                                   provision.py oracle pdftex14029
 #                                                   already uses.
 #   etex-loaded              -> `-fmt=etex-loaded` A real e-TeX INITEX job
 #                                                   dumps `etex-loaded.fmt`
@@ -305,7 +295,7 @@ ensure_format() {
 
 # Interaction mode.
 #
-# scripts/build-pdftex14027-oracle.sh uses -interaction=batchmode for most of
+# The pdftex14029 oracle builder uses -interaction=batchmode for most of
 # its own fixed fixtures: that suppresses nearly all terminal text (measured
 # ~126 bytes per run), which would make this runner's terminal channel
 # vacuous for comparison purposes.
@@ -488,12 +478,12 @@ run_one_case() {
   # produced (e.g. `\openout`/`\write` to a file it names, as
   # page-output/open-close-effect-observation.tex does). The corpus does not
   # use the fixed "<jobname>-effects.out" convention
-  # scripts/build-pdftex14027-oracle.sh's own transitions/extensions/state
+  # The pdftex14029 oracle builder's own transitions/extensions/state
   # fixtures use (only one of 202 sources calls \openout at all, and it opens
   # a name of its own choosing), so effect artifacts are discovered rather
   # than assumed.
   local -a staged=("$source_name" "${stem}.log" ordinary.log "${stem}.dvi" "${stem}.pdf" \
-    status.txt terminal.txt pdftex14027-events.jsonl "${format_name}.fmt")
+    status.txt terminal.txt pdftex14029-events.jsonl "${format_name}.fmt")
   local key
   while IFS= read -r key; do staged+=("$key"); done \
     < <(jq -r '(.inputs // {}) | keys[]' <<<"$case_json")
@@ -517,7 +507,7 @@ run_one_case() {
   printf ' ordinary.log=%s' "$(byte_size "${run_dir}/ordinary.log")"
   printf ' dvi=%s' "$(byte_size "${run_dir}/${stem}.dvi")"
   printf ' pdf=%s' "$(byte_size "${run_dir}/${stem}.pdf")"
-  printf ' events=%s' "$(byte_size "${run_dir}/pdftex14027-events.jsonl")"
+  printf ' events=%s' "$(byte_size "${run_dir}/pdftex14029-events.jsonl")"
   if [[ "${#effect_artifacts[@]}" -gt 0 ]]; then
     printf ' effects=%s' "${effect_artifacts[*]}"
   else

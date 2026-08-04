@@ -510,7 +510,7 @@ fn kern_subtype_dump_matrix_preserves_canonical_spacing_and_annotations() {
             DumpConfig {
                 breadth: 100,
                 depth: 100,
-                profile: tex_command::CommandProfile::PDFTEX14027,
+                profile: tex_command::CommandProfile::PDFTEX14029,
             },
         ),
         concat!(
@@ -937,7 +937,7 @@ fn default_show_box_breadth_renders_top_level_box_instead_of_etc() {
     let config = DumpConfig::read(&stores);
     let text = dump_node_list(&stores, list, config);
 
-    // Real pdftex 1.40.27 writes exactly this line for `\showbox0` after
+    // Real pdftex 1.40.29 writes exactly this line for `\showbox0` after
     // `\setbox0=\hbox{\kern1pt}` (confirmed against the pinned oracle).
     assert_eq!(text, "\\hbox(0.0+0.0)x1.0 []\n");
 }

@@ -1,4 +1,4 @@
-% Final transparent base command-core instrumentation for canonical pdfTeX 1.40.27.
+% Final transparent base command-core instrumentation for canonical pdfTeX 1.40.29.
 % The observer owns only a detached text file, a sequence counter, and flags.
 
 @x [4] Observer-owned globals.
@@ -962,7 +962,7 @@ procedure umber_trace_open;
 begin umber_trace_sequence:=0; umber_recovery_insert:=false;
 umber_alignment_depth:=0; umber_mutation_command:=false;
 umber_line_shift:=0; umber_shift_tail:=0; umber_shift_pos:=0;
-  rewrite(umber_trace_file,'pdftex14027-events.jsonl');
+  rewrite(umber_trace_file,'pdftex14029-events.jsonl');
 umber_trace_opened:=true;
 if umber_trace_opened then write_ln(umber_trace_file,
  '{"schema":1,"manifest":',

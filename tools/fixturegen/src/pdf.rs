@@ -12,7 +12,7 @@ use super::umber_bin;
 use crate::cohort_transaction::CohortCase;
 use crate::layout_migration::{Mode, run_staged_cohort};
 
-const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025)";
+const PDFTEX_VERSION: &str = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)";
 const RENDERER_VERSION: &str = "pdftoppm version 25.08.0";
 const EXTRACTOR_VERSION: &str = "pdftotext version 25.08.0";
 const RENDERER_ARGS: &[&str] = &["-r", "72", "-gray", "-singlefile"];

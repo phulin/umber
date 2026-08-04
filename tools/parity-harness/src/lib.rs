@@ -12,6 +12,7 @@ pub use trip_triage::{
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "reference-tools")]
 use std::process::Command;
 
 #[cfg(feature = "reference-tools")]
@@ -153,7 +154,7 @@ pub fn run_named_fixture_document(
     let format_source_path = repo_root
         .join("third_party/corpus")
         .join(&doc.format_source);
-    let staged = staged_source_dir(&repo_root, &source_path, &format_source_path, false, false)?;
+    let staged = staged_source_dir(&repo_root, &source_path, &format_source_path, false)?;
     let actual = run_umber(&staged.path().join(JOB_NAME))
         .map_err(|error| anyhow!("Umber failed for {document}: {error}"))?;
     let actual_path = repo_root
@@ -195,7 +196,7 @@ pub fn run_named_external_document(
     let source_path = repo_root.join("third_party/corpus").join(document);
     if !source_path.is_file() {
         bail!(
-            "missing external conformance input {}; run scripts/setup-conformance-tests.sh first",
+            "missing external conformance input {}; run python3 scripts/provision.py worktree . first",
             source_path.display()
         );
     }
@@ -627,7 +628,7 @@ fn run_reference_dvi(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<EngineDvi> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, false, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, false)?;
     let output = ref_tex.run_in_dir(
         temp.path(),
         Path::new(JOB_NAME),
@@ -652,7 +653,7 @@ fn run_umber_dvi(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<UmberRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, false, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, false)?;
     let dvi_path = temp.path().join("umber.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
@@ -718,7 +719,7 @@ fn run_reference_trace(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<TraceRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, true, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, true)?;
     let output = ref_tex.run_in_dir(
         temp.path(),
         Path::new(JOB_NAME),
@@ -743,7 +744,7 @@ fn run_umber_trace(
     source_path: &Path,
     format_source_path: &Path,
 ) -> Result<TraceRun> {
-    let temp = staged_source_dir(repo_root, source_path, format_source_path, true, true)?;
+    let temp = staged_source_dir(repo_root, source_path, format_source_path, true)?;
     let dvi_path = temp.path().join("umber-trace.dvi");
     let umber_bin = runnable_umber_bin(umber_bin)?;
     let output = Command::new(&umber_bin)
@@ -792,10 +793,10 @@ fn copy_source(source_path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) -> Result<()> {
+fn copy_corpus_tfms(repo_root: &Path, dest: &Path) -> Result<()> {
     for name in PLAIN_PRELOAD_FONTS {
         let target = dest.join(format!("{name}.tfm"));
-        let source = locate_tfm(repo_root, name, allow_system_lookup)?
+        let source = locate_tfm(repo_root, name)?
             .ok_or_else(|| anyhow!("could not locate required plain TeX font metric {name}.tfm"))?;
         fs::copy(&source, &target).with_context(|| {
             format!(
@@ -808,13 +809,8 @@ fn copy_corpus_tfms(repo_root: &Path, dest: &Path, allow_system_lookup: bool) ->
     Ok(())
 }
 
-/// Resolves one `PLAIN_PRELOAD_FONTS` entry to an on-disk TFM path: a committed
-/// fixture, the gitignored corpus cache, then (when permitted) `kpsewhich`.
-pub fn locate_tfm(
-    repo_root: &Path,
-    name: &str,
-    allow_system_lookup: bool,
-) -> Result<Option<PathBuf>> {
+/// Resolves one `PLAIN_PRELOAD_FONTS` entry from repository-provisioned bytes.
+pub fn locate_tfm(repo_root: &Path, name: &str) -> Result<Option<PathBuf>> {
     let local = repo_root.join(format!("crates/tex-fonts/tests/fixtures/cm/{name}.tfm"));
     if local.exists() {
         return Ok(Some(local));
@@ -823,25 +819,7 @@ pub fn locate_tfm(
     if cached.exists() {
         return Ok(Some(cached));
     }
-    if !allow_system_lookup {
-        return Ok(None);
-    }
-
-    let output = Command::new("kpsewhich")
-        .arg(format!("{name}.tfm"))
-        .output();
-    let Ok(output) = output else {
-        return Ok(None);
-    };
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if path.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(PathBuf::from(path)))
-    }
+    Ok(None)
 }
 
 fn staged_source_dir(
@@ -849,7 +827,6 @@ fn staged_source_dir(
     source_path: &Path,
     format_source_path: &Path,
     tracing: bool,
-    allow_system_font_lookup: bool,
 ) -> Result<tempfile::TempDir> {
     let temp = tempfile::tempdir().context("failed to create parity job temp dir")?;
     copy_source(source_path, temp.path())?;
@@ -857,12 +834,12 @@ fn staged_source_dir(
     let hyphen = repo_root.join("third_party/hyphen/hyphen.tex");
     if !hyphen.is_file() {
         bail!(
-            "missing {}; run scripts/fetch-conformance-inputs.sh before e2e parity",
+            "missing {}; run python3 scripts/provision.py worktree . before e2e parity",
             hyphen.display()
         );
     }
     copy_source(&hyphen, temp.path())?;
-    copy_corpus_tfms(repo_root, temp.path(), allow_system_font_lookup)?;
+    copy_corpus_tfms(repo_root, temp.path())?;
     let file_name = source_path
         .file_name()
         .ok_or_else(|| anyhow!("path has no file name: {}", source_path.display()))?;

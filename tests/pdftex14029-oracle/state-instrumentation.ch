@@ -7,7 +7,7 @@ umber_trace_scanner(3,cur_val_level);
 exit:end;
 @y
 @<Fix the reference count, if any, and negate |cur_val| if |negative|@>;
-if m=16 then {canonical pdfTeX 1.40.27 |elapsed_time_code|}
+if m=16 then {canonical pdfTeX 1.40.29 |elapsed_time_code|}
   begin
   umber_trace_pdf_enquiry(3,cur_val);
   umber_pdf_timer_enquiry:=true;

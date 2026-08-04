@@ -293,7 +293,7 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("first PDF execution");
@@ -327,7 +327,7 @@ fn object_dictionary_pdf_replays_to_identical_bytes_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("replayed PDF execution");
@@ -358,7 +358,7 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("first navigation execution");
@@ -375,7 +375,7 @@ fn navigation_fixture_replays_graph_bytes_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("replayed navigation execution");
@@ -420,7 +420,7 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("first form execution");
@@ -457,7 +457,7 @@ fn form_xobject_fixture_replays_bytes_artifacts_positions_and_state() {
     umber::run_memory_with_stores_and_profile(
         &source,
         &mut stores,
-        tex_command::CommandProfile::PDFTEX14027,
+        tex_command::CommandProfile::PDFTEX14029,
         false,
     )
     .expect("replayed form execution");

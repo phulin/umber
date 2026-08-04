@@ -190,7 +190,7 @@ pub enum SessionProfile {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExecutionRoute {
     Fresh,
-    ProductionPdftex14027Loaded,
+    ProductionPdftex14029Loaded,
     RawEtex26Loaded,
     RawTex82Loaded,
 }
@@ -200,7 +200,7 @@ impl SessionProfile {
     pub const fn execution_route(self) -> ExecutionRoute {
         match self {
             Self::EtexLoaded => ExecutionRoute::RawEtex26Loaded,
-            Self::Production => ExecutionRoute::ProductionPdftex14027Loaded,
+            Self::Production => ExecutionRoute::ProductionPdftex14029Loaded,
             Self::RawTex82Loaded => ExecutionRoute::RawTex82Loaded,
             Self::Initex | Self::EtexInitex => ExecutionRoute::Fresh,
         }
@@ -1088,8 +1088,8 @@ pub fn execute_with_provider(
     provider: &umber::PreparedFormatProvider,
 ) -> Result<SemanticRun, String> {
     match case.profile.execution_route() {
-        ExecutionRoute::ProductionPdftex14027Loaded => {
-            execute_production_pdftex14027_loaded(source, case, provider)
+        ExecutionRoute::ProductionPdftex14029Loaded => {
+            execute_production_pdftex14029_loaded(source, case, provider)
         }
         ExecutionRoute::RawEtex26Loaded => execute_raw_etex26_loaded(source, case, provider),
         ExecutionRoute::RawTex82Loaded => execute_raw_tex82_loaded(source, case, provider),
@@ -1185,7 +1185,7 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
     // precede the root file's own `(` (see `crate::job`'s doc comment on
     // `begin_job`). `first_line` echoes what the oracle is invoked with on
     // its command line -- the bare source filename, e.g. `show-box.tex`.
-    control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14027);
+    control.set_engine_binary(tex_exec::EngineBinaryIdentity::Pdftex14029);
     control.begin_job(&mut universe, &case.source);
     // kpathsea resolves a same-directory file through `./`, so pdfTeX's §537
     // `a_make_name_string` records (and prints) `./show-box.tex` rather than
@@ -1315,24 +1315,24 @@ pub fn loaded_format_recipe(route: ExecutionRoute) -> Option<umber::FormatRecipe
     match route {
         ExecutionRoute::RawTex82Loaded => Some(raw_tex82_recipe()),
         ExecutionRoute::RawEtex26Loaded => Some(raw_etex26_recipe()),
-        ExecutionRoute::ProductionPdftex14027Loaded => {
-            Some(umber::FormatRecipe::production_pdftex14027())
+        ExecutionRoute::ProductionPdftex14029Loaded => {
+            Some(umber::FormatRecipe::production_pdftex14029())
         }
         ExecutionRoute::Fresh => None,
     }
 }
 
-fn execute_production_pdftex14027_loaded(
+fn execute_production_pdftex14029_loaded(
     source: &[u8],
     case: &Case,
     provider: &umber::PreparedFormatProvider,
 ) -> Result<SemanticRun, String> {
     execute_loaded_format(
         provider,
-        umber::FormatRecipe::production_pdftex14027(),
+        umber::FormatRecipe::production_pdftex14029(),
         source,
         case,
-        "production pdfTeX 1.40.27",
+        "production pdfTeX 1.40.29",
     )
 }
 
@@ -1390,7 +1390,7 @@ fn execute_loaded_format(
             &fixture,
             umber::PreparedFormatJob {
                 engine: recipe.engine,
-                engine_binary: tex_exec::EngineBinaryIdentity::Pdftex14027,
+                engine_binary: tex_exec::EngineBinaryIdentity::Pdftex14029,
                 backend: umber::OutputCapability::Dvi,
                 clock: tex_state::JobClock::default(),
                 interaction: case.interaction_mode.engine_mode(),
