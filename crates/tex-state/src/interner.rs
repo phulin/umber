@@ -413,12 +413,6 @@ impl Interner {
         self.spans.len()
     }
 
-    /// Number of bytes occupied by live interned string characters.
-    #[must_use]
-    pub(crate) fn character_count(&self) -> usize {
-        self.arena.len()
-    }
-
     /// Returns whether there are no live interned names.
     #[must_use]
     pub fn is_empty(&self) -> bool {

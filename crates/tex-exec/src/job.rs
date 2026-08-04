@@ -686,11 +686,13 @@ fn print_usage_statistics(stores: &mut Universe) {
         .print_nl("Here is how much of TeX's memory you used:")
         .print_nl(" ");
     print_usize(&mut printer, usage.strings);
-    printer.print(" strings out of 3000").print_nl(" ");
+    printer.print(" strings out of ");
+    print_usize(&mut printer, usage.string_capacity);
+    printer.print_nl(" ");
     print_usize(&mut printer, usage.string_characters);
-    printer
-        .print(" string characters out of 32000")
-        .print_nl(" ");
+    printer.print(" string characters out of ");
+    print_usize(&mut printer, usage.string_character_capacity);
+    printer.print_nl(" ");
     print_usize(&mut printer, usage.memory_words);
     printer.print(" words of memory out of 30000").print_nl(" ");
     print_usize(&mut printer, usage.control_sequences);

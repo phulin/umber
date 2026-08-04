@@ -1241,6 +1241,7 @@ pub enum FormatError {
 struct UniverseFormatPayload {
     interaction_mode: u8,
     pdf: PdfFormatState,
+    string_pool: crate::stores::StringPoolAccounting,
 }
 
 impl std::fmt::Display for FormatError {
@@ -1621,6 +1622,26 @@ impl Universe {
     #[must_use]
     pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {
         self.stores.engine_usage_statistics()
+    }
+
+    /// Records completed TeX82 `make_string` allocations owned outside the
+    /// control-sequence namespace.
+    pub fn record_string_pool_allocations(&mut self, strings: usize, characters: usize) {
+        self.stores.record_pool_strings(strings, characters);
+    }
+
+    pub fn flush_string_pool_allocations(&mut self, strings: usize, characters: usize) {
+        self.stores.flush_pool_strings(strings, characters);
+    }
+
+    #[must_use]
+    pub fn font_would_allocate(&self, font: &crate::font::LoadedFont) -> bool {
+        self.stores.font_would_allocate(font)
+    }
+
+    #[must_use]
+    pub fn string_pool_accounting(&self) -> crate::stores::StringPoolAccounting {
+        self.stores.string_pool_accounting()
     }
 
     /// Returns TeX82 §638's live `(var_used, dyn_used)` projection.
@@ -2694,13 +2715,16 @@ impl Universe {
         let Some(pdf) = pdf else {
             return Err(FormatError::NonEmptyPdfDocument);
         };
-        let stores = self
-            .stores
+        let mut stores = self.stores.clone();
+        stores.mark_string_pool_format_baseline();
+        let string_pool = stores.string_pool_accounting();
+        let stores = stores
             .encode_frozen_format()
             .map_err(map_store_format_error)?;
         let payload = bincode::serialize(&UniverseFormatPayload {
             interaction_mode: encode_interaction_mode(self.interaction_mode),
             pdf,
+            string_pool,
         })
         .map_err(|error| FormatError::InvalidState(error.to_string()))?;
         crate::format_container::encode(&[
@@ -2780,6 +2804,11 @@ impl Universe {
             })?;
         let format: UniverseFormatPayload = bincode::deserialize(payload.bytes.as_ref())
             .map_err(|error| FormatError::InvalidState(error.to_string()))?;
+        if !format.string_pool.has_current_profile() {
+            return Err(FormatError::InvalidState(
+                "unsupported string-pool accounting profile".to_owned(),
+            ));
+        }
         let mode = decode_interaction_mode(format.interaction_mode)?;
         let frozen = crate::stores::FrozenCoreSections {
             names: required_format_section(&container, crate::stores::NAMES_SECTION)?,
@@ -2800,6 +2829,7 @@ impl Universe {
         let environment = required_format_section(&container, crate::stores::FROZEN_ENV_SECTION)?;
         let mut stores = Stores::decode_frozen_format(environment, frozen, non_node, nodes)
             .map_err(map_store_format_error)?;
+        stores.restore_string_pool_accounting(format.string_pool);
         let clock = world.job_clock();
         install_job_clock_params(
             &mut |param, value| stores.set_int_param(param, value),

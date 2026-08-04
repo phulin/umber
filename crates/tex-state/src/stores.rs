@@ -17,6 +17,7 @@ use crate::font::{
 };
 use crate::font::{FontExpansion, FontExpansionConfigError, PdfFontCode};
 use crate::state_hash::StateHashFragment;
+use serde::{Deserialize, Serialize};
 
 type GroupExitObservation = (
     Vec<crate::token::TracedTokenWord>,
@@ -112,6 +113,7 @@ pub(crate) struct StoreSnapshot {
     owner: SnapshotOwner,
     env_snapshot: EnvSnapshot,
     interner_mark: InternerMark,
+    string_pool: StringPoolAccounting,
     token_mark: TokenStoreMark,
     provenance_mark: ProvenanceStoreMark,
     source_map_mark: SourceMapMark,
@@ -184,6 +186,7 @@ pub struct Stores {
     owner: StoreOwner,
     env: Env,
     interner: Interner,
+    string_pool: StringPoolAccounting,
     tokens: TokenStore,
     provenance: ProvenanceStore,
     source_map: SourceMap,
@@ -218,7 +221,9 @@ pub struct Stores {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct EngineUsageStatistics {
     pub strings: usize,
+    pub string_capacity: usize,
     pub string_characters: usize,
+    pub string_character_capacity: usize,
     pub memory_words: usize,
     pub control_sequences: usize,
     pub font_info_words: usize,
@@ -231,11 +236,88 @@ pub struct EngineUsageStatistics {
     pub save_stack: usize,
 }
 
+/// TeX82's string-pool counters and format-relative reporting profile.
+///
+/// The bytes themselves remain in their typed owners; this ledger models only
+/// the `make_string` side effect shared by those owners. Control-sequence names
+/// are deliberately one allocation class among several, not the pool owner.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StringPoolAccounting {
+    profile_version: u8,
+    strings: usize,
+    characters: usize,
+    init_str_ptr: usize,
+    init_pool_ptr: usize,
+    max_strings: usize,
+    pool_size: usize,
+}
+
+impl Default for StringPoolAccounting {
+    fn default() -> Self {
+        Self {
+            profile_version: 3,
+            // TeX82's INITEX profile begins after `get_strings_started` has
+            // installed the character strings and tex.pool vocabulary. These
+            // are profile coordinates, not job usage or fixture totals.
+            strings: 1_027,
+            characters: 106_841,
+            init_str_ptr: 1_027,
+            init_pool_ptr: 106_841,
+            // Web2C's TeX82 profile used by the pinned canonical oracle.
+            max_strings: 15_000,
+            pool_size: 125_000,
+        }
+    }
+}
+
+impl StringPoolAccounting {
+    fn allocate(&mut self, strings: usize, characters: usize) {
+        self.strings = self.strings.saturating_add(strings);
+        self.characters = self.characters.saturating_add(characters);
+    }
+
+    fn flush_last(&mut self, strings: usize, characters: usize) {
+        self.strings = self.strings.saturating_sub(strings);
+        self.characters = self.characters.saturating_sub(characters);
+    }
+
+    fn mark_format_baseline(&mut self) {
+        self.init_str_ptr = self.strings;
+        self.init_pool_ptr = self.characters;
+    }
+
+    #[must_use]
+    pub const fn used_strings(self) -> usize {
+        self.strings.saturating_sub(self.init_str_ptr)
+    }
+
+    #[must_use]
+    pub const fn used_characters(self) -> usize {
+        self.characters.saturating_sub(self.init_pool_ptr)
+    }
+
+    #[must_use]
+    pub const fn string_capacity(self) -> usize {
+        self.max_strings.saturating_sub(self.init_str_ptr)
+    }
+
+    #[must_use]
+    pub const fn character_capacity(self) -> usize {
+        self.pool_size.saturating_sub(self.init_pool_ptr)
+    }
+
+    pub(crate) const fn has_current_profile(self) -> bool {
+        self.profile_version == 3
+    }
+}
+
 impl EngineUsageStatistics {
     fn merge_max(self, other: Self) -> Self {
         Self {
             strings: self.strings.max(other.strings),
+            string_capacity: other.string_capacity,
             string_characters: self.string_characters.max(other.string_characters),
+            string_character_capacity: other.string_character_capacity,
             memory_words: self.memory_words.max(other.memory_words),
             control_sequences: self.control_sequences.max(other.control_sequences),
             font_info_words: self.font_info_words.max(other.font_info_words),
@@ -289,6 +371,7 @@ impl Clone for Stores {
             owner: StoreOwner::new(),
             env: self.env.clone(),
             interner: self.interner.clone(),
+            string_pool: self.string_pool,
             tokens: self.tokens.clone(),
             provenance: self.provenance.clone(),
             source_map: self.source_map.clone(),
@@ -321,8 +404,10 @@ impl Stores {
             .map(|raw| self.env.font_param_len(FontId::new(raw as u32)) as usize)
             .sum();
         let current = EngineUsageStatistics {
-            strings: self.interner.len(),
-            string_characters: self.interner.character_count(),
+            strings: self.string_pool.used_strings(),
+            string_capacity: self.string_pool.string_capacity(),
+            string_characters: self.string_pool.used_characters(),
+            string_character_capacity: self.string_pool.character_capacity(),
             memory_words: self.tokens.token_count() + self.glue.len() + self.nodes.word_count(),
             control_sequences: self.interner.len(),
             font_info_words,
@@ -448,6 +533,7 @@ impl Stores {
             owner: StoreOwner::new(),
             env: Env::new(),
             interner: Interner::new(),
+            string_pool: StringPoolAccounting::default(),
             tokens: TokenStore::new(),
             provenance: ProvenanceStore::new(),
             source_map: SourceMap::default(),
@@ -649,6 +735,12 @@ impl Stores {
         language: u8,
         exception: ExceptionSpec,
     ) {
+        // TeX82 §934 appends the language byte to the normalized word before
+        // `make_string`; the exception table retains that string. The second
+        // extra byte is the command core's unfinished current-string byte:
+        // §1334 counts it in `pool_ptr` although it has no `str_ptr` entry.
+        self.string_pool
+            .allocate(1, exception.word.len().saturating_add(2));
         Arc::make_mut(&mut self.hyphenation).add_exception_for_language(language, exception);
     }
 
@@ -941,14 +1033,52 @@ impl Stores {
 
     /// Interns an active-character control sequence in its TeX82 namespace.
     pub fn intern_active_character(&mut self, ch: char) -> SymbolId {
-        self.interner
+        let before = self.interner.len();
+        let symbol = self
+            .interner
             .intern_active(ch)
-            .expect("control-sequence symbol capacity exceeded")
+            .expect("control-sequence symbol capacity exceeded");
+        if self.interner.len() != before {
+            self.string_pool.allocate(0, ch.len_utf8());
+        }
+        symbol
+    }
+
+    pub(crate) fn record_pool_strings(&mut self, strings: usize, characters: usize) {
+        self.string_pool.allocate(strings, characters);
+    }
+
+    pub(crate) fn flush_pool_strings(&mut self, strings: usize, characters: usize) {
+        self.string_pool.flush_last(strings, characters);
+    }
+
+    pub(crate) const fn string_pool_accounting(&self) -> StringPoolAccounting {
+        self.string_pool
+    }
+
+    pub(crate) fn mark_string_pool_format_baseline(&mut self) {
+        self.string_pool.mark_format_baseline();
+    }
+
+    pub(crate) fn restore_string_pool_accounting(&mut self, accounting: StringPoolAccounting) {
+        self.string_pool = accounting;
     }
 
     /// Interns a control-sequence name, reporting packed-token capacity exhaustion.
     pub(crate) fn try_intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
-        self.interner.intern(name)
+        let before = self.interner.len();
+        let symbol = self.interner.intern(name)?;
+        if self.interner.len() != before {
+            if name.len() > 1 {
+                self.string_pool.allocate(1, name.len());
+            } else {
+                // A one-character control sequence uses TeX82's direct
+                // single-character namespace. Its spelling can still be the
+                // unfinished pool text while `id_lookup` decides that path.
+                self.string_pool.allocate(0, name.len());
+            }
+        }
+        Ok(symbol)
     }
 
     /// Returns the live symbol for an already-interned control-sequence name.
@@ -1557,6 +1687,10 @@ impl Stores {
         }
         self.last_loaded_font = id;
         Ok(id)
+    }
+
+    pub(crate) fn font_would_allocate(&self, font: &LoadedFont) -> bool {
+        self.fonts.would_allocate(font)
     }
 
     /// Interns a font for callers that construct bounded in-memory fonts.
@@ -2757,6 +2891,7 @@ impl Stores {
             owner: self.owner.snapshot_owner(),
             env_snapshot: self.env.checkpoint(),
             interner_mark: self.interner.watermark(),
+            string_pool: self.string_pool,
             token_mark: self.tokens.watermark(),
             provenance_mark: self.provenance.watermark(),
             source_map_mark: self.source_map.watermark(),
@@ -2817,6 +2952,7 @@ impl Stores {
         self.account_rollback_box_refs(snapshot.env_snapshot);
         self.env.rollback_to(snapshot.env_snapshot);
         self.interner.truncate_to(snapshot.interner_mark);
+        self.string_pool = snapshot.string_pool;
         self.tokens.truncate_to(snapshot.token_mark);
         if retry {
             self.provenance

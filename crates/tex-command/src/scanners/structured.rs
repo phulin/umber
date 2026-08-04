@@ -3802,6 +3802,13 @@ impl CommandProcessor<'_> {
                 _ => return Err(CommandError::input_invariant()),
             }
         };
+        // §§516--520's `end_name` reuses the preloaded empty string. It makes
+        // the name plus only the nonempty area and extension components.
+        self.state.record_string_pool_allocations(
+            1 + usize::from(!components.area.is_empty())
+                + usize::from(!components.extension.is_empty()),
+            components.area.len() + components.name.len() + components.extension.len(),
+        );
         Ok(ScannedFileName {
             components,
             termination,

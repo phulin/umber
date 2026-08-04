@@ -85,7 +85,12 @@ an accidental-corruption checksum, not an authenticity mechanism.
 
 Section kind 1 retains the historical directory name
 `TransitionalSemanticV9`, but its schema-11 payload is restricted to
-Universe-level interaction mode and a versioned pdfTeX INITEX resource DTO.
+Universe-level interaction mode, TeX82 string-pool profile/accounting metadata,
+and a versioned pdfTeX INITEX resource DTO. The string-pool record carries
+`str_ptr`/`pool_ptr`, the format-relative `init_str_ptr`/`init_pool_ptr`, and
+the profile's `max_strings`/`pool_size`; typed control-sequence, filename, and
+hyphenation owners retain their own bytes and publish only `make_string`-style
+accounting transitions to this record.
 The PDF DTO retains allocation counters, raw objects, forms, external images,
 and ToUnicode mappings; token lists and node graphs are embedded as validated
 handle-free semantic envelopes. It contains no store or environment data.

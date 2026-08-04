@@ -46,6 +46,44 @@ fn engine_usage_statistics_retain_typed_store_high_water_across_rollback() {
 }
 
 #[test]
+fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct() {
+    let mut universe = Universe::new();
+    universe.intern("control-name");
+    universe.record_string_pool_allocations(3, 17);
+
+    let usage = universe.engine_usage_statistics();
+    assert_eq!(usage.strings, 4);
+    assert_eq!(usage.string_characters, "control-name".len() + 17);
+    assert_eq!(usage.control_sequences, 1);
+}
+
+#[test]
+fn string_pool_format_baselines_and_capacities_round_trip() {
+    let mut source = Universe::new();
+    source.intern("format-control");
+    source.record_string_pool_allocations(2, 9);
+    let image = source.dump_format().expect("format dumps");
+    let baseline = source.string_pool_accounting();
+
+    let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
+    let initially_used = loaded.engine_usage_statistics();
+    assert_eq!(initially_used.strings, 0);
+    assert_eq!(initially_used.string_characters, 0);
+    assert_eq!(initially_used.string_capacity, 15_000 - (1_027 + 3));
+    assert_eq!(
+        initially_used.string_character_capacity,
+        125_000 - (106_841 + "format-control".len() + 9)
+    );
+
+    loaded.intern("job-control");
+    loaded.record_string_pool_allocations(4, 23);
+    let used = loaded.engine_usage_statistics();
+    assert_eq!(used.strings, 5);
+    assert_eq!(used.string_characters, "job-control".len() + 23);
+    assert_eq!(source.string_pool_accounting(), baseline);
+}
+
+#[test]
 fn page_group_selector_consumes_live_signed_warning_control() {
     for (control, warning) in [(0, true), (23, false), (-23, false)] {
         let mut universe = Universe::new();

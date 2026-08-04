@@ -745,6 +745,13 @@ impl CommandContext<'_> {
         }
     }
 
+    /// Commits completed TeX82 `make_string` allocations from the command
+    /// core without exposing the pool ledger itself.
+    pub fn record_string_pool_allocations(&mut self, strings: usize, characters: usize) {
+        self.universe
+            .record_string_pool_allocations(strings, characters);
+    }
+
     /// Reads one box-register dimension through the aggregate state boundary.
     ///
     /// A void box has no dimension; TeX's internal-quantity scanner maps

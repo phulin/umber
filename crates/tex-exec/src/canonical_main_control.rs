@@ -1741,6 +1741,17 @@ impl CanonicalMainControl {
         startup_name: &str,
     ) -> Result<tex_state::SourceId, SourceRegistrationError> {
         let has_resolved_name = source.name().is_some();
+        // The host supplies the already-acquired startup source, but TeX82
+        // reached it through §§516--520's `end_name`. The following §537
+        // `a_make_name_string` result is immediately flushed when it is last.
+        let path = std::path::Path::new(startup_name);
+        stores.record_string_pool_allocations(
+            1 + usize::from(
+                path.parent()
+                    .is_some_and(|area| !area.as_os_str().is_empty()),
+            ) + usize::from(path.extension().is_some()),
+            startup_name.len(),
+        );
         let id = self.register_root_source(source)?;
         if has_resolved_name {
             self.command
@@ -14738,6 +14749,7 @@ fn apply_scanned_step(
                 }
                 Err(error) => return Err(error),
             };
+            let font_would_allocate = stores.font_would_allocate(&loaded);
             let id = match stores.try_intern_font_with_identifier(loaded, identifier) {
                 Ok(id) => id,
                 Err(
@@ -14758,6 +14770,11 @@ fn apply_scanned_step(
                 }
                 Err(error) => return Err(error.into()),
             };
+            // §1254 flushes the last `cur_name` string when an already-loaded
+            // extensionless font is selected again.
+            if !font_would_allocate && !request.name.contains('.') {
+                stores.flush_string_pool_allocations(1, request.name.len());
+            }
             if global {
                 stores.set_meaning_global(request.target, Meaning::Font(id));
             } else {
