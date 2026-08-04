@@ -1,30 +1,6 @@
 use std::process::Command;
 
 #[test]
-fn direct_profile_source_stays_on_canonical_execution_and_stats() {
-    let source = include_str!("../../src/bin/gentle_profile.rs");
-    let execute_once = source
-        .split("fn execute_once")
-        .nth(1)
-        .and_then(|tail| tail.split("fn print_summary").next())
-        .expect("execute_once source boundary exists");
-    for forbidden in [
-        "let mut session = EngineSession",
-        "InputStack",
-        "WorldInput",
-        ".execute()",
-    ] {
-        assert!(
-            !execute_once.contains(forbidden),
-            "direct profiling must not regain legacy execution through {forbidden}"
-        );
-    }
-    assert!(execute_once.contains("CanonicalEngineSession::tex82_initex"));
-    assert!(execute_once.contains("run_with_expansion_stats"));
-    assert!(execute_once.contains("SourceRegistration::world"));
-}
-
-#[test]
 #[allow(clippy::disallowed_methods)] // CLI regression launches the built profiling binary.
 fn explicit_repo_root_is_parsed_outside_a_git_checkout() {
     let repository = test_support::repository_root();

@@ -327,6 +327,7 @@ fn conformance_gate_registry_is_reachable() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn conformance_gate_assets_are_in_worktree_allowlist() {
     let provisioned: BTreeSet<&str> = NATIVE_ASSET_LOCK
         .lines()

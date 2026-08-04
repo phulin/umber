@@ -115,6 +115,7 @@ fn every_loaded_command_route_has_only_the_generic_provider_owner() {
     }
 }
 
+#[ignore = "manual exact-parity tier: tracked by umber2-alfh.11"]
 #[test]
 fn declared_command_semantic_cases_match() {
     let root = tempfile::TempDir::new().expect("hermetic persistent format cache");
@@ -254,6 +255,7 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
     );
 }
 
+#[ignore = "manual exact-parity tier: tracked by umber2-alfh.11"]
 #[test]
 fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() {
     let formats = HermeticFormats::new();

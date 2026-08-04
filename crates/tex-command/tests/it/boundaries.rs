@@ -4,7 +4,7 @@ use test_support::{CompileFailDependency, assert_compile_fail};
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn crate_dependency_direction_is_command_toward_state_only() {
+fn crate_production_dependencies_match_the_command_boundary_allowlist() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let command_manifest = fs::read_to_string(manifest_dir.join("Cargo.toml"))
         .unwrap_or_else(|error| panic!("failed to read tex-command manifest: {error}"));
@@ -13,16 +13,16 @@ fn crate_dependency_direction_is_command_toward_state_only() {
 
     let command_dependencies = dependency_names(&command_manifest);
     let state_dependencies = dependency_names(&state_manifest);
-    assert!(
-        command_dependencies.contains("tex-state"),
-        "tex-command must depend on the aggregate state boundary"
+    assert_eq!(
+        command_dependencies,
+        BTreeSet::from([
+            "md-5.workspace",
+            "posix-regex.workspace",
+            "tex-fonts",
+            "tex-state",
+        ]),
+        "tex-command's production dependency boundary must remain explicit"
     );
-    for forbidden in ["tex-exec", "tex-expand", "tex-lex", "tex-oracle"] {
-        assert!(
-            !command_dependencies.contains(forbidden),
-            "tex-command must not depend on {forbidden}"
-        );
-    }
     assert!(
         !state_dependencies.contains("tex-command"),
         "tex-state must remain unaware of command interpretation"

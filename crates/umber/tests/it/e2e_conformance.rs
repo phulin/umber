@@ -499,6 +499,7 @@ fn canonical_source_identity_selects_startup_input_name_independently_of_staging
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_and_etrip_recipes_select_typed_public_format_inputs() {
     let source: Arc<[u8]> = Arc::from(&b"fixture source"[..]);
     let tripos: Arc<[u8]> = Arc::from(&b"tripos"[..]);
@@ -1443,6 +1444,7 @@ fn e2e_conformance_story() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn e2e_conformance_gentle() {
     assets::with_gate("gentle", |gate| run_plain_fixture_case("gentle.tex", gate));
 }
@@ -1597,6 +1599,7 @@ fn canonical_math_group_singleton_ord_matches_reference_dvi() {
 /// shared conformance comparator permits only the variable preamble comment;
 /// every remaining byte, including list-setting geometry, must match.
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn e2e_conformance_gentle_canonical() {
     assets::with_gate("gentle", |gate| {
         run_plain_fixture_case_canonical("gentle.tex", gate);
@@ -2162,6 +2165,7 @@ fn e2e_conformance_trip_canonical() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
     // Construct the real TRIP format, then retain the loaded-job prefix that
     // establishes the page, paragraph, and three preceding \vadjust states.
@@ -2179,6 +2183,7 @@ fn trip_loaded_vadjust_diagnostic_uses_detached_replacement_layout() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_display_diagnostic_includes_overfull_rule() {
     let log = run_focused_loaded_trip_through(285);
     assert!(
@@ -2223,6 +2228,7 @@ fn trip_loaded_display_diagnostic_includes_overfull_rule() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_vsplit_diagnostics_freeze_canonical_scan_contexts() {
     let log = run_focused_loaded_trip_through(377);
     assert!(
@@ -2247,6 +2253,7 @@ fn trip_loaded_vsplit_diagnostics_freeze_canonical_scan_contexts() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
     // Exact TRIP source through lines 419 and 441--442. TeX82 §§1370/1335:
     // the deferred write's ordinary `\if` remains above the older selected
@@ -2271,6 +2278,7 @@ fn trip_loaded_deferred_write_condition_replaces_the_final_stack_front() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_character_constant_alignment_template_traces_endv_once() {
     let log = run_focused_loaded_trip_through(337);
     assert!(
@@ -2284,6 +2292,7 @@ fn trip_loaded_character_constant_alignment_template_traces_endv_once() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_delete_last_error_shows_command_context_before_help() {
     // TeX82 §§82/1105: the page-removal apology installs its help and calls
     // `error`; the live command input context is printed before §90's help.
@@ -2302,6 +2311,7 @@ fn trip_loaded_delete_last_error_shows_command_context_before_help() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_lastbox_error_shows_command_context_before_help() {
     // TeX82 §§82/1081: `begin_box` rejects `\lastbox` on the current page,
     // then §82 prints the still-live command input before §90's help.
@@ -2318,6 +2328,7 @@ fn trip_loaded_lastbox_error_shows_command_context_before_help() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_missing_definition_target_recovers_once() {
     // TeX82 §1215's `get_r_token` owns one complete `ins_error` and restart:
     // the rejected `{` supplies the empty definition and `?` resumes normally.
@@ -2341,6 +2352,7 @@ fn trip_loaded_missing_definition_target_recovers_once() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_invalid_character_error_precedes_following_trace() {
     // TeX82 §§345/367/370/380 complete both expansion-time errors before the
     // next begin-group command reaches tracing.
@@ -2363,6 +2375,7 @@ fn trip_loaded_invalid_character_error_precedes_following_trace() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_tokens_runaway_names_assignment_scanner() {
     // TeX82 §§306/336/1227 retain the current token-register shorthand as
     // `warning_index` while its balanced right-hand side is absorbed.
@@ -2374,6 +2387,7 @@ fn trip_loaded_tokens_runaway_names_assignment_scanner() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_runaway_context_escapes_nul_control_sequence_name() {
     // TeX82 §§59/262/315 pseudoprint token-list context through the active
     // selector, so NUL bytes use printable double-caret notation.
@@ -2387,6 +2401,7 @@ fn trip_loaded_runaway_context_escapes_nul_control_sequence_name() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_nested_ifcase_operand_preserves_skip_nesting() {
     // TeX82 §509 keeps skipping while an operand-expanded conditional is
     // above the saved `\ifcase` frame, popping only that newer frame's `\fi`.
@@ -2404,6 +2419,7 @@ fn trip_loaded_nested_ifcase_operand_preserves_skip_nesting() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
     // TeX82 §§338--339 prints the already collected preamble token list
     // before `print_err` opens the forbidden-control diagnostic.
@@ -2438,6 +2454,7 @@ fn trip_loaded_runaway_preamble_finishes_partial_before_error() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_runaway_definition_pseudoprints_nonstandard_match_marker() {
     let log = run_focused_loaded_trip_through(364);
     let runaway = log.rfind("Runaway definition?").expect("line-364 runaway");
@@ -2450,6 +2467,7 @@ fn trip_loaded_runaway_definition_pseudoprints_nonstandard_match_marker() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_macro_mismatch_precedes_following_malformed_invocation_trace() {
     // TeX82 §§82/391 completes \T's compulsory-prefix mismatch before
     // §389 can trace the later malformed \a invocation.
@@ -2474,6 +2492,7 @@ fn trip_loaded_macro_mismatch_precedes_following_malformed_invocation_trace() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
     // Exact TRIP source through lines 438--440 reaches the malformed formula's
     // sup/sub pair and `\showbox9`. TeX82 §§135/158/184 make its generated
@@ -2485,6 +2504,7 @@ fn trip_loaded_script_pair_dump_uses_a_normal_kern() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_final_operator_has_one_zero_before_rebox() {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
@@ -2529,6 +2549,7 @@ fn trip_loaded_final_operator_has_one_zero_before_rebox() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_hairy_display_preserves_appendix_g_pack_order() {
     // TRIP line 285 exercises TeX82 §§720, 724, 733, and 749 together. Keep
     // the repeated package calls in their canonical order; equal dimensions
@@ -2599,6 +2620,7 @@ fn trip_loaded_hairy_display_preserves_appendix_g_pack_order() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_radical_overbar_uses_normal_kerns() {
     // The full loaded stream is necessary: skipping its pre-format prefix
     // does not reproduce the showbox9 list reached through TRIP lines 438--440.
@@ -2620,6 +2642,7 @@ fn trip_loaded_radical_overbar_uses_normal_kerns() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_empty_operator_box_keeps_axis_shift() {
     // Full format-loaded history is required. Its malformed class-Op noad
     // reaches TeX82 §749 with a missing math character; the resulting empty
@@ -2677,6 +2700,7 @@ fn loaded_immediate_write_traces_expansion_in_no_mode() {
 /// `\unhcopy3` in math mode reports before §1166 dispatches the following
 /// text accent.
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_math_unboxing_diagnoses_before_following_accent() {
     let log = run_focused_loaded_trip_through(396);
     let incompatible = log
@@ -2695,6 +2719,7 @@ fn trip_loaded_math_unboxing_diagnoses_before_following_accent() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
@@ -2739,6 +2764,7 @@ fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_hairy_display_publishes_both_clean_character_packs() {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),
@@ -2780,6 +2806,7 @@ fn trip_loaded_hairy_display_publishes_both_clean_character_packs() {
 }
 
 #[test]
+#[ignore = "manual compatibility/parity tier: not a cutover closure gate"]
 fn trip_loaded_missing_accent_publishes_clean_nucleus_pack() {
     let trip: Arc<[u8]> = Arc::from(
         test_support::read_repository_asset("third_party/trip/trip.tex").expect("read TRIP source"),

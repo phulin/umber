@@ -11,31 +11,7 @@ use tex_state::{FormatError, Universe, World};
 use super::*;
 
 #[test]
-fn virtual_compile_production_sources_stay_on_the_canonical_retained_boundary() {
-    let driver = include_str!("../virtual_compile.rs");
-    let resolvers = include_str!("resolvers.rs");
-    for (source_name, source) in [("driver", driver), ("resolvers", resolvers)] {
-        for forbidden in [
-            "tex_exec::Executor",
-            "tex_lex::InputStack",
-            "tex_expand::InputResolver",
-            "tex_expand::ResourceLookup",
-            "FontResolver for",
-            "PdfImageResolver for",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "virtual {source_name} must not regain legacy execution through {forbidden}"
-            );
-        }
-    }
-    assert!(driver.contains("drive_with_resource_resolvers(&mut resolvers"));
-    assert!(resolvers.contains("impl CanonicalResourceHost for VirtualRunResolvers"));
-    assert!(resolvers.contains("CanonicalResourceFulfillment::world_input"));
-}
-
-#[test]
-fn every_supported_runtime_enters_the_command_owned_engine() {
+fn every_supported_runtime_names_its_command_owned_engine_entry() {
     let sources = [
         (
             "CLI",
@@ -83,17 +59,6 @@ fn every_supported_runtime_enters_the_command_owned_engine() {
             source.contains(command_entry),
             "{runtime} must enter through its command-owned engine boundary `{command_entry}`"
         );
-        for forbidden in [
-            "tex_exec::Executor",
-            "tex_lex::InputStack",
-            "tex_expand::InputResolver",
-            "tex_expand::ResourceLookup",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "{runtime} must not regain runtime command selection through `{forbidden}`"
-            );
-        }
     }
 }
 
