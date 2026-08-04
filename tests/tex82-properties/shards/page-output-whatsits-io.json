@@ -1170,7 +1170,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_page_output.rs",
+          "path": "crates/tex-exec/src/page_output.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
         }
       ],
@@ -1580,11 +1580,11 @@
       "test_level": "rust-unit+strict-semantic-xfail",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "language_normalization_and_same_language_append_boundaries_match_tex82"
         },
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "setlanguage_illegal_mode_recovers_without_scan_or_append"
         }
       ],

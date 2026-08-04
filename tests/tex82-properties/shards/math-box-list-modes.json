@@ -1177,7 +1177,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery"
         },
         {

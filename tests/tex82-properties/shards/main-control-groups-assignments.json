@@ -617,7 +617,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "main_control_dispatch_matrix_consumes_each_command_once"
         },
         {
@@ -645,7 +645,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "main_control_error_privilege_and_stop_paths_are_finite"
         },
         {
@@ -862,11 +862,11 @@
       "test_level": "rust-unit+semantic-minifixture+strict-semantic-xfail",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "read_to_definition_preserves_effective_scope_and_replay"
         },
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning"
         },
         {
@@ -1028,7 +1028,7 @@
           "test": "othercases_print_errors_without_inventing_events_and_preserve_the_partial_word"
         },
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order"
         },
         {
@@ -1149,7 +1149,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "every_non_eqtb_assignment_family_fires_afterassignment_once"
         },
         {
@@ -1208,7 +1208,7 @@
       "gap_bead": "umber2-chi1",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "openin_closein_replace_stream_state_and_apply_filename_rules"
         },
         {
@@ -1240,7 +1240,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "message_expands_balanced_text_and_applies_terminal_line_spacing"
         },
         {
@@ -1270,7 +1270,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "errmessage_selects_user_or_once_only_builtin_help_and_clears_flag"
         },
         {
@@ -1302,7 +1302,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "case_shift_preserves_raw_token_structure_at_code_table_boundaries"
         },
         {
@@ -1332,7 +1332,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence"
         },
         {
@@ -1365,7 +1365,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind"
         },
         {
@@ -1393,7 +1393,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "showbox_scans_register_and_distinguishes_void_from_box_contents"
         },
         {
@@ -1421,7 +1421,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "showthe_uses_the_toks_for_each_internal_value_family_and_releases_output"
         },
         {
@@ -1453,7 +1453,7 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "show_completion_routes_transcript_and_adjusts_error_count_by_interaction"
         },
         {
@@ -1493,7 +1493,7 @@
           "test": "final_cleanup_drains_nested_kinds_in_current_first_order_with_saved_lines"
         },
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly"
         },
         {
@@ -1506,7 +1506,7 @@
       "gap_bead": "umber2-xfj3",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump"
         },
         {

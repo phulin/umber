@@ -1078,7 +1078,7 @@
           "test": "scan_toks_all_parameter_number_success_and_diagnostic_boundaries"
         },
         {
-          "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
+          "path": "crates/tex-exec/src/main_control/tests.rs",
           "test": "macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope"
         },
         {
