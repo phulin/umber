@@ -201,7 +201,7 @@ fn paragraph_hyphenation_honors_uchyph_for_uppercase_start() {
 }
 
 #[test]
-fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph() {
+fn paragraph_hyphenation_warns_for_an_in_range_missing_hyphen_glyph() {
     let mut stores = super::core::run_canonical_tex82_with_fonts(
         "\\font\\tenrm=cmr10 \\relax \\tenrm \\patterns{a1ba}\\lefthyphenmin=1 \\righthyphenmin=1 \\end",
     );
@@ -221,6 +221,8 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
         .find(|&code| !stores.font_char_exists(font, code))
         .expect("test font has an in-range missing character");
     stores.set_font_hyphen_char(font, i32::from(missing_code));
+    stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
+    stores.set_int_param(IntParam::TRACING_ONLINE, 1);
     let missing_glyph = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
     stores.set_font_hyphen_char(font, i32::from(b'-'));
     let enabled = crate::assignments::test_hyphenated_hlist(&mut stores, &word);
@@ -235,6 +237,13 @@ fn paragraph_hyphenation_requires_an_in_range_hyphen_and_omits_a_missing_glyph()
             matches!(node, Node::Disc { pre, .. } if stores.nodes(*pre).is_empty())
         }),
         "TeX retains the discretionary but new_character returns null"
+    );
+    assert!(
+        super::support::terminal_effect_text(&stores).contains(&format!(
+            "Missing character: There is no {} in font cmr10!",
+            char::from(missing_code)
+        )),
+        "TeX82 §§581/929 warn when automatic hyphen construction finds no glyph"
     );
     assert!(
         enabled

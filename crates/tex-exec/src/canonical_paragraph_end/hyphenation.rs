@@ -9,6 +9,18 @@ pub(crate) enum HyphenationApplyDiagnostic {
     DuplicatePattern,
 }
 
+#[derive(Clone, Debug)]
+pub(super) struct MissingHyphenDiagnostic {
+    pub(super) node_index: usize,
+    pub(super) font: tex_state::ids::FontId,
+    pub(super) ch: char,
+}
+
+struct HyphenationProjection<'a> {
+    physical_post_overrides: &'a mut Vec<(usize, tex_state::ids::NodeListId)>,
+    missing_hyphens: &'a mut Vec<MissingHyphenDiagnostic>,
+}
+
 pub(crate) fn report_apply_diagnostics(
     stores: &mut Universe,
     diagnostics: Vec<HyphenationApplyDiagnostic>,
@@ -129,14 +141,24 @@ pub(crate) fn hyphenated_hlist_with_fuel(
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<Vec<Node>, ExecError> {
-    hyphenated_hlist_with_projections(stores, nodes, fuel, &mut Vec::new())
+    let mut physical_post_overrides = Vec::new();
+    let mut missing_hyphens = Vec::new();
+    hyphenated_hlist_with_projections(
+        stores,
+        nodes,
+        fuel,
+        &mut HyphenationProjection {
+            physical_post_overrides: &mut physical_post_overrides,
+            missing_hyphens: &mut missing_hyphens,
+        },
+    )
 }
 
 fn hyphenated_hlist_with_projections(
     stores: &mut Universe,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
-    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
+    projection: &mut HyphenationProjection<'_>,
 ) -> Result<Vec<Node>, ExecError> {
     // TeX82 §919 initializes the trie on entry to the first hyphenation pass,
     // even when this particular paragraph ultimately supplies no candidate.
@@ -170,7 +192,7 @@ fn hyphenated_hlist_with_projections(
                 (language, left, right),
                 &mut out,
                 fuel,
-                physical_post_overrides,
+                projection,
             )?
         {
             index = next;
@@ -188,10 +210,20 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel(
     stores: &mut Universe,
     nodes: Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
-) -> Result<tex_state::node_sequence::NodeSequence, ExecError> {
+) -> Result<
+    (
+        tex_state::node_sequence::NodeSequence,
+        Vec<MissingHyphenDiagnostic>,
+    ),
+    ExecError,
+> {
     let mut physical_post_overrides = Vec::new();
-    let semantic =
-        hyphenated_hlist_with_projections(stores, nodes, fuel, &mut physical_post_overrides)?;
+    let mut missing_hyphens = Vec::new();
+    let mut projection = HyphenationProjection {
+        physical_post_overrides: &mut physical_post_overrides,
+        missing_hyphens: &mut missing_hyphens,
+    };
+    let semantic = hyphenated_hlist_with_projections(stores, nodes, fuel, &mut projection)?;
     let mut physical = semantic.clone();
     for (index, physical_post) in physical_post_overrides {
         if let Some(Node::Disc { post, .. }) = physical.get_mut(index) {
@@ -199,8 +231,9 @@ pub(crate) fn hyphenated_hlist_sequence_with_fuel(
         }
     }
     project_physical_pre_break_spans(stores, &mut physical, fuel)?;
-    Ok(tex_state::node_sequence::NodeSequence::from_channels(
-        semantic, physical,
+    Ok((
+        tex_state::node_sequence::NodeSequence::from_channels(semantic, physical),
+        missing_hyphens,
     ))
 }
 
@@ -372,7 +405,7 @@ fn hyphenate_after_glue(
     context: (u8, usize, usize),
     out: &mut Option<Vec<Node>>,
     fuel: &mut tex_command::CommandFuel,
-    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
+    projection: &mut HyphenationProjection<'_>,
 ) -> Result<Option<usize>, ExecError> {
     let (mut language, mut left, mut right) = context;
     let mut index = start;
@@ -511,7 +544,7 @@ fn hyphenate_after_glue(
         no_left_boundary,
         out,
         fuel,
-        physical_post_overrides,
+        projection,
     )?;
     if let Some(kern) = trailing_font_kern {
         out.push(kern);
@@ -675,7 +708,7 @@ fn append_hyphenated_word(
     no_left_boundary: bool,
     out: &mut Vec<Node>,
     fuel: &mut tex_command::CommandFuel,
-    physical_post_overrides: &mut Vec<(usize, tex_state::ids::NodeListId)>,
+    projection: &mut HyphenationProjection<'_>,
 ) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
     let nodes = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
@@ -703,6 +736,8 @@ fn append_hyphenated_word(
                 stores,
                 word[char_start - 1].font,
                 replacement,
+                out.len(),
+                projection.missing_hyphens,
             ));
             position_index += 1;
         }
@@ -718,12 +753,15 @@ fn append_hyphenated_word(
             let (disc, physical_post) = discretionary_through_node(
                 stores,
                 word,
-                (char_start, position, char_end),
+                ((char_start, position, char_end), out.len()),
                 node,
                 &nodes[node_index + 1..],
                 fuel,
+                projection.missing_hyphens,
             )?;
-            physical_post_overrides.push((out.len(), physical_post));
+            projection
+                .physical_post_overrides
+                .push((out.len(), physical_post));
             out.push(disc);
             position_index += 1;
             // TeX82 likewise suppresses another hyphenation point whose
@@ -742,7 +780,13 @@ fn append_hyphenated_word(
 
     while let Some(&position) = positions.get(position_index) {
         debug_assert_eq!(position, char_start);
-        out.push(discretionary_hyphen(stores, word[position - 1].font, None));
+        out.push(discretionary_hyphen(
+            stores,
+            word[position - 1].font,
+            None,
+            out.len(),
+            projection.missing_hyphens,
+        ));
         position_index += 1;
     }
     Ok(())
@@ -751,18 +795,20 @@ fn append_hyphenated_word(
 fn discretionary_through_node(
     stores: &mut Universe,
     word: &[WordChar],
-    span: (usize, usize, usize),
+    location: ((usize, usize, usize), usize),
     replacement: Node,
     following: &[Node],
     fuel: &mut tex_command::CommandFuel,
+    missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
 ) -> Result<(Node, tex_state::ids::NodeListId), ExecError> {
+    let (span, node_index) = location;
     let (start, position, end) = span;
     let font = word[position - 1].font;
     let mut pre_pending: Vec<_> = word[start..position]
         .iter()
         .map(WordChar::pending)
         .collect();
-    if let Some(ch) = usable_hyphen_char(stores, font) {
+    if let Some(ch) = automatic_hyphen_char(stores, font, node_index, missing_hyphens) {
         pre_pending.push(PendingHChar {
             font,
             ch,
@@ -971,15 +1017,18 @@ fn discretionary_hyphen(
     stores: &mut Universe,
     font: tex_state::ids::FontId,
     replacement: Option<Node>,
+    node_index: usize,
+    missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
 ) -> Node {
     let empty = stores.freeze_node_list(&[]);
-    let pre = usable_hyphen_char(stores, font).map_or(empty, |ch| {
-        stores.freeze_node_list(&[Node::Char {
-            font,
-            ch,
-            origin: OriginId::UNKNOWN,
-        }])
-    });
+    let pre =
+        automatic_hyphen_char(stores, font, node_index, missing_hyphens).map_or(empty, |ch| {
+            stores.freeze_node_list(&[Node::Char {
+                font,
+                ch,
+                origin: OriginId::UNKNOWN,
+            }])
+        });
     let replace = replacement.as_ref().map_or(empty, |node| {
         stores.freeze_node_list(std::slice::from_ref(node))
     });
@@ -1000,6 +1049,27 @@ fn usable_hyphen_char(stores: &Universe, font: tex_state::ids::FontId) -> Option
     stores
         .font_char_exists(font, code)
         .then(|| char::from(code))
+}
+
+/// TeX82 §929's `new_character(hf, hyf_char)` at automatic-discretionary
+/// construction. An out-of-range hyphen character disables the attempt in
+/// §923, while an in-range missing glyph warns under §581 and yields no node.
+fn automatic_hyphen_char(
+    stores: &Universe,
+    font: tex_state::ids::FontId,
+    node_index: usize,
+    missing_hyphens: &mut Vec<MissingHyphenDiagnostic>,
+) -> Option<char> {
+    let code = u8::try_from(stores.font_hyphen_char(font)).ok()?;
+    if stores.font_char_exists(font, code) {
+        return Some(char::from(code));
+    }
+    missing_hyphens.push(MissingHyphenDiagnostic {
+        node_index,
+        font,
+        ch: char::from(code),
+    });
+    None
 }
 
 #[derive(Clone, Copy)]
@@ -1027,3 +1097,41 @@ use tex_state::token::OriginId;
 
 use crate::ExecError;
 use crate::mode::PendingHChar;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn diagnostic_text(stores: &Universe) -> String {
+        stores
+            .world()
+            .effect_records()
+            .iter()
+            .filter_map(|record| match record {
+                tex_state::world::EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn automatic_missing_hyphen_warns_but_disabled_hyphen_does_not() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let font = stores.current_font();
+        stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
+        stores.set_font_hyphen_char(font, -1);
+        let mut missing = Vec::new();
+        assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
+        assert!(missing.is_empty());
+
+        stores.set_font_hyphen_char(font, i32::from(b'?'));
+        assert_eq!(automatic_hyphen_char(&stores, font, 7, &mut missing), None);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].node_index, 7);
+        assert_eq!((missing[0].font, missing[0].ch), (font, '?'));
+        crate::diagnostics::report_missing_character_warning(&mut stores, font, '?', false);
+        assert!(
+            diagnostic_text(&stores).contains("Missing character: There is no ? in font nullfont!")
+        );
+    }
+}

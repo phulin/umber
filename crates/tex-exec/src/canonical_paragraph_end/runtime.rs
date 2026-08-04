@@ -83,9 +83,19 @@ pub(crate) fn break_current_paragraph(
         line_params.expansion_steps =
             tex_typeset::linebreak::validate_paragraph_expansion(stores, &hlist)?;
     }
-    let (mut decisions, trace) = break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
+    let (mut decisions, trace, missing_hyphens) =
+        break_hlist_with_trace(stores, hlist, line_params, fuel, tracing)?;
     if tracing {
-        report_line_break_trace(stores, &decisions.nodes, &trace);
+        report_line_break_trace(stores, &decisions.nodes, &trace, &missing_hyphens);
+    } else {
+        for warning in missing_hyphens {
+            crate::diagnostics::report_missing_character_warning(
+                stores,
+                warning.font,
+                warning.ch,
+                false,
+            );
+        }
     }
     if let Some(spec) = decisions.last_line_fill {
         let spec = stores.intern_glue(spec);
@@ -491,7 +501,7 @@ pub(crate) fn break_hlist_with_fuel(
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<LineBreakResult, ExecError> {
-    break_hlist_with_trace(stores, hlist, line_params, fuel, false).map(|(result, _)| result)
+    break_hlist_with_trace(stores, hlist, line_params, fuel, false).map(|(result, _, _)| result)
 }
 
 fn break_hlist_with_trace(
@@ -500,7 +510,14 @@ fn break_hlist_with_trace(
     line_params: LineBreakParams,
     fuel: &mut tex_command::CommandFuel,
     tracing: bool,
-) -> Result<(LineBreakResult, Vec<LineBreakTrace>), ExecError> {
+) -> Result<
+    (
+        LineBreakResult,
+        Vec<LineBreakTrace>,
+        Vec<super::hyphenation::MissingHyphenDiagnostic>,
+    ),
+    ExecError,
+> {
     // TeX82 §815 skips the pretolerance pass when `pretolerance<0` and
     // enters the hyphenating second pass directly. §919 initializes the trie
     // at that boundary, even if Umber's pure non-hyphenating planner can
@@ -517,9 +534,13 @@ fn break_hlist_with_trace(
         )
     };
     if let Some(first) = first {
-        Ok((tex_typeset::linebreak::plan_with_nodes(first, hlist), trace))
+        Ok((
+            tex_typeset::linebreak::plan_with_nodes(first, hlist),
+            trace,
+            Vec::new(),
+        ))
     } else {
-        let sequence =
+        let (sequence, missing_hyphens) =
             super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
         let (mut hyphenated, physical_nodes) = sequence.take();
         crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
@@ -534,7 +555,7 @@ fn break_hlist_with_trace(
         let mut result = tex_typeset::linebreak::plan_with_nodes(plan, hyphenated);
         result.physical_boundaries = physical_boundaries(&result.nodes, physical_nodes.len());
         result.physical_nodes = physical_nodes;
-        Ok((result, trace))
+        Ok((result, trace, missing_hyphens))
     }
 }
 
@@ -555,10 +576,45 @@ fn physical_boundaries(nodes: &[Node], physical_len: usize) -> Vec<usize> {
     boundaries
 }
 
-fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineBreakTrace]) {
+fn report_line_break_trace(
+    stores: &mut Universe,
+    nodes: &[Node],
+    trace: &[LineBreakTrace],
+    missing_hyphens: &[super::hyphenation::MissingHyphenDiagnostic],
+) {
+    let missing_hyphens = if stores.int_param(IntParam::TRACING_LOST_CHARS) > 0 {
+        missing_hyphens
+            .iter()
+            .map(|warning| {
+                (
+                    warning.node_index,
+                    stores.font(warning.font).name().to_owned(),
+                    warning.ch,
+                )
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let mut diagnostic = stores.begin_diagnostic();
     let mut short_display = crate::pack_report::ShortDisplayRenderer::new();
+    let mut next_warning = 0;
     for event in trace {
+        if let LineBreakTrace::Feasible { display, .. } = event {
+            while missing_hyphens
+                .get(next_warning)
+                .is_some_and(|(node_index, _, _)| *node_index < display.end)
+            {
+                let (_, font_name, ch) = &missing_hyphens[next_warning];
+                diagnostic
+                    .print_nl("Missing character: There is no ")
+                    .print_ascii(*ch)
+                    .print(" in font ")
+                    .print(font_name)
+                    .print_char('!');
+                next_warning += 1;
+            }
+        }
         match event {
             LineBreakTrace::Pass(pass) => {
                 // TeX82 §851 creates the initial active node once per pass
@@ -652,6 +708,14 @@ fn report_line_break_trace(stores: &mut Universe, nodes: &[Node], trace: &[LineB
                     .print_int(*previous as i32);
             }
         }
+    }
+    for (_, font_name, ch) in &missing_hyphens[next_warning..] {
+        diagnostic
+            .print_nl("Missing character: There is no ")
+            .print_ascii(*ch)
+            .print(" in font ")
+            .print(font_name)
+            .print_char('!');
     }
     diagnostic.end(true);
 }

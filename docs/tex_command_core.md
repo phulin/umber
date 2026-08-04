@@ -3313,6 +3313,14 @@ this matrix and remains Beads `.4.2`.
 | pdfTeX extension registry and PDF semantic families                                                | pdfTeX 1.40.27 registration blocks and routines pinned by `pdftex_primitives.md` (158 exact names)                   | One static profile dispatch over the same command machine; source-derived 158-name inventory, `pdftex::*`, `pdf_output::*`, graphics/navigation/font fixtures, and typed image retry coverage. Engine-neutral aliases are documented there; no new extension boundary is introduced here.                     |
 | Fresh/format-loaded session and observer equivalence                                               | TeX82 INITEX/format model; §§24--25 and §1030+                                                                       | `fresh_and_format_sessions_pin_the_same_command_profile`, `canonical_fresh_and_format_loaded_sessions_execute_the_same_root`, and observed/unobserved paragraph/math/retry tests. Observers buffer only committed records from the same processor episode; they do not replay or synthesize command delivery. |
 
+Paragraph hyphenation preserves TeX82 §929's `new_character(hf,hyf_char)`
+diagnostic as typed evidence alongside the detached hyphenated node sequence.
+The line-break trace renderer publishes that evidence when traversal reaches
+the corresponding automatic discretionary. This retains §581's exact warning
+order even though Umber constructs the hyphenated sequence before its pure
+line-break pass; an out-of-range §923 hyphen character still produces neither
+a node nor a warning.
+
 The architecture test in `crates/tex-exec/tests/it.rs` rejects raw
 `InputStack` delivery and executor dispatch in `CanonicalMainControl`, requires
 the typed `CurrentCommand::meaning()` dispatch boundary, and fixes one
