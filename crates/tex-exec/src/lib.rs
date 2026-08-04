@@ -1,4 +1,4 @@
-//! Canonical TeX stomach and main-control execution.
+//! TeX stomach and main-control execution.
 //!
 //! This crate consumes completed commands from `tex-command`; it does not own
 //! raw token delivery or expansion.
@@ -6,75 +6,70 @@
 #![forbid(unsafe_code)]
 
 mod align;
-mod canonical_assignments;
-mod canonical_box_runtime;
-mod canonical_diagnostics;
-mod canonical_font_support;
-mod canonical_main_control;
-mod canonical_page_output;
-mod canonical_paragraph_end;
-mod canonical_paragraph_memo;
-mod canonical_shipout;
+mod assignments;
+mod box_runtime;
 mod checkpoint;
+mod diagnostics;
 mod dispatch;
 mod effective_tail;
 mod error;
 mod error_report;
+mod font_support;
 mod host_api;
 mod job;
 mod job_output;
+mod main_control;
 mod math;
 mod mode;
 mod node_dump;
 mod pack_report;
 mod packing_params;
 mod page_builder;
+mod page_output;
+mod paragraph_end;
+mod paragraph_memo;
 mod retained_resource;
 mod session_api;
+mod shipout;
 mod splitting;
 mod timing;
 mod vertical;
 
-use canonical_diagnostics as diagnostics;
-
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 
-pub use canonical_assignments::{
+pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
 };
-pub use canonical_main_control::{
-    CanonicalAdvanceOutcome, CanonicalAdvanceReadiness, CanonicalAdvanceTelemetry,
-    CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
-    CanonicalParagraphRegion, CanonicalResourceNeed, CanonicalStepResult, MainControlStep,
-    RootCompletionPolicy, SupersededPageOutputEpisode,
-};
-pub use canonical_paragraph_end::cached_pretolerance_plan;
-pub use canonical_shipout::retry_unavailable_stream_open;
 pub use checkpoint::{
-    CanonicalCheckpointRestoreError, CanonicalEditorFork, CheckpointSink,
-    ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError, EngineBoundary, EngineCheckpoint,
-    RootRehomeContext,
+    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorFork,
+    EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
 pub use host_api::{
     FontResolver, FontSource, PdfImagePageBox, PdfImagePageSelection, PdfImageRequest,
-    PdfImageResolver, ResourceLookup, ResourceNeed, ResourceResult,
+    PdfImageResolver, ResolverResourceNeed, ResourceLookup, ResourceResult,
 };
 pub use job::{
     BANNER, DviJobOutput, ETEX26_BANNER, EngineBinaryIdentity, FormatDumpReceipt,
     PdfJobFinalizationReport, PreloadedFormat, TEX82_BANNER, confirm_format_dump_publication,
 };
+pub use main_control::{
+    AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,
+    MainControl, MainControlStep, ParagraphRegion, ResourceNeed, RootCompletionPolicy, StepResult,
+    SupersededPageOutputEpisode,
+};
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,
     ModeNest, ModeNestSummary,
 };
+pub use paragraph_end::cached_pretolerance_plan;
 pub use retained_resource::{
-    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
-    CanonicalResourceWorld, canonical_font_resource_path,
+    ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, canonical_font_resource_path,
 };
 pub use session_api::{
     Cancellation, ExecutionBudgetCounters, ExecutionBudgets, ExecutionTelemetry, PendingInterrupt,
 };
+pub use shipout::retry_unavailable_stream_open;

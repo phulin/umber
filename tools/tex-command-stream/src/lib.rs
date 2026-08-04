@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tex_command::{
     CommandProfile, FontResource, RegisteredSourceKind, SourceNameClass, SourceRegistration,
 };
-use tex_exec::{CanonicalMainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep};
 use tex_oracle::{
     CommittedFixture, EngineDialect, Event, SchemaVersion, validate_tex82_command_trace_suite,
     validate_tex82_geometry_trace_fixture,
@@ -234,8 +234,7 @@ fn collect_geometry_divergences(
 ) -> Result<(), RunnerError> {
     let fixture = validate_tex82_geometry_trace_fixture(repository)
         .map_err(|error| RunnerError::Suite(error.to_string()))?;
-    let replay =
-        CanonicalStartup::geometry(fixture.source, fixture.stream.events.len()).replay()?;
+    let replay = Startup::geometry(fixture.source, fixture.stream.events.len()).replay()?;
     let actual = replay
         .events
         .into_iter()
@@ -551,7 +550,7 @@ impl fmt::Display for Divergence {
 /// [`run_repository`]'s documentation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReplayFailure {
-    /// A command-core `ExecError`/`CanonicalSessionError` the processor
+    /// A command-core `ExecError`/`SessionError` the processor
     /// returned normally.
     Error(String),
     /// A Rust panic caught by [`catch_panic`], with its rendered message and
@@ -656,18 +655,18 @@ fn replay_fixture(
             fixture.manifest.name
         )));
     }
-    CanonicalStartup::from_fixture(directory, fixture, resources)?.replay()
+    Startup::from_fixture(directory, fixture, resources)?.replay()
 }
 
 /// Replay inputs a fixture needs beyond its own manifest: the opaque font
 /// metrics canonical `\font` resolution must find already registered. Which
 /// declared source TeX's terminal filename scan selects is not a replay
 /// input at all -- it is the fixture's own [`FixtureManifest::root_source`],
-/// tex.web §537's `start_input` target, so [`CanonicalStartup::from_fixture`]
+/// tex.web §537's `start_input` target, so [`Startup::from_fixture`]
 /// reads it from the fixture being replayed instead of from here.
 ///
-/// `CanonicalMainControl::resolve_font_resource` never suspends -- an
-/// unregistered font is an immediate `ExecError::MissingCanonicalFont` -- so
+/// `MainControl::resolve_font_resource` never suspends -- an
+/// unregistered font is an immediate `ExecError::MissingFont` -- so
 /// every font a document can reach is registered up front, before the first
 /// step, rather than through a lazy resource-host retry loop.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -696,7 +695,7 @@ struct ReplayOutput {
 /// iteration over all fixture sources: child inputs are capabilities consumed
 /// later by canonical `\\input` processing.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CanonicalStartup {
+struct Startup {
     profile: CommandProfile,
     terminal_filename: Arc<[u8]>,
     root_name: String,
@@ -707,7 +706,7 @@ struct CanonicalStartup {
     schema: SchemaVersion,
 }
 
-impl CanonicalStartup {
+impl Startup {
     fn geometry(source: Vec<u8>, expected_events: usize) -> Self {
         Self {
             profile: CommandProfile::TEX82,
@@ -814,9 +813,7 @@ impl CanonicalStartup {
             .and_then(|count| count.checked_add(self.expected_events))
             .and_then(|count| count.checked_mul(2))
             .and_then(|count| count.checked_add(MAX_DELIVERIES_OVERHEAD))
-            .ok_or_else(|| {
-                RunnerError::Replay("canonical startup replay bound overflowed".into())
-            })?;
+            .ok_or_else(|| RunnerError::Replay("startup replay bound overflowed".into()))?;
         let mut universe = Universe::new();
         // `scripts/build-tex82-document-traces.sh` captures every one of these
         // fixtures with `-interaction=nonstopmode`, so the replay has to run
@@ -826,7 +823,7 @@ impl CanonicalStartup {
         // fixture would then reach §71's `fatal_error` and end the replay
         // where the oracle simply scrolled on.
         universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = CanonicalMainControl::tex82_initex(&mut universe);
+        let mut control = MainControl::tex82_initex(&mut universe);
         let command = control.command_mut();
         // Source IDs are part of the command state's durable input identity:
         // terminal is always 0 and the selected root is always 1.
@@ -848,7 +845,7 @@ impl CanonicalStartup {
             })?;
         if terminal != SourceId::new(0) || root != SourceId::new(1) {
             return Err(RunnerError::Replay(
-                "canonical startup assigned non-deterministic source identities".into(),
+                "startup assigned non-deterministic source identities".into(),
             ));
         }
         // The `**` filename line is read from the terminal, which tex.web
@@ -866,7 +863,7 @@ impl CanonicalStartup {
                 SourceRegistration::new(RegisteredSourceKind::World, Arc::clone(bytes)),
             );
         }
-        // `resolve_font_resource` returns `MissingCanonicalFont` immediately
+        // `resolve_font_resource` returns `MissingFont` immediately
         // rather than suspending, so the whole staged metric set is installed
         // before the first step instead of through a retry loop.
         for (name, bytes) in &self.fonts {
@@ -1097,8 +1094,8 @@ mod tests {
     /// The transport owns no catcode table of its own: it renders whatever
     /// `canonical_names` spells, so a frozen sentinel arrives as a §289
     /// control-sequence token rather than a `Debug` rendering of Umber's enum.
-    fn nested_startup() -> CanonicalStartup {
-        CanonicalStartup {
+    fn nested_startup() -> Startup {
+        Startup {
             profile: CommandProfile::TEX82,
             terminal_filename: Arc::from(&b"transitions.tex "[..]),
             root_name: "transitions.tex".into(),
@@ -1245,19 +1242,19 @@ mod tests {
     }
 
     #[test]
-    fn canonical_startup_matches_the_terminal_scan_before_root_delivery() {
+    fn startup_matches_the_terminal_scan_before_root_delivery() {
         let fixture = committed_fixture();
         let repository = test_support::repository_root();
-        let startup = CanonicalStartup::from_fixture(
+        let startup = Startup::from_fixture(
             &repository.join(FIXTURE_ROOT).join("command-transitions-v1"),
             &fixture,
             &ReplayResources::default(),
         )
-        .expect("canonical startup");
+        .expect("startup");
 
         assert_eq!(startup.profile, CommandProfile::TEX82);
         assert_eq!(startup.root_name, fixture.manifest.root_source);
-        let actual = startup.replay().expect("canonical startup replays");
+        let actual = startup.replay().expect("startup replays");
         let actual_events = actual.events[..40]
             .iter()
             .map(|event| event.event.clone())
@@ -1444,8 +1441,8 @@ mod tests {
     }
 
     #[test]
-    fn canonical_startup_rejects_a_stale_root_even_if_its_bytes_are_available() {
-        let startup = CanonicalStartup {
+    fn startup_rejects_a_stale_root_even_if_its_bytes_are_available() {
+        let startup = Startup {
             profile: CommandProfile::TEX82,
             terminal_filename: Arc::from(&b"transitions.tex "[..]),
             root_name: "alignment-delivery.tex".into(),

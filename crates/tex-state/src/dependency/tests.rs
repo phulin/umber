@@ -195,7 +195,7 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
 }
 
 #[test]
-fn canonical_paragraph_dependency_phases_remain_exact_and_separate() {
+fn paragraph_dependency_phases_remain_exact_and_separate() {
     let mut runtime = DependencyRuntime::default();
     let front_key = DependencyKey::Meaning(1);
     let break_key = DependencyKey::Meaning(2);

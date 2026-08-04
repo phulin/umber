@@ -21,7 +21,7 @@ use tex_command::{
     DiagnosticArgument, FatalError, FontResource, InputReason, InputTransition, ObservedToken,
     RecoveryKind, RegisteredSourceKind, SourceRegistration, canonical_names,
 };
-use tex_exec::{CanonicalMainControl, MainControlStep, Mode};
+use tex_exec::{MainControl, MainControlStep, Mode};
 use tex_state::{
     ContentHash, EffectRecord, InputOpenState, InputReadState, PrintSink, Universe, node::Node,
 };
@@ -1106,12 +1106,12 @@ fn execute_fresh(source: &[u8], case: &Case) -> Result<SemanticRun, String> {
             .map_err(|error| format!("terminal line registration: {error}"))?;
     }
     let mut control = match case.profile {
-        SessionProfile::Initex => CanonicalMainControl::tex82_initex(&mut universe),
+        SessionProfile::Initex => MainControl::tex82_initex(&mut universe),
         SessionProfile::EtexInitex => {
-            let _tex82_registry = CanonicalMainControl::tex82_initex(&mut universe);
+            let _tex82_registry = MainControl::tex82_initex(&mut universe);
             tex_command::install_etex_expandable_primitives(&mut universe);
             tex_exec::install_etex_unexpandable_primitives(&mut universe);
-            CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
+            MainControl::prepared_initex(CommandProfile::ETEX26)
         }
         SessionProfile::EtexLoaded => unreachable!("loaded profile handled above"),
         SessionProfile::Production => unreachable!("loaded profile handled above"),

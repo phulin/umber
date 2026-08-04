@@ -161,7 +161,7 @@ fn failure_before_any_stable_event_yields_valid_terminated_diagnostic_stream() {
         .finish(
             header(),
             LiveSessionOutcome::Failed {
-                diagnostic: "canonical_session_error".into(),
+                diagnostic: "engine_session_error".into(),
                 detail: "undispatched parameter".into(),
             },
         )

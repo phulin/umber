@@ -386,8 +386,7 @@ fn append_whatsit_effect(
                 // `print_nl(""); token_show(def_ref); print_ln` when the
                 // stream is not an open file. The trailing `print_ln` is part
                 // of the write's own text; the leading `print_nl` is not.
-                if expanded.publication == crate::canonical_shipout::WritePublication::Transactional
-                {
+                if expanded.publication == crate::shipout::WritePublication::Transactional {
                     if write_line_is_open(stores, sink) {
                         stores.world_mut().write_text(sink, "\n");
                     }
@@ -403,7 +402,7 @@ fn append_whatsit_effect(
             effects.push(PageEffect::Special { class, payload });
         }
         Whatsit::DeferredSpecial { class, tokens } => {
-            let crate::canonical_shipout::ExpandedReplayText(payload) =
+            let crate::shipout::ExpandedReplayText(payload) =
                 (expansion.replay_expander)(stores, super::ReplayTextKind::Special, tokens)?;
             effects.push(PageEffect::Special { class, payload });
         }
@@ -450,7 +449,7 @@ fn append_whatsit_effect(
             payload,
         }),
         Whatsit::DeferredPdfLiteral { mode, tokens } => {
-            let crate::canonical_shipout::ExpandedReplayText(payload) =
+            let crate::shipout::ExpandedReplayText(payload) =
                 (expansion.replay_expander)(stores, super::ReplayTextKind::PdfLiteral, tokens)?;
             effects.push(PageEffect::PdfLiteral {
                 mode: lower_pdf_literal_mode(mode),

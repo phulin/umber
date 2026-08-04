@@ -3,7 +3,7 @@
 This domain manifest owns tiny, hand-authored inputs for TeX82 conditional
 properties. The generic `tex-command-stream` integration test discovers the
 manifest at run time, validates its property ownership and provenance, drives
-each source through `tex_exec::CanonicalMainControl` in the TeX82 INITEX exact
+each source through `tex_exec::MainControl` in the TeX82 INITEX exact
 8-bit profile, and compares the declared short semantic observation projection.
 It does not invoke TeX, load a format, read the long-document trace registry, or
 copy expected bytes from a reference run.

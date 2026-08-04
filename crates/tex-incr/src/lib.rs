@@ -16,10 +16,10 @@ use tex_command::{
     SourceRegistrationError,
 };
 use tex_exec::{
-    Cancellation, CanonicalMainControl, CanonicalParagraphRegion, CanonicalResourceFulfillment,
-    CanonicalResourceHost, CanonicalResourceNeed, CanonicalResourceOutcome, CanonicalResourceWorld,
-    CanonicalStepResult, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
-    ExecutionBudgetCounters, MainControlStep, canonical_font_resource_path,
+    Cancellation, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
+    ExecutionBudgetCounters, MainControl, MainControlStep, ParagraphRegion, ResourceFulfillment,
+    ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld, StepResult,
+    canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -45,14 +45,14 @@ struct CandidateControlOptions<'a> {
     root_framing_name: Option<&'a str>,
 }
 
-fn canonical_candidate_control(
+fn candidate_control(
     universe: &mut Universe,
     options: CandidateControlOptions<'_>,
-) -> Result<CanonicalMainControl, SessionError> {
+) -> Result<MainControl, SessionError> {
     if options.initex {
         // `prepared_initex` deliberately owns only command-local state. The
         // composed Session is therefore the authoritative owner of the shared
-        // primitive meanings, just like `CanonicalMainControl::tex82_initex`.
+        // primitive meanings, just like `MainControl::tex82_initex`.
         tex_command::install_tex82_expandable_primitives(universe);
         tex_exec::install_unexpandable_primitives(universe);
         if matches!(
@@ -67,9 +67,9 @@ fn canonical_candidate_control(
         }
     }
     let mut control = if options.initex {
-        CanonicalMainControl::prepared_initex(options.profile)
+        MainControl::prepared_initex(options.profile)
     } else {
-        CanonicalMainControl::with_profile(options.profile)
+        MainControl::with_profile(options.profile)
     };
     control.set_dvi_output(options.emit_dvi);
     let mut registration = SourceRegistration::new(RegisteredSourceKind::Generated, options.bytes)
@@ -235,7 +235,7 @@ pub struct ReuseMetrics {
 ///
 /// These counters belong to the incremental session's accepted-output model:
 /// they describe work attributed to a revision, not live input-stack state.
-/// The canonical command path currently reports the default value until its
+/// The command path currently reports the default value until its
 /// finer-grained delivery counters are wired into candidate completion.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExpansionStats {
@@ -346,7 +346,7 @@ pub struct PendingRevision {
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
-    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
+    accepted_paragraphs: Vec<ParagraphRegion>,
     substrate: PendingSubstrate,
     reuse: ReuseMetrics,
     dumped_format: bool,
@@ -362,21 +362,21 @@ pub struct PendingRevision {
 /// no host capability is retained between calls.
 pub struct RevisionCandidate {
     universe: Universe,
-    control: CanonicalMainControl,
+    control: MainControl,
     sink: CandidateSink,
     memo: tex_state::PureMemoRuntime,
-    completed: Option<CanonicalCandidateCompletion>,
+    completed: Option<CandidateCompletion>,
     suspension_serial: u64,
     delivered_commands: usize,
     effect_start: usize,
     job_start_captured: bool,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
-    carried_paragraphs: Vec<CanonicalParagraphRegion>,
-    replay_suffix: Vec<CanonicalParagraphRegion>,
+    carried_paragraphs: Vec<ParagraphRegion>,
+    replay_suffix: Vec<ParagraphRegion>,
 }
 
-struct CanonicalCandidateCompletion {
+struct CandidateCompletion {
     prepared_dvi_pages: Vec<tex_exec::PreparedDviPage>,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
@@ -407,7 +407,7 @@ enum RevisionCandidateKind {
 /// reaches a terminal executor state.
 #[derive(Clone, Debug)]
 pub enum RevisionCandidateResult {
-    AwaitingResources(CanonicalResourceNeed),
+    AwaitingResources(ResourceNeed),
     Complete,
 }
 
@@ -482,7 +482,7 @@ impl RevisionCandidate {
     fn take_accepted_paragraphs(
         &mut self,
         convergence_position: Option<usize>,
-    ) -> Vec<CanonicalParagraphRegion> {
+    ) -> Vec<ParagraphRegion> {
         let resolver = self.universe.paragraph_origin_resolver();
         let mut accepted = std::mem::take(&mut self.carried_paragraphs);
         accepted.extend(self.control.take_finished_paragraph_regions());
@@ -689,7 +689,7 @@ impl RevisionCandidate {
     /// provisioned immutable generation is observed only by the replayed step.
     pub fn drive_with_resource_resolvers(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
         cancellation: &Cancellation,
     ) -> Result<RevisionCandidateResult, SessionError> {
         if self.completed.is_some() {
@@ -724,7 +724,7 @@ impl RevisionCandidate {
             }
             self.validate_execution_budgets()?;
             match self.control.advance(&mut self.universe)? {
-                CanonicalStepResult::Progress(step) => {
+                StepResult::Progress(step) => {
                     answered_needs.clear();
                     self.delivered_commands = self.delivered_commands.saturating_add(1);
                     self.validate_execution_budgets()?;
@@ -765,7 +765,7 @@ impl RevisionCandidate {
                         CandidateSink::Advance(sink) => sink.stop_requested(),
                     };
                     // Full jobs convert root EOF into §93's fatal `End` inside
-                    // canonical control. Explicit fragment sessions retain
+                    // main control. Explicit fragment sessions retain
                     // `EndOfInput` as their successful host boundary. Either
                     // result is terminal here; replaying an exhausted source
                     // can only duplicate diagnostics and grow state.
@@ -773,7 +773,7 @@ impl RevisionCandidate {
                         self.control
                             .finalize_page_output_receipts(&mut self.universe);
                         let prepared_dvi_pages = self.control.take_prepared_dvi_pages();
-                        self.completed = Some(CanonicalCandidateCompletion {
+                        self.completed = Some(CandidateCompletion {
                             prepared_dvi_pages,
                             dumped_format: self.control.dumped_format(),
                             format_dump_receipt: self.control.format_dump_receipt().cloned(),
@@ -783,28 +783,28 @@ impl RevisionCandidate {
                         return Ok(RevisionCandidateResult::Complete);
                     }
                 }
-                CanonicalStepResult::Suspended(need) => {
+                StepResult::Suspended(need) => {
                     self.validate_execution_budgets()?;
                     if answered_needs.contains(&need) {
-                        return Err(SessionError::CanonicalResourceNoProgress {
+                        return Err(SessionError::ResourceNoProgress {
                             need: Box::new(need),
                             site: self.control.pending_resource_site(),
                         });
                     }
                     let outcome = {
-                        let mut world = CanonicalResourceWorld::new(&mut self.universe);
+                        let mut world = ResourceWorld::new(&mut self.universe);
                         host.fulfill(&mut world, &need)
                     };
                     match outcome {
-                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                        ResourceOutcome::Fulfilled(fulfillment) => {
                             self.fulfill_resource(&need, fulfillment)?;
                             answered_needs.push(need);
                         }
-                        CanonicalResourceOutcome::Unavailable => {
+                        ResourceOutcome::Unavailable => {
                             self.mark_unavailable(&need);
                             answered_needs.push(need);
                         }
-                        CanonicalResourceOutcome::Declined => {
+                        ResourceOutcome::Declined => {
                             self.suspension_serial = self.suspension_serial.saturating_add(1);
                             return Ok(RevisionCandidateResult::AwaitingResources(need));
                         }
@@ -816,56 +816,54 @@ impl RevisionCandidate {
 
     fn fulfill_resource(
         &mut self,
-        need: &CanonicalResourceNeed,
-        fulfillment: CanonicalResourceFulfillment,
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
     ) -> Result<(), SessionError> {
         match (need, fulfillment) {
             (
-                CanonicalResourceNeed::Input { name: expected, .. },
-                CanonicalResourceFulfillment::Input { name, source },
+                ResourceNeed::Input { name: expected, .. },
+                ResourceFulfillment::Input { name, source },
             ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
             (
-                CanonicalResourceNeed::InputProbe { request: expected },
-                CanonicalResourceFulfillment::InputProbe { request, resource },
+                ResourceNeed::InputProbe { request: expected },
+                ResourceFulfillment::InputProbe { request, resource },
             ) if expected == &request => self
                 .control
                 .capabilities_mut()
                 .register_input_probe(request.name, resource),
             (
-                CanonicalResourceNeed::Font { request: expected },
-                CanonicalResourceFulfillment::Font { request, resource },
+                ResourceNeed::Font { request: expected },
+                ResourceFulfillment::Font { request, resource },
             ) if expected == &request => self
                 .control
                 .capabilities_mut()
                 .register_font(canonical_font_resource_path(&request.name), *resource),
             (
-                CanonicalResourceNeed::PdfImage { request: expected },
-                CanonicalResourceFulfillment::PdfImage { request, resource },
+                ResourceNeed::PdfImage { request: expected },
+                ResourceFulfillment::PdfImage { request, resource },
             ) if expected == &request => self
                 .control
                 .capabilities_mut()
                 .register_pdf_image(request, *resource),
-            _ => return Err(SessionError::UnexpectedCanonicalResource),
+            _ => return Err(SessionError::UnexpectedResource),
         }
         Ok(())
     }
 
-    fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
+    fn mark_unavailable(&mut self, need: &ResourceNeed) {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => {
+            ResourceNeed::Input { name, .. } => {
                 self.control.capabilities_mut().mark_input_unavailable(name)
             }
-            CanonicalResourceNeed::InputProbe { request } => self
+            ResourceNeed::InputProbe { request } => self
                 .control
                 .capabilities_mut()
                 .mark_input_probe_unavailable(&request.name),
-            CanonicalResourceNeed::Font { request } => {
-                self.control.capabilities_mut().register_font(
-                    canonical_font_resource_path(&request.name),
-                    tex_command::FontResource::Unavailable,
-                )
-            }
-            CanonicalResourceNeed::PdfImage { request } => self
+            ResourceNeed::Font { request } => self.control.capabilities_mut().register_font(
+                canonical_font_resource_path(&request.name),
+                tex_command::FontResource::Unavailable,
+            ),
+            ResourceNeed::PdfImage { request } => self
                 .control
                 .capabilities_mut()
                 .register_pdf_image(request.clone(), tex_command::PdfImageResource::Unavailable),
@@ -922,7 +920,7 @@ impl RevisionCandidate {
             checkpoint_root_bytes: self
                 .universe
                 .live_generation_charged_bytes()
-                .saturating_add(std::mem::size_of::<CanonicalMainControl>()),
+                .saturating_add(std::mem::size_of::<MainControl>()),
             memo_result_bytes: self.universe.pure_memo_stats().retained_bytes,
             diagnostic_bytes,
             output_bytes,
@@ -1055,7 +1053,7 @@ pub struct Session {
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
-    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
+    accepted_paragraphs: Vec<ParagraphRegion>,
     substrate: Option<GenerationSubstrate>,
     checkpoint_budget: usize,
     registered_inputs: BTreeMap<PathBuf, Vec<u8>>,
@@ -1215,7 +1213,7 @@ impl Session {
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
             history: Vec::new(),
-            canonical_paragraphs: Vec::new(),
+            accepted_paragraphs: Vec::new(),
             substrate: None,
             checkpoint_budget,
             registered_inputs: BTreeMap::new(),
@@ -1388,12 +1386,12 @@ impl Session {
     }
 
     pub fn cold(&mut self) -> Result<AcceptedOutput, SessionError> {
-        self.cold_with_resolvers(&mut DirectCanonicalHost)
+        self.cold_with_resolvers(&mut DirectResourceHost)
     }
 
     pub fn cold_with_resolvers(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
         let mut candidate = self.start_cold_candidate()?;
         drive_synchronous_candidate(&mut candidate, host)?;
@@ -1402,7 +1400,7 @@ impl Session {
 
     pub fn cold_with_resource_resolvers(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
         self.cold_with_resolvers(host)
     }
@@ -1414,7 +1412,7 @@ impl Session {
         universe.begin_retained_session()?;
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
-        let control = canonical_candidate_control(
+        let control = candidate_control(
             &mut universe,
             CandidateControlOptions {
                 job_name: &self.job_name,
@@ -1536,13 +1534,11 @@ impl Session {
             .position(|record| record.key.boundary == EngineBoundary::JobStart);
         let can_restore = restart.is_some_and(|restart| {
             self.substrate.as_ref().is_some_and(|substrate| {
-                setup.old_history[restart]
-                    .checkpoint()
-                    .can_fork_canonical_editor(
-                        substrate,
-                        setup.old_source.as_bytes(),
-                        &self.source_file_bytes(&setup.next),
-                    )
+                setup.old_history[restart].checkpoint().can_fork_editor(
+                    substrate,
+                    setup.old_source.as_bytes(),
+                    &self.source_file_bytes(&setup.next),
+                )
             })
         });
         if let Some(restart) = restart.filter(|_| can_restore) {
@@ -1629,13 +1625,11 @@ impl Session {
         match restart {
             Some(restart) => {
                 let can_restore = self.substrate.as_ref().is_some_and(|substrate| {
-                    setup.old_history[restart]
-                        .checkpoint()
-                        .can_fork_canonical_editor(
-                            substrate,
-                            setup.old_source.as_bytes(),
-                            &self.source_file_bytes(&setup.next),
-                        )
+                    setup.old_history[restart].checkpoint().can_fork_editor(
+                        substrate,
+                        setup.old_source.as_bytes(),
+                        &self.source_file_bytes(&setup.next),
+                    )
                 });
                 if can_restore {
                     self.start_restored_candidate(setup, restart, true)
@@ -1664,7 +1658,7 @@ impl Session {
         let revised_root: Arc<[u8]> = Arc::from(setup.next.as_bytes());
         let mut paragraph_start_rehome_failures = 0;
         let rehomed_paragraphs = self
-            .canonical_paragraphs
+            .accepted_paragraphs
             .iter()
             .filter_map(|region| {
                 let rehomed = region.rehome_edited_root(
@@ -1696,7 +1690,7 @@ impl Session {
         let allow_convergence = allow_convergence
             && !replay_suffix
                 .iter()
-                .any(tex_exec::CanonicalParagraphRegion::permits_contiguous_cold_replay);
+                .any(tex_exec::ParagraphRegion::permits_contiguous_cold_replay);
         if carried_paragraphs.is_empty()
             && replay_suffix.is_empty()
             && paragraph_start_rehome_failures > 0
@@ -1712,9 +1706,9 @@ impl Session {
             return Ok(candidate);
         }
         let mut control = if self.initex {
-            CanonicalMainControl::prepared_initex(self.effective_command_profile())
+            MainControl::prepared_initex(self.effective_command_profile())
         } else {
-            CanonicalMainControl::with_profile(self.effective_command_profile())
+            MainControl::with_profile(self.effective_command_profile())
         };
         control.set_dvi_output(self.dvi_output);
         control
@@ -1730,10 +1724,10 @@ impl Session {
             restart_fork_latency,
             materialized_replay_suffix,
             mut validation_failures,
-        ) = anchor.checkpoint().fork_canonical_editor_with_paragraphs(
+        ) = anchor.checkpoint().fork_editor_with_paragraphs(
             &mut control,
             substrate,
-            tex_exec::CanonicalEditorFork {
+            tex_exec::EditorFork {
                 old_source: setup.old_source.as_bytes(),
                 new_source: Arc::from(self.source_file_bytes(&setup.next)),
                 fragments: &setup.fragments,
@@ -1747,7 +1741,7 @@ impl Session {
         ));
         if let Some(owners) = materialized_replay_suffix
             .iter()
-            .map(tex_exec::CanonicalParagraphRegion::output_effect_episode_owners)
+            .map(tex_exec::ParagraphRegion::output_effect_episode_owners)
             .max_by_key(|owners| owners.len())
         {
             universe
@@ -1756,7 +1750,7 @@ impl Session {
         }
         if let Some(publications) = materialized_replay_suffix
             .iter()
-            .map(tex_exec::CanonicalParagraphRegion::output_effect_publications)
+            .map(tex_exec::ParagraphRegion::output_effect_publications)
             .max_by_key(|publications| publications.len())
         {
             universe
@@ -1765,14 +1759,14 @@ impl Session {
         }
         if let Some(domains) = materialized_replay_suffix
             .iter()
-            .map(tex_exec::CanonicalParagraphRegion::effect_domains)
+            .map(tex_exec::ParagraphRegion::effect_domains)
             .max_by_key(|domains| domains.len())
         {
             universe.world_mut().install_effect_domains(domains);
         }
         if let Some(ordinals) = materialized_replay_suffix
             .iter()
-            .map(tex_exec::CanonicalParagraphRegion::effect_semantic_record_ordinals)
+            .map(tex_exec::ParagraphRegion::effect_semantic_record_ordinals)
             .max_by_key(|ordinals| ordinals.len())
         {
             universe
@@ -1781,7 +1775,7 @@ impl Session {
         }
         if let Some(orders) = materialized_replay_suffix
             .iter()
-            .map(tex_exec::CanonicalParagraphRegion::effect_placement_intra_orders)
+            .map(tex_exec::ParagraphRegion::effect_placement_intra_orders)
             .max_by_key(|orders| orders.len())
         {
             universe
@@ -1833,7 +1827,7 @@ impl Session {
         universe.begin_retained_session()?;
         universe.install_editor_fragments(&setup.fragments, &setup.next_layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(setup.next.as_bytes()));
-        let mut control = canonical_candidate_control(
+        let mut control = candidate_control(
             &mut universe,
             CandidateControlOptions {
                 job_name: &self.job_name,
@@ -1849,7 +1843,7 @@ impl Session {
         let revised_root: Arc<[u8]> = Arc::from(setup.next.as_bytes());
         let mut replay_suffix = Vec::new();
         for region in self
-            .canonical_paragraphs
+            .accepted_paragraphs
             .iter()
             .take_while(|_| setup.allow_paragraph_replay)
         {
@@ -1877,7 +1871,7 @@ impl Session {
         let replay_suffix = match (setup.old_history.first(), self.substrate.as_ref()) {
             (Some(anchor), Some(substrate)) => anchor
                 .checkpoint()
-                .materialize_canonical_paragraphs_into(&mut universe, substrate, &replay_suffix)?,
+                .materialize_accepted_paragraphs_into(&mut universe, substrate, &replay_suffix)?,
             _ => Vec::new(),
         };
         control.install_contiguous_cold_paragraph_replay_regions(replay_suffix.iter().cloned());
@@ -1921,7 +1915,7 @@ impl Session {
         &self,
         mut candidate: RevisionCandidate,
     ) -> Result<PendingRevision, SessionError> {
-        let canonical_paragraphs = candidate.take_accepted_paragraphs(None);
+        let accepted_paragraphs = candidate.take_accepted_paragraphs(None);
         let RevisionCandidateKind::Replacement { setup } = candidate.kind else {
             return Err(SessionError::CandidateKindMismatch);
         };
@@ -1980,7 +1974,7 @@ impl Session {
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
         let expansion_stats = ExpansionStats::default();
-        let CanonicalCandidateCompletion {
+        let CandidateCompletion {
             prepared_dvi_pages,
             dumped_format,
             format_dump_receipt,
@@ -2034,7 +2028,7 @@ impl Session {
             artifacts,
             dvi_pages,
             history,
-            canonical_paragraphs,
+            accepted_paragraphs,
             substrate: PendingSubstrate::Replaced {
                 substrate,
                 current_artifact_origins: Vec::new(),
@@ -2058,7 +2052,7 @@ impl Session {
             }
             _ => None,
         };
-        let canonical_paragraphs = candidate.take_accepted_paragraphs(convergence_position);
+        let accepted_paragraphs = candidate.take_accepted_paragraphs(convergence_position);
         let RevisionCandidateKind::Incremental {
             setup,
             restart,
@@ -2082,7 +2076,7 @@ impl Session {
         let broke_retained_paragraph = memo.stats().paragraph_validation_failure_reasons
             [break_dependency_index]
             > before_memo.paragraph_validation_failure_reasons[break_dependency_index];
-        let CanonicalCandidateCompletion {
+        let CandidateCompletion {
             prepared_dvi_pages,
             dumped_format,
             format_dump_receipt: _,
@@ -2520,7 +2514,7 @@ impl Session {
             artifacts,
             dvi_pages: pages,
             history,
-            canonical_paragraphs,
+            accepted_paragraphs,
             substrate: pending_substrate,
             reuse,
             dumped_format,
@@ -2760,14 +2754,14 @@ impl Session {
         next_revision: RevisionId,
         edit: Edit,
     ) -> Result<AcceptedOutput, SessionError> {
-        self.advance_with_resolvers(next_revision, edit, &mut DirectCanonicalHost)
+        self.advance_with_resolvers(next_revision, edit, &mut DirectResourceHost)
     }
 
     pub fn advance_with_resolvers(
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
         let pending = self.prepare_advance_with_resolvers(next_revision, edit, host)?;
         self.accept_pending(pending)
@@ -2777,7 +2771,7 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<AcceptedOutput, SessionError> {
         let pending = self.prepare_advance_with_resource_resolvers(next_revision, edit, host)?;
         self.accept_pending(pending)
@@ -2790,7 +2784,7 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<PendingRevision, SessionError> {
         // Query caches are revision-attempt ephemera. A failed candidate keeps
         // accepted semantic state but must not keep maps lowered before it.
@@ -2804,7 +2798,7 @@ impl Session {
         &mut self,
         next_revision: RevisionId,
         edit: Edit,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
     ) -> Result<PendingRevision, SessionError> {
         self.prepare_advance_with_resolvers(next_revision, edit, host)
     }
@@ -2865,7 +2859,7 @@ impl Session {
             artifacts,
             dvi_pages,
             history,
-            canonical_paragraphs,
+            accepted_paragraphs,
             substrate,
             reuse,
             dumped_format,
@@ -2966,7 +2960,7 @@ impl Session {
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
         self.history = history;
-        self.canonical_paragraphs = canonical_paragraphs;
+        self.accepted_paragraphs = accepted_paragraphs;
         self.dumped_format = dumped_format;
         self.format_dump_receipt = format_dump_receipt;
         self.expansion_stats = expansion_stats;
@@ -3039,7 +3033,7 @@ impl Session {
         );
         retention.memo_result_bytes = self.pure_memo.stats().retained_bytes;
         self.history = history;
-        self.canonical_paragraphs = run.canonical_paragraphs;
+        self.accepted_paragraphs = run.accepted_paragraphs;
         self.effects = run.effects;
         self.effect_sequences = run.effect_sequences;
         self.effect_publications = run.effect_publications;
@@ -3147,7 +3141,7 @@ fn build_page_render_map(
 
 struct RevisionRun {
     history: Vec<BoundaryRecord>,
-    canonical_paragraphs: Vec<CanonicalParagraphRegion>,
+    accepted_paragraphs: Vec<ParagraphRegion>,
     effects: Vec<EffectRecord>,
     effect_sequences: Vec<tex_state::EffectSequence>,
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
@@ -3180,7 +3174,7 @@ struct FinishedColdCandidate {
 fn finish_cold_candidate(
     mut candidate: RevisionCandidate,
 ) -> Result<FinishedColdCandidate, SessionError> {
-    let canonical_paragraphs = candidate.take_accepted_paragraphs(None);
+    let accepted_paragraphs = candidate.take_accepted_paragraphs(None);
     let RevisionCandidateKind::Initial { source_len } = candidate.kind else {
         return Err(SessionError::CandidateKindMismatch);
     };
@@ -3242,7 +3236,7 @@ fn finish_cold_candidate(
         .iter()
         .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
         .count();
-    let CanonicalCandidateCompletion {
+    let CandidateCompletion {
         prepared_dvi_pages,
         dumped_format,
         format_dump_receipt,
@@ -3256,7 +3250,7 @@ fn finish_cold_candidate(
     Ok(FinishedColdCandidate {
         run: RevisionRun {
             history: sink.records,
-            canonical_paragraphs,
+            accepted_paragraphs,
             effects,
             effect_sequences,
             effect_publications,
@@ -3557,36 +3551,31 @@ fn select_restart(history: &[BoundaryRecord], old: &str, new: &str, edit: &Edit)
         .map(|(index, _)| index)
 }
 
-struct DirectCanonicalHost;
+struct DirectResourceHost;
 
-impl CanonicalResourceHost for DirectCanonicalHost {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for DirectResourceHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => world
-                .read_file(Path::new(name))
-                .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::world_input(
-                        name, content,
-                    ))
-                }),
-            CanonicalResourceNeed::InputProbe { request } => world
+            ResourceNeed::Input { name, .. } => world.read_file(Path::new(name)).ok().map_or(
+                ResourceOutcome::Unavailable,
+                |content| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
+                },
+            ),
+            ResourceNeed::InputProbe { request } => world
                 .read_file(Path::new(&request.name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                    CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content),
-                    )
+                .map_or(ResourceOutcome::Unavailable, |content| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                        request.clone(),
+                        content,
+                    ))
                 }),
-            CanonicalResourceNeed::Font { request } => world
+            ResourceNeed::Font { request } => world
                 .read_file(canonical_font_resource_path(&request.name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                .map_or(ResourceOutcome::Unavailable, |metrics| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(tex_command::FontResource::Tfm {
                             metrics,
@@ -3594,23 +3583,21 @@ impl CanonicalResourceHost for DirectCanonicalHost {
                         }),
                     })
                 }),
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+            ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
 }
 
 fn drive_synchronous_candidate(
     candidate: &mut RevisionCandidate,
-    host: &mut dyn CanonicalResourceHost,
+    host: &mut dyn ResourceHost,
 ) -> Result<(), SessionError> {
     match candidate.drive_with_resource_resolvers(host, &Cancellation::new())? {
         RevisionCandidateResult::Complete => Ok(()),
-        RevisionCandidateResult::AwaitingResources(need) => {
-            Err(SessionError::CanonicalResourceNoProgress {
-                need: Box::new(need),
-                site: candidate.control.pending_resource_site(),
-            })
-        }
+        RevisionCandidateResult::AwaitingResources(need) => Err(SessionError::ResourceNoProgress {
+            need: Box::new(need),
+            site: candidate.control.pending_resource_site(),
+        }),
     }
 }
 
@@ -5230,9 +5217,9 @@ pub enum SessionError {
     InvalidEditRange,
     CandidateKindMismatch,
     CandidateNotComplete,
-    UnexpectedCanonicalResource,
-    CanonicalResourceNoProgress {
-        need: Box<CanonicalResourceNeed>,
+    UnexpectedResource,
+    ResourceNoProgress {
+        need: Box<ResourceNeed>,
         site: Option<tex_state::provenance::DiagnosticSite>,
     },
     SourceRegistration(SourceRegistrationError),
@@ -5274,17 +5261,17 @@ impl fmt::Display for SessionError {
             Self::CandidateNotComplete => {
                 f.write_str("revision candidate is still executing or suspended")
             }
-            Self::UnexpectedCanonicalResource => {
-                f.write_str("canonical resource fulfillment does not match the pending need")
+            Self::UnexpectedResource => {
+                f.write_str("resource fulfillment does not match the pending need")
             }
-            Self::CanonicalResourceNoProgress { need, .. } => write!(
+            Self::ResourceNoProgress { need, .. } => write!(
                 f,
-                "canonical retained host answered {need:?}, but replay suspended on the identical need again before committing progress"
+                "retained host answered {need:?}, but replay suspended on the identical need again before committing progress"
             ),
             Self::SourceRegistration(error) => {
-                write!(f, "canonical source registration failed: {error}")
+                write!(f, "source registration failed: {error}")
             }
-            Self::CommandSummary(error) => write!(f, "canonical checkpoint failed: {error}"),
+            Self::CommandSummary(error) => write!(f, "checkpoint failed: {error}"),
             Self::MissingAcceptedSubstrate => {
                 f.write_str("session has no accepted cold generation")
             }
@@ -5308,7 +5295,7 @@ impl SessionError {
     pub fn diagnostic_site(&self) -> Option<tex_state::provenance::DiagnosticSite> {
         match self {
             Self::Execute(error) => Some(error.diagnostic_site()),
-            Self::CanonicalResourceNoProgress { site, .. } => site.clone(),
+            Self::ResourceNoProgress { site, .. } => site.clone(),
             _ => None,
         }
     }

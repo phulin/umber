@@ -613,7 +613,7 @@ fn two_phase_trip_helper_forbids_private_format_paths() {
         concat!(".dump_", "format("),
         concat!("construct_format_", "in_worker"),
         concat!("run_format_", "worker"),
-        concat!("CanonicalEngineSession::", "tex82_initex"),
+        concat!("EngineSession::", "tex82_initex"),
         concat!("Once", "Lock"),
         concat!("Temp", "Dir"),
     ] {
@@ -1257,7 +1257,7 @@ fn document_routes_use_plain_while_self_contained_dvi_routes_use_raw_tex82() {
         concat!("dump_", "format"),
         concat!("FormatCacheStore::", "new"),
         concat!("run_format_", "worker"),
-        concat!("CanonicalEngineSession::", "tex82_initex"),
+        concat!("EngineSession::", "tex82_initex"),
         concat!("Once", "Lock"),
         concat!("Temp", "Dir"),
     ] {

@@ -6,7 +6,7 @@ use tex_command::{
     CommandProfile, FontResource, PdfImageResource, RegisteredSourceKind, SourceRegistration,
 };
 use tex_exec::{
-    CheckpointSink, EngineBoundary, FontResolver, PdfImageRequest as LegacyPdfImageRequest,
+    CheckpointSink, EngineBoundary, FontResolver, PdfImageRequest as OutputPdfImageRequest,
     PdfImageResolver,
 };
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
@@ -16,10 +16,10 @@ use tex_state::{
     ResourceLookup, ResourceResult, Universe, WorldCommitMode, WorldError,
 };
 
-mod canonical_session;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli_resource;
 mod editor_session;
+mod engine_session;
 mod fixed_point;
 #[cfg(not(target_arch = "wasm32"))]
 mod format_fixture;
@@ -42,13 +42,13 @@ mod virtual_compile;
 
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub use canonical_session::{
-    CanonicalEngineSession, CanonicalExpansionStats, CanonicalSessionError, CanonicalSessionState,
-    CanonicalStartupInput, DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
-};
 pub use editor_session::{
     EditorCompileSession, EditorResourceError, EditorSessionOptions, EditorSessionStatus,
     EditorStabilizationAttempt,
+};
+pub use engine_session::{
+    DEFAULT_NO_PROGRESS_LIMIT, EngineSession, ExpansionStats, SessionError, SessionState,
+    StartupInput,
 };
 pub use fixed_point::FixedPointLimits;
 #[cfg(not(target_arch = "wasm32"))]
@@ -79,10 +79,7 @@ pub use pdf_output::{
 pub use pdftex::PDFTEX_PRIMITIVE_NAMES;
 #[cfg(not(target_arch = "wasm32"))]
 pub use prepared_format::{PreparedFormatJob, PreparedFormatProvider};
-pub use tex_exec::{
-    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
-    CanonicalResourceWorld,
-};
+pub use tex_exec::{ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld};
 pub use tex_fixed_point::{
     TexFixedPointAttempt, TexFixedPointError, TexFixedPointOptions, TexFixedPointOutput,
     TexFixedPointSession,
@@ -174,9 +171,9 @@ impl RetainedRootRequest {
     }
 }
 
-struct NoCanonicalCheckpoints;
+struct NoCheckpoints;
 
-impl CheckpointSink for NoCanonicalCheckpoints {
+impl CheckpointSink for NoCheckpoints {
     fn wants_checkpoint(&self, _boundary: EngineBoundary) -> bool {
         false
     }
@@ -188,9 +185,9 @@ impl CheckpointSink for NoCanonicalCheckpoints {
 pub fn run_retained_root(
     stores: &mut Universe,
     request: RetainedRootRequest,
-    host: &mut dyn CanonicalResourceHost,
-) -> Result<RunResult, CanonicalSessionError> {
-    let mut session = CanonicalEngineSession::new(stores, request.profile);
+    host: &mut dyn ResourceHost,
+) -> Result<RunResult, SessionError> {
+    let mut session = EngineSession::new(stores, request.profile);
     match request.completion {
         tex_exec::RootCompletionPolicy::RequireTeXEnd => {
             session.register_retained_root_with_invocation(
@@ -207,7 +204,7 @@ pub fn run_retained_root(
             )?;
         }
     }
-    session.run(host, &mut NoCanonicalCheckpoints)
+    session.run(host, &mut NoCheckpoints)
 }
 
 /// Registers the one exact Cargo-test entry used when an authenticated format
@@ -312,21 +309,21 @@ impl FileSessionResolvers {
     }
 }
 
-impl CanonicalResourceHost for FileSessionResolvers {
+impl ResourceHost for FileSessionResolvers {
     fn fulfill(
         &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &tex_exec::CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+        world: &mut ResourceWorld<'_>,
+        need: &tex_exec::ResourceNeed,
+    ) -> ResourceOutcome {
         match need {
-            tex_exec::CanonicalResourceNeed::Input { name, .. } => {
+            tex_exec::ResourceNeed::Input { name, .. } => {
                 if let Some(result) = self
                     .input
                     .0
-                    .read_restricted_pipe_from_canonical_world(world, name)
+                    .read_restricted_pipe_from_resource_world(world, name)
                 {
-                    return result.map_or(CanonicalResourceOutcome::Unavailable, |text| {
-                        CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                    return result.map_or(ResourceOutcome::Unavailable, |text| {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::input(
                             name,
                             RegisteredSourceKind::Generated,
                             Arc::from(text.into_bytes()),
@@ -335,39 +332,38 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 }
                 self.input
                     .0
-                    .read_from_canonical_world(world, name)
+                    .read_from_resource_world(world, name)
                     .ok()
-                    .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::world_input(name, content),
-                        )
+                    .map_or(ResourceOutcome::Unavailable, |content| {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
                     })
             }
-            tex_exec::CanonicalResourceNeed::InputProbe { request } => self
+            tex_exec::ResourceNeed::InputProbe { request } => self
                 .input
                 .0
-                .read_from_canonical_world(world, &request.name)
+                .read_from_resource_world(world, &request.name)
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                    CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content),
-                    )
+                .map_or(ResourceOutcome::Unavailable, |content| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                        request.clone(),
+                        content,
+                    ))
                 }),
-            tex_exec::CanonicalResourceNeed::Font { request } => {
+            tex_exec::ResourceNeed::Font { request } => {
                 let mut path = PathBuf::from(&request.name);
                 if path.extension().is_none() {
                     path.set_extension("tfm");
                 }
-                CanonicalResourceOutcome::Fulfilled(
+                ResourceOutcome::Fulfilled(
                     self.font
                         .0
-                        .read_from_canonical_world(world, &path)
+                        .read_from_resource_world(world, &path)
                         .map_or_else(
-                            |_| CanonicalResourceFulfillment::Font {
+                            |_| ResourceFulfillment::Font {
                                 request: request.clone(),
                                 resource: Box::new(FontResource::Unavailable),
                             },
-                            |metrics| CanonicalResourceFulfillment::Font {
+                            |metrics| ResourceFulfillment::Font {
                                 request: request.clone(),
                                 resource: Box::new(FontResource::Tfm {
                                     metrics,
@@ -377,15 +373,15 @@ impl CanonicalResourceHost for FileSessionResolvers {
                         ),
                 )
             }
-            tex_exec::CanonicalResourceNeed::PdfImage { request } => {
+            tex_exec::ResourceNeed::PdfImage { request } => {
                 let Ok(content) = self
                     .image
                     .0
-                    .read_exact_from_canonical_world(world, &request.name)
+                    .read_exact_from_resource_world(world, &request.name)
                 else {
-                    return CanonicalResourceOutcome::Unavailable;
+                    return ResourceOutcome::Unavailable;
                 };
-                let legacy = LegacyPdfImageRequest {
+                let legacy = OutputPdfImageRequest {
                     name: request.name.clone(),
                     page: match &request.page {
                         tex_command::PdfImagePageSelection::Number(page) => {
@@ -410,7 +406,7 @@ impl CanonicalResourceHost for FileSessionResolvers {
                 let resource = virtual_compile::parse_image(&content, &legacy)
                     .map(PdfImageResource::Available)
                     .unwrap_or_else(PdfImageResource::Invalid);
-                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::PdfImage {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
                     request: request.clone(),
                     resource: Box::new(resource),
                 })
@@ -608,7 +604,7 @@ impl PdfImageResolver for FileImageResolver {
     fn open_image(
         &mut self,
         input: &mut dyn tex_state::InputReadState,
-        request: &LegacyPdfImageRequest,
+        request: &OutputPdfImageRequest,
         _request_index: u64,
     ) -> tex_exec::ResourceResult<tex_state::PdfExternalImageSource> {
         let content = match self.0.read(input, &request.name) {
@@ -1515,8 +1511,8 @@ mod primitive_mode_tests {
 pub fn run_input_with_context(
     stores: &mut Universe,
     request: RetainedRootRequest,
-    host: &mut dyn CanonicalResourceHost,
-) -> Result<String, CanonicalSessionError> {
+    host: &mut dyn ResourceHost,
+) -> Result<String, SessionError> {
     run_input_collecting_artifacts(stores, request, host).map(|result| result.terminal_text)
 }
 
@@ -1524,9 +1520,9 @@ pub fn run_input_with_context(
 pub fn run_input_with_context_and_profile(
     stores: &mut Universe,
     request: RetainedRootRequest,
-    host: &mut dyn CanonicalResourceHost,
+    host: &mut dyn ResourceHost,
     profile: CommandProfile,
-) -> Result<String, CanonicalSessionError> {
+) -> Result<String, SessionError> {
     run_input_collecting_artifacts_with_profile(stores, request, host, profile)
         .map(|result| result.terminal_text)
 }
@@ -1535,8 +1531,8 @@ pub fn run_input_with_context_and_profile(
 pub fn run_input_collecting_artifacts(
     stores: &mut Universe,
     request: RetainedRootRequest,
-    host: &mut dyn CanonicalResourceHost,
-) -> Result<RunResult, CanonicalSessionError> {
+    host: &mut dyn ResourceHost,
+) -> Result<RunResult, SessionError> {
     run_retained_root(stores, request, host)
 }
 
@@ -1549,9 +1545,9 @@ pub fn run_input_collecting_artifacts(
 pub fn run_input_collecting_artifacts_with_profile(
     stores: &mut Universe,
     mut request: RetainedRootRequest,
-    host: &mut dyn CanonicalResourceHost,
+    host: &mut dyn ResourceHost,
     profile: CommandProfile,
-) -> Result<RunResult, CanonicalSessionError> {
+) -> Result<RunResult, SessionError> {
     request.profile = profile;
     run_retained_root(stores, request, host)
 }
@@ -1655,10 +1651,7 @@ pub fn html_from_artifacts<R: tex_out::html::HtmlFontAssets>(
 }
 
 /// Runs in-memory TeX through the `umber run` executor setup.
-pub fn run_memory_with_stores(
-    source: &str,
-    stores: &mut Universe,
-) -> Result<String, CanonicalSessionError> {
+pub fn run_memory_with_stores(source: &str, stores: &mut Universe) -> Result<String, SessionError> {
     run_memory_with_stores_and_profile(source, stores, CommandProfile::TEX82, true)
 }
 
@@ -1668,10 +1661,10 @@ pub fn run_memory_with_stores_and_profile(
     stores: &mut Universe,
     profile: CommandProfile,
     emit_dvi: bool,
-) -> Result<String, CanonicalSessionError> {
+) -> Result<String, SessionError> {
     let _ = emit_dvi;
     let mut host = FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
-    let mut session = CanonicalEngineSession::new(stores, profile);
+    let mut session = EngineSession::new(stores, profile);
     session.project_terminal_text_to_root_body();
     session.register_retained_fragment_with_invocation(
         "texput",
@@ -1682,7 +1675,7 @@ pub fn run_memory_with_stores_and_profile(
         ),
     )?;
     session
-        .run(&mut host, &mut NoCanonicalCheckpoints)
+        .run(&mut host, &mut NoCheckpoints)
         .map(|result| result.terminal_text)
 }
 
@@ -2085,7 +2078,7 @@ mod tests {
         let run = |source: &'static [u8], stores: &mut Universe| {
             let mut host =
                 FileSessionResolvers::new(Path::new("texput.tex"), Vec::new(), Vec::new());
-            let mut session = crate::CanonicalEngineSession::new(stores, CommandProfile::TEX82);
+            let mut session = crate::EngineSession::new(stores, CommandProfile::TEX82);
             session.project_terminal_text_to_root_body();
             session
                 .register_retained_fragment_with_invocation(
@@ -2095,7 +2088,7 @@ mod tests {
                 )
                 .expect("root registers");
             session
-                .run(&mut host, &mut super::NoCanonicalCheckpoints)
+                .run(&mut host, &mut super::NoCheckpoints)
                 .expect("retained root completes")
         };
 
@@ -2171,8 +2164,7 @@ mod tests {
                 .read_file("/project/job.tex")
                 .expect("World selects the root");
             let root_hash = selected_root.hash();
-            let mut session =
-                crate::CanonicalEngineSession::new(&mut stores, mode.command_profile());
+            let mut session = crate::EngineSession::new(&mut stores, mode.command_profile());
             session
                 .register_world_root("job", selected_root)
                 .expect("selected root registers unchanged");

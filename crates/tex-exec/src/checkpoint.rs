@@ -57,13 +57,13 @@ pub struct RootRehomeContext<'a> {
     new_content_hash: ContentHash,
 }
 
-/// Complete editor-root replacement supplied to one canonical checkpoint fork.
-pub struct CanonicalEditorFork<'a> {
+/// Complete editor-root replacement supplied to one checkpoint fork.
+pub struct EditorFork<'a> {
     pub old_source: &'a [u8],
     pub new_source: std::sync::Arc<[u8]>,
     pub fragments: &'a FragmentStore,
     pub layout: &'a tex_state::EditorLayout,
-    pub paragraphs: &'a [crate::CanonicalParagraphRegion],
+    pub paragraphs: &'a [crate::ParagraphRegion],
 }
 
 impl<'a> RootRehomeContext<'a> {
@@ -91,12 +91,12 @@ impl EngineCheckpoint {
     /// Materializes retained paragraph command graphs into an independently
     /// prepared cold destination without restoring this checkpoint's runtime
     /// continuation.
-    pub fn materialize_canonical_paragraphs_into(
+    pub fn materialize_accepted_paragraphs_into(
         &self,
         destination: &mut Universe,
         substrate: &GenerationSubstrate,
-        paragraphs: &[crate::CanonicalParagraphRegion],
-    ) -> Result<Vec<crate::CanonicalParagraphRegion>, EditorRestoreError> {
+        paragraphs: &[crate::ParagraphRegion],
+    ) -> Result<Vec<crate::ParagraphRegion>, EditorRestoreError> {
         let summary = self.command_summary();
         let (_, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
@@ -142,9 +142,9 @@ impl EngineCheckpoint {
         Ok(materialized)
     }
 
-    /// Captures a canonical named boundary.  Command publication proves that
+    /// Captures a named boundary.  Command publication proves that
     /// no scanner, macro matcher, or alignment delivery remains live.
-    pub fn capture_canonical(
+    pub fn capture_checkpoint(
         boundary: EngineBoundary,
         command: &CommandState,
         nest: &ModeNest,
@@ -183,7 +183,7 @@ impl EngineCheckpoint {
 
     /// Captures the restartable event-time projection of a checkpoint reached
     /// while an enclosing paragraph recorder remains active.
-    pub(crate) fn capture_canonical_during_paragraph(
+    pub(crate) fn capture_during_paragraph(
         boundary: EngineBoundary,
         command: &CommandState,
         nest: &ModeNest,
@@ -255,43 +255,43 @@ impl EngineCheckpoint {
         self.command.as_ref()
     }
 
-    /// Restores the canonical state roots.  Preparation validates the command
+    /// Restores the state roots.  Preparation validates the command
     /// profile and mode summary before it changes the live command, mode, or
     /// Universe roots.
-    pub fn restore_canonical_state(
+    pub fn restore_state(
         &self,
         command: &mut CommandState,
         nest: &mut ModeNest,
         universe: &mut Universe,
-    ) -> Result<(), CanonicalCheckpointRestoreError> {
+    ) -> Result<(), CheckpointRestoreError> {
         let summary = self.command.as_ref().clone();
         let mut restored_command = command.clone();
         restored_command
             .restore_summary(summary)
-            .map_err(CanonicalCheckpointRestoreError::CommandProfile)?;
-        let restored_modes = ModeNest::from_summary(self.modes.clone())
-            .map_err(CanonicalCheckpointRestoreError::Mode)?;
+            .map_err(CheckpointRestoreError::CommandProfile)?;
+        let restored_modes =
+            ModeNest::from_summary(self.modes.clone()).map_err(CheckpointRestoreError::Mode)?;
         universe.rollback(&self.universe);
         *command = restored_command;
         *nest = restored_modes;
         Ok(())
     }
 
-    /// Forks a retained canonical checkpoint and substitutes an edited root
+    /// Forks a retained checkpoint and substitutes an edited root
     /// source whose consumed prefix is unchanged.
-    pub fn fork_canonical_editor(
+    pub fn fork_editor(
         &self,
-        control: &mut crate::CanonicalMainControl,
+        control: &mut crate::MainControl,
         substrate: &GenerationSubstrate,
         old_source: &[u8],
         new_source: std::sync::Arc<[u8]>,
         fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
     ) -> Result<(Universe, Duration), EditorRestoreError> {
-        self.fork_canonical_editor_with_paragraphs(
+        self.fork_editor_with_paragraphs(
             control,
             substrate,
-            CanonicalEditorFork {
+            EditorFork {
                 old_source,
                 new_source,
                 fragments,
@@ -304,21 +304,21 @@ impl EngineCheckpoint {
 
     /// Forks a checkpoint and atomically remaps its command continuation and
     /// retained paragraph endpoints before either can be restored.
-    pub fn fork_canonical_editor_with_paragraphs(
+    pub fn fork_editor_with_paragraphs(
         &self,
-        control: &mut crate::CanonicalMainControl,
+        control: &mut crate::MainControl,
         substrate: &GenerationSubstrate,
-        request: CanonicalEditorFork<'_>,
+        request: EditorFork<'_>,
     ) -> Result<
         (
             Universe,
             Duration,
-            Vec<crate::CanonicalParagraphRegion>,
+            Vec<crate::ParagraphRegion>,
             Vec<tex_state::ParagraphValidationFailure>,
         ),
         EditorRestoreError,
     > {
-        let CanonicalEditorFork {
+        let EditorFork {
             old_source,
             new_source,
             fragments,
@@ -408,14 +408,14 @@ impl EngineCheckpoint {
             .iter()
             .all(|paragraph| paragraph.mount_finished_lines(&mut universe))
         {
-            return Err(EditorRestoreError::Canonical(
-                CanonicalCheckpointRestoreError::InvalidRetainedParagraph,
+            return Err(EditorRestoreError::Checkpoint(
+                CheckpointRestoreError::InvalidRetainedParagraph,
             ));
         }
         rebound.universe = universe.snapshot();
         control
             .restore_checkpoint(&rebound, &mut universe)
-            .map_err(EditorRestoreError::Canonical)?;
+            .map_err(EditorRestoreError::Checkpoint)?;
         universe.set_root_editor_content_hash(new_content_hash);
         Ok((
             universe,
@@ -428,9 +428,9 @@ impl EngineCheckpoint {
         ))
     }
 
-    /// Checks the immutable prerequisites for an edited-root canonical fork.
+    /// Checks the immutable prerequisites for an edited-root fork.
     #[must_use]
-    pub fn can_fork_canonical_editor(
+    pub fn can_fork_editor(
         &self,
         substrate: &GenerationSubstrate,
         old_source: &[u8],
@@ -636,15 +636,15 @@ impl CheckpointSink for Vec<EngineCheckpoint> {
     }
 }
 
-/// Failure to restore a canonical command checkpoint.
+/// Failure to restore a command checkpoint.
 #[derive(Debug)]
-pub enum CanonicalCheckpointRestoreError {
+pub enum CheckpointRestoreError {
     InvalidRetainedParagraph,
     CommandProfile(CommandProfileMismatch),
     Mode(ExecError),
 }
 
-impl fmt::Display for CanonicalCheckpointRestoreError {
+impl fmt::Display for CheckpointRestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRetainedParagraph => {
@@ -658,7 +658,7 @@ impl fmt::Display for CanonicalCheckpointRestoreError {
     }
 }
 
-impl std::error::Error for CanonicalCheckpointRestoreError {}
+impl std::error::Error for CheckpointRestoreError {}
 
 /// Failure to atomically restore and rebind an editor checkpoint.
 #[derive(Debug)]
@@ -666,7 +666,7 @@ pub enum EditorRestoreError {
     Fork(GenerationForkError),
     Layout(tex_state::EditorLayoutError),
     RootRevisionMismatch,
-    Canonical(CanonicalCheckpointRestoreError),
+    Checkpoint(CheckpointRestoreError),
     ChangedRootPrefix,
     Mode(ExecError),
 }
@@ -679,7 +679,7 @@ impl fmt::Display for EditorRestoreError {
             Self::RootRevisionMismatch => {
                 f.write_str("checkpoint root revision does not match the accepted source")
             }
-            Self::Canonical(error) => write!(f, "could not restore canonical checkpoint: {error}"),
+            Self::Checkpoint(error) => write!(f, "could not restore checkpoint: {error}"),
             Self::ChangedRootPrefix => {
                 f.write_str("edited source changed bytes before the restart anchor")
             }

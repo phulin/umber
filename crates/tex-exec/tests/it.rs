@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use test_support::{CompileFailDependency, assert_compile_fail};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{CanonicalMainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep};
 use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
@@ -11,7 +11,7 @@ fn run_tex82(source: &[u8], tracing_online: bool) -> String {
     if tracing_online {
         stores.set_int_param(tex_state::env::banks::IntParam::TRACING_ONLINE, 1);
     }
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,

@@ -12,7 +12,7 @@ use tex_state::token::OriginId;
 use crate::mode::{PendingHChar, PendingHRunChar};
 use crate::{ExecError, Mode, ModeNest};
 
-pub(crate) fn append_canonical_character_with_fuel(
+pub(crate) fn append_character_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     ch: char,
@@ -28,19 +28,19 @@ pub(crate) fn append_canonical_character_with_fuel(
 }
 
 #[cfg(any())]
-pub(crate) fn append_canonical_character(
+pub(crate) fn append_character(
     nest: &mut ModeNest,
     stores: &mut Universe,
     ch: char,
     origin: OriginId,
 ) -> Result<(), ExecError> {
     let mut fuel = tex_command::CommandFuelLedger::default();
-    append_canonical_character_with_fuel(nest, stores, ch, origin, false, fuel.fuel_mut())
+    append_character_with_fuel(nest, stores, ch, origin, false, fuel.fuel_mut())
 }
 
-/// Appends an ordinary space from canonical main control after horizontal
+/// Appends an ordinary space from main control after horizontal
 /// mode has been selected by TeX82 §1095.
-pub(crate) fn append_canonical_space_with_fuel(
+pub(crate) fn append_space_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
@@ -256,7 +256,7 @@ pub(crate) fn append_space_after_flush(
 /// append_normal_space` always takes the space-factor-1000 branch, unlike an
 /// ordinary `spacer` token, which only reaches `append_normal_space` when
 /// `space_factor=1000` and otherwise scales the glue through `app_space`
-/// (§1042). Scanner fronts and canonical main control share this typed
+/// (§1042). Scanner fronts and main control share this typed
 /// mode-switch-then-append operation.
 pub(crate) fn append_control_space_glue_after_flush(
     nest: &mut ModeNest,
@@ -275,10 +275,10 @@ pub(crate) fn append_control_space_glue_after_flush(
     Ok(())
 }
 
-/// Appends the explicit `\ ` control-space glue from canonical main control
+/// Appends the explicit `\ ` control-space glue from main control
 /// after TeX82 §1090's vertical-mode paragraph start (if any) has already run.
 /// Mirrors `append_canonical_space`'s split from `append_space` above.
-pub(crate) fn append_canonical_control_space_with_fuel(
+pub(crate) fn append_control_space_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,

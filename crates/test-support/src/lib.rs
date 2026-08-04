@@ -190,7 +190,7 @@ mod imp {
                 }
                 // umber2-jmq5: this used to be a blanket workaround for
                 // Umber never producing §310 `show_context` output at all.
-                // umber2-alfh.8 fixed that for `CanonicalMainControl`
+                // umber2-alfh.8 fixed that for `MainControl`
                 // generally (verified against the pinned oracle through
                 // `tools/tex-command-stream`'s harness), so removing this
                 // was tried here too -- but `crates/umber`'s own CLI driver

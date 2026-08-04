@@ -12,8 +12,8 @@ use tex_command::{RegisteredSourceKind, SourceRegistration};
 #[cfg(feature = "profiling")]
 use tex_exec::{AlignmentTemplateMeasurement, alignment_template_measurement};
 use tex_exec::{
-    Cancellation, CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
-    CanonicalResourceOutcome, CanonicalResourceWorld, CheckpointSink, EngineCheckpoint,
+    Cancellation, CheckpointSink, EngineCheckpoint, ResourceFulfillment, ResourceHost,
+    ResourceNeed, ResourceOutcome, ResourceWorld,
 };
 use tex_incr::{
     AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
@@ -32,8 +32,8 @@ use tex_state::{
 };
 use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
 #[cfg(feature = "profiling")]
-use umber::CanonicalExpansionStats;
-use umber::{CanonicalEngineSession, FileSessionResolvers, dvi_from_page_plans};
+use umber::ExpansionStats;
+use umber::{EngineSession, FileSessionResolvers, dvi_from_page_plans};
 
 const JOB_DIR: &str = "/gentle-profile";
 const JOB_FILE: &str = "profile-job.tex";
@@ -161,7 +161,7 @@ struct RunOutput {
     checkpoints: usize,
     checkpoint_hash: u64,
     #[cfg(feature = "profiling")]
-    expansion_stats: CanonicalExpansionStats,
+    expansion_stats: ExpansionStats,
 }
 
 #[derive(Default)]
@@ -597,24 +597,18 @@ struct OverlayInputResolver<'a> {
     generated: &'a str,
 }
 
-impl CanonicalResourceHost for OverlayInputResolver<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for OverlayInputResolver<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } if name == STABILIZATION_INPUT => {
-                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+            ResourceNeed::Input { name, .. } if name == STABILIZATION_INPUT => {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::input(
                     name,
                     RegisteredSourceKind::Generated,
                     self.generated.as_bytes().into(),
                 ))
             }
-            CanonicalResourceNeed::InputProbe { request }
-                if request.name == STABILIZATION_INPUT =>
-            {
-                CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::InputProbe {
+            ResourceNeed::InputProbe { request } if request.name == STABILIZATION_INPUT => {
+                ResourceOutcome::Fulfilled(ResourceFulfillment::InputProbe {
                     request: request.clone(),
                     resource: tex_command::FileEnquiryResource::new(
                         SourceRegistration::new(
@@ -2228,7 +2222,7 @@ fn execute_once(template: &World, capture_checkpoints: bool) -> Result<RunOutput
     let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
     let mut checkpoints = ProfileCheckpointSink::default();
     let startup_name = path.to_string_lossy();
-    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+    let mut session = EngineSession::tex82_initex(&mut stores);
     session
         .register_retained_root(
             startup_name.as_ref(),

@@ -820,7 +820,7 @@ pub enum MathTextFieldKind {
 /// consume only the already-classified request and ask the same processor for
 /// the next completed field/group episode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CanonicalMathRequest {
+pub enum MathRequest {
     Character(ScannedMathCharacter),
     Family(ScannedMathFamily),
     TextField(MathTextFieldKind),
@@ -1940,11 +1940,11 @@ impl CommandProcessor<'_> {
     /// target, §1224), exactly as `mmode+math_char_num` carries it in the
     /// integer `\\mathchar` scans. Keying on the primitive alone silently
     /// excluded `math_given` from the whole mmode table.
-    pub fn scan_canonical_math_request(
+    pub fn scan_math_request(
         &mut self,
         command: &crate::CurrentCommand,
-    ) -> Result<Option<CanonicalMathRequest>, CommandError> {
-        use CanonicalMathRequest as Request;
+    ) -> Result<Option<MathRequest>, CommandError> {
+        use MathRequest as Request;
         use MathTextFieldKind as Field;
         // TeX82 §1154's `mmode+math_given: set_math_char(cur_chr)`. Unlike
         // `mmode+math_char_num`, which reaches the same `set_math_char`

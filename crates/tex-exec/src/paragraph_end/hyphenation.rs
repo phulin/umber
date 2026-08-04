@@ -211,10 +211,9 @@ fn project_physical_pre_break_spans(
             ch: hyphen,
             origin: last_origin,
         });
-        let pre = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
-            stores, &pending, true, false, fuel,
-        )
-        .map_err(ExecError::Command)?;
+        let pre =
+            crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pending, true, false, fuel)
+                .map_err(ExecError::Command)?;
         let pre = stores.freeze_node_list(&pre);
         let Node::Disc {
             pre: physical_pre, ..
@@ -611,7 +610,7 @@ fn append_hyphenated_word(
     projection: &mut HyphenationProjection<'_>,
 ) -> Result<(), ExecError> {
     let pending: Vec<_> = word.iter().map(WordChar::pending).collect();
-    let nodes = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+    let nodes = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
         &pending,
         no_left_boundary,
@@ -715,16 +714,11 @@ fn discretionary_through_node(
             origin: word[position - 1].origin,
         });
     }
-    let pre = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
-        stores,
-        &pre_pending,
-        true,
-        false,
-        fuel,
-    )
-    .map_err(ExecError::Command)?;
+    let pre =
+        crate::box_runtime::hmode::reconstitute_with_fuel(stores, &pre_pending, true, false, fuel)
+            .map_err(ExecError::Command)?;
     let post_pending: Vec<_> = word[position..end].iter().map(WordChar::pending).collect();
-    let post = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+    let post = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
         &post_pending,
         false,
@@ -770,7 +764,7 @@ fn physical_discretionary_projection(
         .iter()
         .map(WordChar::pending)
         .collect::<Vec<_>>();
-    let minor = crate::canonical_box_runtime::hmode::reconstitute_with_fuel(
+    let minor = crate::box_runtime::hmode::reconstitute_with_fuel(
         stores,
         &minor_pending,
         false,

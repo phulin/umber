@@ -46,7 +46,7 @@ fn unclosed_group_report_uses_live_escapechar_and_interaction_selector() {
     }
 }
 
-use crate::{CanonicalMainControl, MainControlStep};
+use crate::{MainControl, MainControlStep};
 
 fn channel_text(stores: &Universe, matches_sink: impl Fn(PrintSink) -> bool) -> String {
     stores
@@ -99,7 +99,7 @@ fn format_dump_publication_confirmation_obeys_selector_and_is_one_shot() {
 /// the engine's own `\shipout` handling, not by any test-visible setter).
 fn run_source_to_end(source: &[u8]) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     let registered = control
         .command_mut()
         .register_source(SourceRegistration::new(

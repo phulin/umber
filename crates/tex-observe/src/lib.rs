@@ -321,7 +321,7 @@ pub struct LiveSessionStreams {
 /// Host-side translation of captured normal-session observations.
 ///
 /// This owns only detached oracle transport state. It neither drives nor
-/// mutates a `CanonicalEngineSession`; callers may hand it observations after
+/// mutates a `EngineSession`; callers may hand it observations after
 /// the engine has returned, including after an early failure.
 pub struct LiveSessionTranslator {
     sources: Vec<ActiveSource>,

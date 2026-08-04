@@ -189,7 +189,7 @@ sends the complete recipe to a dedicated native worker process. The request
 contains the expected cache identity; the worker reconstructs the recipe and
 recomputes that identity before creating a memory `World`, installing the
 selected fresh primitive profile, and driving the retained
-`CanonicalEngineSession`. The ordered typed-resource closure and finite
+`EngineSession`. The ordered typed-resource closure and finite
 command-fuel limit remain inside that worker. A production consumer calls
 `dispatch_format_worker` before ordinary argument parsing and passes
 `FormatWorkerLauncher::production`; a libtest consumer installs
@@ -294,7 +294,7 @@ Git.
 A `FormatFixture` loads by decoding its validated bytes into a fresh `World`
 and `Universe`, then reinstalling the selected profile's live primitive
 implementations. The returned `LoadedFormatFixture` owns that fresh universe
-until it constructs one retained `CanonicalEngineSession` for a job.
+until it constructs one retained `EngineSession` for a job.
 
 DVI font numbers are the immutable internal font allocation index minus one,
 as specified by tex.web §§617 and 642. The frozen font rows preserve that

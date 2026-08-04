@@ -9,8 +9,8 @@ use crate::vertical::{append_vertical_contribution, is_outer_vertical};
 use super::append_node_to_current_list;
 use crate::{ExecError, Mode, ModeNest};
 
-use crate::canonical_box_runtime::first_box_node;
-use crate::canonical_box_runtime::hmode::flush_pending_hchars;
+use crate::box_runtime::first_box_node;
+use crate::box_runtime::hmode::flush_pending_hchars;
 
 pub(crate) fn execute_scanned_unbox_with_error_context(
     primitive: UnexpandablePrimitive,
@@ -391,7 +391,7 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 
 /// TeX.web §1110's `unpackage` refusal, which leaves the register alone.
 ///
-/// Canonical replay prefers the context frozen at the completed register scan;
+/// The replay prefers the context frozen at the completed register scan;
 /// retired callers without that boundary fall back to the published summary.
 fn report_incompatible_unbox(
     stores: &mut Universe,

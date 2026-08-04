@@ -47,7 +47,7 @@ gitignored `third_party/trip/` and verifies their SHA-256 hashes. The ignored
 `e2e_conformance_trip_canonical` Cargo integration probe reaches its
 registered assets through the conformance gate, which fails rather than
 silently skipping when an asset is absent. It uses retained
-`CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
+`EngineSession`, `World` roots, and typed resource fulfillment for
 format creation and the format-loaded run, with no `Executor`/`InputStack`
 fallback. The shared conformance library gates the pinned semantic channels
 and retains advisory geometry comparison in both phases. Successful recipe-owned `\dump`
@@ -176,7 +176,7 @@ between a command-semantic failure and later output evidence.
 The TeX82 and e-TeX oracle scripts publish deterministic two-phase command-v1,
 geometry-v2, transcript, log, and loaded-format DVI channels under
 `target/trip-oracles/<trip|etrip>/`. The in-process harness captures both event
-channels from one ordinary `CanonicalEngineSession::run_with_observer` call;
+channels from one ordinary `EngineSession::run_with_observer` call;
 the observer does not use replay or a legacy input-stack projection. A
 successful comparison removes any stale TRIP-specific artifact and
 emits no new triage output.

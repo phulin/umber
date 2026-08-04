@@ -8,7 +8,7 @@ change TeX semantics or the atomic boundary in
 
 ## Measured problem
 
-`CanonicalStepSnapshot::capture` clones `ModeNest` before every atomic
+`StepSnapshot::capture` clones `ModeNest` before every atomic
 operation. Its `Arc` roots make capture cheap, but retaining the old mode-list
 root forces the first successful mutation to copy the complete `Vec<Node>`.
 The `umber2-johp.298` symbolized profile attributed 5.79% self time to that
@@ -91,7 +91,7 @@ journal generation, cursors, log length, and capacity remain excluded from
 `Debug`, equality, summaries, semantic hashes, formats, and durable
 checkpoints.
 
-`CanonicalStepSnapshot` begins an opaque mode savepoint after capturing the
+`StepSnapshot` begins an opaque mode savepoint after capturing the
 command root and before execution. On success it commits that savepoint before
 publishing observers, geometry, prepared pages, effects, artifacts, or named
 checkpoints. On ordinary error or typed resource suspension it first rolls
@@ -113,7 +113,7 @@ The first phase replaced direct `&mut Node` access by index and at
 the tail with closure-scoped write barriers, then moved every remaining mode
 list mutation behind the typed capability. The second phase implemented and
 exhaustively tested the disabled journal. The final promotion removed the
-retained `ModeNest` clone from `CanonicalStepSnapshot`; production now has one
+retained `ModeNest` clone from `StepSnapshot`; production now has one
 authoritative rollback path.
 
 The acceptance baseline is the integrated five-fixture command-stream report:

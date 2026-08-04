@@ -12,7 +12,7 @@ identities show the distinct math request path. Final box-register node outlines
 cover field/atom, choice, and script construction without exposing arena IDs.
 Mode transitions cover entry and exit lifecycle. The eight DVI-designated cases
 also require a committed shipout artifact hash from
-`CanonicalMainControl::take_prepared_dvi_pages`, the focused boundary at which
+`MainControl::take_prepared_dvi_pages`, the focused boundary at which
 the detached DVI page plan and page artifact have committed together.
 
 Every source is one short line, needs no format or external font, and ends at a

@@ -67,15 +67,15 @@ Double-counting rules used here are strict:
 
 Affected crates: `tex-command`, `tex-exec`, `tex-incr`, `umber`, `tex-state`, `tex-fonts`, `tex-typeset`, `tex-out`, `umber-wasm`, and `tex-command-stream`.
 
-**Current design — implemented.** `tex-command` owns source delivery, expansion, and operand scanning, while `tex-exec::CanonicalMainControl` is the sole stomach transition machine. Native, virtual, incremental, format-loaded, and WebAssembly sessions all drive that command-owned path. The retired executor, lexer/expander representations, assignment/alignment/math scanner fronts, replay adapters, and compatibility-only tests are absent from the workspace and tex-exec source graph.
+**Current design — implemented.** `tex-command` owns source delivery, expansion, and operand scanning, while `tex-exec::MainControl` is the sole stomach transition machine. Native, virtual, incremental, format-loaded, and WebAssembly sessions all drive that command-owned path. The retired executor, lexer/expander representations, assignment/alignment/math scanner fronts, replay adapters, and compatibility-only tests are absent from the workspace and tex-exec source graph.
 
-**End state.** `CanonicalMainControl` becomes the only production transition machine. `EngineSession` may remain as a compatibility façade, but it delegates unconditionally to canonical state. The legacy `Executor`, executor-only raw dispatch and assignment machinery, duplicate font/materialization paths, and duplicate checkpoint plumbing disappear. Shared code used by canonical execution remains.
+**End state.** `MainControl` is the only production transition machine. `EngineSession` is its host-neutral session façade. The retired `Executor`, executor-only raw dispatch and assignment machinery, duplicate font/materialization paths, and duplicate checkpoint plumbing are absent. Shared execution code remains.
 
 The completed cutover also deleted `tex-lex` and `tex-expand`; their required behavior now belongs to `tex-command` rather than a compatibility façade.
 
 **Estimated net reduction.** 6,000–10,000 production/tool LOC and 3,500–7,000 test/support LOC. Confidence: medium. The source evidence for duplication is strong, but TeX’s observable behavior makes the deletion surface unusually risky.
 
-**Why functionality can be preserved.** The canonical path already owns typed command state, resource needs, checkpoints, and committed transitions. Preservation requires equality of DVI/PDF output, diagnostics, tracing, source locations, fuel behavior, format bytes, state identities, resource suspension ordering, and incremental replay—not merely successful compilation.
+**Why functionality can be preserved.** The engine path owns typed command state, resource needs, checkpoints, and committed transitions. Preservation requires equality of DVI/PDF output, diagnostics, tracing, source locations, fuel behavior, format bytes, state identities, resource suspension ordering, and incremental replay—not merely successful compilation.
 
 **Migration status.** Runtime callers use canonical resource and checkpoint capabilities, and the executor-only assignment, font, math, alignment, checkpoint, output, and diagnostic fronts have been deleted. Rollback now means reverting the cutover commits; there is intentionally no session selector that can revive the old engine.
 
@@ -213,11 +213,11 @@ Rollback retains the old translator and codec readers behind a schema/profile sw
 
 Affected crates: `tex-exec`, `tex-incr`, `umber`, `tex-state`, `tex-out`, `tex-command-stream`, and `umber-vfs`.
 
-**Current design — observed.** Canonical execution is advanced through several local loops. `tex-incr` exposes a candidate driver at [`crates/tex-incr/src/lib.rs:585`](/home/phulin/umber/crates/tex-incr/src/lib.rs:585), `umber` has its own canonical session lifecycle, and command-stream tooling has another replay lifecycle. Checkpoint and artifact publication are similarly repeated across engine, editor, and host layers.
+**Current design — observed.** Execution is advanced through several local loops. `tex-incr` exposes a candidate driver at [`crates/tex-incr/src/lib.rs:585`](/home/phulin/umber/crates/tex-incr/src/lib.rs:585), `umber` has its own session lifecycle, and command-stream tooling has another replay lifecycle. Checkpoint and artifact publication are similarly repeated across engine, editor, and host layers.
 
 **End state.** Introduce one canonical transaction protocol, split into two explicit responsibilities:
 
-- `CanonicalStepRunner`: advances one bounded step and returns `Progress`, `ResourceNeed`, `Committed`, `Completed`, or `Failed`;
+- `StepRunner`: advances one bounded step and returns `Progress`, `ResourceNeed`, `Committed`, `Completed`, or `Failed`;
 - `RevisionTransaction`/`OutputLedger`: owns checkpoint capture, state publication, artifact ordering, resource fulfillment, and rollback.
 
 Frontends retain policy—blocking versus asynchronous resource resolution, cold versus incremental mode, diagnostic verbosity—but do not implement their own loops.
@@ -456,7 +456,7 @@ Rollback keeps the old cache readers and can repopulate the new cache from verif
 
 Affected crates: `tex-fonts`, `tex-shape`, `tex-exec`, `tex-typeset`, `tex-out`, and `umber`.
 
-**Current design — observed.** `tex-fonts` already owns validated SFNT data, cached shaping faces, OpenType context, and font-unit conversion. It repeats shaping context in request, parsed-font, and selection structures at [`crates/tex-fonts/src/opentype/contract.rs:286`](/home/phulin/umber/crates/tex-fonts/src/opentype/contract.rs:286), [`crates/tex-fonts/src/opentype/parse.rs:180`](/home/phulin/umber/crates/tex-fonts/src/opentype/parse.rs:180), and [`crates/tex-fonts/src/metrics.rs:335`](/home/phulin/umber/crates/tex-fonts/src/metrics.rs:335). `tex-shape` is a thin adapter that extracts the raw face and performs another projection at [`crates/tex-shape/src/lib.rs:105`](/home/phulin/umber/crates/tex-shape/src/lib.rs:105). `tex-exec` independently converts direction and shaping data at [`crates/tex-exec/src/canonical_box_runtime/hmode.rs:714`](/home/phulin/umber/crates/tex-exec/src/canonical_box_runtime/hmode.rs:714).
+**Current design — observed.** `tex-fonts` already owns validated SFNT data, cached shaping faces, OpenType context, and font-unit conversion. It repeats shaping context in request, parsed-font, and selection structures at [`crates/tex-fonts/src/opentype/contract.rs:286`](/home/phulin/umber/crates/tex-fonts/src/opentype/contract.rs:286), [`crates/tex-fonts/src/opentype/parse.rs:180`](/home/phulin/umber/crates/tex-fonts/src/opentype/parse.rs:180), and [`crates/tex-fonts/src/metrics.rs:335`](/home/phulin/umber/crates/tex-fonts/src/metrics.rs:335). `tex-shape` is a thin adapter that extracts the raw face and performs another projection at [`crates/tex-shape/src/lib.rs:105`](/home/phulin/umber/crates/tex-shape/src/lib.rs:105). `tex-exec` independently converts direction and shaping data at [`crates/tex-exec/src/box_runtime/hmode.rs:714`](/home/phulin/umber/crates/tex-exec/src/box_runtime/hmode.rs:714).
 
 **End state.** `tex-fonts` owns one immutable font/shaping context and one typed shaping operation. `tex-shape` becomes a private module or disappears after a compatibility façade period. Output consumers use the same validated face/resource identity instead of reparsing or reconstructing context.
 

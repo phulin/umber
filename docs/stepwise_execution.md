@@ -1,7 +1,7 @@
 # Stepwise TeX execution and resource suspension
 
 This document defines the implementation contract for owned, stepwise
-`CanonicalMainControl` execution. It is the
+`MainControl` execution. It is the
 engine-side layer beneath the host-neutral resource protocol in
 [`wasm_resource_acquisition.md`](wasm_resource_acquisition.md) and the accepted
 revision transaction in
@@ -133,7 +133,7 @@ it:
 | output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
 | accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
 
-`CanonicalMainControl` owns `CommandState`, mode/execution roots, fuel ledger,
+`MainControl` owns `CommandState`, mode/execution roots, fuel ledger,
 and explicit host capabilities. Each operation constructs borrow-scoped
 `CommandProcessor` and `CommandHostContext` values; neither can outlive the
 operation or enter a snapshot.
@@ -226,7 +226,7 @@ StepSavepoint {
     universe: Snapshot,
     command: CommandStateSnapshot,
     modes: ModeNest rollback root,
-    control: canonical execution rollback roots,
+    control: execution rollback roots,
     stats: ExecutionStats rollback root,
     checkpoint_publisher: publisher rollback root,
     artifact/effect/prepared-page prefixes,
@@ -418,7 +418,7 @@ revision and immutable resource bindings.
 
 Production sessions default to 10,000,000 committed steps, 100,000 live input
 frames, 256 MiB of environment journal, 1,000,000 pending effects, and
-100,000,000 command-fuel units. Canonical sessions accept only
+100,000,000 command-fuel units. Engine sessions accept only
 `1..=1,000,000,000`; zero and larger values are typed configuration errors.
 `SessionLimits` configures the legacy ceilings uniformly for native and WASM
 sessions; native CLI runs additionally

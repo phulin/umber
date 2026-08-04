@@ -1,7 +1,7 @@
 //! Alignment stomach machinery.
 
-mod canonical_execution;
-pub(crate) use canonical_execution::{FinishedAlignment, append_finished_alignment};
+mod execution;
+pub(crate) use execution::{FinishedAlignment, append_finished_alignment};
 
 pub(crate) mod packaging;
 pub(crate) mod widths;
@@ -33,7 +33,7 @@ pub(crate) fn init_span_aux(nest: &mut ModeNest, stores: &mut Universe) {
     } else {
         nest.current_list_mutation()
             .set_prev_depth(crate::mode::ignored_depth(stores));
-        crate::canonical_paragraph_end::normal_paragraph(nest, stores);
+        crate::paragraph_end::normal_paragraph(nest, stores);
     }
 }
 

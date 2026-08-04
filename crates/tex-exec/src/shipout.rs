@@ -1,4 +1,4 @@
-//! Source-free canonical page and PDF-form staging transaction.
+//! Source-free page and PDF-form staging transaction.
 
 use tex_state::ids::TokenListId;
 use tex_state::node::Node;
@@ -59,13 +59,13 @@ pub(crate) type WriteReplayHost<'a> =
 pub(crate) type TextReplayHost<'a> = dyn FnMut(&mut Universe, ReplayTextKind, TokenListId) -> Result<ExpandedReplayText, ExecError>
     + 'a;
 
-/// Canonical staging capabilities borrowed for one atomic page/form traversal.
-pub(crate) struct CanonicalShipoutTransaction<'a> {
+/// Staging capabilities borrowed for one atomic page/form traversal.
+pub(crate) struct ShipoutTransaction<'a> {
     write: &'a mut WriteReplayHost<'a>,
     replay: &'a mut TextReplayHost<'a>,
 }
 
-impl<'a> CanonicalShipoutTransaction<'a> {
+impl<'a> ShipoutTransaction<'a> {
     pub(crate) fn new(
         write: &'a mut WriteReplayHost<'a>,
         replay: &'a mut TextReplayHost<'a>,
@@ -92,7 +92,7 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         stores
             .world_mut()
             .set_active_effect_output_attempt(Some(output_attempt));
-        let publication = transaction::stage_canonical_page(
+        let publication = transaction::stage_page(
             node,
             input_summary,
             origin,
@@ -137,6 +137,6 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         form: PdfFormRecord,
         stores: &mut Universe,
     ) -> Result<PdfFormArtifact, ExecError> {
-        transaction::stage_canonical_form(form, stores, self.write, self.replay)
+        transaction::stage_form(form, stores, self.write, self.replay)
     }
 }

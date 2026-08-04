@@ -25,20 +25,16 @@ use crate::diagnostics;
 
 const MAX_SHIPOUT_DEPTH: usize = 4096;
 
-pub(crate) type WriteExpander<'a> = dyn FnMut(
-        &mut Universe,
-        PrintSink,
-        TokenListId,
-    ) -> Result<crate::canonical_shipout::ExpandedWrite, ExecError>
+pub(crate) type WriteExpander<'a> = dyn FnMut(&mut Universe, PrintSink, TokenListId) -> Result<crate::shipout::ExpandedWrite, ExecError>
     + 'a;
 
-pub(crate) use crate::canonical_shipout::ReplayTextKind;
+pub(crate) use crate::shipout::ReplayTextKind;
 
 pub(crate) type ReplayTextExpander<'a> = dyn FnMut(
         &mut Universe,
         ReplayTextKind,
         TokenListId,
-    ) -> Result<crate::canonical_shipout::ExpandedReplayText, ExecError>
+    ) -> Result<crate::shipout::ExpandedReplayText, ExecError>
     + 'a;
 
 pub(crate) struct StagedShipout {

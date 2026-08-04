@@ -146,7 +146,7 @@ pub(crate) fn break_current_paragraph(
         nest.current_list().nodes().len()
     };
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
-        crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
+        crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         materialize_pdf_line(
             stores,
             &mut broken.nodes,
@@ -574,7 +574,7 @@ fn break_hlist_with_trace(
         let (sequence, missing_hyphens) =
             super::hyphenation::hyphenated_hlist_sequence_with_fuel(stores, hlist, fuel)?;
         let (mut hyphenated, physical_nodes) = sequence.take();
-        crate::canonical_box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
+        crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut hyphenated);
         let (plan, trace) = if tracing {
             line_break_hyphenated_traced(stores, &hyphenated, &line_params, trace)
         } else {
@@ -1123,7 +1123,7 @@ pub(crate) fn normal_paragraph(_nest: &mut ModeNest, stores: &mut Universe) {
     stores.set_paragraph_shape(&[], false);
 }
 
-pub(crate) fn start_canonical_paragraph(
+pub(crate) fn start_paragraph(
     nest: &mut ModeNest,
     stores: &mut Universe,
     indent: bool,
@@ -1153,7 +1153,7 @@ pub(crate) fn start_canonical_paragraph(
             stores.push_paragraph_start_line(stores.current_input_line());
             if indent {
                 let mut fuel = tex_command::CommandFuelLedger::default();
-                crate::canonical_box_runtime::indent_in_hmode(nest, stores, true, fuel.fuel_mut())?;
+                crate::box_runtime::indent_in_hmode(nest, stores, true, fuel.fuel_mut())?;
             }
             Ok(())
         }
@@ -1183,7 +1183,7 @@ use tex_typeset::linebreak::{
     try_line_break_without_hyphenation, try_line_break_without_hyphenation_traced,
 };
 
-use crate::canonical_box_runtime::{
+use crate::box_runtime::{
     append_node_to_current_list, commit_current_list, flush_pending_hchars_with_fuel,
     hpack_owned_with_overfull_rule,
 };

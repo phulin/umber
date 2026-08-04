@@ -845,7 +845,7 @@ fn provenance_source_lexing(c: &mut Criterion) {
         group.throughput(Throughput::Elements(token_count as u64));
         group.bench_with_input(BenchmarkId::new("traced", name), &input, |b, input| {
             b.iter_batched(
-                || canonical_source_case(input.clone(), needs_control_sequences),
+                || source_case(input.clone(), needs_control_sequences),
                 |(mut stores, mut command, mut runtime, mut capabilities)| {
                     black_box(drain_traced_source_timed(
                         &mut stores,
@@ -1177,7 +1177,7 @@ fn drain_traced_source_timed(
 
 fn diagnostic_case(input: String) -> (Universe, tex_state::token::OriginId) {
     let (mut stores, mut command, mut runtime, mut capabilities) =
-        canonical_source_case(input, false);
+        source_case(input, false);
     let token = CommandProcessor::new(
         &mut command,
         &mut runtime,
@@ -1193,7 +1193,7 @@ fn diagnostic_case(input: String) -> (Universe, tex_state::token::OriginId) {
 fn print_provenance_report() {
     for (name, text, needs_control_sequences) in source_workloads() {
         let mut stores = source_universe(needs_control_sequences);
-        let (mut command, mut runtime, mut capabilities) = canonical_source_command(text);
+        let (mut command, mut runtime, mut capabilities) = source_command(text);
         let (tokens, direct, live, peak) =
             drain_traced_source(&mut stores, &mut command, &mut runtime, &mut capabilities);
         eprintln!(
@@ -1227,24 +1227,24 @@ fn print_provenance_report() {
 
 fn source_heavy_token_count(input: &str) -> usize {
     let (mut stores, mut command, mut runtime, mut capabilities) =
-        canonical_source_case(input.to_owned(), input.contains('\\'));
+        source_case(input.to_owned(), input.contains('\\'));
     drain_traced_source_timed(&mut stores, &mut command, &mut runtime, &mut capabilities)
 }
 
-type CanonicalSourceCase = (
+type SourceCase = (
     Universe,
     CommandState,
     CommandRuntime,
     CommandHostCapabilities,
 );
 
-fn canonical_source_case(input: String, needs_control_sequences: bool) -> CanonicalSourceCase {
+fn source_case(input: String, needs_control_sequences: bool) -> SourceCase {
     let stores = source_universe(needs_control_sequences);
-    let (command, runtime, capabilities) = canonical_source_command(input);
+    let (command, runtime, capabilities) = source_command(input);
     (stores, command, runtime, capabilities)
 }
 
-fn canonical_source_command(
+fn source_command(
     input: String,
 ) -> (CommandState, CommandRuntime, CommandHostCapabilities) {
     let profile = CommandProfile::unicode_extended(CommandDialect::Pdftex14029);
@@ -1277,7 +1277,7 @@ fn source_universe(needs_control_sequences: bool) -> Universe {
     stores
 }
 
-type CanonicalExpansionCase = (
+type ExpansionCase = (
     Universe,
     CommandState,
     CommandRuntime,
@@ -1285,7 +1285,7 @@ type CanonicalExpansionCase = (
     ProvenanceStats,
 );
 
-fn macro_heavy_case() -> CanonicalExpansionCase {
+fn macro_heavy_case() -> ExpansionCase {
     let mut stores = Universe::new();
     let macro_cs = stores.intern("hotmacro");
     let params = stores.intern_token_list(&[]);
@@ -1320,7 +1320,7 @@ fn macro_heavy_case() -> CanonicalExpansionCase {
     )
 }
 
-fn scanner_heavy_case() -> CanonicalExpansionCase {
+fn scanner_heavy_case() -> ExpansionCase {
     let mut stores = Universe::new();
     install_tex82_expandable_primitives(&mut stores);
     let number = stores.symbol("number").expect("number primitive");
@@ -1335,7 +1335,7 @@ fn scanner_heavy_case() -> CanonicalExpansionCase {
     traced_token_list_input(stores, tokens)
 }
 
-fn generated_run_case() -> CanonicalExpansionCase {
+fn generated_run_case() -> ExpansionCase {
     let mut stores = Universe::new();
     install_tex82_expandable_primitives(&mut stores);
     let roman = stores
@@ -1352,7 +1352,7 @@ fn generated_run_case() -> CanonicalExpansionCase {
     traced_token_list_input(stores, tokens)
 }
 
-fn traced_token_list_input(mut stores: Universe, tokens: Vec<Token>) -> CanonicalExpansionCase {
+fn traced_token_list_input(mut stores: Universe, tokens: Vec<Token>) -> ExpansionCase {
     let origin = stores.source_origin(SourceId::new(2), 0, 1, 1);
     let traced = tokens
         .into_iter()

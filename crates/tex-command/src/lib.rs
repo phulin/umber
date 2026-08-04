@@ -110,12 +110,12 @@ pub use profile::{
     CommandProfileMismatch,
 };
 pub use scanners::{
-    AlignmentCellOpening, CanonicalMathRequest, EquationNumberSide, ExpandedWriteText,
-    FileNameComponents, FileNameTermination, FontLoadRequest, FontSizeRecovery, GeneratedFontKind,
-    HyphenationDataKind, ImmediateExtension, InputStreamRequest, InternalValue,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody,
-    MathFieldEpisode, MathFractionKind, MathLimitKind, MathScriptKind, MathStyleKind,
-    MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
+    AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
+    FileNameTermination, FontLoadRequest, FontSizeRecovery, GeneratedFontKind, HyphenationDataKind,
+    ImmediateExtension, InputStreamRequest, InternalValue, MathDelimiterBoundary,
+    MathDelimiterBoundaryKind, MathFamilySize, MathFieldBody, MathFieldEpisode, MathFractionKind,
+    MathLimitKind, MathRequest, MathScriptKind, MathStyleKind, MathTextFieldKind,
+    PdfAnnotationRequest, PdfColorStackActionRequest, PdfDestinationRequest,
     PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest, PdfImagePageBox,
     PdfImagePageSelection, PdfImageRequest, PdfNavigationRequest, PdfObjectRequest,
     PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest, PdfThreadRequest,

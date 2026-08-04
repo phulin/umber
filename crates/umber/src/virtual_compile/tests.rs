@@ -20,18 +20,18 @@ fn every_supported_runtime_names_its_command_owned_engine_entry() {
         ),
         (
             "retained session",
-            include_str!("../canonical_session.rs"),
-            "control: CanonicalMainControl",
+            include_str!("../engine_session.rs"),
+            "control: MainControl",
         ),
         (
             "direct library",
             include_str!("../lib.rs"),
-            "CanonicalEngineSession::new",
+            "EngineSession::new",
         ),
         (
             "loaded format",
             include_str!("../format_fixture.rs"),
-            "CanonicalEngineSession::new",
+            "EngineSession::new",
         ),
         (
             "virtual compile",
@@ -46,7 +46,7 @@ fn every_supported_runtime_names_its_command_owned_engine_entry() {
         (
             "incremental",
             include_str!("../../../tex-incr/src/lib.rs"),
-            "control: CanonicalMainControl",
+            "control: MainControl",
         ),
         (
             "WASM",
@@ -4102,7 +4102,7 @@ fn unavailable_file_size_enquiry_is_a_probe_and_reaches_dump() {
 }
 
 #[test]
-fn canonical_pdf_file_enquiries_share_typed_virtual_file_responses() {
+fn pdf_file_enquiries_share_typed_virtual_file_responses() {
     let mut session = VirtualCompileSession::new(SessionOptions {
         engine: EngineMode::PdfTex,
         ..SessionOptions::default()

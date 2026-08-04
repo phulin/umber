@@ -71,11 +71,11 @@ pub fn retry_unavailable_stream_open(
 /// caller that knows one always knows the other.
 /// Ships a completed box using an already-owned publication summary.
 ///
-/// Canonical command replay has no independent source stack: it publishes the
+/// Command replay has no independent source stack: it publishes the
 /// most recently committed input summary while retaining command input in its
 /// own state.  The direct artifact kernel needs only this detached summary,
 /// never a source-consumption capability.
-#[allow(clippy::too_many_arguments)] // Canonical and retired replay capabilities remain disjoint.
+#[allow(clippy::too_many_arguments)] // Traversal capabilities are borrowed only for the atomic transaction.
 pub(crate) fn shipout_node_with_input_summary(
     node: Node,
     input_summary: tex_state::InputSummary,
@@ -93,7 +93,7 @@ pub(crate) fn shipout_node_with_input_summary(
     if huge_shipout_box(&node, stores) {
         // TeX.web §641 drops the page rather than emitting it, so the report
         // is the whole of the engine's response. Shipout also runs from
-        // canonical replay, which owns no live source stack. Its caller
+        // command replay, which owns no live source stack. Its caller
         // captured §82's display from the command-owned stack before
         // releasing that borrow; the Universe summary is only republished
         // later by successful artifact staging and can still name an older
@@ -151,7 +151,7 @@ pub(crate) fn shipout_node_with_input_summary(
             stores.record_pure_shipout_hit(imported_bytes);
             // The memo retains the detached artifact, not an execution-owned
             // plan. Rebuild its equivalent pure receipt exactly once at this
-            // publication boundary so canonical callers never need to lower
+            // publication boundary so callers never need to lower
             // an already-committed page during finalization.
             if let Some(geometry) = geometry {
                 stores.record_geometry_observation(geometry);
@@ -248,7 +248,7 @@ pub(crate) fn shipout_node_with_input_summary(
         })
     {
         let render_provenance =
-            crate::canonical_paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
+            crate::paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
         stores.insert_pure_shipout(
             key,
             PureShipoutEntry {
@@ -308,7 +308,7 @@ fn shipout_error_context(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn stage_canonical_page(
+pub(crate) fn stage_page(
     node: Node,
     input_summary: tex_state::InputSummary,
     origin: ShipoutOrigin,
@@ -332,7 +332,7 @@ pub(crate) fn stage_canonical_page(
     )
 }
 
-pub(crate) fn stage_canonical_form(
+pub(crate) fn stage_form(
     form: tex_state::PdfFormRecord,
     stores: &mut Universe,
     write_expander: &mut WriteReplayHost<'_>,

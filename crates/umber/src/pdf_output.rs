@@ -4872,10 +4872,9 @@ mod tests {
         assert!(!is_pdf_sfnt_program(b"font.pfb"));
     }
     use crate::{
-        CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceOutcome,
-        CanonicalResourceWorld, FileSessionResolvers, RetainedRootRequest, RunResult,
-        dvi_from_page_plans, prepare_pdftex_run_stores, run_input_collecting_artifacts,
-        run_input_collecting_artifacts_with_profile,
+        FileSessionResolvers, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld,
+        RetainedRootRequest, RunResult, dvi_from_page_plans, prepare_pdftex_run_stores,
+        run_input_collecting_artifacts, run_input_collecting_artifacts_with_profile,
     };
     use std::path::Path;
     use test_support::{
@@ -4912,23 +4911,23 @@ mod tests {
         requests: Vec<tex_command::PdfImageRequest>,
     }
 
-    impl CanonicalResourceHost for RecordingImageResolver {
+    impl ResourceHost for RecordingImageResolver {
         fn fulfill(
             &mut self,
-            _world: &mut CanonicalResourceWorld<'_>,
-            need: &tex_exec::CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            _world: &mut ResourceWorld<'_>,
+            need: &tex_exec::ResourceNeed,
+        ) -> ResourceOutcome {
             match need {
-                tex_exec::CanonicalResourceNeed::PdfImage { request } => {
+                tex_exec::ResourceNeed::PdfImage { request } => {
                     self.requests.push(request.clone());
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::PdfImage {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
                         request: request.clone(),
                         resource: Box::new(tex_command::PdfImageResource::Available(
                             self.source.clone(),
                         )),
                     })
                 }
-                _ => CanonicalResourceOutcome::Unavailable,
+                _ => ResourceOutcome::Unavailable,
             }
         }
     }
@@ -4958,47 +4957,46 @@ mod tests {
         }
     }
 
-    impl CanonicalResourceHost for StaticImageResolver {
+    impl ResourceHost for StaticImageResolver {
         fn fulfill(
             &mut self,
-            _world: &mut CanonicalResourceWorld<'_>,
-            need: &tex_exec::CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            _world: &mut ResourceWorld<'_>,
+            need: &tex_exec::ResourceNeed,
+        ) -> ResourceOutcome {
             match need {
-                tex_exec::CanonicalResourceNeed::PdfImage { request } => {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::PdfImage {
+                tex_exec::ResourceNeed::PdfImage { request } => {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
                         request: request.clone(),
                         resource: Box::new(tex_command::PdfImageResource::Available(
                             self.source.clone(),
                         )),
                     })
                 }
-                _ => CanonicalResourceOutcome::Unavailable,
+                _ => ResourceOutcome::Unavailable,
             }
         }
     }
 
-    impl CanonicalResourceHost for QueueImageResolver {
+    impl ResourceHost for QueueImageResolver {
         fn fulfill(
             &mut self,
-            _world: &mut CanonicalResourceWorld<'_>,
-            need: &tex_exec::CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            _world: &mut ResourceWorld<'_>,
+            need: &tex_exec::ResourceNeed,
+        ) -> ResourceOutcome {
             match need {
-                tex_exec::CanonicalResourceNeed::PdfImage { request } => self
-                    .sources
-                    .pop_front()
-                    .map_or(CanonicalResourceOutcome::Unavailable, |source| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::PdfImage {
+                tex_exec::ResourceNeed::PdfImage { request } => {
+                    self.sources
+                        .pop_front()
+                        .map_or(ResourceOutcome::Unavailable, |source| {
+                            ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
                                 request: request.clone(),
                                 resource: Box::new(tex_command::PdfImageResource::Available(
                                     source,
                                 )),
-                            },
-                        )
-                    }),
-                _ => CanonicalResourceOutcome::Unavailable,
+                            })
+                        })
+                }
+                _ => ResourceOutcome::Unavailable,
             }
         }
     }
@@ -6841,10 +6839,7 @@ mod tests {
         .expect("minimal page ships")
     }
 
-    fn try_run_in(
-        stores: &mut Universe,
-        source: &str,
-    ) -> Result<RunResult, crate::CanonicalSessionError> {
+    fn try_run_in(stores: &mut Universe, source: &str) -> Result<RunResult, crate::SessionError> {
         let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
         run_input_collecting_artifacts_with_profile(
             stores,
@@ -6865,7 +6860,7 @@ mod tests {
     fn try_run_in_dvi(
         stores: &mut Universe,
         source: &str,
-    ) -> Result<RunResult, crate::CanonicalSessionError> {
+    ) -> Result<RunResult, crate::SessionError> {
         let mut host = FileSessionResolvers::new(Path::new("pdf-test.tex"), Vec::new(), Vec::new());
         run_input_collecting_artifacts_with_profile(
             stores,
@@ -8391,7 +8386,7 @@ mod tests {
             prepare_pdftex_run_stores(&mut dvi_stores);
             assert!(matches!(
                 try_run_in_dvi(&mut dvi_stores, &source),
-                Err(crate::CanonicalSessionError::Execution(
+                Err(crate::SessionError::Execution(
                     tex_exec::ExecError::PdfDeferredNodeInDviMode("pdfrefxform")
                 ))
             ));

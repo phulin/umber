@@ -158,7 +158,7 @@ Focused regressions live at the owning boundary:
   migration, quarterword span bounds and merge fields, width recurrence, and
   final set-list traversal:
   `crates/tex-command/src/scanners/structured/tests.rs` and
-  `crates/tex-exec/src/align/{canonical_execution,packaging,widths}/`.
+  `crates/tex-exec/src/align/{execution,packaging,widths}/`.
 
 The fixture-only native correctness gate remains `cargo test --tests`; format
 and clippy remain `scripts/check.sh`.

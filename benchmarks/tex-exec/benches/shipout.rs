@@ -1,6 +1,6 @@
 use criterion::{BatchSize, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
-use tex_exec::{CanonicalMainControl, MainControlStep};
+use tex_exec::{MainControl, MainControlStep};
 use tex_state::Universe;
 use tex_state::glue::Order;
 use tex_state::math::{MathField, MathListNode, MathNoad, NoadClass, NoadKind};
@@ -21,7 +21,7 @@ fn shipout(c: &mut Criterion) {
     group.finish();
 }
 
-fn ordinary_shipout() -> (Universe, CanonicalMainControl) {
+fn ordinary_shipout() -> (Universe, MainControl) {
     let mut stores = prepared_universe();
     let nodes = (0..NODE_COUNT)
         .map(|index| Node::Penalty(index as i32))
@@ -31,7 +31,7 @@ fn ordinary_shipout() -> (Universe, CanonicalMainControl) {
     (stores, control)
 }
 
-fn deferred_math_shipout() -> (Universe, CanonicalMainControl) {
+fn deferred_math_shipout() -> (Universe, MainControl) {
     let mut stores = prepared_universe();
     let content = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
         NoadKind::Normal(NoadClass::Ord),
@@ -68,8 +68,8 @@ fn install_box(stores: &mut Universe, nodes: &[Node]) {
     stores.set_box_reg(0, root_list);
 }
 
-fn shipout_input(stores: &mut Universe) -> CanonicalMainControl {
-    let mut control = CanonicalMainControl::tex82_initex(stores);
+fn shipout_input(stores: &mut Universe) -> MainControl {
+    let mut control = MainControl::tex82_initex(stores);
     control
         .register_root_source(SourceRegistration::new(
             RegisteredSourceKind::Generated,
@@ -79,7 +79,7 @@ fn shipout_input(stores: &mut Universe) -> CanonicalMainControl {
     control
 }
 
-fn run_shipout((mut stores, mut control): (Universe, CanonicalMainControl)) {
+fn run_shipout((mut stores, mut control): (Universe, MainControl)) {
     loop {
         match control
             .step(&mut stores)

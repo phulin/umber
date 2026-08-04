@@ -9,7 +9,7 @@ use tex_command::{
 };
 use tex_state::{FileContent, InputOpenState, InputReadState, Universe, WorldError};
 
-use crate::CanonicalResourceNeed;
+use crate::ResourceNeed;
 
 /// Returns the exact transient capability key for a canonical font request.
 ///
@@ -26,7 +26,7 @@ pub fn canonical_font_resource_path(name: &str) -> std::path::PathBuf {
 }
 
 #[derive(Clone, Debug)]
-pub enum CanonicalResourceFulfillment {
+pub enum ResourceFulfillment {
     Input {
         name: String,
         source: SourceRegistration,
@@ -49,13 +49,13 @@ pub enum CanonicalResourceFulfillment {
 }
 
 #[derive(Clone, Debug)]
-pub enum CanonicalResourceOutcome {
-    Fulfilled(CanonicalResourceFulfillment),
+pub enum ResourceOutcome {
+    Fulfilled(ResourceFulfillment),
     Unavailable,
     Declined,
 }
 
-impl CanonicalResourceFulfillment {
+impl ResourceFulfillment {
     #[must_use]
     pub fn input(name: impl Into<String>, kind: RegisteredSourceKind, bytes: Arc<[u8]>) -> Self {
         Self::Input {
@@ -81,11 +81,11 @@ impl CanonicalResourceFulfillment {
     }
 }
 
-pub struct CanonicalResourceWorld<'a> {
+pub struct ResourceWorld<'a> {
     stores: &'a mut Universe,
 }
 
-impl<'a> CanonicalResourceWorld<'a> {
+impl<'a> ResourceWorld<'a> {
     #[must_use]
     pub fn new(stores: &'a mut Universe) -> Self {
         Self { stores }
@@ -114,10 +114,6 @@ impl<'a> CanonicalResourceWorld<'a> {
     }
 }
 
-pub trait CanonicalResourceHost {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome;
+pub trait ResourceHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome;
 }

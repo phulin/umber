@@ -34,7 +34,7 @@ pub(crate) enum SelectedPageOutput {
     ),
 }
 
-/// Selects and packages one pending page without accessing input.  Canonical
+/// Selects and packages one pending page without accessing input. Main control
 /// main control owns the subsequent mode/group transition; command control
 /// owns replay of `\\output` itself.
 pub(crate) fn select_pending_page_output(
@@ -397,7 +397,7 @@ pub(crate) fn prepend_output_heldover(
         stores.take_current_page_prefix_owned(stores.current_page_len());
     // TeX82 §§994/1012 resume the page builder after `fire_up`; without an
     // output routine that continuation discards the chosen penalty after
-    // §1013 rewrites it to `inf_penalty`. Canonical main control defers the
+    // §1013 rewrites it to `inf_penalty`. Main control defers the
     // output tail to the command-step boundary, so complete that one-token
     // continuation only when the rewritten break is the entire suffix.
     // Material contributed after the fire-up belongs to a later builder
@@ -456,7 +456,7 @@ fn output_penalty_and_rewrite_break(
 /// TeX.web §1024's `<Explain that too many dead cycles have occurred...>`.
 ///
 /// Page output is driven by the page builder, not by a scanner, so its caller
-/// supplies §82's context. Canonical main control renders its live command
+/// supplies §82's context. Main control renders its live command
 /// stack; the retained executor renders the last input summary it published.
 pub(crate) fn report_output_loop(
     stores: &mut Universe,

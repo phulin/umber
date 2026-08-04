@@ -6,7 +6,7 @@ use tex_state::{FileContent, InputReadState};
 pub enum ResourceLookup<T> {
     Available(T),
     Unavailable,
-    NeedResource(ResourceNeed),
+    NeedResource(ResolverResourceNeed),
 }
 
 impl<T> ResourceLookup<T> {
@@ -23,11 +23,11 @@ impl<T> ResourceLookup<T> {
 pub type ResourceResult<T> = Result<ResourceLookup<T>, String>;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct ResourceNeed {
+pub struct ResolverResourceNeed {
     request_index: u64,
 }
 
-impl ResourceNeed {
+impl ResolverResourceNeed {
     #[must_use]
     pub const fn new(request_index: u64) -> Self {
         Self { request_index }
@@ -39,7 +39,7 @@ impl ResourceNeed {
     }
 }
 
-impl From<tex_state::ResourceNeed> for ResourceNeed {
+impl From<tex_state::ResourceNeed> for ResolverResourceNeed {
     fn from(value: tex_state::ResourceNeed) -> Self {
         Self::new(value.request_index())
     }

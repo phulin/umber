@@ -122,7 +122,7 @@ away from.
    ```
 
    It reports the live execution mode and the first `ExecError`/
-   `CanonicalSessionError` (with provenance-resolved source context) or Rust
+   `SessionError` (with provenance-resolved source context) or Rust
    panic it hits. As a first-failure locator (Glossary), it can only show
    that execution stopped, not that completed output is wrong. `story`
    currently completes cleanly and is a regression gate (§5): a new `story`

@@ -5,12 +5,12 @@
 
 use super::*;
 
-fn etex_control() -> (Universe, CanonicalMainControl) {
+fn etex_control() -> (Universe, MainControl) {
     let mut stores = Universe::new_with_plain_catcodes();
-    let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
+    let _initialized = MainControl::tex82_initex(&mut stores);
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let control = CanonicalMainControl::with_profile(tex_command::CommandProfile::ETEX26);
+    let control = MainControl::with_profile(tex_command::CommandProfile::ETEX26);
     (stores, control)
 }
 

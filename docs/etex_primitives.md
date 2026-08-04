@@ -87,7 +87,7 @@ three of the four render `etex.ch`'s exact rendered trace text:
 - `\tracingassigns` renders `etex.ch` [17.687-750]'s `assign_trace`/
   `restore_trace` `{into ...}`/`{reassigning ...}`/`{changing ...}`/
   `{globally changing ...}` lines (`crates/tex-exec/src/assignments/tracing.rs`),
-  hooked at `canonical_main_control.rs`'s `apply_scanned_step` for the
+  hooked at `main_control.rs`'s `apply_scanned_step` for the
   integer/dimension/glue/mu-glue/token register and parameter families, the
   six code tables, and `\def`/`\edef`/`\gdef`/`\xdef`/`\let`/`\futurelet`
   meaning assignments. `\setbox`, `\font`/`\textfont`-family font selection,
@@ -169,7 +169,7 @@ family and the compatibility-mode visibility boundary.
   `scripts/regen-fixtures.sh`.
 - Diagnostic trace wording for `\tracingassigns`, `\tracinggroups`, and
   `\tracingifs` is pinned by
-  `crates/tex-exec/src/canonical_main_control/etex_diagnostic_tracing.rs`'s
+  `crates/tex-exec/src/main_control/etex_diagnostic_tracing.rs`'s
   focused fixtures, and `\tracingnesting`'s `file_warning` case by
   `crates/tex-command/src/processor/expand/tests.rs`'s, against real
   e-TeX/pdfTeX 1.40.25 output captured with each parameter set in isolation.

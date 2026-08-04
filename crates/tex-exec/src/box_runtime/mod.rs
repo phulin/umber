@@ -1,6 +1,6 @@
 //! Source-free box and horizontal-mode runtime surface.
 //!
-//! Canonical command control consumes only these typed mutation, material,
+//! Main control consumes only these typed mutation, material,
 //! packing, and migration operations.
 
 pub(crate) mod hmode;
@@ -17,10 +17,10 @@ pub(crate) use packaging::{
 pub(crate) use vsplit::split_vbox_register;
 
 pub(crate) use hmode::{
-    append_canonical_character_with_fuel, append_canonical_control_space_with_fuel,
-    append_canonical_space_with_fuel, append_italic_correction_with_fuel, append_whatsit,
-    commit_current_list, control_space_glue_spec, fixed_infinite_glue, flush_pending_hchars,
-    flush_pending_hchars_with_fuel, flush_pending_hchars_without_right_boundary,
+    append_character_with_fuel, append_control_space_with_fuel, append_italic_correction_with_fuel,
+    append_space_with_fuel, append_whatsit, commit_current_list, control_space_glue_spec,
+    fixed_infinite_glue, flush_pending_hchars, flush_pending_hchars_with_fuel,
+    flush_pending_hchars_without_right_boundary,
 };
 pub(crate) use leaders::{
     append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,

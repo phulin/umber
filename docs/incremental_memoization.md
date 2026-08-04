@@ -26,7 +26,7 @@ existing height/page-preserving suffix-adoption path remains independent.
 
 ## Main-control consumer boundary
 
-Canonical main control owns TeX82 paragraph entry and completion. Paragraph
+Main control owns TeX82 paragraph entry and completion. Paragraph
 memoization is an optional typed consumer of the prepared horizontal list and
 the completed line material; it neither drives line breaking nor reads raw
 input. Its recorder observes command-owned input and provenance at that

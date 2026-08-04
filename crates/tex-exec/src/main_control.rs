@@ -1,4 +1,4 @@
-//! Production canonical main-control driver.
+//! Production main-control driver.
 //!
 //! This intentionally owns only typed execution mutations. Raw delivery,
 //! expansion, macro calls, input nesting, and operand collection remain in
@@ -9,20 +9,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
-    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CanonicalMathRequest,
-    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile,
-    CommandRuntime, CommandState, CommandStateSnapshot, FatalError, FontLoadRequest, FontResource,
+    AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
+    CommandState, CommandStateSnapshot, FatalError, FontLoadRequest, FontResource,
     GeneratedFontKind, HyphenationDataKind, ImmediateExtension, InputStreamRequest,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathScriptKind,
-    MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
-    PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
-    PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
-    PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind, RestrictedIntegerClass,
-    ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
-    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
-    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
-    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
-    SourceRegistration, SourceRegistrationError,
+    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest,
+    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
+    PdfColorStackActionRequest, PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest,
+    PdfGraphicsRequest, PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest,
+    PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind,
+    RestrictedIntegerClass, ScannedAccent, ScannedAccentBase, ScannedBoxConstruction,
+    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionaryOpening,
+    ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
+    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath,
+    ScannedVSplit, SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -53,8 +53,8 @@ use tex_state::{
 };
 use tex_typeset::PackSpec;
 
-use crate::canonical_assignments::tracing as assignment_tracing;
-use crate::canonical_font_support::{
+use crate::assignments::tracing as assignment_tracing;
+use crate::font_support::{
     FontLoadFailure, GlyphToUnicodeParse, parse_glyph_to_unicode, report_font_capacity,
     report_font_not_loadable_with_context, warn_pdf_destination_duplicate,
 };
@@ -103,7 +103,7 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 
 /// Production command main control with command-owned source consumption.
 #[derive(Debug, Default)]
-pub struct CanonicalMainControl {
+pub struct MainControl {
     command: CommandState,
     runtime: CommandRuntime,
     fuel: tex_command::CommandFuelLedger,
@@ -177,7 +177,7 @@ pub struct CanonicalMainControl {
     /// `init`-guarded code removed from the latter, so §1252's `\patterns`
     /// and §1335's `\dump` have entirely different behavior in the two
     /// binaries. Umber has one binary, so the distinction is the session's:
-    /// [`CanonicalMainControl::tex82_initex`] builds an INITEX session and
+    /// [`MainControl::tex82_initex`] builds an INITEX session and
     /// every other constructor a production one.
     initex: bool,
     /// Set when this session was started from a dumped format, so §61/§536's
@@ -235,15 +235,15 @@ pub struct CanonicalMainControl {
     operation_observations: ObservationSlot,
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     /// Detached DVI receipts whose artifact commits have survived an entire
-    /// canonical aggregate operation. This is replay state so rollback drops
+    /// aggregate operation. This is replay state so rollback drops
     /// it with the corresponding World artifact/effect roots.
     prepared_dvi_pages: PreparedDviPages,
     /// Named safe boundaries committed by the last aggregate operation.  The
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
-    /// Canonical paragraph input regions completed since the host last drained them.
-    paragraph_recorder: CanonicalParagraphRecorder,
+    /// Accepted paragraph input regions completed since the host last drained them.
+    paragraph_recorder: ParagraphRecorder,
     paragraph_replay_replaced_mode_journal: bool,
     /// A committed artifact prefix waiting for the outer main-control owner.
     ///
@@ -272,7 +272,7 @@ pub struct CanonicalMainControl {
     job_body_effect_end: Option<tex_state::EffectPos>,
     /// Operational accounting only; snapshots and durable checkpoints never
     /// observe it.
-    advance_telemetry: CanonicalAdvanceTelemetry,
+    advance_telemetry: AdvanceTelemetry,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -419,14 +419,14 @@ struct ActiveDiscretionary {
     rejected: bool,
 }
 
-/// The only normal reason a canonical operation may be retried by its host.
+/// The only normal reason a operation may be retried by its host.
 ///
 /// The command core has already classified the unavailable resource, while
 /// this value deliberately retains neither a command nor a host capability.
 /// Retrying therefore starts a fresh TeX82 §§24--25 processor episode at the
 /// enclosing main-control operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanonicalResourceNeed {
+pub enum ResourceNeed {
     /// TeX82's `start_input` scanned this logical filename (§529 / §1030+),
     /// but the host has not supplied its immutable source registration.
     Input { name: String, original_name: String },
@@ -443,16 +443,16 @@ pub enum CanonicalResourceNeed {
     PdfImage { request: PdfImageRequest },
 }
 
-/// Outcome of one atomic canonical main-control operation.
+/// Outcome of one atomic main-control operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanonicalStepResult {
+pub enum StepResult {
     Progress(MainControlStep),
-    Suspended(CanonicalResourceNeed),
+    Suspended(ResourceNeed),
 }
 
-/// Host decision sampled immediately before a canonical aggregate operation.
+/// Host decision sampled immediately before a aggregate operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CanonicalAdvanceReadiness {
+pub enum AdvanceReadiness {
     Ready,
     /// A host interrupt was observed between aggregate operations. TeX's
     /// instruction dialog runs before the untouched command stream resumes.
@@ -460,16 +460,16 @@ pub enum CanonicalAdvanceReadiness {
     Cancelled,
 }
 
-/// Outcome of a cancellation-aware canonical advance.
+/// Outcome of a cancellation-aware advance.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanonicalAdvanceOutcome {
-    Step(CanonicalStepResult),
+pub enum AdvanceOutcome {
+    Step(StepResult),
     Cancelled,
 }
 
 /// Non-semantic accounting for canonical aggregate savepoint ownership.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CanonicalAdvanceTelemetry {
+pub struct AdvanceTelemetry {
     pub attempts: u64,
     pub commits: u64,
     pub rollbacks: u64,
@@ -478,9 +478,9 @@ pub struct CanonicalAdvanceTelemetry {
 }
 
 /// One retained diagnostic-expansion operation. Assignments are executed by
-/// canonical main control; every other expanded spelling is returned intact.
+/// main control; every other expanded spelling is returned intact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CanonicalDiagnosticStep {
+pub enum DiagnosticStep {
     Token {
         spelling: TracedTokenWord,
         meaning: Meaning,
@@ -492,15 +492,15 @@ pub enum CanonicalDiagnosticStep {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanonicalDiagnosticStepResult {
-    Progress(CanonicalDiagnosticStep),
-    Suspended(CanonicalResourceNeed),
+pub enum DiagnosticStepResult {
+    Progress(DiagnosticStep),
+    Suspended(ResourceNeed),
 }
 
-/// All replay-owned state that must move with a bounded canonical operation.
+/// All replay-owned state that must move with a bounded operation.
 /// Host capabilities are intentionally absent: their borrow ends before this
 /// checkpoint can be restored.
-struct CanonicalStepSnapshot {
+struct StepSnapshot {
     command: CommandStateSnapshot,
     mode_savepoint: crate::mode::ModeSavepoint,
     next_alignment_identity: u64,
@@ -516,7 +516,7 @@ struct CanonicalStepSnapshot {
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
-    paragraph_recorder: CanonicalParagraphRecorder,
+    paragraph_recorder: ParagraphRecorder,
     paragraph_replay_replaced_mode_journal: bool,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
@@ -534,8 +534,8 @@ struct CanonicalStepSnapshot {
     universe: tex_state::Snapshot,
 }
 
-impl CanonicalStepSnapshot {
-    fn capture(control: &mut CanonicalMainControl, stores: &mut Universe) -> Self {
+impl StepSnapshot {
+    fn capture(control: &mut MainControl, stores: &mut Universe) -> Self {
         Self {
             command: control.command.snapshot(),
             mode_savepoint: control.modes.begin_journal(),
@@ -563,7 +563,7 @@ impl CanonicalStepSnapshot {
         }
     }
 
-    fn rollback(self, control: &mut CanonicalMainControl, stores: &mut Universe) {
+    fn rollback(self, control: &mut MainControl, stores: &mut Universe) {
         // Roll the aggregate owner back before reinstalling command roots that
         // may contain OriginIds allocated from that owner. No intermediate
         // state with a restored command and a newer provenance timeline is
@@ -572,15 +572,15 @@ impl CanonicalStepSnapshot {
         control
             .command
             .rollback(self.command)
-            .expect("canonical step snapshot keeps its command profile");
+            .expect("step snapshot keeps its command profile");
         // CommandRuntime is deliberately non-cloneable: its caches and
         // profiling cannot become semantic or durable state. Its fresh value
-        // is therefore the canonical retry restoration form.
+        // is therefore the retry restoration form.
         control.runtime = CommandRuntime::default();
         control
             .modes
             .rollback_journal(self.mode_savepoint)
-            .expect("canonical step owns the innermost mode savepoint");
+            .expect("step owns the innermost mode savepoint");
         control.next_alignment_identity = self.next_alignment_identity;
         control.active_alignment = self.active_alignment;
         control.boxes = self.boxes;
@@ -608,14 +608,14 @@ impl CanonicalStepSnapshot {
         stores.can_rollback_to(&self.universe)
     }
 
-    fn commit(self, control: &mut CanonicalMainControl) {
+    fn commit(self, control: &mut MainControl) {
         if std::mem::take(&mut control.paragraph_replay_replaced_mode_journal) {
             return;
         }
         control
             .modes
             .commit_journal(self.mode_savepoint)
-            .expect("canonical step owns the innermost mode savepoint");
+            .expect("step owns the innermost mode savepoint");
     }
 }
 
@@ -725,7 +725,7 @@ impl SupersededPageOutputEpisode {
 
 /// Identity and exact command-owned input transaction for one finished paragraph.
 #[derive(Clone, Debug)]
-pub struct CanonicalParagraphRegion {
+pub struct ParagraphRegion {
     identity: u64,
     input: tex_command::ParagraphInputTransaction,
     owned_input: Arc<tex_command::OwnedCommandContinuation>,
@@ -766,7 +766,7 @@ pub struct CanonicalParagraphRegion {
     line_provenance: tex_state::ParagraphLineProvenance,
 }
 
-impl CanonicalParagraphRegion {
+impl ParagraphRegion {
     #[doc(hidden)]
     #[must_use]
     pub fn output_effect_episode_owners(&self) -> &[Option<tex_state::PageOutputEpisodeId>] {
@@ -885,9 +885,9 @@ impl CanonicalParagraphRegion {
             .mount_prevalidated_paragraph_result_lazy(lines, std::sync::Arc::clone(resolver))?;
         Some(universe.nodes(list).to_vec())
     }
-    fn history_record(&self) -> tex_state::CanonicalParagraphHistoryRecord {
+    fn history_record(&self) -> tex_state::ParagraphHistoryRecord {
         let coverage = self.input.coverage();
-        tex_state::CanonicalParagraphHistoryRecord {
+        tex_state::ParagraphHistoryRecord {
             identity: self.identity,
             root_start: coverage.root_start(),
             root_end: coverage.root_end(),
@@ -915,7 +915,7 @@ impl CanonicalParagraphRegion {
 
     /// Publishes this accepted replay region into universe-owned history.
     pub fn publish_carried_history(&self, stores: &mut Universe) {
-        stores.record_carried_canonical_paragraph_region(self.history_record());
+        stores.record_carried_accepted_paragraph_region(self.history_record());
     }
 
     #[must_use]
@@ -1001,7 +1001,7 @@ impl CanonicalParagraphRegion {
     /// Validates only the exact state facts read by this paragraph.
     #[must_use]
     pub fn dependencies_match(&self, stores: &Universe) -> bool {
-        crate::canonical_paragraph_memo::validate_dependencies(stores, &self.dependencies)
+        crate::paragraph_memo::validate_dependencies(stores, &self.dependencies)
     }
 
     /// Rehomes a region proven wholly before an edited root interval.
@@ -1050,7 +1050,7 @@ impl CanonicalParagraphRegion {
 }
 
 #[derive(Clone, Debug, Default)]
-struct CanonicalParagraphRecorder {
+struct ParagraphRecorder {
     pending: bool,
     lookup_attempted: bool,
     next_identity: u64,
@@ -1074,8 +1074,8 @@ struct CanonicalParagraphRecorder {
     // Paragraph histories must therefore remain persistent roots: copying all
     // prior regions here makes a document's command cost grow with every
     // paragraph it has already completed.
-    finished: Arc<Vec<CanonicalParagraphRegion>>,
-    replay: Arc<Vec<CanonicalParagraphRegion>>,
+    finished: Arc<Vec<ParagraphRegion>>,
+    replay: Arc<Vec<ParagraphRegion>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1096,10 +1096,10 @@ mod paragraph_recorder_tests {
     fn scalar_savepoint_shares_active_paragraph_boundary_snapshot() {
         let mut stores = Universe::new_with_plain_catcodes();
         let boundary = Arc::new(stores.snapshot_with_exact_identity());
-        let recorder = CanonicalParagraphRecorder {
+        let recorder = ParagraphRecorder {
             pending: true,
             starting_universe: Some(Arc::clone(&boundary)),
-            ..CanonicalParagraphRecorder::default()
+            ..ParagraphRecorder::default()
         };
 
         let savepoint = recorder.clone();
@@ -1112,7 +1112,7 @@ mod paragraph_recorder_tests {
     }
 }
 
-impl CanonicalParagraphRecorder {
+impl ParagraphRecorder {
     fn start_output_episode(
         &mut self,
         owners: &[tex_state::ParagraphRegionOwner],
@@ -1363,7 +1363,7 @@ impl CanonicalParagraphRecorder {
         barriers.extend(stores.take_pure_paragraph_barriers());
         barriers.sort_unstable();
         barriers.dedup();
-        let region = CanonicalParagraphRegion {
+        let region = ParagraphRegion {
             identity,
             input,
             owned_input,
@@ -1408,7 +1408,7 @@ impl CanonicalParagraphRecorder {
             line_provenance: tex_state::ParagraphLineProvenance::Pending,
         };
         if barriers.is_empty() {
-            stores.record_canonical_paragraph_region(region.history_record());
+            stores.record_accepted_paragraph_region(region.history_record());
         }
         if !barriers.is_empty() {
             stores.record_pure_paragraph_barriers(&barriers);
@@ -1523,7 +1523,7 @@ fn command_processor<'a>(
     }
 }
 
-impl CanonicalMainControl {
+impl MainControl {
     fn activate_page_output_receipt(
         &mut self,
         episode: tex_state::PageOutputEpisodeId,
@@ -1567,7 +1567,7 @@ impl CanonicalMainControl {
     /// Reports aggregate-operation/savepoint accounting without exposing the
     /// mode journal or any rollback capability.
     #[must_use]
-    pub const fn advance_telemetry(&self) -> CanonicalAdvanceTelemetry {
+    pub const fn advance_telemetry(&self) -> AdvanceTelemetry {
         self.advance_telemetry
     }
 
@@ -1576,15 +1576,15 @@ impl CanonicalMainControl {
     pub fn advance_when(
         &mut self,
         stores: &mut Universe,
-        readiness: CanonicalAdvanceReadiness,
-    ) -> Result<CanonicalAdvanceOutcome, ExecError> {
-        if readiness == CanonicalAdvanceReadiness::Cancelled {
-            return Ok(CanonicalAdvanceOutcome::Cancelled);
+        readiness: AdvanceReadiness,
+    ) -> Result<AdvanceOutcome, ExecError> {
+        if readiness == AdvanceReadiness::Cancelled {
+            return Ok(AdvanceOutcome::Cancelled);
         }
-        if readiness == CanonicalAdvanceReadiness::Interrupted {
+        if readiness == AdvanceReadiness::Interrupted {
             self.pause_for_instructions(stores)?;
         }
-        self.advance(stores).map(CanonicalAdvanceOutcome::Step)
+        self.advance(stores).map(AdvanceOutcome::Step)
     }
 
     fn pause_for_instructions(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
@@ -1696,7 +1696,7 @@ impl CanonicalMainControl {
         }
     }
 
-    /// Creates a fresh canonical TeX82 INITEX replay environment.
+    /// Creates a fresh TeX82 INITEX environment.
     ///
     /// The primitive definitions are installed from the engine's static TeX82
     /// registries, before any fixture or host source is registered.
@@ -1712,13 +1712,13 @@ impl CanonicalMainControl {
         }
     }
 
-    /// Borrows canonical command state for source registration and snapshots.
+    /// Borrows command state for source registration and snapshots.
     #[must_use]
     pub fn command_mut(&mut self) -> &mut CommandState {
         &mut self.command
     }
 
-    /// Returns the number of live canonical TeX input levels.
+    /// Returns the number of live TeX input levels.
     #[must_use]
     pub fn input_level_count(&self) -> usize {
         self.command.input_level_count()
@@ -1754,7 +1754,7 @@ impl CanonicalMainControl {
         self.fuel.burned()
     }
 
-    /// Selects whether canonical shipout also prepares DVI page receipts.
+    /// Selects whether shipout also prepares DVI page receipts.
     ///
     /// This is immutable host policy for a retained run, not TeX state, and
     /// therefore remains outside formats and command checkpoints.
@@ -1783,7 +1783,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_canonical(
+        let mut checkpoint = crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
             &self.modes,
@@ -1804,7 +1804,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_canonical(
+        let mut checkpoint = crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
             &self.modes,
@@ -1825,7 +1825,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_canonical_during_paragraph(
+        let mut checkpoint = crate::EngineCheckpoint::capture_during_paragraph(
             boundary,
             &self.command,
             &self.modes,
@@ -1845,13 +1845,13 @@ impl CanonicalMainControl {
         &mut self,
         checkpoint: &crate::EngineCheckpoint,
         stores: &mut Universe,
-    ) -> Result<(), crate::CanonicalCheckpointRestoreError> {
+    ) -> Result<(), crate::CheckpointRestoreError> {
         self.paragraph_recorder.abandon(&mut self.command, stores);
-        checkpoint.restore_canonical_state(&mut self.command, &mut self.modes, stores)?;
+        checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
-        self.paragraph_recorder = CanonicalParagraphRecorder::default();
+        self.paragraph_recorder = ParagraphRecorder::default();
         Ok(())
     }
 
@@ -2016,7 +2016,7 @@ impl CanonicalMainControl {
             .map(str::to_owned)
             .map_err(|error| {
                 ExecError::InvalidShipoutArtifact(format!(
-                    "unable to open canonical DVI output name: {error:?}"
+                    "unable to open DVI output name: {error:?}"
                 ))
             })
     }
@@ -2081,12 +2081,12 @@ impl CanonicalMainControl {
             return Ok(scanned);
         };
         let path = crate::canonical_font_resource_path(&request.name);
-        let resource =
-            self.capabilities
-                .font(&path)
-                .ok_or_else(|| ExecError::MissingCanonicalFont {
-                    request: request.clone(),
-                })?;
+        let resource = self
+            .capabilities
+            .font(&path)
+            .ok_or_else(|| ExecError::MissingFont {
+                request: request.clone(),
+            })?;
         Ok(ScannedStep::FontDefinition {
             request,
             resource: Box::new(Some(resource)),
@@ -2122,7 +2122,7 @@ impl CanonicalMainControl {
                     Some(resource) => Some(resource.source().clone()),
                     None if self.capabilities.input_probe_is_unavailable(&packed_name) => None,
                     None => {
-                        return Err(ExecError::MissingCanonicalInputProbe {
+                        return Err(ExecError::MissingInputProbe {
                             request: tex_command::FileEnquiryRequest::new(
                                 packed_name,
                                 tex_command::FileEnquiryIntent::OpenInProbe,
@@ -2153,17 +2153,18 @@ impl CanonicalMainControl {
             });
         }
         apply_pdf_image_compatibility_policy(stores);
-        request.page_box = canonical_pdf_image_page_box(stores, &request);
-        let resource = self.capabilities.pdf_image(&request).ok_or_else(|| {
-            ExecError::MissingCanonicalPdfImage {
-                request: request.clone(),
-            }
-        })?;
+        request.page_box = pdf_image_page_box(stores, &request);
+        let resource =
+            self.capabilities
+                .pdf_image(&request)
+                .ok_or_else(|| ExecError::MissingPdfImage {
+                    request: request.clone(),
+                })?;
         Ok(ScannedStep::PdfXImage { request, resource })
     }
 
     /// Registers and opens the one root source selected by the host before
-    /// canonical main control starts.  Source acquisition is deliberately
+    /// main control starts.  Source acquisition is deliberately
     /// complete before this call: the command state retains only immutable
     /// bytes and never reaches back into a host input stack.
     pub fn register_root_source(
@@ -2391,11 +2392,11 @@ impl CanonicalMainControl {
         }
     }
 
-    fn snapshot_step(&mut self, stores: &mut Universe) -> CanonicalStepSnapshot {
-        CanonicalStepSnapshot::capture(self, stores)
+    fn snapshot_step(&mut self, stores: &mut Universe) -> StepSnapshot {
+        StepSnapshot::capture(self, stores)
     }
 
-    fn commit_step(&mut self, snapshot: CanonicalStepSnapshot) {
+    fn commit_step(&mut self, snapshot: StepSnapshot) {
         snapshot.commit(self);
     }
 
@@ -2461,7 +2462,7 @@ impl CanonicalMainControl {
         });
     }
 
-    fn rollback_step(&mut self, snapshot: CanonicalStepSnapshot, stores: &mut Universe) {
+    fn rollback_step(&mut self, snapshot: StepSnapshot, stores: &mut Universe) {
         snapshot.rollback(self, stores);
     }
 
@@ -2471,10 +2472,10 @@ impl CanonicalMainControl {
     /// committed state instead of attempting an invalid rollback.
     fn finish_failed_step(
         &mut self,
-        snapshot: CanonicalStepSnapshot,
+        snapshot: StepSnapshot,
         stores: &mut Universe,
         error: ExecError,
-    ) -> Result<CanonicalStepResult, ExecError> {
+    ) -> Result<StepResult, ExecError> {
         let error = error.freeze_diagnostic_origin(stores);
         // pdftex.web §1549 reserves both the form object and its resource
         // object before it fetches the box register. Its ext1 void-box error
@@ -2496,23 +2497,19 @@ impl CanonicalMainControl {
                 site,
                 frozen,
             } => match *error {
-                ExecError::MissingCanonicalInput {
+                ExecError::MissingInput {
                     name,
                     original_name,
                 } => {
                     self.pending_resource_site = Some(site);
-                    Ok(CanonicalStepResult::Suspended(
-                        CanonicalResourceNeed::Input {
-                            name,
-                            original_name,
-                        },
-                    ))
+                    Ok(StepResult::Suspended(ResourceNeed::Input {
+                        name,
+                        original_name,
+                    }))
                 }
-                ExecError::MissingCanonicalInputProbe { request } => {
+                ExecError::MissingInputProbe { request } => {
                     self.pending_resource_site = Some(site);
-                    Ok(CanonicalStepResult::Suspended(
-                        CanonicalResourceNeed::InputProbe { request },
-                    ))
+                    Ok(StepResult::Suspended(ResourceNeed::InputProbe { request }))
                 }
                 error => Err(ExecError::Captured {
                     error: Box::new(error),
@@ -2520,24 +2517,22 @@ impl CanonicalMainControl {
                     frozen,
                 }),
             },
-            ExecError::MissingCanonicalInput {
+            ExecError::MissingInput {
                 name,
                 original_name,
-            } => Ok(CanonicalStepResult::Suspended(
-                CanonicalResourceNeed::Input {
-                    name,
-                    original_name,
-                },
-            )),
-            ExecError::MissingCanonicalInputProbe { request } => Ok(
-                CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { request }),
-            ),
-            ExecError::MissingCanonicalFont { request } => Ok(CanonicalStepResult::Suspended(
-                CanonicalResourceNeed::Font { request },
-            )),
-            ExecError::MissingCanonicalPdfImage { request } => Ok(CanonicalStepResult::Suspended(
-                CanonicalResourceNeed::PdfImage { request },
-            )),
+            } => Ok(StepResult::Suspended(ResourceNeed::Input {
+                name,
+                original_name,
+            })),
+            ExecError::MissingInputProbe { request } => {
+                Ok(StepResult::Suspended(ResourceNeed::InputProbe { request }))
+            }
+            ExecError::MissingFont { request } => {
+                Ok(StepResult::Suspended(ResourceNeed::Font { request }))
+            }
+            ExecError::MissingPdfImage { request } => {
+                Ok(StepResult::Suspended(ResourceNeed::PdfImage { request }))
+            }
             error => Err(error),
         }
     }
@@ -2548,7 +2543,7 @@ impl CanonicalMainControl {
         self.pending_resource_site.clone()
     }
 
-    /// Drains committed canonical shipout receipts in artifact order.
+    /// Drains committed shipout receipts in artifact order.
     ///
     /// Each plan was prepared during shipout and is retained only after the
     /// enclosing aggregate operation commits; finalizers must not re-lower
@@ -2566,9 +2561,9 @@ impl CanonicalMainControl {
         std::mem::take(&mut self.completed_boundaries)
     }
 
-    /// Drains completed canonical paragraph input regions in publication order.
+    /// Drains completed accepted paragraph input regions in publication order.
     #[must_use]
-    pub fn take_finished_paragraph_regions(&mut self) -> Vec<CanonicalParagraphRegion> {
+    pub fn take_finished_paragraph_regions(&mut self) -> Vec<ParagraphRegion> {
         let episodes = Arc::clone(&self.paragraph_recorder.output_episodes);
         let mut regions =
             Arc::unwrap_or_clone(std::mem::take(&mut self.paragraph_recorder.finished));
@@ -2594,7 +2589,7 @@ impl CanonicalMainControl {
     /// reused.
     pub fn install_paragraph_replay_regions(
         &mut self,
-        regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
+        regions: impl IntoIterator<Item = ParagraphRegion>,
     ) {
         let regions = regions.into_iter().collect::<Vec<_>>();
         self.paragraph_recorder.next_identity = self.paragraph_recorder.next_identity.max(
@@ -2628,7 +2623,7 @@ impl CanonicalMainControl {
     /// first failed entry validation.
     pub fn install_contiguous_cold_paragraph_replay_regions(
         &mut self,
-        regions: impl IntoIterator<Item = CanonicalParagraphRegion>,
+        regions: impl IntoIterator<Item = ParagraphRegion>,
     ) {
         self.install_paragraph_replay_regions(regions);
     }
@@ -2674,10 +2669,10 @@ impl CanonicalMainControl {
             self.paragraph_recorder.lookup_attempted = true;
             if !region.barriers.is_empty() {
                 Arc::make_mut(&mut self.paragraph_recorder.replay).drain(index..);
-                stores.record_canonical_paragraph_lookup(false, 0, 0);
+                stores.record_accepted_paragraph_lookup(false, 0, 0);
                 return false;
             }
-            if !crate::canonical_paragraph_memo::same_mutation_entry_class(
+            if !crate::paragraph_memo::same_mutation_entry_class(
                 region.mutation_entry_in_group,
                 tex_state::ExpansionState::execution_group_depth(stores),
             ) {
@@ -2691,7 +2686,7 @@ impl CanonicalMainControl {
                 continue;
             }
             if let Some(key) =
-                crate::canonical_paragraph_memo::dependency_failure(stores, &region.dependencies)
+                crate::paragraph_memo::dependency_failure(stores, &region.dependencies)
             {
                 let is_break_dependency =
                     region
@@ -2710,7 +2705,7 @@ impl CanonicalMainControl {
                 validation_failure.get_or_insert(failure);
                 continue;
             }
-            if !crate::canonical_paragraph_memo::validate_mutations(stores, &region.mutations) {
+            if !crate::paragraph_memo::validate_mutations(stores, &region.mutations) {
                 validation_failure.get_or_insert(tex_state::ParagraphValidationFailure::Mutation);
                 continue;
             }
@@ -2724,7 +2719,7 @@ impl CanonicalMainControl {
                     Arc::make_mut(&mut self.paragraph_recorder.replay).clear();
                 }
             }
-            stores.record_canonical_paragraph_lookup(false, 0, 0);
+            stores.record_accepted_paragraph_lookup(false, 0, 0);
             return false;
         };
         let input = self.paragraph_recorder.replay[index].input.clone();
@@ -2737,7 +2732,7 @@ impl CanonicalMainControl {
             })
             .is_err()
         {
-            stores.record_canonical_paragraph_lookup(false, 0, 0);
+            stores.record_accepted_paragraph_lookup(false, 0, 0);
             return false;
         }
         let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
@@ -2760,7 +2755,7 @@ impl CanonicalMainControl {
         if finished_nodes.is_some() {
             stores.record_pure_paragraph_line_hit();
         }
-        stores.record_canonical_paragraph_lookup(
+        stores.record_accepted_paragraph_lookup(
             true,
             region.input.coverage().delivered_commands(),
             region.mutations.len(),
@@ -2794,8 +2789,8 @@ impl CanonicalMainControl {
             self.active_math_shifts
                 .push(MathShiftContext::from_paragraph_shift(*shift));
         }
-        crate::canonical_paragraph_memo::replay_mutations(stores, &region.mutations);
-        crate::canonical_paragraph_end::normal_paragraph(&mut self.modes, stores);
+        crate::paragraph_memo::replay_mutations(stores, &region.mutations);
+        crate::paragraph_end::normal_paragraph(&mut self.modes, stores);
         let effect_owner_start = region.starting_effect_pos;
         for (offset, effect) in region.effects().enumerate() {
             let owner = region
@@ -2825,7 +2820,7 @@ impl CanonicalMainControl {
         stores.world_mut().set_active_output_episode(None);
         stores.world_mut().set_active_effect_publication(None);
         stores.world_mut().set_active_effect_domain(None);
-        stores.record_carried_canonical_paragraph_region(region.history_record());
+        stores.record_carried_accepted_paragraph_region(region.history_record());
         let entry_prev_graf = self.paragraph_recorder.starting_prev_graf;
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
@@ -2936,18 +2931,18 @@ impl CanonicalMainControl {
     }
 
     /// Returns a detached summary of the live current mode level for exact
-    /// crate-test assertions without exposing the canonical control's nest.
+    /// crate-test assertions without exposing the main control.s nest.
     #[cfg(any())]
     pub(crate) fn current_mode_level_for_test(&self) -> crate::ModeLevelSummary {
         self.modes
             .summary()
             .levels()
             .last()
-            .expect("canonical mode nest always has a current level")
+            .expect("mode nest always has a current level")
             .clone()
     }
 
-    /// Returns the enquiry projection derived from canonical main control's
+    /// Returns the enquiry projection derived from main control's
     /// live mode nest.
     #[cfg(any())]
     pub(crate) fn engine_state_snapshot_for_test(
@@ -2965,7 +2960,7 @@ impl CanonicalMainControl {
     }
 
     /// Finishes the current unfinished math list for crate-level structural
-    /// assertions without exposing the canonical control's owned mode nest.
+    /// assertions without exposing the main control.s owned mode nest.
     #[cfg(any())]
     pub(crate) fn finish_current_math_list_for_test(
         &mut self,
@@ -2983,7 +2978,7 @@ impl CanonicalMainControl {
             .map(|alignment| alignment.identity)
     }
 
-    /// Projects the preamble retained by canonical main control for focused
+    /// Projects the preamble retained by main control for focused
     /// crate-internal scanner assertions.
     #[cfg(any())]
     pub(crate) fn active_alignment_state_for_test(&self) -> Option<AlignState> {
@@ -2995,7 +2990,7 @@ impl CanonicalMainControl {
                 .map(|templates| AlignColumn {
                     u_template: templates
                         .u_template
-                        .expect("canonical columns retain u templates")
+                        .expect("alignment columns retain u templates")
                         .token_list(),
                     v_template: templates.v_template.token_list(),
                 })
@@ -3131,7 +3126,7 @@ impl CanonicalMainControl {
         let mode = self.modes.current_mode();
         let innermost_group = stores.innermost_group_kind();
         let main_loop_active = self.main_loop_active;
-        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
+        let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -3244,7 +3239,7 @@ impl CanonicalMainControl {
         Ok(result)
     }
 
-    /// Applies the scanned steps `CanonicalMainControl` owns itself instead of
+    /// Applies the scanned steps `MainControl` owns itself instead of
     /// routing through [`apply_scanned_step`], and hands every other step back
     /// unchanged.
     ///
@@ -3269,19 +3264,17 @@ impl CanonicalMainControl {
                 self.completed_replay_episode = Some(episode);
                 Ok(ReplayStep::Continue)
             }
-            ScannedStep::Math(request) => self.apply_canonical_math_request(request, stores),
+            ScannedStep::Math(request) => self.apply_math_request(request, stores),
             ScannedStep::DisplayAlignmentEquationNumber { side } => {
                 self.recover_display_alignment_equation_number(side, stores)
             }
-            ScannedStep::MathDelimiter(boundary) => {
-                self.apply_canonical_math_delimiter(boundary, stores)
-            }
+            ScannedStep::MathDelimiter(boundary) => self.apply_math_delimiter(boundary, stores),
             // TeX82 §1137's `hmode+math_shift: init_math` and §1193's
             // `mmode+math_shift: if cur_group=math_shift_group then
             // after_math else off_save`. §1090 backs a `vmode+math_shift` up
             // and runs `new_graf(true)` first, so vertical mode never reaches
             // this step.
-            ScannedStep::MathShift { pairing } => self.apply_canonical_math_shift(pairing, stores),
+            ScannedStep::MathShift { pairing } => self.apply_math_shift(pairing, stores),
             ScannedStep::DiscretionaryOpening(opening) => self.begin_discretionary(opening, stores),
             ScannedStep::DiscretionaryPartEnd => self.finish_discretionary_part(stores),
             ScannedStep::DiscretionaryHyphen { origin } => {
@@ -3434,9 +3427,9 @@ impl CanonicalMainControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+        crate::box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -3451,7 +3444,7 @@ impl CanonicalMainControl {
 
     fn open_discretionary_part(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         // TeX82 §216 checks nest capacity before saving the current semantic
-        // level. Fatal overflow is committed by canonical main control, so
+        // level. Fatal overflow is committed by main control, so
         // this fallible operation must precede both halves of the live
         // discretionary lifecycle: no rejected opener may leave a disc_group
         // without its restricted-horizontal mode.
@@ -3476,11 +3469,8 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
-        let level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let level =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         // TeX82 §1121 advances `q` across the admissible prefix and, on the
         // first forbidden node `p`, severs `link(q)`. Thus the prefix remains
         // this discretionary part while `show_box(p)` reports and flushes the
@@ -3613,9 +3603,9 @@ impl CanonicalMainControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+        crate::box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -3653,20 +3643,20 @@ impl CanonicalMainControl {
         Ok(ReplayStep::Continue)
     }
 
-    /// Attempts one atomic canonical main-control operation.
+    /// Attempts one atomic main-control operation.
     ///
     /// Missing retained input rolls back the complete aggregate operation and
     /// is returned as a typed suspension. All other failures are restored and
     /// remain ordinary diagnostics. In either case the next call creates a
     /// fresh command processor; no delivered `CurrentCommand` is retained.
-    pub fn advance(&mut self, stores: &mut Universe) -> Result<CanonicalStepResult, ExecError> {
+    pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
         if self.fatal.is_some() {
-            return Ok(CanonicalStepResult::Progress(MainControlStep::End));
+            return Ok(StepResult::Progress(MainControlStep::End));
         }
         if self.modes.current_mode() == Mode::Horizontal
             && self.try_replay_paragraph_before_delivery(stores)
         {
-            return Ok(CanonicalStepResult::Progress(MainControlStep::Continue));
+            return Ok(StepResult::Progress(MainControlStep::Continue));
         }
         self.advance_telemetry.attempts += 1;
         self.advance_telemetry.live_savepoints += 1;
@@ -3680,7 +3670,7 @@ impl CanonicalMainControl {
                 self.commit_step(snapshot);
                 self.advance_telemetry.live_savepoints -= 1;
                 self.advance_telemetry.commits += 1;
-                Ok(CanonicalStepResult::Progress(step))
+                Ok(StepResult::Progress(step))
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
@@ -3706,7 +3696,7 @@ impl CanonicalMainControl {
                     self.commit_step(snapshot);
                     self.advance_telemetry.live_savepoints -= 1;
                     self.advance_telemetry.commits += 1;
-                    return Ok(CanonicalStepResult::Progress(self.succumb(fatal)));
+                    return Ok(StepResult::Progress(self.succumb(fatal)));
                 }
                 let rolled_back =
                     !matches!(error, ExecError::PdfXFormVoidBox) && snapshot.can_rollback(stores);
@@ -3729,7 +3719,7 @@ impl CanonicalMainControl {
     pub fn diagnostic_expand_step(
         &mut self,
         stores: &mut Universe,
-    ) -> Result<CanonicalDiagnosticStepResult, ExecError> {
+    ) -> Result<DiagnosticStepResult, ExecError> {
         let snapshot = self.snapshot_step(stores);
         let operation = (|| {
             self.refresh_host_capabilities(stores);
@@ -3747,13 +3737,13 @@ impl CanonicalMainControl {
                     .map_err(command_error)?
             };
             let Some(command) = command else {
-                return Ok(CanonicalDiagnosticStep::EndOfInput);
+                return Ok(DiagnosticStep::EndOfInput);
             };
             if tex_command::exceeds_max_non_prefixed_command(command.meaning()) {
                 self.step_once(stores, Some(command))?;
-                Ok(CanonicalDiagnosticStep::Assignment)
+                Ok(DiagnosticStep::Assignment)
             } else {
-                Ok(CanonicalDiagnosticStep::Token {
+                Ok(DiagnosticStep::Token {
                     spelling: command.spelling(),
                     meaning: command.meaning(),
                     control_sequence: command.control_sequence(),
@@ -3764,13 +3754,11 @@ impl CanonicalMainControl {
         match operation {
             Ok(step) => {
                 self.commit_step(snapshot);
-                Ok(CanonicalDiagnosticStepResult::Progress(step))
+                Ok(DiagnosticStepResult::Progress(step))
             }
             Err(error) => match self.finish_failed_step(snapshot, stores, error)? {
-                CanonicalStepResult::Suspended(need) => {
-                    Ok(CanonicalDiagnosticStepResult::Suspended(need))
-                }
-                CanonicalStepResult::Progress(_) => {
+                StepResult::Suspended(need) => Ok(DiagnosticStepResult::Suspended(need)),
+                StepResult::Progress(_) => {
                     unreachable!("diagnostic failure made progress")
                 }
             },
@@ -3787,25 +3775,21 @@ impl CanonicalMainControl {
             error => error,
         })?;
         match result {
-            CanonicalStepResult::Progress(step) => Ok(step),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
+            StepResult::Progress(step) => Ok(step),
+            StepResult::Suspended(ResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { .. }) => {
+            StepResult::Suspended(ResourceNeed::InputProbe { .. }) => {
                 Err(ExecError::MissingToken {
                     context: "pdfTeX file enquiry",
                 })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "\\font resource",
-                })
-            }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "\\pdfximage resource",
-                })
-            }
+            StepResult::Suspended(ResourceNeed::Font { .. }) => Err(ExecError::MissingToken {
+                context: "\\font resource",
+            }),
+            StepResult::Suspended(ResourceNeed::PdfImage { .. }) => Err(ExecError::MissingToken {
+                context: "\\pdfximage resource",
+            }),
         }
     }
 
@@ -3821,7 +3805,7 @@ impl CanonicalMainControl {
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
+        let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -4070,9 +4054,9 @@ impl CanonicalMainControl {
             self.modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_canonical_paragraph(&mut self.command, &mut self.modes, stores, true)?;
+            start_paragraph(&mut self.command, &mut self.modes, stores, true)?;
         }
-        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+        crate::box_runtime::flush_pending_hchars_with_fuel(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
@@ -4184,16 +4168,8 @@ impl CanonicalMainControl {
             let producer_cursor = stores.world().output_episode_cursor();
             let producer_artifact = stores.world().artifact_pos();
             let producer_effect = stores.world().effect_records().len();
-            match crate::canonical_page_output::select_pending_page_output(
-                stores,
-                fire_up,
-                error_context,
-            )? {
-                crate::canonical_page_output::SelectedPageOutput::Default(
-                    page,
-                    ownership,
-                    owners,
-                ) => {
+            match crate::page_output::select_pending_page_output(stores, fire_up, error_context)? {
+                crate::page_output::SelectedPageOutput::Default(page, ownership, owners) => {
                     let retained = self
                         .paragraph_recorder
                         .take_matching_output_episode(&owners);
@@ -4358,10 +4334,7 @@ impl CanonicalMainControl {
                     // starts the next invocation.
                     break;
                 }
-                crate::canonical_page_output::SelectedPageOutput::UserRoutine(
-                    ownership,
-                    owners,
-                ) => {
+                crate::page_output::SelectedPageOutput::UserRoutine(ownership, owners) => {
                     if ownership != tex_state::PagePrefixOwnership::Unowned {
                         let active = self.paragraph_recorder.start_output_episode(
                             &owners,
@@ -4495,7 +4468,7 @@ impl CanonicalMainControl {
         stores: &mut Universe,
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
         self.main_loop_active = false;
-        while canonical_left_group_open(&self.modes, stores) {
+        while left_group_open(&self.modes, stores) {
             // The `\right.` applied below is exactly the closer §1065 selects
             // for `math_left_group`, so the report is §1064's `off_save`.
             let context = self.command.output_open_context(&stores.command_context());
@@ -4507,7 +4480,7 @@ impl CanonicalMainControl {
                 &OFF_SAVE_HELP,
                 context,
             )?;
-            self.apply_canonical_math_delimiter(
+            self.apply_math_delimiter(
                 MathDelimiterBoundary {
                     kind: MathDelimiterBoundaryKind::Right,
                     delimiter: tex_command::ScannedMathDelimiter {
@@ -4522,12 +4495,9 @@ impl CanonicalMainControl {
                 stores,
             )?;
         }
-        let level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
-        finish_canonical_math_list(
+        let level =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
+        finish_math_list(
             level.list().nodes(),
             level.list().incomplete_fraction(),
             stores,
@@ -4561,7 +4531,7 @@ impl CanonicalMainControl {
         match field.body {
             MathFieldBody::Missing => Ok(MathField::Empty),
             MathFieldBody::Character(code) => Ok(MathField::MathChar(
-                canonical_math_char(stores, u32::from(code), field.provenance.primary)?.1,
+                math_char(stores, u32::from(code), field.provenance.primary)?.1,
             )),
             MathFieldBody::OpenGroup => {
                 let list = self.execute_live_math_group(GroupKind::Math, stores)?;
@@ -4570,29 +4540,29 @@ impl CanonicalMainControl {
         }
     }
 
-    fn apply_canonical_math_request(
+    fn apply_math_request(
         &mut self,
-        request: CanonicalMathRequest,
+        request: MathRequest,
         stores: &mut Universe,
     ) -> Result<ReplayStep, ExecError> {
         match request {
-            CanonicalMathRequest::Character(value) => {
-                append_canonical_math_char(
+            MathRequest::Character(value) => {
+                append_math_char(
                     self.modes.current_list_mutation(),
                     stores,
                     u32::from(value.code),
                     value.provenance.primary,
                 )?;
             }
-            CanonicalMathRequest::Delimiter(value) => {
-                append_canonical_math_char(
+            MathRequest::Delimiter(value) => {
+                append_math_char(
                     self.modes.current_list_mutation(),
                     stores,
                     value.code >> 12,
                     value.provenance.primary,
                 )?;
             }
-            CanonicalMathRequest::TextField(kind) => {
+            MathRequest::TextField(kind) => {
                 // TeX82 §1151's caller has already allocated the noad and
                 // passes `nucleus(tail)` to `scan_math`.  This is observable
                 // while a braced field is being scanned: `\showlists` in the
@@ -4639,18 +4609,15 @@ impl CanonicalMainControl {
                         .expect("reserved math noad must remain present");
                 }
             }
-            CanonicalMathRequest::Script(script) => {
-                let target = reserve_canonical_script_target(
-                    self.modes.current_list_mutation(),
-                    stores,
-                    script.kind,
-                )?;
+            MathRequest::Script(script) => {
+                let target =
+                    reserve_script_target(self.modes.current_list_mutation(), stores, script.kind)?;
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
-                fill_canonical_script_target(self.modes.current_list_mutation(), target, field);
+                fill_script_target(self.modes.current_list_mutation(), target, field);
             }
-            CanonicalMathRequest::Limits(kind) => {
-                if !apply_canonical_limits(self.modes.current_list_mutation(), kind) {
+            MathRequest::Limits(kind) => {
+                if !apply_limits(self.modes.current_list_mutation(), kind) {
                     // §1159 falls through to the error only when the tail is
                     // not an `op_noad`; the switch is dropped and the job
                     // continues.
@@ -4661,8 +4628,8 @@ impl CanonicalMainControl {
                     report.error().jump_out()?;
                 }
             }
-            CanonicalMathRequest::Fraction(fraction) => {
-                if !start_canonical_fraction(self.modes.current_list_mutation(), stores, fraction) {
+            MathRequest::Fraction(fraction) => {
+                if !start_fraction(self.modes.current_list_mutation(), stores, fraction) {
                     let context = self.command.output_open_context(&stores.command_context());
                     let mut report = stores.print_err("Ambiguous; you need another { and }");
                     report.help(&[
@@ -4674,7 +4641,7 @@ impl CanonicalMainControl {
                     report.error().jump_out()?;
                 }
             }
-            CanonicalMathRequest::Style(style) => {
+            MathRequest::Style(style) => {
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathStyle(match style {
@@ -4684,7 +4651,7 @@ impl CanonicalMainControl {
                         MathStyleKind::ScriptScript => MathStyle::ScriptScript,
                     }))
             }
-            CanonicalMathRequest::Choice => {
+            MathRequest::Choice => {
                 // TeX82 §1172's `append_choices` opens the first branch with
                 // `push_math(math_choice_group); scan_left_brace`, and
                 // §1174's `build_choices` repeats exactly that after storing
@@ -4725,7 +4692,7 @@ impl CanonicalMainControl {
                         script_script,
                     }));
             }
-            CanonicalMathRequest::Radical(delimiter) => {
+            MathRequest::Radical(delimiter) => {
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 self.modes
@@ -4737,7 +4704,7 @@ impl CanonicalMainControl {
                         field,
                     )));
             }
-            CanonicalMathRequest::Accent { character } => {
+            MathRequest::Accent { character } => {
                 let accent = if let Some(accent) = character {
                     accent
                 } else {
@@ -4759,8 +4726,7 @@ impl CanonicalMainControl {
                 let episode = self.command_scan_math_field(stores)?;
                 let field = self.execute_math_field(episode, stores)?;
                 let accent =
-                    canonical_math_char(stores, u32::from(accent.code), accent.provenance.primary)?
-                        .1;
+                    math_char(stores, u32::from(accent.code), accent.provenance.primary)?.1;
                 self.modes
                     .current_list_mutation()
                     .push(Node::MathNoad(MathNoad::new(
@@ -4768,20 +4734,20 @@ impl CanonicalMainControl {
                         field,
                     )));
             }
-            CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
+            MathRequest::MuMaterial(ScannedMathMuMaterial::Glue(glue)) => {
                 self.modes.current_list_mutation().push(Node::Glue {
                     spec: stores.intern_glue(glue),
                     kind: GlueKind::MuSkip,
                     leader: None,
                 })
             }
-            CanonicalMathRequest::MuMaterial(ScannedMathMuMaterial::Kern(amount)) => {
+            MathRequest::MuMaterial(ScannedMathMuMaterial::Kern(amount)) => {
                 self.modes.current_list_mutation().push(Node::Kern {
                     amount,
                     kind: KernKind::Mu,
                 })
             }
-            CanonicalMathRequest::EquationNumber(number) => {
+            MathRequest::EquationNumber(number) => {
                 if self.modes.current_mode() != Mode::DisplayMath {
                     // §1140's `mmode+eq_no` is guarded by `privileged`, and
                     // §1049 lists `eq_no` under `non_math`; both failures end
@@ -4801,7 +4767,7 @@ impl CanonicalMainControl {
                         Some(context),
                     )?;
                 } else {
-                    let display = take_finished_canonical_math_list(&mut self.modes, stores)?;
+                    let display = take_finished_math_list(&mut self.modes, stores)?;
                     stores.enter_group_with_kind_at_line(
                         GroupKind::MathShift,
                         self.command.current_file_line_number(),
@@ -4827,7 +4793,7 @@ impl CanonicalMainControl {
                         .set_display_eq_no(crate::mode::DisplayEqNo { side, display });
                 }
             }
-            CanonicalMathRequest::Family(_) => {}
+            MathRequest::Family(_) => {}
         }
         Ok(ReplayStep::Continue)
     }
@@ -4841,8 +4807,8 @@ impl CanonicalMainControl {
         let Some((nodes, aux_prev_depth)) =
             self.modes.current_list_mutation().take_display_alignment()
         else {
-            return self.apply_canonical_math_request(
-                CanonicalMathRequest::EquationNumber(tex_command::ScannedEquationNumber { side }),
+            return self.apply_math_request(
+                MathRequest::EquationNumber(tex_command::ScannedEquationNumber { side }),
                 stores,
             );
         };
@@ -4860,7 +4826,7 @@ impl CanonicalMainControl {
             ],
             context,
         )?;
-        self.finish_canonical_display_alignment(
+        self.finish_display_alignment(
             stores,
             crate::align::FinishedAlignment {
                 nodes,
@@ -4871,7 +4837,7 @@ impl CanonicalMainControl {
         Ok(ReplayStep::Continue)
     }
 
-    fn apply_canonical_math_shift(
+    fn apply_math_shift(
         &mut self,
         pairing: MathShiftPairing,
         stores: &mut Universe,
@@ -4879,7 +4845,7 @@ impl CanonicalMainControl {
         match self.modes.current_mode() {
             Mode::Horizontal | Mode::RestrictedHorizontal => {
                 debug_assert_ne!(pairing, MathShiftPairing::ProbeDisplayEnd);
-                crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
+                crate::box_runtime::flush_pending_hchars_with_fuel(
                     &mut self.modes,
                     stores,
                     self.fuel.fuel_mut(),
@@ -4889,33 +4855,27 @@ impl CanonicalMainControl {
                 // rather than consumed, so `paired` is false there and this
                 // must not retest the mode and disagree with the backup.
                 if pairing == MathShiftPairing::Paired {
-                    self.enter_canonical_display(stores)?;
+                    self.enter_display(stores)?;
                 } else {
-                    self.enter_canonical_math_level(false, stores)?;
+                    self.enter_math_level(false, stores)?;
                     schedule_everymath(&mut self.command, stores, false);
                 }
             }
             Mode::Math => {
                 if self.modes.current_list().display_eq_no().is_some() {
                     debug_assert_eq!(pairing, MathShiftPairing::ProbeDisplayEnd);
-                    let content = self.prepare_canonical_math_list(stores)?;
-                    let eq = self.finish_canonical_equation_number_mlist(stores)?;
-                    let paired = self.scan_canonical_display_end(stores)?;
+                    let content = self.prepare_math_list(stores)?;
+                    let eq = self.finish_equation_number_mlist(stores)?;
+                    let paired = self.scan_display_end(stores)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
                     let (display, finished) =
-                        self.finish_canonical_equation_number_group(stores, eq, content)?;
-                    self.finish_canonical_display_math_content(
-                        stores,
-                        display,
-                        Some(finished),
-                        false,
-                        None,
-                    )?;
+                        self.finish_equation_number_group(stores, eq, content)?;
+                    self.finish_display_math_content(stores, display, Some(finished), false, None)?;
                 } else {
                     debug_assert_eq!(pairing, MathShiftPairing::Unpaired);
-                    self.finish_canonical_inline_math(stores)?;
+                    self.finish_inline_math(stores)?;
                 }
             }
             Mode::DisplayMath => {
@@ -4923,11 +4883,11 @@ impl CanonicalMainControl {
                 if let Some((nodes, aux_prev_depth)) =
                     self.modes.current_list_mutation().take_display_alignment()
                 {
-                    let paired = self.scan_canonical_display_end(stores)?;
+                    let paired = self.scan_display_end(stores)?;
                     if !paired {
                         report_unpaired_display_end(&self.command, stores)?;
                     }
-                    self.finish_canonical_display_alignment(
+                    self.finish_display_alignment(
                         stores,
                         crate::align::FinishedAlignment {
                             nodes,
@@ -4937,18 +4897,12 @@ impl CanonicalMainControl {
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
-                let (content, display_level) = self.prepare_canonical_display_math_list(stores)?;
-                let paired = self.scan_canonical_display_end(stores)?;
+                let (content, display_level) = self.prepare_display_math_list(stores)?;
+                let paired = self.scan_display_end(stores)?;
                 if !paired {
                     report_unpaired_display_end(&self.command, stores)?;
                 }
-                self.finish_canonical_display_math_content(
-                    stores,
-                    content,
-                    None,
-                    true,
-                    Some(display_level),
-                )?;
+                self.finish_display_math_content(stores, content, None, true, Some(display_level))?;
             }
             Mode::Vertical | Mode::InternalVertical => {
                 unreachable!("vertical math shifts retry through ParagraphStart")
@@ -4959,13 +4913,13 @@ impl CanonicalMainControl {
 
     /// TeX82 §1194 checks the current formula's math fonts before `fin_mlist`
     /// and before §1197 probes for the second display-closing `$`.
-    fn prepare_canonical_math_list(
+    fn prepare_math_list(
         &mut self,
         stores: &mut Universe,
     ) -> Result<tex_state::ids::NodeListId, ExecError> {
         let math_font_context = self.command.output_open_context(&stores.command_context());
         let rejected = crate::math::reject_invalid_math_fonts(stores, math_font_context)?;
-        let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+        let content = take_finished_math_list(&mut self.modes, stores)?;
         Ok(if rejected {
             stores.freeze_node_list(&[])
         } else {
@@ -4975,20 +4929,17 @@ impl CanonicalMainControl {
 
     /// TeX82 §§1185/1194/1197's display `fin_mlist(null)`: detach the
     /// completed display mode before expanding the required second `$`.
-    fn prepare_canonical_display_math_list(
+    fn prepare_display_math_list(
         &mut self,
         stores: &mut Universe,
     ) -> Result<(tex_state::ids::NodeListId, crate::mode::ModeLevelSummary), ExecError> {
-        let content = self.prepare_canonical_math_list(stores)?;
-        let level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let content = self.prepare_math_list(stores)?;
+        let level =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         Ok((content, level))
     }
 
-    fn scan_canonical_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
+    fn scan_display_end(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
         // TeX82 §§1185/1194's `fin_mlist` has already popped the display
         // level. Publish that live nest before §1197's nested expansion
         // episode: capabilities were last sampled at the start of the outer
@@ -5010,11 +4961,7 @@ impl CanonicalMainControl {
         Ok(paired)
     }
 
-    fn enter_canonical_math_level(
-        &mut self,
-        display: bool,
-        stores: &mut Universe,
-    ) -> Result<(), ExecError> {
+    fn enter_math_level(&mut self, display: bool, stores: &mut Universe) -> Result<(), ExecError> {
         stores.enter_group_with_kind_at_line(
             GroupKind::MathShift,
             self.command.current_file_line_number(),
@@ -5042,14 +4989,13 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn enter_canonical_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let paragraph = crate::canonical_paragraph_end::interrupt_canonical_paragraph_for_display(
+    fn enter_display(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let paragraph = crate::paragraph_end::interrupt_paragraph_for_display(
             &mut self.modes,
             stores,
             self.fuel.fuel_mut(),
         )?;
-        let dimensions =
-            crate::canonical_paragraph_end::display_line_dimensions(&self.modes, stores);
+        let dimensions = crate::paragraph_end::display_line_dimensions(&self.modes, stores);
         let pre_display_size = paragraph
             .last_line
             .as_ref()
@@ -5059,7 +5005,7 @@ impl CanonicalMainControl {
         // TeX82 §1145 opens `math_shift_group` before these local parameter
         // definitions, so §283 restores all of them when the display ends.
         // `\everydisplay` is scheduled only after the definitions are live.
-        self.enter_canonical_math_level(true, stores)?;
+        self.enter_math_level(true, stores)?;
         stores.set_dimen_param(DimenParam::PRE_DISPLAY_SIZE, pre_display_size);
         stores.set_dimen_param(DimenParam::DISPLAY_WIDTH, dimensions.width);
         stores.set_dimen_param(DimenParam::DISPLAY_INDENT, dimensions.indent);
@@ -5084,8 +5030,8 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn finish_canonical_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
-        let mut content = take_finished_canonical_math_list(&mut self.modes, stores)?;
+    fn finish_inline_math(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+        let mut content = take_finished_math_list(&mut self.modes, stores)?;
         let conversion_error_context = crate::math::MathConversionErrorContext::new(
             self.command.output_open_context(&stores.command_context()),
         );
@@ -5093,11 +5039,8 @@ impl CanonicalMainControl {
         if crate::math::reject_invalid_math_fonts(stores, math_font_context)? {
             content = stores.freeze_node_list(&[]);
         }
-        let _ = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let _ =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let insert_penalties = self.modes.current_mode() == Mode::Horizontal;
         let (nodes, _) = crate::math::finish_inline_math_list_node(
             stores,
@@ -5121,15 +5064,12 @@ impl CanonicalMainControl {
         Ok(())
     }
 
-    fn finish_canonical_equation_number_mlist(
+    fn finish_equation_number_mlist(
         &mut self,
         stores: &mut Universe,
     ) -> Result<crate::mode::DisplayEqNo, ExecError> {
-        let mut level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let mut level =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let eq = level
             .list_mutation()
             .take_display_eq_no()
@@ -5140,7 +5080,7 @@ impl CanonicalMainControl {
         Ok(eq)
     }
 
-    fn finish_canonical_equation_number_group(
+    fn finish_equation_number_group(
         &mut self,
         stores: &mut Universe,
         eq: crate::mode::DisplayEqNo,
@@ -5172,25 +5112,22 @@ impl CanonicalMainControl {
         Ok((eq.display, finished))
     }
 
-    fn finish_canonical_display_alignment(
+    fn finish_display_alignment(
         &mut self,
         stores: &mut Universe,
         finished: crate::align::FinishedAlignment,
     ) -> Result<(), ExecError> {
-        self.finish_canonical_display_alignment_inner(stores, finished, true)
+        self.finish_display_alignment_inner(stores, finished, true)
     }
 
-    fn finish_canonical_display_alignment_inner(
+    fn finish_display_alignment_inner(
         &mut self,
         stores: &mut Universe,
         finished: crate::align::FinishedAlignment,
         scan_optional_space: bool,
     ) -> Result<(), ExecError> {
-        let mut level = crate::canonical_box_runtime::commit_current_list(
-            &mut self.modes,
-            stores,
-            self.fuel.fuel_mut(),
-        )?;
+        let mut level =
+            crate::box_runtime::commit_current_list(&mut self.modes, stores, self.fuel.fuel_mut())?;
         let interrupt =
             level
                 .list_mutation()
@@ -5207,14 +5144,10 @@ impl CanonicalMainControl {
         self.active_math_shifts.pop();
         self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        self.resume_canonical_display_inner(
-            stores,
-            interrupt.active_directions,
-            scan_optional_space,
-        )
+        self.resume_display_inner(stores, interrupt.active_directions, scan_optional_space)
     }
 
-    fn finish_canonical_display_math_content(
+    fn finish_display_math_content(
         &mut self,
         stores: &mut Universe,
         mut content: tex_state::ids::NodeListId,
@@ -5233,7 +5166,7 @@ impl CanonicalMainControl {
         }
         let mut level = match display_level {
             Some(level) => level,
-            None => crate::canonical_box_runtime::commit_current_list(
+            None => crate::box_runtime::commit_current_list(
                 &mut self.modes,
                 stores,
                 self.fuel.fuel_mut(),
@@ -5261,18 +5194,18 @@ impl CanonicalMainControl {
         self.active_math_shifts.pop();
         self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
-        self.resume_canonical_display(stores, interrupt.active_directions)
+        self.resume_display(stores, interrupt.active_directions)
     }
 
-    fn resume_canonical_display(
+    fn resume_display(
         &mut self,
         stores: &mut Universe,
         directions: Vec<tex_state::node::Direction>,
     ) -> Result<(), ExecError> {
-        self.resume_canonical_display_inner(stores, directions, true)
+        self.resume_display_inner(stores, directions, true)
     }
 
-    fn resume_canonical_display_inner(
+    fn resume_display_inner(
         &mut self,
         stores: &mut Universe,
         directions: Vec<tex_state::node::Direction>,
@@ -5302,7 +5235,7 @@ impl CanonicalMainControl {
             .current_list_mutation()
             .append(directions.into_iter().map(Node::Direction));
         if scan_optional_space {
-            self.scan_canonical_optional_space(stores)?;
+            self.scan_optional_space(stores)?;
         }
         crate::math::display::build_page_after_display_resume(&self.modes, stores)
     }
@@ -5318,7 +5251,7 @@ impl CanonicalMainControl {
     /// vertical list gained an empty line box and its interline glue
     /// (`umber2-johp.231`). The scan is a plain `get_x_token`, so a macro
     /// following the display is expanded here exactly as TeX82 expands it.
-    fn scan_canonical_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
+    fn scan_optional_space(&mut self, stores: &mut Universe) -> Result<(), ExecError> {
         let mode = self.modes.current_mode();
         let shown_mode = self.shown_mode;
         let mut machine = self.command_machine();
@@ -5364,7 +5297,7 @@ impl CanonicalMainControl {
         report_pending_diagnostics(stores, diagnostics)
     }
 
-    fn apply_canonical_math_delimiter(
+    fn apply_math_delimiter(
         &mut self,
         boundary: MathDelimiterBoundary,
         stores: &mut Universe,
@@ -5397,15 +5330,15 @@ impl CanonicalMainControl {
                     )));
             }
             MathDelimiterBoundaryKind::Middle => {
-                if canonical_left_group_open(&self.modes, stores) {
+                if left_group_open(&self.modes, stores) {
                     // e-TeX 2.6 [48.1191] treats `\middle` as a boundary
                     // between two consecutive `math_left_group` segments:
                     // `fin_mlist; unsave; push_math(math_left_group)`.  In
                     // particular, assignments made since the preceding
                     // `\left` or `\middle` are restored before the next
                     // segment starts.
-                    let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                    let _ = crate::canonical_box_runtime::commit_current_list(
+                    let content = take_finished_math_list(&mut self.modes, stores)?;
+                    let _ = crate::box_runtime::commit_current_list(
                         &mut self.modes,
                         stores,
                         self.fuel.fuel_mut(),
@@ -5457,7 +5390,7 @@ impl CanonicalMainControl {
                 }
             }
             MathDelimiterBoundaryKind::Right => {
-                if !canonical_left_group_open(&self.modes, stores) {
+                if !left_group_open(&self.modes, stores) {
                     // TeX82 §1192's `<Try to recover from mismatched \right>`
                     // in its `math_shift_group` arm.
                     let context = self.command.output_open_context(&stores.command_context());
@@ -5471,8 +5404,8 @@ impl CanonicalMainControl {
                     )?;
                     return Ok(ReplayStep::Continue);
                 }
-                let content = take_finished_canonical_math_list(&mut self.modes, stores)?;
-                let _ = crate::canonical_box_runtime::commit_current_list(
+                let content = take_finished_math_list(&mut self.modes, stores)?;
+                let _ = crate::box_runtime::commit_current_list(
                     &mut self.modes,
                     stores,
                     self.fuel.fuel_mut(),
@@ -5565,25 +5498,21 @@ impl CanonicalMainControl {
         observer: &mut dyn CommandObserver,
     ) -> Result<ReplayStep, ExecError> {
         match self.advance_with_observer(stores, observer)? {
-            CanonicalStepResult::Progress(step) => Ok(step),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input { .. }) => {
+            StepResult::Progress(step) => Ok(step),
+            StepResult::Suspended(ResourceNeed::Input { .. }) => {
                 Err(ExecError::MissingToken { context: "\\input" })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::InputProbe { .. }) => {
+            StepResult::Suspended(ResourceNeed::InputProbe { .. }) => {
                 Err(ExecError::MissingToken {
                     context: "pdfTeX file enquiry",
                 })
             }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Font { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "\\font resource",
-                })
-            }
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { .. }) => {
-                Err(ExecError::MissingToken {
-                    context: "\\pdfximage resource",
-                })
-            }
+            StepResult::Suspended(ResourceNeed::Font { .. }) => Err(ExecError::MissingToken {
+                context: "\\font resource",
+            }),
+            StepResult::Suspended(ResourceNeed::PdfImage { .. }) => Err(ExecError::MissingToken {
+                context: "\\pdfximage resource",
+            }),
         }
     }
 
@@ -5593,9 +5522,9 @@ impl CanonicalMainControl {
         &mut self,
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
-    ) -> Result<CanonicalStepResult, ExecError> {
+    ) -> Result<StepResult, ExecError> {
         if self.fatal.is_some() {
-            return Ok(CanonicalStepResult::Progress(MainControlStep::End));
+            return Ok(StepResult::Progress(MainControlStep::End));
         }
         let geometry_start = observer.observes_geometry().then(|| {
             stores.enable_geometry_observation();
@@ -5621,7 +5550,7 @@ impl CanonicalMainControl {
             Ok(step) => {
                 self.commit_step(snapshot);
                 pending.flush_into(observer);
-                Ok(CanonicalStepResult::Progress(step))
+                Ok(StepResult::Progress(step))
             }
             Err(error) => {
                 if let Some(fatal) = error.as_fatal() {
@@ -5633,7 +5562,7 @@ impl CanonicalMainControl {
                     let step = self.succumb(fatal);
                     observer.committed(CommandObservation::Diagnostic(fatal.record()));
                     observer.committed(CommandObservation::Effect(engine_termination_effect()));
-                    return Ok(CanonicalStepResult::Progress(step));
+                    return Ok(StepResult::Progress(step));
                 }
                 self.finish_failed_step(snapshot, stores, error)
             }
@@ -5740,7 +5669,7 @@ impl CanonicalMainControl {
         let outer_paragraph_was_active = mode == Mode::Horizontal && self.modes.depth() == 2;
         let alignment_preamble = alignment_preamble(self.active_alignment.as_mut());
         let innermost_group = stores.innermost_group_kind();
-        let job_is_all_over = crate::canonical_page_output::job_is_all_over(stores);
+        let job_is_all_over = crate::page_output::job_is_all_over(stores);
         let mut diagnostics = Vec::new();
         let scanned = {
             let mut processor = command_processor(
@@ -6225,7 +6154,7 @@ fn report_improper_discretionary(
     Ok(())
 }
 
-/// The structural outcome of one canonical main-control operation.
+/// The structural outcome of one main-control operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MainControlStep {
     Continue,
@@ -6248,15 +6177,15 @@ pub enum RootCompletionPolicy {
 
 // The fixture suite retains its historical vocabulary locally.  This alias is
 // deliberately unavailable to normal builds: production code names and uses
-// the canonical driver directly.
+// the driver directly.
 #[cfg(any())]
-type CommandReplayControl = CanonicalMainControl;
+type CommandReplayControl = MainControl;
 
 // Kept private while the implementation is migrated in place; callers only
 // see `MainControlStep`.
 type ReplayStep = MainControlStep;
 
-fn canonical_math_char(
+fn math_char(
     stores: &Universe,
     code: u32,
     origin: tex_state::token::OriginId,
@@ -6294,13 +6223,13 @@ fn canonical_math_char(
     ))
 }
 
-fn append_canonical_math_char(
+fn append_math_char(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &Universe,
     code: u32,
     origin: tex_state::token::OriginId,
 ) -> Result<(), ExecError> {
-    let (class, character) = canonical_math_char(stores, code, origin)?;
+    let (class, character) = math_char(stores, code, origin)?;
     list.push(Node::MathNoad(MathNoad::new(
         NoadKind::Normal(class),
         MathField::MathChar(character),
@@ -6331,7 +6260,7 @@ fn append_canonical_math_char(
 /// bound `\mathchar` and `\mathaccent` to fifteen bits, and §437's
 /// `scan_twenty_seven_bit_int` bounds `\delimiter`'s `cur_val div @'10000`
 /// to the same range, so those callers append unconditionally.
-fn set_canonical_math_char(
+fn set_math_char(
     ch: char,
     origin: tex_state::token::OriginId,
     stores: &mut Universe,
@@ -6349,7 +6278,7 @@ fn set_canonical_math_char(
         treated.map_err(command_error)?;
         return Ok(());
     }
-    append_canonical_math_char(modes.current_list_mutation(), stores, code, origin)
+    append_math_char(modes.current_list_mutation(), stores, code, origin)
 }
 
 fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
@@ -6376,7 +6305,7 @@ fn noad_kind_for_text(kind: MathTextFieldKind) -> NoadKind {
 /// and `right_noad` sort at or above the upper bound.  e-TeX's `\middle`
 /// (etex.ch's `middle_noad`) is a `right_noad` carrying a distinguishing
 /// `subtype`, so the same bound excludes it without a separate test.
-fn canonical_scripts_allowed(node: &Node) -> bool {
+fn scripts_allowed(node: &Node) -> bool {
     match node {
         Node::MathNoad(noad) => !matches!(
             noad.kind,
@@ -6388,10 +6317,7 @@ fn canonical_scripts_allowed(node: &Node) -> bool {
     }
 }
 
-pub(crate) fn canonical_script_field_mut(
-    noad: &mut MathNoad,
-    kind: MathScriptKind,
-) -> &mut MathField {
+pub(crate) fn script_field_mut(noad: &mut MathNoad, kind: MathScriptKind) -> &mut MathField {
     match kind {
         MathScriptKind::Superscript => &mut noad.superscript,
         MathScriptKind::Subscript => &mut noad.subscript,
@@ -6399,7 +6325,7 @@ pub(crate) fn canonical_script_field_mut(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CanonicalScriptTarget {
+pub(crate) struct ScriptTarget {
     pub(crate) node_index: usize,
     kind: MathScriptKind,
 }
@@ -6419,17 +6345,17 @@ pub(crate) struct CanonicalScriptTarget {
 /// precedes every side effect of the field scan, and material appended while a
 /// recovered or nested field executes cannot move the eventual attachment to a
 /// newer tail.
-pub(crate) fn reserve_canonical_script_target(
+pub(crate) fn reserve_script_target(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     kind: MathScriptKind,
-) -> Result<CanonicalScriptTarget, ExecError> {
+) -> Result<ScriptTarget, ExecError> {
     // `t<>empty`: the tail was eligible but already carries this script.
     let tail_index = list.nodes().len().checked_sub(1);
     let (eligible, occupied) = match tail_index.and_then(|index| list.nodes().get(index)) {
-        Some(node) if canonical_scripts_allowed(node) => {
+        Some(node) if scripts_allowed(node) => {
             let Node::MathNoad(noad) = node else {
-                unreachable!("canonical_scripts_allowed admits only noads")
+                unreachable!("scripts_allowed admits only noads")
             };
             let occupied = match kind {
                 MathScriptKind::Superscript => !matches!(noad.superscript, MathField::Empty),
@@ -6467,29 +6393,26 @@ pub(crate) fn reserve_canonical_script_target(
         report.error().jump_out()?;
     }
 
-    Ok(CanonicalScriptTarget { node_index, kind })
+    Ok(ScriptTarget { node_index, kind })
 }
 
-pub(crate) fn fill_canonical_script_target(
+pub(crate) fn fill_script_target(
     mut list: crate::mode::ModeListMutation<'_>,
-    target: CanonicalScriptTarget,
+    target: ScriptTarget,
     field: MathField,
 ) {
     list.with_node_mut(target.node_index, |node| {
         let Node::MathNoad(noad) = node else {
             unreachable!("reserved canonical script target must remain a noad")
         };
-        let reserved = canonical_script_field_mut(noad, target.kind);
+        let reserved = script_field_mut(noad, target.kind);
         debug_assert!(matches!(reserved, MathField::Empty));
         *reserved = field;
     })
     .expect("reserved canonical script target must remain present");
 }
 
-fn apply_canonical_limits(
-    mut list: crate::mode::ModeListMutation<'_>,
-    kind: MathLimitKind,
-) -> bool {
+fn apply_limits(mut list: crate::mode::ModeListMutation<'_>, kind: MathLimitKind) -> bool {
     // TeX82 §1159's `math_limit_switch`: the subtype is set only when
     // `head<>tail` *and* the tail is an `op_noad`. `with_last_node_mut`
     // returns `None` for the empty list, which is `head=tail`.
@@ -6513,7 +6436,7 @@ fn apply_canonical_limits(
     .unwrap_or(false)
 }
 
-fn start_canonical_fraction(
+fn start_fraction(
     mut list: crate::mode::ModeListMutation<'_>,
     stores: &mut Universe,
     fraction: tex_command::ScannedMathFraction,
@@ -6534,7 +6457,7 @@ fn start_canonical_fraction(
     true
 }
 
-fn finish_canonical_math_list(
+fn finish_math_list(
     nodes: &[Node],
     incomplete: Option<&crate::mode::IncompleteFraction>,
     stores: &mut Universe,
@@ -6602,7 +6525,7 @@ fn collapse_singleton_math_group(stores: &Universe, list: tex_state::ids::NodeLi
     MathField::SubMlist(list)
 }
 
-fn take_finished_canonical_math_list(
+fn take_finished_math_list(
     modes: &mut ModeNest,
     stores: &mut Universe,
 ) -> Result<tex_state::ids::NodeListId, ExecError> {
@@ -6610,7 +6533,7 @@ fn take_finished_canonical_math_list(
         let mut list = modes.current_list_mutation();
         (list.take_nodes(), list.take_incomplete_fraction())
     };
-    finish_canonical_math_list(&nodes, incomplete.as_ref(), stores)
+    finish_math_list(&nodes, incomplete.as_ref(), stores)
 }
 
 /// TeX82 §1064's `off_save` help, shared by all four closers §1065 selects.
@@ -6713,7 +6636,7 @@ fn report_unpaired_display_end(
     Ok(())
 }
 
-fn canonical_left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
+fn left_group_open(modes: &ModeNest, stores: &Universe) -> bool {
     // e-TeX etex.ch [48.1192] admits `\middle` through the same
     // `math_left_group` case as `\right`.  Seeing a leading left noad is not
     // sufficient: a simple group nested inside that left/right group is an
@@ -6860,7 +6783,7 @@ enum ScannedStep {
     MissingAlignmentCr,
     MissingMathShift,
     ReplayCompleted(tex_command::CommandReplayEpisode),
-    Math(CanonicalMathRequest),
+    Math(MathRequest),
     DisplayAlignmentEquationNumber {
         side: tex_command::EquationNumberSide,
     },
@@ -7527,7 +7450,7 @@ enum ScannedStep {
     /// outside math mode take `report_illegal_case` ("You can't use
     /// `\eqno' in ... mode") rather than §1047's `insert_dollar_sign`, even
     /// though tex.web registers them under the same `eq_no` command code as
-    /// the math-request vocabulary `scan_canonical_math_request` otherwise
+    /// the math-request vocabulary `scan_math_request` otherwise
     /// dispatches. Reaching this arm proves `mode` is not
     /// `Math`/`DisplayMath` (that gate would have consumed the primitive
     /// first via `Request::EquationNumber`), matching
@@ -8474,7 +8397,7 @@ fn scan_leaders_step(
     primitive: UnexpandablePrimitive,
     mode: Mode,
 ) -> Result<ScannedStep, ExecError> {
-    let kind = crate::canonical_box_runtime::leader_glue_kind(primitive);
+    let kind = crate::box_runtime::leader_glue_kind(primitive);
     match processor.scan_leader_payload().map_err(command_error)? {
         ScannedLeaderPayload::Missing => Ok(ScannedStep::MissingLeaderPayload),
         ScannedLeaderPayload::Construction(construction) => {
@@ -8728,7 +8651,7 @@ fn scan_command(
     }
     if matches!(mode, Mode::Math | Mode::DisplayMath)
         && let Some(request) = processor
-            .scan_canonical_math_request(&command)
+            .scan_math_request(&command)
             .map_err(command_error)?
     {
         return Ok(ScannedStep::Math(request));
@@ -8739,7 +8662,7 @@ fn scan_command(
             ..
         } = command.meaning()
     {
-        return Ok(ScannedStep::Math(CanonicalMathRequest::Script(
+        return Ok(ScannedStep::Math(MathRequest::Script(
             tex_command::ScannedMathScript {
                 kind: MathScriptKind::Superscript,
                 provenance: tex_command::StructuredProvenance {
@@ -8754,7 +8677,7 @@ fn scan_command(
             ..
         } = command.meaning()
     {
-        return Ok(ScannedStep::Math(CanonicalMathRequest::Script(
+        return Ok(ScannedStep::Math(MathRequest::Script(
             tex_command::ScannedMathScript {
                 kind: MathScriptKind::Subscript,
                 provenance: tex_command::StructuredProvenance {
@@ -8868,7 +8791,7 @@ fn scan_command(
         } = command.meaning()
     {
         processor.back_input(command).map_err(command_error)?;
-        return Ok(ScannedStep::Math(CanonicalMathRequest::TextField(
+        return Ok(ScannedStep::Math(MathRequest::TextField(
             MathTextFieldKind::Ord,
         )));
     }
@@ -10837,9 +10760,9 @@ fn scan_off_save(
 ///   `reswitch`). `dispatch_main_control_command` is where that happens, so
 ///   reaching this function names a caller that bypassed it.
 /// - `Err(ExecError::UnimplementedPrimitive { .. })`: this primitive has no
-///   dispatch at all yet in canonical main control, or is dispatched only
+///   dispatch at all yet in main control, or is dispatched only
 ///   conditionally elsewhere (for example the math-noad family routed
-///   through `scan_canonical_math_request`, or `\left`/`\right`/`\middle`'s
+///   through `scan_math_request`, or `\left`/`\right`/`\middle`'s
 ///   math-delimiter gate) and was reached outside that context, or is a
 ///   e-TeX/pdfTeX extension whose canonical routing has not been written.
 ///   Per umber2-johp.69's scope, this function does not implement any of
@@ -10847,7 +10770,7 @@ fn scan_off_save(
 ///   work can be tracked as ordinary chain links (see umber2-johp.74).
 /// - `insert_dollar_sign` recovery: this primitive is a member of TeX82
 ///   §1046's "math-only cases in non-math modes" table (`non_math(...)` in
-///   tex.web) -- it is dispatched correctly by `scan_canonical_math_request`
+///   tex.web) -- it is dispatched correctly by `scan_math_request`
 ///   or the `\left`/`\right`/`\middle` gate above whenever `mode` actually is
 ///   `Math`/`DisplayMath`, so reaching this function at all proves `mode` is
 ///   not math. §1047's `insert_dollar_sign` backs the offending command up
@@ -11063,7 +10986,7 @@ fn scan_unclassified_primitive(
         ),
         // TeX82 §1046's `non_math(...)` table: each of these primitives is a
         // math-noad, math-style, or math-delimiter command whose *only*
-        // canonical dispatch is `scan_canonical_math_request` (or the
+        // canonical dispatch is `scan_math_request` (or the
         // `\left`/`\right`/`\middle` gate) under `Mode::Math`/`DisplayMath`.
         // Reaching this arm therefore proves `mode` is not math, which is
         // exactly tex.web's non-math table; §1047's `insert_dollar_sign`
@@ -11117,7 +11040,7 @@ fn scan_unclassified_primitive(
         // `eq_no` command code as the math-request vocabulary. Reaching this
         // arm proves `mode` is not `Math`/`DisplayMath` (that gate would
         // have consumed the primitive first via
-        // `scan_canonical_math_request`'s `Request::EquationNumber`);
+        // `scan_math_request`'s `Request::EquationNumber`);
         // `mmode+eq_no` itself (gated by `privileged`/`cur_group`) is
         // unaffected.
         P::EqNo | P::LeftEqNo => Ok(ScannedStep::IllegalEqNo {
@@ -11228,7 +11151,7 @@ fn scan_unclassified_primitive(
 ///
 /// # Buckets
 ///
-/// - `Ok(...)`: tex.web routes this meaning somewhere canonical main control
+/// - `Ok(...)`: tex.web routes this meaning somewhere main control
 ///   already implements generically, cited per arm. Two of these arms
 ///   reproduce the cited section's *action* while its diagnostic is still
 ///   missing; both say so and name umber2-johp.110.
@@ -11244,7 +11167,7 @@ fn scan_unclassified_primitive(
 ///   math; §1047's `insert_dollar_sign` recovers it through the same
 ///   `recover_missing_math_shift` the primitive classifier's identical
 ///   bucket uses.
-/// - `Err(ExecError::UnimplementedMeaning { .. })`: canonical main control
+/// - `Err(ExecError::UnimplementedMeaning { .. })`: main control
 ///   has no routing for this meaning yet, or the meaning should be
 ///   unreachable by a gullet invariant and the error names the broken
 ///   invariant exactly. Per umber2-johp.108's scope this function implements
@@ -11323,7 +11246,7 @@ fn scan_unclassified_meaning(
         // recovery the whole math-only vocabulary takes outside math mode.
         // Reaching this arm proves `mode` is not `Math`/`DisplayMath`:
         // §1154's `mmode+math_given` is dispatched by `scan_command`'s
-        // `scan_canonical_math_request` gate, which consumes the meaning
+        // `scan_math_request` gate, which consumes the meaning
         // before its outer match runs.
         Meaning::MathCharGiven(_) => {
             processor
@@ -11587,7 +11510,7 @@ fn replay_text(tokens: &[tex_state::token::Token]) -> String {
         .collect()
 }
 
-fn canonical_write_text(tokens: &[Token], stores: &Universe) -> String {
+fn write_text(tokens: &[Token], stores: &Universe) -> String {
     let mut text = String::new();
     for &token in tokens {
         tex_state::token_show::append_token_string_text(stores, token, &mut text);
@@ -11675,7 +11598,7 @@ fn apply_pdf_navigation_request(
                             .create_pdf_annotation(data)
                             .map_err(|_| ExecError::PdfObjectCapacity)?,
                     };
-                    crate::canonical_box_runtime::append_whatsit(
+                    crate::box_runtime::append_whatsit(
                         modes,
                         stores,
                         fuel,
@@ -11709,7 +11632,7 @@ fn apply_pdf_navigation_request(
                 )
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
             reserve_navigation_action_targets(stores, action)?;
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -11734,7 +11657,7 @@ fn apply_pdf_navigation_request(
             if open.nesting_depth != stores.execution_group_depth() {
                 stores.world_mut().write_text(PrintSink::TerminalAndLog, "\npdfTeX warning: \\pdfendlink ended up in different nesting level than \\pdfstartlink\n");
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -11778,7 +11701,7 @@ fn apply_pdf_navigation_request(
                 warn_pdf_destination_duplicate(stores, &identity);
                 return Ok(ReplayStep::Continue);
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -11803,7 +11726,7 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode(primitive));
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 fuel,
@@ -11820,12 +11743,7 @@ fn apply_pdf_navigation_request(
             if stores.int_param(IntParam::PDF_OUTPUT) <= 0 {
                 return Err(ExecError::PdfExtensionInDviMode("pdfendthread"));
             }
-            crate::canonical_box_runtime::append_whatsit(
-                modes,
-                stores,
-                fuel,
-                Whatsit::PdfEndThread,
-            )?;
+            crate::box_runtime::append_whatsit(modes, stores, fuel, Whatsit::PdfEndThread)?;
         }
     }
     Ok(ReplayStep::Continue)
@@ -12088,7 +12006,7 @@ fn apply_pdf_form_request(
                 .ok()
                 .and_then(|object| stores.pdf_form(object))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -12136,30 +12054,22 @@ fn apply_pdf_form_request(
                 // one ledger/artifact owner.
                 let command = std::cell::RefCell::new(command);
                 let mut write = |stores: &mut Universe, _: PrintSink, tokens: TokenListId| {
-                    canonical_replay_write(
-                        &mut command.borrow_mut(),
-                        stores,
-                        tokens,
-                        &mut Vec::new(),
-                    )
+                    replay_write(&mut command.borrow_mut(), stores, tokens, &mut Vec::new())
                 };
                 let mut replay = |stores: &mut Universe,
-                                  kind: crate::canonical_shipout::ReplayTextKind,
+                                  kind: crate::shipout::ReplayTextKind,
                                   tokens: TokenListId| {
-                    canonical_replay_text(
+                    replay_text(
                         &mut command.borrow_mut(),
                         stores,
                         kind,
                         tokens,
                         &mut Vec::new(),
                     )
-                    .map(crate::canonical_shipout::ExpandedReplayText)
+                    .map(crate::shipout::ExpandedReplayText)
                 };
-                let artifact = crate::canonical_shipout::CanonicalShipoutTransaction::new(
-                    &mut write,
-                    &mut replay,
-                )
-                .stage_form(form, stores)?;
+                let artifact = crate::shipout::ShipoutTransaction::new(&mut write, &mut replay)
+                    .stage_form(form, stores)?;
                 stores.publish_pdf_traversal_positions(
                     artifact.last_position(),
                     artifact.snap_reference(),
@@ -12171,10 +12081,10 @@ fn apply_pdf_form_request(
     Ok(ReplayStep::Continue)
 }
 
-fn canonical_replay_text(
+fn replay_text(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
-    kind: crate::canonical_shipout::ReplayTextKind,
+    kind: crate::shipout::ReplayTextKind,
     tokens: TokenListId,
     diagnostics: &mut Vec<PendingDiagnostic>,
 ) -> Result<Vec<u8>, ExecError> {
@@ -12212,15 +12122,15 @@ fn canonical_replay_text(
     let mut text = String::new();
     for &token in stores.tokens(expanded.token_list()) {
         match kind {
-            crate::canonical_shipout::ReplayTextKind::Special => {
+            crate::shipout::ReplayTextKind::Special => {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
-            crate::canonical_shipout::ReplayTextKind::PdfLiteral => {
+            crate::shipout::ReplayTextKind::PdfLiteral => {
                 crate::diagnostics::append_token_show_text(stores, token, &mut text);
             }
         }
     }
-    if matches!(kind, crate::canonical_shipout::ReplayTextKind::PdfLiteral) {
+    if matches!(kind, crate::shipout::ReplayTextKind::PdfLiteral) {
         return Ok(text.into_bytes());
     }
     let mut bytes = Vec::with_capacity(text.len());
@@ -12235,12 +12145,12 @@ fn canonical_replay_text(
     Ok(bytes)
 }
 
-fn canonical_replay_write(
+fn replay_write(
     command: &mut CommandMachine<'_>,
     stores: &mut Universe,
     tokens: TokenListId,
     diagnostics: &mut Vec<PendingDiagnostic>,
-) -> Result<crate::canonical_shipout::ExpandedWrite, ExecError> {
+) -> Result<crate::shipout::ExpandedWrite, ExecError> {
     let input_snapshot = command.state.snapshot();
     let traced = stores
         .tokens(tokens)
@@ -12284,7 +12194,7 @@ fn canonical_replay_write(
     }
     let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
     text.push('\n');
-    Ok(crate::canonical_shipout::ExpandedWrite::transactional(text))
+    Ok(crate::shipout::ExpandedWrite::transactional(text))
 }
 
 /// Selects TeX82 §1370 `write_out`'s destination for a stream number that
@@ -12512,7 +12422,7 @@ fn committed_arithmetic_mutation(
 ///   names -- either it is not an `eqtb` write at all, or it lands in a region
 ///   `umber_trace_eq_mutation` deliberately declines to serialize. Each arm
 ///   cites which.
-/// - `unreachable!()`: [`CanonicalMainControl::apply_host_owned_step`] applies
+/// - `unreachable!()`: [`MainControl::apply_host_owned_step`] applies
 ///   the step before this classifier runs, so reaching it means that routing
 ///   was removed without updating this classifier.
 fn applied_mutation_observation(
@@ -13091,7 +13001,7 @@ fn applied_mutation_observation(
         | ScannedStep::Paragraph
         | ScannedStep::ParagraphStart
         | ScannedStep::Character { .. } => return None,
-        // -- Applied by `CanonicalMainControl::apply_host_owned_step` before
+        // -- Applied by `MainControl::apply_host_owned_step` before
         // this classifier runs, either because the step is applied through its
         // own typed request path or because it ends the replay episode
         // outright.
@@ -13112,7 +13022,7 @@ fn applied_mutation_observation(
 
 /// Captures an executor-owned observable effect before application, then
 /// emits it only after that application commits through the replay seam.
-fn canonical_pdf_image_dimensions(
+fn pdf_image_dimensions(
     source: &tex_state::PdfExternalImageSource,
     width: Option<Scaled>,
     height: Option<Scaled>,
@@ -13149,7 +13059,7 @@ fn canonical_pdf_image_dimensions(
 
 /// Applies pdfTeX §§1550--1552's obsolete image-inclusion parameter aliases
 /// before the effective request is exposed to the host. These writes remain
-/// inside the canonical step snapshot, so a resource suspension rolls them
+/// inside the step snapshot, so a resource suspension rolls them
 /// back together with their diagnostics and retries the transition once.
 fn apply_pdf_image_compatibility_policy(stores: &mut Universe) {
     let obsolete_page_box = stores.int_param(IntParam::PDF_OPTION_ALWAYS_USE_PDF_PAGE_BOX);
@@ -13177,7 +13087,7 @@ fn apply_pdf_image_compatibility_policy(stores: &mut Universe) {
 /// command-owned source scanning but before the immutable host request is
 /// exposed. This keeps `CommandProcessor` independent of `Universe` while
 /// ensuring the host sees the effective page-box identity.
-fn canonical_pdf_image_page_box(
+fn pdf_image_page_box(
     stores: &Universe,
     request: &PdfImageRequest,
 ) -> tex_command::PdfImagePageBox {
@@ -13519,142 +13429,137 @@ fn shipout_replay_box(
     let supports_pdftex = command.state.profile().capabilities().supports_pdftex();
     let emit_dvi = command.emit_dvi_override.unwrap_or(!supports_pdftex);
     let command_cell = std::cell::RefCell::new(command);
-    let mut expand_write = |stores: &mut Universe,
-                            sink: PrintSink,
-                            tokens: tex_state::ids::TokenListId| {
-        let mut command = command_cell.borrow_mut();
-        let input_snapshot = command.state.snapshot();
-        // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
-        // before moving to the next whatsit. A following write expands only
-        // after those effects have happened, so publish the committed prefix
-        // before its nested command episode contributes observations.
-        if let Some(observations) = command.observations.as_mut() {
-            observations.0.extend(
-                stores.world().effect_records()[effect_cursor.get()..]
-                    .iter()
-                    .filter_map(stream_effect_observation)
-                    .map(CommandObservation::Effect),
-            );
-        }
-        effect_cursor.set(stores.world().effect_records().len());
-        let traced = stores
-            .tokens(tokens)
-            .iter()
-            .copied()
-            .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
-            .collect::<Vec<_>>();
-        let traced = stores.finish_traced_token_list(&traced);
-        let expanded = {
-            // TeX82 §1370 temporarily sets `mode:=0` while deferred
-            // write text expands. §299 names that value "no mode", and
-            // §367 updates `shown_mode` if it traces an expandable
-            // command during the scan.
-            let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
-            let mut processor = command.processor(stores);
-            processor.set_command_trace_mode_prefix(mode_prefix);
-            let result = processor.expand_write_text(traced).map_err(command_error);
-            let command_trace_printed = processor.command_trace_printed();
-            write_publications.borrow_mut().extend(
-                processor
-                    .take_semantic_diagnostics()
-                    .into_iter()
-                    .map(|diagnostic| {
-                        PendingShipoutPublication::Diagnostic(PendingDiagnostic::Command(
-                            diagnostic,
-                        ))
-                    }),
-            );
-            drop(processor);
-            if command_trace_printed {
-                *command.shown_mode = None;
+    let mut expand_write =
+        |stores: &mut Universe, sink: PrintSink, tokens: tex_state::ids::TokenListId| {
+            let mut command = command_cell.borrow_mut();
+            let input_snapshot = command.state.snapshot();
+            // TeX82 §§1374--1375 execute an open/close whatsit in `out_what`
+            // before moving to the next whatsit. A following write expands only
+            // after those effects have happened, so publish the committed prefix
+            // before its nested command episode contributes observations.
+            if let Some(observations) = command.observations.as_mut() {
+                observations.0.extend(
+                    stores.world().effect_records()[effect_cursor.get()..]
+                        .iter()
+                        .filter_map(stream_effect_observation)
+                        .map(CommandObservation::Effect),
+                );
             }
+            effect_cursor.set(stores.world().effect_records().len());
+            let traced = stores
+                .tokens(tokens)
+                .iter()
+                .copied()
+                .map(|token| TracedTokenWord::pack(token, tex_state::token::OriginId::UNKNOWN))
+                .collect::<Vec<_>>();
+            let traced = stores.finish_traced_token_list(&traced);
+            let expanded = {
+                // TeX82 §1370 temporarily sets `mode:=0` while deferred
+                // write text expands. §299 names that value "no mode", and
+                // §367 updates `shown_mode` if it traces an expandable
+                // command during the scan.
+                let mode_prefix = command.shown_mode.is_some().then(|| "no mode".to_owned());
+                let mut processor = command.processor(stores);
+                processor.set_command_trace_mode_prefix(mode_prefix);
+                let result = processor.expand_write_text(traced).map_err(command_error);
+                let command_trace_printed = processor.command_trace_printed();
+                write_publications.borrow_mut().extend(
+                    processor
+                        .take_semantic_diagnostics()
+                        .into_iter()
+                        .map(|diagnostic| {
+                            PendingShipoutPublication::Diagnostic(PendingDiagnostic::Command(
+                                diagnostic,
+                            ))
+                        }),
+                );
+                drop(processor);
+                if command_trace_printed {
+                    *command.shown_mode = None;
+                }
+                result
+            };
+            command
+                .state
+                .rollback_nested_input_preserving_conditions(input_snapshot)
+                .expect("shipout write replay preserves the command profile");
+            let expanded = expanded?;
+            if let Some(observations) = command.observations.as_mut() {
+                observations
+                    .0
+                    .push(CommandObservation::Effect(EffectRecord {
+                        kind: "write",
+                        detail: write_effect_detail(sink),
+                        source: None,
+                        tokens: Some(
+                            stores
+                                .tokens(expanded.tokens.token_list())
+                                .iter()
+                                .copied()
+                                .map(|token| observed_macro_token(token, stores))
+                                .collect(),
+                        ),
+                    }));
+            }
+            if expanded.unbalanced {
+                // TeX82 §1372's `<Recover from an unbalanced write command>`.
+                // The expansion diagnostics above and this report occur on one
+                // live `write_out` call stack in tex.web. Both must cross the
+                // atomic page transaction in that same detection order.
+                write_publications
+                    .borrow_mut()
+                    .push(PendingShipoutPublication::UnbalancedWrite {
+                        context: expanded
+                            .error_context
+                            .expect("unbalanced write retains its live input context"),
+                    });
+            }
+            let mut text = String::new();
+            for &token in stores.tokens(expanded.tokens.token_list()) {
+                tex_state::token_show::append_token_string_text(stores, token, &mut text);
+            }
+            let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
+            text.push('\n');
+            if let Some(sink) = crate::shipout::direct::deferred_write_sink(stores, sink) {
+                write_publications
+                    .borrow_mut()
+                    .push(PendingShipoutPublication::Write {
+                        sink,
+                        text: text.clone(),
+                    });
+            }
+            Ok(crate::shipout::ExpandedWrite::deferred(text))
+        };
+    let mut expand_replay =
+        |stores: &mut Universe, kind: crate::shipout::ReplayTextKind, tokens: TokenListId| {
+            let mut command = command_cell.borrow_mut();
+            let mut diagnostics = Vec::new();
+            let result = replay_text(&mut command, stores, kind, tokens, &mut diagnostics)
+                .map(crate::shipout::ExpandedReplayText);
+            write_publications.borrow_mut().extend(
+                diagnostics
+                    .into_iter()
+                    .map(PendingShipoutPublication::Diagnostic),
+            );
             result
         };
-        command
-            .state
-            .rollback_nested_input_preserving_conditions(input_snapshot)
-            .expect("shipout write replay preserves the command profile");
-        let expanded = expanded?;
-        if let Some(observations) = command.observations.as_mut() {
-            observations
-                .0
-                .push(CommandObservation::Effect(EffectRecord {
-                    kind: "write",
-                    detail: write_effect_detail(sink),
-                    source: None,
-                    tokens: Some(
-                        stores
-                            .tokens(expanded.tokens.token_list())
-                            .iter()
-                            .copied()
-                            .map(|token| observed_macro_token(token, stores))
-                            .collect(),
-                    ),
-                }));
-        }
-        if expanded.unbalanced {
-            // TeX82 §1372's `<Recover from an unbalanced write command>`.
-            // The expansion diagnostics above and this report occur on one
-            // live `write_out` call stack in tex.web. Both must cross the
-            // atomic page transaction in that same detection order.
-            write_publications
-                .borrow_mut()
-                .push(PendingShipoutPublication::UnbalancedWrite {
-                    context: expanded
-                        .error_context
-                        .expect("unbalanced write retains its live input context"),
-                });
-        }
-        let mut text = String::new();
-        for &token in stores.tokens(expanded.tokens.token_list()) {
-            tex_state::token_show::append_token_string_text(stores, token, &mut text);
-        }
-        let mut text = crate::diagnostics::print_text_with_newlinechar(stores, &text);
-        text.push('\n');
-        if let Some(sink) = crate::canonical_shipout::direct::deferred_write_sink(stores, sink) {
-            write_publications
-                .borrow_mut()
-                .push(PendingShipoutPublication::Write {
-                    sink,
-                    text: text.clone(),
-                });
-        }
-        Ok(crate::canonical_shipout::ExpandedWrite::deferred(text))
-    };
-    let mut expand_replay = |stores: &mut Universe,
-                             kind: crate::canonical_shipout::ReplayTextKind,
-                             tokens: TokenListId| {
-        let mut command = command_cell.borrow_mut();
-        let mut diagnostics = Vec::new();
-        let result = canonical_replay_text(&mut command, stores, kind, tokens, &mut diagnostics)
-            .map(crate::canonical_shipout::ExpandedReplayText);
-        write_publications.borrow_mut().extend(
-            diagnostics
-                .into_iter()
-                .map(PendingShipoutPublication::Diagnostic),
-        );
-        result
-    };
-    let mut receipt = crate::canonical_shipout::CanonicalShipoutTransaction::new(
-        &mut expand_write,
-        &mut expand_replay,
-    )
-    .stage_page(
-        node,
-        input_summary,
-        crate::canonical_shipout::ShipoutOrigin {
-            output_open_context: Some(output_open_context),
-            pending_end,
-            // The TeX82 profile follows tex.web §1374 exactly. The notice is
-            // a later Web2C change retained by the pdfTeX profile.
-            announce_openout: supports_pdftex,
-        },
-        stores,
-        emit_dvi,
-        publication_candidate,
-        effect_candidate,
-        receipt,
-    )?;
+    let mut receipt =
+        crate::shipout::ShipoutTransaction::new(&mut expand_write, &mut expand_replay).stage_page(
+            node,
+            input_summary,
+            crate::shipout::ShipoutOrigin {
+                output_open_context: Some(output_open_context),
+                pending_end,
+                // The TeX82 profile follows tex.web §1374 exactly. The notice is
+                // a later Web2C change retained by the pdfTeX profile.
+                announce_openout: supports_pdftex,
+            },
+            stores,
+            emit_dvi,
+            publication_candidate,
+            effect_candidate,
+            receipt,
+        )?;
     let command = command_cell.into_inner();
     if let Some(receipt) = receipt
         .as_mut()
@@ -13681,7 +13586,7 @@ fn shipout_replay_box(
             publication.artifact.effect(),
             publication
                 .effect_output_attempt
-                .expect("canonical shipout assigns output-attempt ownership"),
+                .expect("shipout assigns output-attempt ownership"),
         );
         publication.effects = marker_start..stores.world().effect_records().len();
         stores
@@ -13700,12 +13605,12 @@ fn shipout_replay_box(
     // from that read; committing here keeps the *next* page's `pending_end`
     // from including this one's trailing `]` (`umber2-alfh.10`, confirmed
     // against
-    // `canonical_effect_free_shipout_memo_republishes_one_aligned_receipt`'s
+    // `effect_free_shipout_memo_republishes_one_aligned_receipt`'s
     // two identical `\shipout\copy0` calls). It is a no-op under retained
     // sessions, which consume their effect suffix on export instead.
     //
     // This is not free: a checkpoint/retry session (`crates/umber`'s
-    // `CanonicalEngineSession`) can still roll this whole step back if a
+    // `EngineSession`) can still roll this whole step back if a
     // *later* command turns out to need a resource this speculative run did
     // not have, and `commit_effects` materializes into
     // `World::memory_terminal_output`/`memory_log_output`, which that
@@ -13714,7 +13619,7 @@ fn shipout_replay_box(
     // `umber2-v4dx` tracks giving rollback that reach.
     stores.commit_effects(stores.world().effect_pos())?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
-    // Canonical lowering bypasses the legacy executor's bookkeeping, so keep
+    // The shipout boundary owns the page-state bookkeeping, so keep
     // the page-state transition at the typed shipout boundary.
     stores.set_page_integer(tex_state::page::PageInteger::DeadCycles, 0);
     Ok(receipt)
@@ -13725,8 +13630,8 @@ pub(crate) fn test_shipout_replay_box(
     node: Node,
     stores: &mut Universe,
 ) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
-    let mut control = CanonicalMainControl::default();
-    let snapshot = CanonicalStepSnapshot::capture(&mut control, stores);
+    let mut control = MainControl::default();
+    let snapshot = StepSnapshot::capture(&mut control, stores);
     let mut fuel = tex_command::CommandFuelLedger::default();
     let mut shown_mode = None;
     let mut command = CommandMachine {
@@ -13946,11 +13851,7 @@ fn begin_next_replay_alignment_cell(
     // list open. A valign entry can therefore leave horizontal mode before
     // the following column starts without packaging the spanning cell yet.
     if active.kind == AlignmentKind::VAlign {
-        crate::canonical_paragraph_end::end_canonical_paragraph_without_source(
-            modes,
-            stores,
-            command.fuel,
-        )?;
+        crate::paragraph_end::end_paragraph_without_source(modes, stores, command.fuel)?;
     }
     if delimiter == AlignmentCellDelimiter::Span {
         active.cell_span = active
@@ -14097,7 +13998,7 @@ fn replace_alignment_entry_save_level(
     stores: &mut Universe,
 ) -> Result<(), ExecError> {
     let aftergroup = leave_alignment_save_level(stores, "alignment entry group")?;
-    enter_canonical_group(stores, command.state, GroupKind::Align);
+    enter_group(stores, command.state, GroupKind::Align);
     schedule_aftergroup(command, stores, aftergroup)
 }
 
@@ -14195,10 +14096,10 @@ fn capture_replay_alignment_cell(
         return Ok(());
     }
 
-    // Canonical alignment packaging still defers that paragraph's lowering,
+    // Alignment packaging still defers that paragraph's lowering,
     // but §815's negative pretolerance makes its immediate transition into
     // the hyphenating pass certain. Publish §919's one-way trie lifecycle at
-    // this canonical boundary, before `align_peek` fetches what follows.
+    // this boundary, before `align_peek` fetches what follows.
     if matches!(
         modes.current_mode(),
         Mode::Horizontal | Mode::RestrictedHorizontal
@@ -14206,7 +14107,7 @@ fn capture_replay_alignment_cell(
     {
         stores.close_hyphenation_patterns();
     }
-    let mut cell = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
+    let mut cell = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
     let material = if active.kind == AlignmentKind::HAlign {
         // TeX82 §796 packs an `\halign` column with `adjust_tail:=cur_tail`,
         // so §651/§655 remove its insertions, marks, and `\vadjust` contents
@@ -14216,7 +14117,7 @@ fn capture_replay_alignment_cell(
         let material =
             crate::math::finish_math_lists_owned(stores, cell.list_mutation().take_nodes(), false);
         let (retained, mut pre_migrated, migrated) =
-            crate::canonical_box_runtime::split_hpack_migrations(stores, material);
+            crate::box_runtime::split_hpack_migrations(stores, material);
         pre_migrated.extend(migrated);
         active.row_migrations.extend(pre_migrated);
         retained
@@ -14263,7 +14164,7 @@ fn finish_replay_alignment_row(
         return Ok(());
     }
 
-    let mut row = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
+    let mut row = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
     let children = stores.freeze_node_list(&row.list_mutation().take_nodes());
     let row = crate::align::packaging::make_unset_node(
         stores,
@@ -14324,7 +14225,7 @@ fn finish_replay_alignment(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     finish_replay_alignment_row(active, modes, stores, fuel)?;
-    let mut alignment = crate::canonical_box_runtime::commit_current_list(modes, stores, fuel)?;
+    let mut alignment = crate::box_runtime::commit_current_list(modes, stores, fuel)?;
     // TeX82 §800 makes §661's box-diagnostic origin negative for the whole
     // `fin_align` setting pass. The magnitude is the alignment level's
     // `mode_line`, captured by §774's `push_nest`, and §812 restores the
@@ -14349,7 +14250,7 @@ fn finish_replay_alignment_with_origin(
         .map(|templates| AlignColumn {
             u_template: templates
                 .u_template
-                .expect("canonical columns retain u templates")
+                .expect("alignment columns retain u templates")
                 .token_list(),
             v_template: templates.v_template.token_list(),
         })
@@ -14623,7 +14524,7 @@ fn show_box_context(active: &ActiveReplayBox) -> String {
     context
 }
 
-fn enter_canonical_group(stores: &mut Universe, command: &CommandState, kind: GroupKind) {
+fn enter_group(stores: &mut Universe, command: &CommandState, kind: GroupKind) {
     stores.enter_group_with_kind_at_line(kind, command.current_file_line_number());
 }
 
@@ -14650,20 +14551,12 @@ fn apply_scanned_step(
             // the ligature loop. The command itself has no list effect, but
             // it is still a word boundary: `?\\relax\\char96` must not form
             // the `?`` ligature across the relax.
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::TextDirection { direction, enabled } => {
             if enabled {
-                crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                    modes,
-                    stores,
-                    command.fuel,
-                )?;
+                crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
                 modes
                     .current_list_mutation()
                     .push(Node::Direction(direction));
@@ -14732,7 +14625,7 @@ fn apply_scanned_step(
             )?;
             Ok(ReplayStep::Continue)
         }
-        // These are intercepted by `CanonicalMainControl::step_once`, where
+        // These are intercepted by `MainControl::step_once`, where
         // the owning opaque episode and mutable replay driver are available.
         ScannedStep::ReplayCompleted(_)
         | ScannedStep::Math(_)
@@ -14743,7 +14636,7 @@ fn apply_scanned_step(
             font,
             global,
         } => {
-            assign_canonical_math_family_font(
+            assign_math_family_font(
                 stores,
                 MathFontSize::from(family.size),
                 family.family,
@@ -14761,7 +14654,7 @@ fn apply_scanned_step(
             // reporting `incomplete_conditions`, the "(see the transcript
             // file..." note, and this same `dump` flag's
             // `(\dump is performed only by INITEX)` note, in that exact
-            // order -- runs in `CanonicalMainControl::end_of_job_final_cleanup`
+            // order -- runs in `MainControl::end_of_job_final_cleanup`
             // once this returns: the paren close needs `self`'s job-framing
             // state, which this free function does not have, and tex.web
             // orders it first. `incomplete_conditions` is discarded here
@@ -14779,7 +14672,7 @@ fn apply_scanned_step(
             // discard lists, so the host-side format encoder still rejects
             // genuine page material instead of mistaking `last_penalty` or
             // `last_node_type` for it.
-            if dump && command.initex && crate::canonical_page_output::job_is_all_over(stores) {
+            if dump && command.initex && crate::page_output::job_is_all_over(stores) {
                 stores.start_new_page();
             }
             // TeX82 §1378 closes every still-open numbered output file after
@@ -14901,13 +14794,9 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(command.state, modes, stores, true)?;
             }
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
                 spec: stores.intern_glue(value),
                 kind: GlueKind::Normal,
@@ -14925,11 +14814,7 @@ fn apply_scanned_step(
             // vertical list is represented by the page contribution queue,
             // so it still uses the shared contribution splice (contrast
             // `\penalty`, §1103, which also calls `build_page` there).
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -14947,17 +14832,13 @@ fn apply_scanned_step(
             // vertical mode, matching `append_vertical_contribution`'s own
             // `is_outer_vertical` gate and (unlike `\vskip`'s `append_glue`,
             // §1057) always followed by a page-builder call in that case.
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(modes, stores, Node::Penalty(amount));
             crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeleteLast { primitive, context } => {
-            crate::canonical_box_runtime::execute_delete_last(
+            crate::box_runtime::execute_delete_last(
                 primitive,
                 context,
                 modes,
@@ -15009,7 +14890,7 @@ fn apply_scanned_step(
         ScannedStep::ItalicCorrection => {
             match modes.current_mode() {
                 Mode::Horizontal | Mode::RestrictedHorizontal => {
-                    crate::canonical_box_runtime::append_italic_correction_with_fuel(
+                    crate::box_runtime::append_italic_correction_with_fuel(
                         modes,
                         stores,
                         command.fuel,
@@ -15067,7 +14948,7 @@ fn apply_scanned_step(
         }
         ScannedStep::NoBoundary { suppress_right } => {
             if suppress_right {
-                crate::canonical_box_runtime::flush_pending_hchars_without_right_boundary(
+                crate::box_runtime::flush_pending_hchars_without_right_boundary(
                     modes,
                     stores,
                     command.fuel,
@@ -15103,19 +14984,19 @@ fn apply_scanned_step(
                 // `mmode+letter`/`mmode+other_char`/`mmode+char_given` cases:
                 // it appends a math-char noad and never begins or continues
                 // a horizontal list from math mode.
-                set_canonical_math_char(ch, origin, stores, modes, command)?;
+                set_math_char(ch, origin, stores, modes, command)?;
                 return Ok(ReplayStep::Continue);
             }
             if matches!(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(command.state, modes, stores, true)?;
             }
             modes
                 .current_list_mutation()
                 .set_no_boundary(suppress_left_boundary);
-            crate::canonical_box_runtime::append_canonical_character_with_fuel(
+            crate::box_runtime::append_character_with_fuel(
                 modes,
                 stores,
                 ch,
@@ -15131,7 +15012,7 @@ fn apply_scanned_step(
                     // TeX82 §1030's `mmode+ex_space: goto append_normal_space`
                     // (§1041) appends real interword glue in math mode, unlike
                     // an ordinary `mmode+spacer`, which §1045 makes a no-op.
-                    let spec = crate::canonical_box_runtime::control_space_glue_spec(stores);
+                    let spec = crate::box_runtime::control_space_glue_spec(stores);
                     modes.current_list_mutation().push(Node::Glue {
                         spec: stores.intern_glue(spec),
                         kind: GlueKind::Normal,
@@ -15139,15 +15020,15 @@ fn apply_scanned_step(
                     });
                 }
                 Mode::Vertical | Mode::InternalVertical => {
-                    start_canonical_paragraph(command.state, modes, stores, true)?;
-                    crate::canonical_box_runtime::append_canonical_control_space_with_fuel(
+                    start_paragraph(command.state, modes, stores, true)?;
+                    crate::box_runtime::append_control_space_with_fuel(
                         modes,
                         stores,
                         command.fuel,
                     )?;
                 }
                 _ => {
-                    crate::canonical_box_runtime::append_canonical_control_space_with_fuel(
+                    crate::box_runtime::append_control_space_with_fuel(
                         modes,
                         stores,
                         command.fuel,
@@ -15248,16 +15129,11 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command.state, modes, stores, true)?;
+                start_paragraph(command.state, modes, stores, true)?;
             }
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             modes.current_list_mutation().push(Node::Glue {
-                spec: stores
-                    .intern_glue(crate::canonical_box_runtime::fixed_infinite_glue(primitive)),
+                spec: stores.intern_glue(crate::box_runtime::fixed_infinite_glue(primitive)),
                 kind: GlueKind::Normal,
                 leader: None,
             });
@@ -15273,7 +15149,7 @@ fn apply_scanned_step(
             // a mistake"), unlike `append_penalty` (§1103); no page build
             // follows here.
             let spec = stores.intern_glue(value);
-            crate::canonical_box_runtime::append_node_to_current_list(
+            crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
                 Node::Glue {
@@ -15288,9 +15164,8 @@ fn apply_scanned_step(
         ScannedStep::FixedVerticalGlue { primitive } => {
             // See `ScannedStep::VerticalSkip` above: same §1054/§1057
             // `append_glue`, no paragraph start, no page build.
-            let spec =
-                stores.intern_glue(crate::canonical_box_runtime::fixed_infinite_glue(primitive));
-            crate::canonical_box_runtime::append_node_to_current_list(
+            let spec = stores.intern_glue(crate::box_runtime::fixed_infinite_glue(primitive));
+            crate::box_runtime::append_node_to_current_list(
                 modes,
                 stores,
                 Node::Glue {
@@ -15314,9 +15189,9 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                start_canonical_paragraph(command.state, modes, stores, indent)?;
+                start_paragraph(command.state, modes, stores, indent)?;
             } else {
-                crate::canonical_box_runtime::indent_in_hmode(modes, stores, indent, command.fuel)?;
+                crate::box_runtime::indent_in_hmode(modes, stores, indent, command.fuel)?;
             }
             Ok(ReplayStep::Continue)
         }
@@ -15698,7 +15573,7 @@ fn apply_scanned_step(
                 bind_null_font(stores);
                 return Ok(ReplayStep::Continue);
             }
-            let loaded = match load_canonical_font(&request, resource) {
+            let loaded = match load_font(&request, resource) {
                 Ok(loaded) => loaded,
                 Err(ExecError::FontParse(_)) => {
                     // TeX.web §564 treats malformed metrics exactly like the
@@ -15876,12 +15751,8 @@ fn apply_scanned_step(
                     });
                 }
             };
-            let dimensions = canonical_pdf_image_dimensions(
-                &source,
-                request.width,
-                request.height,
-                request.depth,
-            );
+            let dimensions =
+                pdf_image_dimensions(&source, request.width, request.height, request.depth);
             stores
                 .allocate_pdf_external_image(source, dimensions, request.color_space_object)
                 .map_err(|_| ExecError::PdfObjectCapacity)?;
@@ -15897,7 +15768,7 @@ fn apply_scanned_step(
                 .and_then(|id| stores.pdf_external_image_record(id))
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
             let dimensions = image.dimensions();
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -15931,7 +15802,7 @@ fn apply_scanned_step(
                 };
                 return Err(ExecError::PdfExtensionInDviMode(name));
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -15947,7 +15818,7 @@ fn apply_scanned_step(
                     "pdfrunninglinkoff"
                 }));
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -15977,7 +15848,7 @@ fn apply_scanned_step(
                 .ok()
                 .filter(|object| stores.pdf_raw_object(*object).is_some())
                 .ok_or(ExecError::PdfReferencedObjectNotFound)?;
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16159,7 +16030,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredOpenOut { stream, file_name } => {
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16171,7 +16042,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredCloseOut { stream } => {
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16182,7 +16053,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::DeferredWrite { stream, tokens } => {
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16197,7 +16068,7 @@ fn apply_scanned_step(
             deferred: true,
             tokens,
         } => {
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16216,7 +16087,7 @@ fn apply_scanned_step(
             for &token in stores.tokens(tokens.token_list()) {
                 tex_state::token_show::append_token_string_text(stores, token, &mut text);
             }
-            crate::canonical_box_runtime::append_whatsit(
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16245,11 +16116,10 @@ fn apply_scanned_step(
             // language that was current while it was being built.
             let clang = u8::try_from(language).unwrap_or(0);
             let left_hyphen_min =
-                crate::canonical_box_runtime::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
-            let right_hyphen_min = crate::canonical_box_runtime::norm_min(
-                stores.int_param(IntParam::RIGHT_HYPHEN_MIN),
-            );
-            crate::canonical_box_runtime::append_whatsit(
+                crate::box_runtime::norm_min(stores.int_param(IntParam::LEFT_HYPHEN_MIN));
+            let right_hyphen_min =
+                crate::box_runtime::norm_min(stores.int_param(IntParam::RIGHT_HYPHEN_MIN));
+            crate::box_runtime::append_whatsit(
                 modes,
                 stores,
                 command.fuel,
@@ -16476,9 +16346,9 @@ fn apply_scanned_step(
             // the live scan, where §82 could still show the character that
             // caused them; installing is all that is left here.
             if patterns {
-                crate::canonical_paragraph_end::apply_scanned_patterns(stores, pattern_specs)?;
+                crate::paragraph_end::apply_scanned_patterns(stores, pattern_specs)?;
             } else {
-                crate::canonical_paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
+                crate::paragraph_end::apply_scanned_hyphenation_exceptions(stores, words);
             }
             Ok(ReplayStep::Continue)
         }
@@ -16581,7 +16451,7 @@ fn apply_scanned_step(
             // TeX82 §218 observes the synchronous linked list built by
             // main_control. Materialize Umber's batched character tail before
             // traversing its diagnostic physical projection.
-            crate::canonical_box_runtime::flush_pending_hchars(modes, stores, command.fuel)?;
+            crate::box_runtime::flush_pending_hchars(modes, stores, command.fuel)?;
             let context = command.state.output_open_context(&stores.command_context());
             crate::diagnostics::execute_showlists(stores, modes, context, command.state.profile())?;
             Ok(ReplayStep::Continue)
@@ -16618,7 +16488,7 @@ fn apply_scanned_step(
             diagnostic: Some(diagnostic),
         } => {
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
+            crate::diagnostics::execute_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ShowGroups { diagnostic: None } => {
@@ -16632,7 +16502,7 @@ fn apply_scanned_step(
                 active_math_shifts,
             );
             let context = command.state.output_open_context(&stores.command_context());
-            crate::diagnostics::execute_canonical_showgroups(stores, &diagnostic, context)?;
+            crate::diagnostics::execute_showgroups(stores, &diagnostic, context)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::ImmediateExtension(extension) => {
@@ -16657,7 +16527,7 @@ fn apply_scanned_step(
                     }
                 }
                 ImmediateExtension::Write { stream, tokens } => {
-                    let text = canonical_write_text(stores.tokens(tokens.token_list()), stores);
+                    let text = write_text(stores.tokens(tokens.token_list()), stores);
                     if let Some(sink) = immediate_write_sink(stream, stores) {
                         write_immediate_text(stores, sink, &text);
                     }
@@ -16724,12 +16594,12 @@ fn apply_scanned_step(
                         if copy && let Some(id) = id {
                             stores.pin_survivor(id);
                         }
-                        let node = crate::canonical_box_runtime::first_box_node(stores, id);
+                        let node = crate::box_runtime::first_box_node(stores, id);
                         let context = boxes.take_box_context(false);
                         box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
                     }
                     ScannedBoxShiftPayload::LastBox { error_context } => {
-                        let node = crate::canonical_box_runtime::take_last_box(
+                        let node = crate::box_runtime::take_last_box(
                             modes,
                             stores,
                             command.fuel,
@@ -16742,7 +16612,7 @@ fn apply_scanned_step(
                         if let Some(context) = &split.missing_to_context {
                             report_missing_vsplit_to(context, stores)?;
                         }
-                        let node = crate::canonical_box_runtime::split_vbox_register(
+                        let node = crate::box_runtime::split_vbox_register(
                             stores,
                             split.index,
                             split.height,
@@ -16768,7 +16638,7 @@ fn apply_scanned_step(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, stores)?;
             }
-            let node = crate::canonical_box_runtime::split_vbox_register(
+            let node = crate::box_runtime::split_vbox_register(
                 stores,
                 split.index,
                 split.height,
@@ -16805,7 +16675,7 @@ fn apply_scanned_step(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            let node = crate::canonical_box_runtime::first_box_node(stores, id);
+            let node = crate::box_runtime::first_box_node(stores, id);
             let context = boxes.take_box_context(ships_out);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -16832,7 +16702,7 @@ fn apply_scanned_step(
                     tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
                 );
             }
-            crate::canonical_box_runtime::execute_scanned_unbox_with_error_context(
+            crate::box_runtime::execute_scanned_unbox_with_error_context(
                 primitive,
                 index,
                 modes,
@@ -16843,7 +16713,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::SavedVerticalDiscards(primitive) => {
-            crate::canonical_box_runtime::execute_scanned_saved_vertical_discards(
+            crate::box_runtime::execute_scanned_saved_vertical_discards(
                 primitive,
                 modes,
                 stores,
@@ -16852,12 +16722,8 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::LastBox { error_context } => {
-            let node = crate::canonical_box_runtime::take_last_box(
-                modes,
-                stores,
-                command.fuel,
-                error_context,
-            )?;
+            let node =
+                crate::box_runtime::take_last_box(modes, stores, command.fuel, error_context)?;
             let context = boxes.take_box_context(false);
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
@@ -16869,7 +16735,7 @@ fn apply_scanned_step(
         } => {
             boxes.pending_leader = None;
             let spec = stores.intern_glue(glue);
-            crate::canonical_box_runtime::append_leader_contribution(
+            crate::box_runtime::append_leader_contribution(
                 modes,
                 stores,
                 kind,
@@ -16885,11 +16751,9 @@ fn apply_scanned_step(
             copy,
             glue,
         } => {
-            if let Some(payload) =
-                crate::canonical_box_runtime::take_register_payload(stores, index, copy)
-            {
+            if let Some(payload) = crate::box_runtime::take_register_payload(stores, index, copy) {
                 let spec = stores.intern_glue(glue);
-                crate::canonical_box_runtime::append_leader_contribution(
+                crate::box_runtime::append_leader_contribution(
                     modes,
                     stores,
                     kind,
@@ -16965,12 +16829,12 @@ fn apply_scanned_step(
                 class = 0;
             }
             let class = class as u16;
-            enter_canonical_group(stores, command.state, GroupKind::Insert);
+            enter_group(stores, command.state, GroupKind::Insert);
             modes.push_at_line(Mode::InternalVertical, stores.current_input_line())?;
             // §1099: `normal_paragraph` resets \parshape/\looseness/\hangindent/
             // \hangafter local to the just-opened insert group, exactly like
             // `begin_box` does for `\vbox`/`\vtop` (§1051-2).
-            crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+            crate::paragraph_end::normal_paragraph(modes, stores);
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
                 ships_out: false,
@@ -17063,11 +16927,7 @@ fn apply_scanned_step(
             // No `build_page` call afterward (unlike `\penalty`/`\insert`):
             // TeX82 §1101 and e-TeX 2.6 [26.424]'s `make_mark` append the
             // node in every mode and leave page building to a later trigger.
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             crate::vertical::append_vertical_contribution(
                 modes,
                 stores,
@@ -17088,7 +16948,7 @@ fn apply_scanned_step(
                 ScannedPackingSpec::Exactly(size) => PackSpec::Exactly(size),
                 ScannedPackingSpec::Spread(size) => PackSpec::Spread(size),
             };
-            enter_canonical_group(stores, command.state, kind.group_kind());
+            enter_group(stores, command.state, kind.group_kind());
             modes.push_at_line(
                 if kind.horizontal() {
                     Mode::RestrictedHorizontal
@@ -17098,7 +16958,7 @@ fn apply_scanned_step(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -17126,7 +16986,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSimpleGroup => {
-            enter_canonical_group(stores, command.state, GroupKind::Simple);
+            enter_group(stores, command.state, GroupKind::Simple);
             boxes.recovery_simple_group_pending = false;
             boxes.recovery_simple_group_open = true;
             Ok(ReplayStep::Continue)
@@ -17146,7 +17006,7 @@ fn apply_scanned_step(
             // `scan_left_brace`. Keep the reset at this consumed-opening-brace
             // boundary: doing it in the deferred page-fire tail runs before
             // command control has established the routine's body boundary.
-            crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+            crate::paragraph_end::normal_paragraph(modes, stores);
             boxes.output_routine_opening_pending = false;
             Ok(ReplayStep::Continue)
         }
@@ -17188,14 +17048,14 @@ fn apply_scanned_step(
             // internal vertical list; merely popping it discards the paragraph.
             // `end_paragraph` is the shared spelling of §1096: it ignores
             // non-horizontal modes and pops a null paragraph without a line.
-            crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
+            crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
                 command.state,
                 command.fuel,
             )?;
             let output_level =
-                crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
+                crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
             stores
                 .leave_group_with_kind(GroupKind::Output)
                 .map_err(|_| ExecError::MissingToken {
@@ -17203,7 +17063,7 @@ fn apply_scanned_step(
                 })?;
             stores.set_output_routine_active(false);
             boxes.output_routine_active = false;
-            crate::canonical_page_output::resume_page_builder_after_output(
+            crate::page_output::resume_page_builder_after_output(
                 stores,
                 output_level.list().nodes().to_vec(),
                 context,
@@ -17236,7 +17096,7 @@ fn apply_scanned_step(
             // the filler glue can become the chosen breakpoint and leave the
             // forced penalty queued.
             if !*end_job_ejection_pending {
-                crate::canonical_page_output::append_end_job_contributions(stores);
+                crate::page_output::append_end_job_contributions(stores);
                 *end_job_ejection_pending = true;
             }
             crate::page_builder::build_page(stores)?;
@@ -17263,39 +17123,27 @@ fn apply_scanned_step(
             // run when the next expanded command is not a character. A brace
             // is therefore a real text boundary on both entry and exit:
             // `{f}i` must not form `fi` across the closing brace.
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             if command.state.paragraph_started_in_macro_frame() {
                 stores.mark_pure_paragraph_barrier(
                     tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
                 );
             }
-            enter_canonical_group(stores, command.state, GroupKind::Simple);
+            enter_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             if command.state.paragraph_started_in_macro_frame() {
                 stores.mark_pure_paragraph_barrier(
                     tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
                 );
             }
-            enter_canonical_group(stores, command.state, GroupKind::SemiSimple);
+            enter_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndSemiSimpleGroup => {
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::SemiSimple)
@@ -17367,11 +17215,7 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::EndOrdinaryGroup => {
-            crate::canonical_box_runtime::flush_pending_hchars_with_fuel(
-                modes,
-                stores,
-                command.fuel,
-            )?;
+            crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
             warn_cross_file_group_close(stores, command);
             let aftergroup = stores
                 .leave_group_with_kind(GroupKind::Simple)
@@ -17439,7 +17283,7 @@ fn apply_scanned_step(
             // char node -- and left the box's real internal-vertical level open
             // on the mode nest (`umber2-johp.232`).
             if !box_state.kind.horizontal() {
-                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
+                crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -17464,8 +17308,7 @@ fn apply_scanned_step(
             // are dropped along with the popped mode level instead of ever
             // becoming node.
 
-            let level =
-                crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
+            let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
             let children = stores.freeze_node_list(level.list().nodes());
             // TeX82 §1086 snapshots `d:=box_max_depth` before `unsave`.
             // The box body may assign a local, signed `\boxmaxdepth`; that
@@ -17488,7 +17331,7 @@ fn apply_scanned_step(
             // fuzz, and overfull-rule parameters authoritative. Max depth is
             // the exception: `package` saved it above before `unsave`.
             let node = if box_state.kind.horizontal() {
-                Node::HList(crate::canonical_box_runtime::hpack_with_overfull_rule(
+                Node::HList(crate::box_runtime::hpack_with_overfull_rule(
                     stores,
                     children,
                     box_state.packing,
@@ -17538,11 +17381,10 @@ fn apply_scanned_step(
                 return Ok(ReplayStep::Continue);
             }
             if let Some(kind) = box_state.leader_kind {
-                let payload = crate::canonical_box_runtime::payload_from_node(node).ok_or(
-                    ExecError::MissingToken {
+                let payload =
+                    crate::box_runtime::payload_from_node(node).ok_or(ExecError::MissingToken {
                         context: "leader box payload",
-                    },
-                )?;
+                    })?;
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
@@ -17576,9 +17418,9 @@ fn apply_scanned_step(
                 // here.
                 let mut node = node;
                 if let Some(shift) = box_state.shift {
-                    crate::canonical_box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
+                    crate::box_runtime::apply_box_shift_delta(&mut node, shift.delta)?;
                 }
-                crate::canonical_box_runtime::append_box_node_to_current_list(
+                crate::box_runtime::append_box_node_to_current_list(
                     modes,
                     stores,
                     node,
@@ -17701,7 +17543,7 @@ fn apply_scanned_step(
             // `scan_spec(align_group,false)`, whose `new_save_level(c)` opens
             // the save level that brackets the alignment as a whole. §800's
             // `fin_align` removes it with the second of its two `unsave`s.
-            enter_canonical_group(stores, command.state, GroupKind::Align);
+            enter_group(stores, command.state, GroupKind::Align);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AlignmentPreambleStart { alignment } => {
@@ -17750,7 +17592,7 @@ fn apply_scanned_step(
             // cell -- `\\bf`, `\\tt`, a `\\fam`, any local register -- is
             // restored before the next entry begins. §800's first `unsave`
             // removes the last one.
-            enter_canonical_group(stores, command.state, GroupKind::Align);
+            enter_group(stores, command.state, GroupKind::Align);
             // §774 then runs
             // `if every_cr<>null then begin_token_list(every_cr,every_cr_text)`
             // before its own `align_peek`, exactly as §799 does at every later
@@ -17768,14 +17610,14 @@ fn apply_scanned_step(
                 })?;
             active.align_peek_pending = false;
             active.noalign_open = true;
-            enter_canonical_group(stores, command.state, GroupKind::NoAlign);
+            enter_group(stores, command.state, GroupKind::NoAlign);
             // TeX82 §785 leaves the alignment's own mode level in place when
             // `\noalign` opens. It calls `normal_paragraph` only for an
             // h-alignment's internal-vertical mode; a v-alignment is already
             // in restricted horizontal mode, but that level is the alignment
             // list itself, not a paragraph to pop.
             if modes.current_mode() == Mode::InternalVertical {
-                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores);
             }
             Ok(ReplayStep::Continue)
         }
@@ -17857,7 +17699,7 @@ fn apply_scanned_step(
             // the brace, so the following rows were built on the horizontal
             // level and `fin_align` popped that level instead of the alignment
             // (`umber2-usol`).
-            crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
+            crate::paragraph_end::end_paragraph_with_fuel(
                 modes,
                 stores,
                 command.state,
@@ -17948,10 +17790,10 @@ fn apply_scanned_step(
                 modes.current_mode(),
                 Mode::Vertical | Mode::InternalVertical
             ) {
-                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores);
                 crate::vertical::build_page_if_outer_vertical(modes, stores)?;
             } else {
-                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
+                crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -17962,13 +17804,13 @@ fn apply_scanned_step(
         }
         // TeX82 §1137 and §1193 need the mode nest, the save stack, and the
         // command processor's token-list scheduling together, so
-        // `CanonicalMainControl::apply_host_owned_step` applies this step for
+        // `MainControl::apply_host_owned_step` applies this step for
         // every delivery entry point before `apply_scanned_step` runs.
         ScannedStep::MathShift { .. } => {
             unreachable!("apply_host_owned_step applies canonical math shifts")
         }
         ScannedStep::ParagraphStart => {
-            start_canonical_paragraph(command.state, modes, stores, true)?;
+            start_paragraph(command.state, modes, stores, true)?;
             Ok(ReplayStep::Continue)
         }
         ScannedStep::Character {
@@ -17981,7 +17823,7 @@ fn apply_scanned_step(
                 if !matches!(cat, Catcode::Space) {
                     // TeX82 §1154's `mmode+letter,mmode+other_char:
                     // set_math_char(ho(math_code(cur_chr)))`.
-                    set_canonical_math_char(ch, origin, stores, modes, command)?;
+                    set_math_char(ch, origin, stores, modes, command)?;
                 }
                 return Ok(ReplayStep::Continue);
             }
@@ -17998,11 +17840,7 @@ fn apply_scanned_step(
                         modes.current_mode(),
                         Mode::Horizontal | Mode::RestrictedHorizontal
                     ) {
-                        crate::canonical_box_runtime::append_canonical_space_with_fuel(
-                            modes,
-                            stores,
-                            command.fuel,
-                        )?;
+                        crate::box_runtime::append_space_with_fuel(modes, stores, command.fuel)?;
                     }
                 }
                 Catcode::Letter | Catcode::Other => {
@@ -18010,12 +17848,12 @@ fn apply_scanned_step(
                         modes.current_mode(),
                         Mode::Vertical | Mode::InternalVertical
                     ) {
-                        start_canonical_paragraph(command.state, modes, stores, true)?;
+                        start_paragraph(command.state, modes, stores, true)?;
                     }
                     modes
                         .current_list_mutation()
                         .set_no_boundary(suppress_left_boundary);
-                    crate::canonical_box_runtime::append_canonical_character_with_fuel(
+                    crate::box_runtime::append_character_with_fuel(
                         modes,
                         stores,
                         ch,
@@ -18032,13 +17870,13 @@ fn apply_scanned_step(
         // snapshot is live. Observed replay is not an alternate production
         // execution path, so reaching these arms is an invariant.
         ScannedStep::DiscretionaryOpening(_) | ScannedStep::DiscretionaryPartEnd => {
-            unreachable!("discretionary is applied by CanonicalMainControl")
+            unreachable!("discretionary is applied by MainControl")
         }
         ScannedStep::DiscretionaryHyphen { .. } => {
-            unreachable!("discretionary hyphen is applied by CanonicalMainControl")
+            unreachable!("discretionary hyphen is applied by MainControl")
         }
         ScannedStep::Accent(_) => {
-            unreachable!("accent is applied by CanonicalMainControl")
+            unreachable!("accent is applied by MainControl")
         }
     }
 }
@@ -18648,7 +18486,7 @@ fn begin_replay_box(
     } else {
         kind.group_kind()
     };
-    enter_canonical_group(stores, command.state, group_kind);
+    enter_group(stores, command.state, group_kind);
     modes.push_at_line(
         if kind.horizontal() {
             Mode::RestrictedHorizontal
@@ -18658,7 +18496,7 @@ fn begin_replay_box(
         stores.current_input_line(),
     )?;
     if !kind.horizontal() {
-        crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+        crate::paragraph_end::normal_paragraph(modes, stores);
     }
     boxes.active_boxes.push(ActiveReplayBox {
         target,
@@ -18720,13 +18558,12 @@ fn apply_box_shift(
             if copy && let Some(id) = id {
                 stores.pin_survivor(id);
             }
-            let node = crate::canonical_box_runtime::first_box_node(stores, id);
+            let node = crate::box_runtime::first_box_node(stores, id);
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::LastBox { error_context } => {
-            let node =
-                crate::canonical_box_runtime::take_last_box(modes, stores, fuel, error_context)?;
+            let node = crate::box_runtime::take_last_box(modes, stores, fuel, error_context)?;
             append_shifted_box(modes, stores, node, shift.delta, fuel)?;
             Ok(ReplayStep::Continue)
         }
@@ -18734,7 +18571,7 @@ fn apply_box_shift(
             if let Some(context) = &split.missing_to_context {
                 report_missing_vsplit_to(context, stores)?;
             }
-            let node = crate::canonical_box_runtime::split_vbox_register(
+            let node = crate::box_runtime::split_vbox_register(
                 stores,
                 split.index,
                 split.height,
@@ -18773,7 +18610,7 @@ fn apply_box_shift(
             } else {
                 kind.group_kind()
             };
-            enter_canonical_group(stores, command, group_kind);
+            enter_group(stores, command, group_kind);
             modes.push_at_line(
                 if kind.horizontal() {
                     Mode::RestrictedHorizontal
@@ -18783,7 +18620,7 @@ fn apply_box_shift(
                 stores.current_input_line(),
             )?;
             if !kind.horizontal() {
-                crate::canonical_paragraph_end::normal_paragraph(modes, stores);
+                crate::paragraph_end::normal_paragraph(modes, stores);
             }
             boxes.active_boxes.push(ActiveReplayBox {
                 target: None,
@@ -18949,8 +18786,8 @@ fn append_shifted_box(
     let Some(mut node) = node else {
         return Ok(());
     };
-    crate::canonical_box_runtime::apply_box_shift_delta(&mut node, delta)?;
-    crate::canonical_box_runtime::append_box_node_to_current_list(modes, stores, node, fuel)?;
+    crate::box_runtime::apply_box_shift_delta(&mut node, delta)?;
+    crate::box_runtime::append_box_node_to_current_list(modes, stores, node, fuel)?;
     crate::vertical::build_page_if_outer_vertical(modes, stores)
 }
 
@@ -18972,7 +18809,7 @@ fn apply_scanned_rule(
         match modes.current_mode() {
             Mode::Vertical | Mode::InternalVertical => {}
             Mode::Horizontal => {
-                crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
+                crate::paragraph_end::end_paragraph_with_fuel(
                     modes,
                     stores,
                     command.state,
@@ -19004,13 +18841,13 @@ fn apply_scanned_rule(
             modes.current_mode(),
             Mode::Vertical | Mode::InternalVertical
         ) {
-            start_canonical_paragraph(command.state, modes, stores, true)?;
+            start_paragraph(command.state, modes, stores, true)?;
         }
         // TeX82 §1054 reaches `append_rule` only after main_control has
         // finished the current word. Materialize Umber's pending character
         // run before appending the rule so a `\vrule` cannot split a word and
         // move its final character behind the rule node.
-        crate::canonical_box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+        crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
         modes.current_list_mutation().push(node);
         // TeX82 §1056 resets `space_factor` after a rule in either
         // horizontal mode. This matters when a zero-sfcode closer follows
@@ -19095,11 +18932,8 @@ fn apply_accent_nodes(
         modes.current_list_mutation().push(accent_node);
     } else {
         let children = stores.freeze_node_list(&[accent_node]);
-        let mut boxed = crate::canonical_box_runtime::hpack_with_overfull_rule(
-            stores,
-            children,
-            PackSpec::Natural,
-        );
+        let mut boxed =
+            crate::box_runtime::hpack_with_overfull_rule(stores, children, PackSpec::Natural);
         boxed.shift = accent_x_height
             .checked_sub(base_metrics.height)
             .ok_or(ExecError::ArithmeticOverflow)?;
@@ -19118,7 +18952,7 @@ fn apply_accent_nodes(
     Ok(ReplayStep::Continue)
 }
 
-fn assign_canonical_math_family_font(
+fn assign_math_family_font(
     stores: &mut Universe,
     size: MathFontSize,
     family: u8,
@@ -19137,7 +18971,7 @@ fn assign_canonical_math_family_font(
     Ok(())
 }
 
-fn load_canonical_font(
+fn load_font(
     request: &FontLoadRequest,
     resource: FontResource,
 ) -> Result<tex_fonts::LoadedFont, ExecError> {
@@ -19209,19 +19043,14 @@ fn load_canonical_font(
 /// TeX82 §1095 `new_graf`: command control has already made any required
 /// backup, then this typed transition installs the indent and schedules the
 /// immutable `\everypar` payload through the same command state.
-fn start_canonical_paragraph(
+fn start_paragraph(
     command: &mut CommandState,
     modes: &mut ModeNest,
     stores: &mut Universe,
     indent: bool,
 ) -> Result<(), ExecError> {
     let error_context = command.output_open_context(&stores.command_context());
-    crate::canonical_paragraph_end::start_canonical_paragraph(
-        modes,
-        stores,
-        indent,
-        &error_context,
-    )?;
+    crate::paragraph_end::start_paragraph(modes, stores, indent, &error_context)?;
     let everypar = stores.tok_param(TokParam::EVERY_PAR);
     if !stores.tokens(everypar).is_empty() {
         let origin = stores.bootstrap_origin();
@@ -19275,12 +19104,7 @@ fn finish_insert_or_adjust_group(
     // before main control fetches another command. Preserve this closing
     // brace's still-live input stack for `ensure_vbox` -> `box_error` -> §82.
     let page_error_context = command.state.output_open_context(&stores.command_context());
-    crate::canonical_paragraph_end::end_canonical_paragraph_with_fuel(
-        modes,
-        stores,
-        command.state,
-        command.fuel,
-    )?;
+    crate::paragraph_end::end_paragraph_with_fuel(modes, stores, command.state, command.fuel)?;
     let split_top_skip = stores.glue_param(GlueParam::SPLIT_TOP_SKIP);
     let split_max_depth = stores.dimen_param(DimenParam::SPLIT_MAX_DEPTH);
     let floating_penalty = stores.int_param(IntParam::FLOATING_PENALTY);
@@ -19289,14 +19113,14 @@ fn finish_insert_or_adjust_group(
         .map_err(|_| ExecError::MissingToken {
             context: "insert group",
         })?;
-    let level = crate::canonical_box_runtime::commit_current_list(modes, stores, command.fuel)?;
+    let level = crate::box_runtime::commit_current_list(modes, stores, command.fuel)?;
     let content = stores.freeze_node_list(level.list().nodes());
     let params = tex_typeset::VpackParams {
         box_max_depth: Scaled::MAX_DIMEN,
         ..crate::packing_params::vpack_params(stores)
     };
     let packed = crate::packing_params::vpack(stores, content, PackSpec::Natural, params);
-    crate::canonical_box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
+    crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
     let node = if class == 255 {
         Node::Adjust(tex_state::node::AdjustNode { content, pre })
     } else {
@@ -19496,7 +19320,7 @@ fn report_shipout_publications(
                 )?;
             }
             PendingShipoutPublication::Write { sink, text } => {
-                if crate::canonical_shipout::direct::write_line_is_open(stores, sink) {
+                if crate::shipout::direct::write_line_is_open(stores, sink) {
                     stores.world_mut().write_text(sink, "\n");
                 }
                 stores.world_mut().write_text(sink, &text);
@@ -19832,13 +19656,11 @@ fn command_error(error: CommandError) -> ExecError {
         CommandError::MissingInput {
             name,
             original_name,
-        } => ExecError::MissingCanonicalInput {
+        } => ExecError::MissingInput {
             name,
             original_name,
         },
-        CommandError::MissingInputProbe(request) => {
-            ExecError::MissingCanonicalInputProbe { request }
-        }
+        CommandError::MissingInputProbe(request) => ExecError::MissingInputProbe { request },
         CommandError::PdfNavigation(message) => ExecError::PdfNavigation(message),
         // §93 `succumb` is not a command failure to be re-described; it keeps
         // its own identity all the way up to the driver.
@@ -19863,7 +19685,7 @@ mod discretionary_hyphen_tests {
         // 0..256. In particular, -1 disables the visible pre-break.
         let mut stores = Universe::new_with_plain_catcodes();
         stores.set_font_hyphen_char(stores.current_font(), -1);
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         control
             .register_root_source(tex_command::SourceRegistration::new(
                 tex_command::RegisteredSourceKind::Generated,
@@ -19895,7 +19717,7 @@ mod discretionary_hyphen_tests {
         // TeX82 §§581/1113: an in-range hyphen character is constructed via
         // `new_character`, which warns and returns null for an absent glyph.
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         stores.set_int_param(IntParam::TRACING_LOST_CHARS, 1);
         stores.set_int_param(IntParam::TRACING_ONLINE, 1);
         stores.set_font_hyphen_char(stores.current_font(), i32::from(b'?'));
@@ -19926,7 +19748,7 @@ mod discretionary_hyphen_tests {
         // and expands its condition before testing the frozen `\endwrite`
         // stopper. Atomic shipout staging must retain that live-call order.
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         control
             .register_root_source(tex_command::SourceRegistration::new(
                 tex_command::RegisteredSourceKind::Generated,
@@ -19956,7 +19778,7 @@ mod discretionary_hyphen_tests {
 }
 
 #[cfg(any())]
-#[path = "canonical_main_control/tests.rs"]
+#[path = "main_control/tests.rs"]
 mod direct_tests;
 
 #[cfg(test)]
@@ -19966,9 +19788,9 @@ mod page_output_receipt_tests {
     #[test]
     fn retained_receipt_survives_delayed_activation_and_rollback() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::default();
+        let mut control = MainControl::default();
         control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(1), false);
-        let snapshot = CanonicalStepSnapshot::capture(&mut control, &mut stores);
+        let snapshot = StepSnapshot::capture(&mut control, &mut stores);
 
         control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
         control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(19), false);
@@ -19989,7 +19811,7 @@ mod page_output_receipt_tests {
     #[test]
     fn finalization_releases_retained_receipt_for_standalone_episode() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::default();
+        let mut control = MainControl::default();
         control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
 
         control.finalize_page_output_receipts(&mut stores);

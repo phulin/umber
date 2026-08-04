@@ -13,7 +13,7 @@ use crate::{EngineBoundary, ExecutionBudgetCounters};
 
 mod etex_diagnostic_tracing;
 
-fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
+fn register_source(control: &mut MainControl, bytes: &[u8]) {
     let source = control
         .command_mut()
         .register_source(SourceRegistration::new(
@@ -27,7 +27,7 @@ fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
-fn register_cmr10_as(control: &mut CanonicalMainControl, stores: &mut Universe, name: &str) {
+fn register_cmr10_as(control: &mut MainControl, stores: &mut Universe, name: &str) {
     const CMR10: &[u8] = include_bytes!("../../../tex-fonts/tests/fixtures/cm/cmr10.tfm");
     stores
         .world_mut()
@@ -47,9 +47,9 @@ fn register_cmr10_as(control: &mut CanonicalMainControl, stores: &mut Universe, 
     );
 }
 
-fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
+fn run_to_end(control: &mut MainControl, stores: &mut Universe) {
     loop {
-        match control.step(stores).expect("canonical program executes") {
+        match control.step(stores).expect("program executes") {
             MainControlStep::End | MainControlStep::EndOfInput => break,
             MainControlStep::Continue => {}
         }
@@ -64,7 +64,7 @@ fn tracingcommands_reports_only_big_switch_commands_with_live_selector_and_mode(
     // `\tracingonline` trace is log-only because that assignment has not yet
     // executed, while the prefix uses the newly live terminal-and-log selector.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingcommands=1\\tracingonline=1\\global\\global\\escapechar=64\\end",
@@ -87,7 +87,7 @@ fn setbox_rejects_non_box_command_with_assignment_context_diagnostic() {
     // TeX82 §1084: genuine `scan_box` missing-box recovery backs the
     // rejected command for execution.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\setbox0=\count0=7 \count1=9\end",
@@ -113,7 +113,7 @@ fn forbidden_setbox_reports_before_reading_the_following_command() {
     // but the following command is still to be read when `error` renders the
     // context; it subsequently executes once and the destination stays void.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\accent65\setbox0=\count0=7 X\end",
@@ -133,7 +133,7 @@ fn tracingcommands_two_traces_nonmacro_expansion_before_big_switch_result() {
     // then the settled unexpandable command traces at `reswitch`. The first
     // trace consumes the mode prefix; the second must not repeat it.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingcommands=2\\tracingonline=1\\romannumeral0\\relax\\end",
@@ -157,17 +157,14 @@ fn tracingcommands_expansion_after_eqno_reports_restored_display_mode() {
     // before `get_x_token` expands the next command. Section 367 must compare
     // that restored mode with `shown_mode` and print the new mode prefix.
     let mut initialized = Universe::new_with_plain_catcodes();
-    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let fresh_control = MainControl::tex82_initex(&mut initialized);
     let format = initialized.dump_format().expect("dump TeX82 format");
     let loaded =
         Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
 
     for (mut stores, mut control) in [
         (initialized, fresh_control),
-        (
-            loaded,
-            CanonicalMainControl::with_profile(CommandProfile::TEX82),
-        ),
+        (loaded, MainControl::with_profile(CommandProfile::TEX82)),
     ] {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         register_source(
@@ -202,17 +199,14 @@ fn tracingcommands_aftergroup_expansion_reports_resumed_horizontal_mode() {
     // §1197's display-mode second-$ probe above, and consumes the new mode
     // prefix exactly once.
     let mut initialized = Universe::new_with_plain_catcodes();
-    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let fresh_control = MainControl::tex82_initex(&mut initialized);
     let format = initialized.dump_format().expect("dump TeX82 format");
     let loaded =
         Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
 
     for (mut stores, mut control) in [
         (initialized, fresh_control),
-        (
-            loaded,
-            CanonicalMainControl::with_profile(CommandProfile::TEX82),
-        ),
+        (loaded, MainControl::with_profile(CommandProfile::TEX82)),
     ] {
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
         register_source(
@@ -242,7 +236,7 @@ fn tracingcommands_omits_characters_retired_inside_main_loop() {
     // adjacent characters are retired by its raw lookahead and never reach
     // §1030's `reswitch` trace boundary.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -264,7 +258,7 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
     // control. Once `7` enters `main_loop`, adjacent `A` is fetched by bare
     // `get_next`; only the following assignment returns to `x_token`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -333,7 +327,7 @@ fn trip_valign_row_uses_raw_main_loop_lookahead_before_assignment() {
 #[test]
 fn tracingcommands_precedes_recovery_reported_while_scanning_the_command() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingcommands=1 \\tracingonline=1 \\openout-1=trace.out\\end",
@@ -355,7 +349,7 @@ fn tracingcommands_caret_renders_a_nonprintable_live_escapechar() {
     // escape prefix is printed as a one-character string rather than by the
     // raw `print_char` primitive.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingcommands=1\\tracingonline=1\\escapechar=127\\global\\count0=1\\end",
@@ -374,7 +368,7 @@ fn global_escapechar_survives_off_save_inserted_group_recovery() {
     // TeX82 §§1064/1214: a globally assigned integer parameter remains live
     // while `off_save` backs up the offending command and inserts the closer.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\scrollmode\\tracingonline=1\\hbox{\\escapechar=127\\global\\escapechar=256\\end}",
@@ -393,7 +387,7 @@ fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
     // the command fetched by `\ignorespaces` is traced. A later prefix and
     // its target are fetched inside `prefixed_command` and remain untraced.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingcommands=1\\tracingonline=1\\global\\global\\count0=1\\ignorespaces\\relax\\end",
@@ -412,7 +406,7 @@ fn tracingcommands_traces_reswitch_but_not_prefixed_command_internal_fetches() {
 #[test]
 fn disabled_tracingcommands_emits_no_command_diagnostic() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\tracingonline=1\\escapechar=64\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -428,7 +422,7 @@ fn tracingcommands_does_not_trace_constructed_leader_glue_internal_fetch() {
     // `show_cur_cmd_chr`. A later ordinary `\hskip` remains a main-control
     // command and is the negative control.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingcommands=1\tracingonline=1
@@ -454,7 +448,7 @@ fn tracingcommands_does_not_trace_output_routine_scanner_brace() {
     // receives the internal-vertical-mode prefix instead of the brace.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingcommands=1\tracingonline=1
@@ -479,7 +473,7 @@ fn tracingmacros_two_traces_the_named_output_token_list() {
     for (level, expected) in [(1, false), (2, true)] {
         let mut stores = Universe::new_with_plain_catcodes();
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
             &mut control,
             format!(
@@ -510,7 +504,7 @@ fn named_output_token_list_trace_uses_live_escape_character() {
     // no prefix.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingmacros=2\\tracingonline=1\\maxdeadcycles=1\\output={\\dimen0=1pt}\\escapechar=256\\topskip=0pt\\setbox0=\\vbox to1pt{}\\copy0\\penalty-10000\\end",
@@ -529,7 +523,7 @@ fn tracingcommands_does_not_trace_shipout_box_constructor() {
     // traced main-control case. Its constructor is scanner-owned, while a
     // later standalone constructor returns normally through `reswitch`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingcommands=1\tracingonline=1\shipout\hbox{}\hbox{}\end",
@@ -547,7 +541,7 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     // TeX82 §§389/400 and §245: the invocation line precedes completed
     // arguments and the live selector controls both routed copies.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\def\\pair#1#2{}\\tracingmacros=1 \\tracingonline=1 \\pair CD\\end",
@@ -562,7 +556,7 @@ fn tracingmacros_reports_definition_then_arguments_with_live_routing() {
     assert_eq!(log, expected);
 
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\def\\pair#1#2{}\\tracingmacros=1 \\pair AB\\end",
@@ -584,7 +578,7 @@ fn tracingmacros_precedes_condition_result_during_operand_expansion() {
     // before matching arguments. A macro expanded while `conditional` scans
     // an operand therefore precedes both its argument trace and the result.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\t#1{#1pt}\tracingcommands=2\tracingmacros=1\tracingonline=1
@@ -605,7 +599,7 @@ fn tracingmacros_precedes_condition_result_during_operand_expansion() {
 #[test]
 fn disabled_tracingmacros_emits_no_macro_diagnostic() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\def\\pair#1#2{}\\tracingonline=1\\pair AB\\end",
@@ -620,7 +614,7 @@ fn disabled_tracingmacros_emits_no_macro_diagnostic() {
 #[test]
 fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\count0=7}\\end",
@@ -638,7 +632,7 @@ fn tracingrestores_reports_exact_restoration_through_the_live_selector() {
 #[test]
 fn tracingrestores_reports_dimension_register_restoration() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\dimen9=1.25pt}\\end",
@@ -665,7 +659,7 @@ fn tracingrestores_reports_code_table_restoration_and_retained_globals() {
         ),
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, source);
 
         run_to_end(&mut control, &mut stores);
@@ -681,7 +675,7 @@ fn tracingrestores_reports_current_font_selector_restoration() {
     // followed by the restored font's frozen identifier, not the selector
     // token used to choose it. Loading a format also exercises frozen symbols.
     let mut initialized = Universe::new_with_plain_catcodes();
-    let mut initex = CanonicalMainControl::tex82_initex(&mut initialized);
+    let mut initex = MainControl::tex82_initex(&mut initialized);
     register_cmr10_as(&mut initex, &mut initialized, "cmr10.tfm");
     register_source(&mut initex, br"\font\f=cmr10 \font\g=cmr10 at 9pt \f\end");
     run_to_end(&mut initex, &mut initialized);
@@ -690,7 +684,7 @@ fn tracingrestores_reports_current_font_selector_restoration() {
         .expect("dump font selector format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore font selector format");
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut control = MainControl::with_profile(CommandProfile::TEX82);
     register_source(
         &mut control,
         br"\let\alias=\g\tracingrestores=1\tracingonline=1{\alias}\end",
@@ -709,7 +703,7 @@ fn tracingrestores_spells_active_character_names_without_an_escape() {
     // TeX82 §§252/263: region-1 `show_eqtb` uses `sprint_cs`, under which
     // an active-character control sequence prints as the bare character.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\catcode`\?=13 \tracingrestores=1\tracingonline=1{\def?{x}}\end",
@@ -727,7 +721,7 @@ fn tracingrestores_spells_active_character_names_without_an_escape() {
 fn tracingrestores_reports_math_family_font_restoration() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -751,7 +745,7 @@ fn output_routine_box255_error_reports_live_command_context() {
     // list, while the command-owned source level beneath it remains live.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\maxdeadcycles=2\\output={\\relax}\\topskip=0pt\\setbox0=\\hbox{}\\copy0\\penalty-10000\\end",
@@ -778,7 +772,7 @@ fn output_routine_box255_error_reports_live_command_context() {
 #[test]
 fn tracingrestores_reports_restored_box_register_value() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\hbox{}{\\setbox7=\\vbox{}}\\end",
@@ -795,7 +789,7 @@ fn tracingrestores_reports_restored_box_register_value() {
 #[test]
 fn tracingrestores_prints_restored_void_box_inline() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\setbox254=\\hbox{}}\\end",
@@ -812,7 +806,7 @@ fn tracingrestores_prints_restored_void_box_inline() {
 #[test]
 fn consuming_current_group_box_preserves_original_void_restore() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\setbox2=\\hbox to2pt{}\\setbox3=\\box2}\\end",
@@ -830,7 +824,7 @@ fn consuming_current_group_box_preserves_original_void_restore() {
 #[test]
 fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1\\setbox7=\\hbox{}{\\setbox7=\\vbox{}\\setbox7=\\hbox{X}}\\end",
@@ -847,7 +841,7 @@ fn tracingrestores_captures_intermediate_box_before_its_arena_lifetime_ends() {
 #[test]
 fn tracingrestores_reports_retained_globals_and_obeys_routing_and_zero_suppression() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"{\\count0=7\\global\\count0=8}\\tracingrestores=1{\\count1=9\\global\\count1=10}{\\count2=11}\\tracingrestores=0{\\count3=12}\\end",
@@ -870,7 +864,7 @@ fn tracingrestores_reports_retained_integer_parameter_with_live_escapechar() {
     // TeX82 §283 calls `restore_trace` for both retained and restored eqtb
     // words; §252's `show_eqtb` names integer parameters through `print_esc`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingrestores=1\\tracingonline=1{\\escapechar=127\\global\\escapechar=256}\\end",
@@ -891,7 +885,7 @@ fn tracingrestores_reports_named_glue_parameters_with_exact_specs() {
     // save-stack entries. The retained infinite-order component is the
     // negative control against formatting every component as ordinary `pt`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1{\lineskip=1pt plus 2fil minus 3pt}{\baselineskip=1pt\global\baselineskip=4pt plus 5fill}\end",
@@ -911,7 +905,7 @@ fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
     // `sa_save`. The sparse mutation remains observable, but §283 therefore
     // has no register entry to restore before the ordinary parameter entry.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1{\tracingassigns=1\muskip2000=0mu\toks2000={}}\end",
@@ -933,7 +927,7 @@ fn etex_identical_sparse_pointer_assignments_do_not_create_restore_entries() {
 #[test]
 fn tracingrestores_coalesces_same_level_writes_and_renders_parameter_banks() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1\everypar={aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}{\vsize=1pt\global\vsize=2pt\everypar={B}\splitmaxdepth=3pt\count15=1\count15=2}\end",
@@ -958,7 +952,7 @@ fn tracingrestores_reports_primitive_meaning_through_an_alias() {
     // sequence twice. An alias is the negative control: `\foo` must be named
     // on the left while primitive `\box` is selected on the right.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\let\foo=\box\tracingrestores=1\tracingonline=1{\let\foo=\relax}\end",
@@ -984,7 +978,7 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     // target spellings prove this is the region-one meaning path, while
     // `\fam` pins reverse save-stack publication order from the TRIP case.
     let mut initialized = Universe::new_with_plain_catcodes();
-    let mut initex = CanonicalMainControl::tex82_initex(&mut initialized);
+    let mut initex = MainControl::tex82_initex(&mut initialized);
     register_source(
         &mut initex,
         br#"\mathchardef\minus="232D \mathchardef\+="1234
@@ -994,7 +988,7 @@ fn tracingrestores_reports_loaded_mathchar_meanings_in_unsave_order() {
     let format = initialized.dump_format().expect("dump mathchar format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore mathchar format");
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut control = MainControl::with_profile(CommandProfile::TEX82);
     register_source(
         &mut control,
         br#"\tracingrestores=1\tracingonline=1
@@ -1023,7 +1017,7 @@ fn tracingrestores_reports_macro_old_value() {
     // TeX82 §§252/283 show the restored macro's saved body after copying the
     // saved eqtb word back, with §262's breadth bound.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\foo{abcdefghijklmnopqrstuvwx}\tracingrestores=1\tracingonline=1{\def\foo{X}}\end",
@@ -1039,10 +1033,10 @@ fn tracingrestores_reports_macro_old_value() {
 #[test]
 fn tracingassigns_reports_setbox_change_and_committed_box() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
+    let _initialized = MainControl::tex82_initex(&mut stores);
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    let mut control = MainControl::with_profile(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\tracingonline=1\tracingassigns=1\setbox25=\hbox{}\end",
@@ -1064,7 +1058,7 @@ fn tracingassigns_reports_setbox_change_and_committed_box() {
 #[test]
 fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\tracingparagraphs=1\\tracingonline=1\\linepenalty=10\\parfillskip=0pt plus 1fil\\indent\\par\\end",
@@ -1080,12 +1074,12 @@ fn tracingparagraphs_reports_exact_first_pass_break_sequence() {
 }
 
 #[test]
-fn paragraph_shrink_error_uses_the_live_canonical_input_context() {
+fn paragraph_shrink_error_uses_the_live_input_context() {
     // TeX82 §§82/825 reports the `\par` source line before the paragraph
-    // recovery help, while canonical command state still owns that cursor.
+    // recovery help, while command state still owns that cursor.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingparagraphs=1\tracingonline=1{\rightskip0pt plus 104pt minus 100fil \looseness5 \spaceskip4pt plus 2pt minus 1fil A B\par}\end",
@@ -1129,7 +1123,7 @@ fn etex_everyeof_assignment_is_visible_to_scantokens_during_edef() {
     // e-TeX 2.6 etex.ch §24.362 inserts a non-null \everyeof token list
     // before retiring the pseudo-file, including while \edef is defining.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\everyeof={\noexpand}\edef\x{\scantokens{\begingroup}\endgroup}\end",
@@ -1158,7 +1152,7 @@ fn etex_scantokens_warns_for_box_group_before_following_conditional() {
     // `unsave`/conditional pop. The two lines of one scantokens source must
     // therefore report the hbox group before the enclosing ifcase.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\let\egroup=}\tracingonline=1\tracingnesting=1
@@ -1186,10 +1180,10 @@ fn etex_fire_up_distinguishes_empty_class_zero_and_sparse_botmarks() {
     // sparse `botmarks` pointer. Only the later `topmarks0` enquiry therefore
     // installs and retires a `mark_text` input level.
     let mut stores = Universe::new_with_plain_catcodes();
-    // Stage the exact post-fire-up state proved by canonical_page_output.rs's white-box
+    // Stage the exact post-fire-up state proved by page_output.rs's white-box
     // regression, then cross the command processor's enquiry boundary.
     stores.set_page_mark_class(PageMark::Top, 0, tex_state::ids::TokenListId::EMPTY);
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         include_bytes!("../fixtures/etex-empty-botmark-fire-up.tex"),
@@ -1234,7 +1228,7 @@ fn write_prints_a_control_character_equal_to_newlinechar_as_a_physical_newline()
         },
     ];
 
-    assert_eq!(canonical_write_text(&tokens, &stores), "A\nB\n");
+    assert_eq!(write_text(&tokens, &stores), "A\nB\n");
 }
 
 #[test]
@@ -1249,7 +1243,7 @@ fn terminal_write_uses_live_line_width_and_breaks_after_message() {
             .with_max_print_line(72)
             .expect("e-TRIP line width is valid"),
     );
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     tex_command::install_etex_expandable_primitives(&mut stores);
@@ -1278,7 +1272,7 @@ fn tracingstats_frames_consecutive_shipouts_with_live_memory_reports() {
     // progress marker before printing its complete report. The diagnostic is
     // per shipout; consecutive pages must not share one marker line.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingstats=2\shipout\hbox{}\shipout\hbox{}\end",
@@ -1364,7 +1358,7 @@ fn etex_unexpanded_replays_protected_macros_as_ordinary_expandable_input() {
     // loop. Protection suppresses expansion only while an expanded token
     // list is being built; it is not persistent replay metadata.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\protected\def\p{\global\advance\count0 by1}\unexpanded{\p}\end",
@@ -1400,9 +1394,9 @@ fn etex_optimized_aftergroup_links_tokens_onto_one_backup_level() {
     for (profile, expected_backups) in [(CommandProfile::TEX82, 3), (CommandProfile::ETEX26, 1)] {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = if profile == CommandProfile::ETEX26 {
-            canonical_etex_initex(&mut stores)
+            etex_initex(&mut stores)
         } else {
-            CanonicalMainControl::tex82_initex(&mut stores)
+            MainControl::tex82_initex(&mut stores)
         };
         register_source(
             &mut control,
@@ -1452,10 +1446,8 @@ fn hbox_group_type_respects_box_context_and_vertical_mode() {
         (br"\hbox{}".as_slice(), GroupKind::AdjustedHBox),
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-        control
-            .set_fuel_limit(1_000)
-            .expect("bounded canonical fuel");
+        let mut control = MainControl::tex82_initex(&mut stores);
+        control.set_fuel_limit(1_000).expect("bounded fuel");
         register_source(&mut control, source);
 
         assert_eq!(
@@ -1480,14 +1472,12 @@ fn discretionary_parts_execute_live_in_disc_group_without_duplicate_delivery() {
     // the literal `\kern` is the nonmacro negative control for duplicate
     // delivery.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     stores.install_primitive_meaning(
         "currentgrouptype",
         Meaning::InternalInteger(tex_state::meaning::InternalInteger::CurrentGroupType),
     );
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\def\layera{\layerb}
@@ -1548,10 +1538,8 @@ fn nested_discretionary_preserves_aftergroup_before_rejecting_the_outer_part() {
     // simultaneously proves that ActiveDiscretionary is a proper stack, then
     // §1121 rejects it as a forbidden node in the outer discretionary list.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\let\opener={\noindent
@@ -1603,7 +1591,7 @@ fn discretionary_nest_overflow_leaves_group_and_active_stack_untouched() {
     // discretionary opener must not install disc_group or its executor frame
     // until that bounded push has succeeded.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\noindent\discretionary{}{}{}");
     assert_eq!(
         control.step(&mut stores).expect("paragraph starts"),
@@ -1632,10 +1620,8 @@ fn vtop_resets_inherited_parshape_before_display_line_measurement() {
     // 12pt second `\parshape` line. The empty display's centered reference
     // point therefore extends the vtop's exact natural width to 50pt.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\nonstopmode
@@ -1661,10 +1647,8 @@ fn preamble_span_expands_one_token_and_preserves_later_template_meaning() {
     // kern before the spanned column template executes. The template must
     // retain \A itself and resolve its later meaning, producing exactly 3pt.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(20_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(20_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\nonstopmode
@@ -1690,10 +1674,8 @@ fn nested_valign_rows_do_not_contribute_baseline_glue_to_outer_cell_width() {
     // `\halign` cell; routing them through §679 would insert 12pt baselineskip
     // and make the cell spuriously 17pt wide.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(20_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(20_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\nonstopmode
@@ -1718,21 +1700,16 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
     // separating blank, so the malformed postdisplaypenalty assignment must
     // diagnose before any later display-mode command trace.
     let mut initialized = Universe::new_with_plain_catcodes();
-    let fresh_control = CanonicalMainControl::tex82_initex(&mut initialized);
+    let fresh_control = MainControl::tex82_initex(&mut initialized);
     let format = initialized.dump_format().expect("dump TeX82 format");
     let loaded =
         Universe::from_format(tex_state::World::memory(), &format).expect("restore TeX82 format");
 
     for (mut stores, mut control) in [
         (initialized, fresh_control),
-        (
-            loaded,
-            CanonicalMainControl::with_profile(CommandProfile::TEX82),
-        ),
+        (loaded, MainControl::with_profile(CommandProfile::TEX82)),
     ] {
-        control
-            .set_fuel_limit(20_000)
-            .expect("bounded canonical fuel");
+        control.set_fuel_limit(20_000).expect("bounded fuel");
         register_source(
             &mut control,
             br"\nonstopmode\tracingcommands=1\tracingonline=1
@@ -1753,12 +1730,12 @@ fn display_alignment_tail_runs_assignments_before_main_control() {
     }
 }
 
-fn canonical_etex_initex(stores: &mut Universe) -> CanonicalMainControl {
+fn etex_initex(stores: &mut Universe) -> MainControl {
     tex_command::install_tex82_expandable_primitives(stores);
     tex_command::install_etex_expandable_primitives(stores);
     crate::install_unexpandable_primitives(stores);
     crate::install_etex_unexpandable_primitives(stores);
-    CanonicalMainControl::prepared_initex(CommandProfile::ETEX26)
+    MainControl::prepared_initex(CommandProfile::ETEX26)
 }
 
 #[test]
@@ -1769,7 +1746,7 @@ fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
     // following \message is the negative control that still publishes the
     // ordinary §473 absorbing transition.
     let mut initialized = crate::test_harness::universe_with_plain_catcodes();
-    let fresh_control = canonical_etex_initex(&mut initialized);
+    let fresh_control = etex_initex(&mut initialized);
     let format = initialized
         .dump_format()
         .expect("dump extended e-TeX format");
@@ -1778,14 +1755,9 @@ fn etex_showtokens_uses_recursive_general_text_in_fresh_and_loaded_formats() {
 
     for (mut stores, mut control) in [
         (initialized, fresh_control),
-        (
-            loaded,
-            CanonicalMainControl::with_profile(CommandProfile::ETEX26),
-        ),
+        (loaded, MainControl::with_profile(CommandProfile::ETEX26)),
     ] {
-        control
-            .set_fuel_limit(10_000)
-            .expect("bounded canonical fuel");
+        control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(&mut control, br"\showtokens\expandafter{X}\message{Y}\end");
         let mut observations = ObservationRecorder::default();
         run_to_end_observed(&mut control, &mut stores, &mut observations);
@@ -1843,10 +1815,8 @@ fn etex_raw_font_character_enquiries_are_forbidden_without_scanning_in_every_mod
         br"\nonstopmode $$\fontcharwd a\fontcharht b\fontchardp c\fontcharic d$$\end",
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = canonical_etex_initex(&mut stores);
-        control
-            .set_fuel_limit(10_000)
-            .expect("bounded canonical fuel");
+        let mut control = etex_initex(&mut stores);
+        control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(&mut control, source);
 
         run_to_end(&mut control, &mut stores);
@@ -1867,10 +1837,8 @@ fn standalone_internal_integer_shows_live_context_before_scrolled_help() {
     // `report_illegal_case`; `error` shows the live line before routing help
     // off the terminal in nonstop mode.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(1_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(1_000).expect("bounded fuel");
     register_source(
         &mut control,
         b"\\nonstopmode\n\\hyphenpenalty 89 \\badness\n\\end",
@@ -1908,10 +1876,8 @@ fn hundredth_standalone_internal_integer_error_terminates_before_later_command()
     source.push_str("\\count0=23\\end");
 
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(&mut control, source.as_bytes());
 
     run_to_end(&mut control, &mut stores);
@@ -1937,10 +1903,8 @@ fn errorstop_standalone_internal_integer_prompts_after_live_context_and_resumes(
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts the error response");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
-    control
-        .set_fuel_limit(1_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(1_000).expect("bounded fuel");
     register_source(&mut control, b"\\badness \\count0=23\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -1960,16 +1924,14 @@ fn etex_raw_font_character_enquiry_loaded_format_checkpoint_retry_is_atomic() {
     // Restoring a quiescent checkpoint must restore both the diagnostic
     // effect and the unconsumed operand so a retry takes the identical path.
     let mut initex_stores = Universe::new_with_plain_catcodes();
-    let _ = canonical_etex_initex(&mut initex_stores);
+    let _ = etex_initex(&mut initex_stores);
     let format = initex_stores
         .dump_format()
         .expect("dump extended e-TeX format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore extended e-TeX format");
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
-    control
-        .set_fuel_limit(1_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::with_profile(CommandProfile::ETEX26);
+    control.set_fuel_limit(1_000).expect("bounded fuel");
     register_source(&mut control, br"\nonstopmode \fontcharwd a\end");
     assert_eq!(
         control
@@ -2022,10 +1984,8 @@ fn etex_raw_parshape_enquiries_are_forbidden_without_scanning_in_every_mode() {
         br"\nonstopmode $$\parshapelength1\parshapeindent2\parshapedimen3$$\end",
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = canonical_etex_initex(&mut stores);
-        control
-            .set_fuel_limit(10_000)
-            .expect("bounded canonical fuel");
+        let mut control = etex_initex(&mut stores);
+        control.set_fuel_limit(10_000).expect("bounded fuel");
         register_source(&mut control, source);
 
         run_to_end(&mut control, &mut stores);
@@ -2043,16 +2003,14 @@ fn etex_raw_parshape_enquiries_are_forbidden_without_scanning_in_every_mode() {
 #[test]
 fn etex_parshape_enquiry_loaded_format_checkpoint_retry_is_atomic() {
     let mut initex_stores = Universe::new_with_plain_catcodes();
-    let _ = canonical_etex_initex(&mut initex_stores);
+    let _ = etex_initex(&mut initex_stores);
     let format = initex_stores
         .dump_format()
         .expect("dump extended e-TeX format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore extended e-TeX format");
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
-    control
-        .set_fuel_limit(1_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::with_profile(CommandProfile::ETEX26);
+    control.set_fuel_limit(1_000).expect("bounded fuel");
     register_source(&mut control, br"\nonstopmode \parshapelength1\end");
     assert_eq!(
         control
@@ -2096,10 +2054,8 @@ fn empty_equation_number_checks_math_fonts_on_both_sides() {
     // TeX82 §1194 checks the equation-number mlist and then the saved display
     // mlist independently, even though neither one contains a math noad.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    let mut control = etex_initex(&mut stores);
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1$$\eqno^{}$\end",
@@ -2138,7 +2094,7 @@ fn tex82_display_parameters_are_local_to_the_math_shift_group() {
     // `push_math(math_shift_group)` and restored in reverse assignment order.
     // e-TeX's `\predisplaydirection` extension is absent in TeX82 mode.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingrestores=1\tracingonline=1\noindent $$x$$\end",
@@ -2172,10 +2128,8 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
     // that group is current ends `\noalign`; braces belonging to nested math
     // groups must close those groups first.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
-    control
-        .set_fuel_limit(10_000)
-        .expect("bounded canonical fuel");
+    let mut control = etex_initex(&mut stores);
+    control.set_fuel_limit(10_000).expect("bounded fuel");
     register_source(
         &mut control,
         br"\valign{#\cr\noalign{$${\left.\middle.\right.}$$}}\end",
@@ -2190,7 +2144,7 @@ fn noalign_body_dispatches_nested_math_braces_by_save_stack_group() {
             MainControlStep::Continue => {}
         }
     }
-    panic!("canonical noalign regression exceeded its step bound");
+    panic!("noalign regression exceeded its step bound");
 }
 
 #[test]
@@ -2199,7 +2153,7 @@ fn invalid_middle_and_right_report_missing_delimiter_before_extra_command() {
     // whether the boundary has a matching `\left`. The rejected `\par` is
     // therefore named by both errors, in that order, for each command.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\tracingonline=1\setbox0=\vbox{\middle \par \right \par}\end",
@@ -2223,14 +2177,14 @@ fn invalid_middle_and_right_report_missing_delimiter_before_extra_command() {
 }
 
 fn run_to_end_observed(
-    control: &mut CanonicalMainControl,
+    control: &mut MainControl,
     stores: &mut Universe,
     observations: &mut dyn CommandObserver,
 ) {
     loop {
         match control
             .step_with_observer(stores, observations)
-            .expect("canonical program executes")
+            .expect("program executes")
         {
             MainControlStep::End | MainControlStep::EndOfInput => break,
             MainControlStep::Continue => {}
@@ -2319,7 +2273,7 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
             .world_mut()
             .push_memory_terminal_line("s")
             .expect("memory terminal accepts the continuation request");
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         let mut source = command.to_vec();
         source.extend_from_slice(br"\count0=17\end");
         register_source(&mut control, &source);
@@ -2350,7 +2304,7 @@ fn misplaced_alignment_commands_route_exact_help_and_continue() {
 fn misplaced_category_five_character_routes_car_ret_help() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\catcode90=5 Z\n\\global\\count0=17\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -2412,7 +2366,7 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\catcode123=1 \let\bgroup={ \let\bgroup={ \global\let\bgroup={ \end",
@@ -2445,7 +2399,7 @@ fn etex_identical_local_let_is_a_reassignment_but_global_let_is_not() {
 fn bare_macro_parameter_reports_illegal_case_and_continues_in_every_mode() {
     // TeX82 §1045: `any_mode(mac_param): report_illegal_case`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode
@@ -2490,12 +2444,12 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     // and errorstop would send §82 into §83's dialog, which this harness's
     // terminal cannot answer and §71 ends the job over.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"#\input child\end");
 
     assert!(matches!(
         control.advance(&mut stores).expect("parameter recovers"),
-        CanonicalStepResult::Progress(ReplayStep::Continue)
+        StepResult::Progress(ReplayStep::Continue)
     ));
     let committed = terminal_text(&stores);
     assert_eq!(committed.matches("macro parameter character #").count(), 1);
@@ -2503,7 +2457,7 @@ fn bare_macro_parameter_commit_survives_later_input_retry_without_duplication() 
     for _ in 0..3 {
         assert!(matches!(
             control.advance(&mut stores).expect("missing input suspends"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+            StepResult::Suspended(ResourceNeed::Input {
                 name,
                 original_name,
             }) if name == "child.tex" && original_name == "child"
@@ -2537,7 +2491,7 @@ fn extra_endcsname_reports_once_and_continues_with_observer_parity_in_every_mode
     ] {
         let run = |observed: bool| {
             let mut stores = crate::test_harness::universe_with_plain_catcodes();
-            let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+            let mut control = MainControl::tex82_initex(&mut stores);
             control.set_fuel_limit(128).expect("bounded command fuel");
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
@@ -2594,7 +2548,7 @@ fn stray_endv_outside_math_runs_off_save_once_and_continues_in_every_mode() {
         let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let endv = stores.intern("forcedendv");
         stores.set_meaning(endv, Meaning::EndV);
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         control.set_fuel_limit(128).expect("bounded command fuel");
         if mode != Mode::Vertical {
             control.modes.push(mode).expect("test mode push");
@@ -2636,7 +2590,7 @@ fn stray_endv_in_math_inserts_shift_then_replays_for_off_save() {
         let mut stores = crate::test_harness::universe_with_plain_catcodes();
         let endv = stores.intern("forcedendv");
         stores.set_meaning(endv, Meaning::EndV);
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         control.set_fuel_limit(256).expect("bounded command fuel");
         let mut source = opening.to_vec();
         source.extend_from_slice(br"\forcedendv\par\count0=29");
@@ -2898,7 +2852,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
     let source = stores.box_reg(0).expect("promoted source graph");
     let baseline = stores.snapshot();
 
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox1=\copy0");
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.box_reg(0), Some(source), "copy retains its source");
@@ -2922,7 +2876,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
         matches!(children[3], Node::Mark { tokens, .. } if stores.tokens(tokens) == [Token::Char { ch: 'm', cat: Catcode::Letter }, Token::Char { ch: '!', cat: Catcode::Other }])
     );
 
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\setbox2=\box0");
     run_to_end(&mut control, &mut stores);
     assert!(stores.box_reg(0).is_none(), "box consumes its source");
@@ -2960,7 +2914,7 @@ fn copy_preserves_every_recursive_node_payload_and_source_register() {
 #[test]
 fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox0=\vbox{\hbox{\kern1pt}}\setbox1=\vbox{\noindent\kern2pt\unvbox0}",
@@ -2989,7 +2943,7 @@ fn vertical_unbox_in_horizontal_mode_ends_the_paragraph_before_splicing() {
 #[test]
 fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox0=\hbox{\hbox{\kern1pt}}\setbox1=\vbox{\vbox{\kern2pt}}",
@@ -2997,7 +2951,7 @@ fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
     run_to_end(&mut control, &mut stores);
     let before = stores.testing_epoch_clone_counts();
 
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox2=\hbox{\unhbox0}\setbox3=\vbox{\unvbox1}",
@@ -3015,7 +2969,7 @@ fn destructive_unbox_shares_nested_survivor_children_without_epoch_clone() {
 #[test]
 fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     let before = stores.testing_epoch_clone_counts();
     register_source(&mut control, br"{\setbox0\hbox{X}\copy0}");
     run_to_end(&mut control, &mut stores);
@@ -3026,9 +2980,9 @@ fn grouped_copy_keeps_survivor_children_without_epoch_clone() {
 }
 
 #[test]
-fn canonical_paragraph_publishes_command_owned_input_region() {
+fn paragraph_publishes_command_owned_input_region() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"alpha beta\\par\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -3048,23 +3002,23 @@ fn canonical_paragraph_publishes_command_owned_input_region() {
 }
 
 #[test]
-fn canonical_paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
+fn paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"alpha \\count0=7 beta\\par\\end");
     run_to_end(&mut control, &mut stores);
     let region = control
         .take_finished_paragraph_regions()
         .pop()
-        .expect("canonical paragraph");
+        .expect("paragraph");
     let (starting_provenance, ending_provenance) = region.provenance_bounds();
     let expected_bounds = (*starting_provenance, *ending_provenance);
 
     let resolver = stores.paragraph_origin_resolver();
     let mut memo = stores.take_pure_memo_runtime();
     memo.accept_paragraph_history(resolver);
-    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    let accepted = &memo.accepted_paragraph_history()[0];
     assert_eq!(accepted.dependencies.as_ref(), region.dependencies.as_ref());
     assert_eq!(
         accepted.front_dependency_ordinals.len() + accepted.break_dependency_ordinals.len(),
@@ -3087,7 +3041,7 @@ fn canonical_paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
 }
 
 #[test]
-fn canonical_carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
+fn carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
     let old = b"alpha beta\\par\\end";
     let prefix = b"% shifted\n";
     let mut revised = prefix.to_vec();
@@ -3095,7 +3049,7 @@ fn canonical_carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
     let revised: std::sync::Arc<[u8]> = revised.into();
     let mut cold_stores = Universe::new_with_plain_catcodes();
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, old);
     run_to_end(&mut cold, &mut cold_stores);
     let region = cold
@@ -3109,14 +3063,14 @@ fn canonical_carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
 
     let mut replay_stores = Universe::new_with_plain_catcodes();
     replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    let mut replay = MainControl::tex82_initex(&mut replay_stores);
     register_source(&mut replay, &revised);
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
     let resolver = replay_stores.paragraph_origin_resolver();
     let mut memo = replay_stores.take_pure_memo_runtime();
     memo.accept_paragraph_history(resolver);
-    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    let accepted = &memo.accepted_paragraph_history()[0];
     assert_eq!(accepted.root_start, expected_start);
     assert_eq!(accepted.ending_provenance, expected_provenance);
     assert_eq!(
@@ -3126,17 +3080,17 @@ fn canonical_carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
 }
 
 #[test]
-fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
+fn paragraph_replay_validates_and_advances_before_delivery() {
     let source = b"alpha beta\\par\\end";
     let mut cold_stores = Universe::new_with_plain_catcodes();
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, source);
     run_to_end(&mut cold, &mut cold_stores);
     let regions = cold.take_finished_paragraph_regions();
     assert_eq!(regions.len(), 1);
 
     let mut replay_stores = Universe::new_with_plain_catcodes();
-    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    let mut replay = MainControl::tex82_initex(&mut replay_stores);
     register_source(&mut replay, source);
     replay.install_paragraph_replay_regions(regions);
     run_to_end(&mut replay, &mut replay_stores);
@@ -3148,11 +3102,11 @@ fn canonical_paragraph_replay_validates_and_advances_before_delivery() {
 }
 
 #[test]
-fn canonical_paragraph_validation_ignores_an_unrelated_prefix_cell() {
+fn paragraph_validation_ignores_an_unrelated_prefix_cell() {
     let source = b"alpha beta\\par\\end";
     let mut cold_stores = Universe::new_with_plain_catcodes();
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, source);
     cold_stores.set_count(77, 0);
     run_to_end(&mut cold, &mut cold_stores);
@@ -3163,24 +3117,24 @@ fn canonical_paragraph_validation_ignores_an_unrelated_prefix_cell() {
 }
 
 #[test]
-fn canonical_paragraph_validation_rejects_a_real_dependency_change() {
+fn paragraph_validation_rejects_a_real_dependency_change() {
     let source = b"alpha \\count0=7 beta\\par\\end";
     let mut cold_stores = Universe::new_with_plain_catcodes();
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, source);
     run_to_end(&mut cold, &mut cold_stores);
     let regions = cold.take_finished_paragraph_regions();
 
     cold_stores.set_count(0, 123_456);
-    assert!(!crate::canonical_paragraph_memo::validate_mutations(
+    assert!(!crate::paragraph_memo::validate_mutations(
         &cold_stores,
         &regions[0].mutations,
     ));
 }
 
 #[test]
-fn canonical_paragraph_rehome_filters_the_edited_root_region() {
+fn paragraph_rehome_filters_the_edited_root_region() {
     let old = b"alpha\\par beta\\par\\end";
     let new: std::sync::Arc<[u8]> = std::sync::Arc::from(&b"alpha\\par gamma\\par\\end"[..]);
     let edit_start = old
@@ -3188,7 +3142,7 @@ fn canonical_paragraph_rehome_filters_the_edited_root_region() {
         .position(|window| window == b"beta")
         .expect("second paragraph");
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, old);
     run_to_end(&mut control, &mut stores);
     let regions = control.take_finished_paragraph_regions();
@@ -3207,7 +3161,7 @@ fn canonical_paragraph_rehome_filters_the_edited_root_region() {
 }
 
 #[test]
-fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
+fn paragraph_rehome_translates_regions_after_a_prefix_edit() {
     let old = br"alpha
 
  beta\par\end";
@@ -3216,7 +3170,7 @@ fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
     revised.extend_from_slice(old);
     let revised: std::sync::Arc<[u8]> = revised.into();
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, old);
     run_to_end(&mut control, &mut stores);
     let regions = control.take_finished_paragraph_regions();
@@ -3275,7 +3229,7 @@ fn canonical_paragraph_rehome_translates_regions_after_a_prefix_edit() {
 }
 
 #[test]
-fn canonical_paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
+fn paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
     let old = b"alpha\\par\nbeta\\par\ngamma\\par\n\\end";
     let new: Arc<[u8]> = Arc::from(&b"alpha\\par\ndelta\\par\ngamma\\par\n\\end"[..]);
     let edit_start = old
@@ -3284,7 +3238,7 @@ fn canonical_paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
         .expect("middle paragraph");
     let mut cold_stores = Universe::new_with_plain_catcodes();
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, old);
     run_to_end(&mut cold, &mut cold_stores);
     let regions = cold.take_finished_paragraph_regions();
@@ -3311,7 +3265,7 @@ fn canonical_paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
     let run = |region| {
         let mut stores = Universe::new_with_plain_catcodes();
         stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, &new);
         control.install_paragraph_replay_regions([region]);
         run_to_end(&mut control, &mut stores);
@@ -3322,7 +3276,7 @@ fn canonical_paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
 }
 
 #[test]
-fn canonical_rebound_front_key_keeps_dependency_validation_selective() {
+fn rebound_front_key_keeps_dependency_validation_selective() {
     let old = br"alpha \count0=7 beta\par\end";
     let prefix = b"% revised root\n";
     let mut revised = prefix.to_vec();
@@ -3332,7 +3286,7 @@ fn canonical_rebound_front_key_keeps_dependency_validation_selective() {
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     cold_stores.set_count(0, 0);
     cold_stores.set_count(77, 0);
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, old);
     run_to_end(&mut cold, &mut cold_stores);
     let region = cold
@@ -3347,7 +3301,7 @@ fn canonical_rebound_front_key_keeps_dependency_validation_selective() {
         stores.enable_pure_memo(tex_state::PureMemoConfig::default());
         stores.set_count(0, count0);
         stores.set_count(77, count77);
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, &revised);
         control.install_paragraph_replay_regions([region.clone()]);
         run_to_end(&mut control, &mut stores);
@@ -3380,11 +3334,11 @@ fn editor_layout_for(bytes: &[u8]) -> (tex_state::FragmentStore, tex_state::Edit
 fn fork_after_first_paragraph(
     old: &[u8],
     revised: Arc<[u8]>,
-) -> (CanonicalMainControl, Universe, CanonicalParagraphRegion) {
+) -> (MainControl, Universe, ParagraphRegion) {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, old);
     let checkpoint = loop {
         assert!(
@@ -3422,15 +3376,15 @@ fn fork_after_first_paragraph(
         .expect("stable suffix rehomes");
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (forked, _) = checkpoint
-        .fork_canonical_editor(&mut replay, &substrate, old, revised, &fragments, &layout)
-        .expect("canonical editor checkpoint forks");
+        .fork_editor(&mut replay, &substrate, old, revised, &fragments, &layout)
+        .expect("editor checkpoint forks");
     (replay, forked, region)
 }
 
 #[test]
-fn canonical_checkpoint_fork_keeps_rehomed_suffix_replay_key() {
+fn checkpoint_fork_keeps_rehomed_suffix_replay_key() {
     let old = br"first\par
 beta\par
 stable suffix\par
@@ -3454,7 +3408,7 @@ stable suffix\par
 }
 
 #[test]
-fn canonical_job_start_fork_replays_after_unrelated_prefix_assignment() {
+fn job_start_fork_replays_after_unrelated_prefix_assignment() {
     let old = br"stateful \count5=41 paragraph text\par
 stateful \count5=42 paragraph text\par
 \end";
@@ -3466,7 +3420,7 @@ stateful \count5=42 paragraph text\par
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut cold = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut cold = MainControl::tex82_initex(&mut stores);
     register_source(&mut cold, old);
     let checkpoint = cold
         .capture_checkpoint_with_exact_identity(
@@ -3487,9 +3441,9 @@ stateful \count5=42 paragraph text\par
         .collect::<Vec<_>>();
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (mut stores, _) = checkpoint
-        .fork_canonical_editor(
+        .fork_editor(
             &mut replay,
             &substrate,
             old,
@@ -3502,10 +3456,10 @@ stateful \count5=42 paragraph text\par
     run_to_end(&mut replay, &mut stores);
     assert_eq!(stores.pure_memo_stats().paragraph_hits, 2);
     assert_eq!(stores.count(99), 3);
-    assert_canonical_job_start_fork_rejects_changed_mutation_precondition();
+    assert_job_start_fork_rejects_changed_mutation_precondition();
 }
 
-fn assert_canonical_job_start_fork_rejects_changed_mutation_precondition() {
+fn assert_job_start_fork_rejects_changed_mutation_precondition() {
     let old = br"stateful \count5=41 paragraph text\par
 \end";
     let prefix = br"\count5=99 ";
@@ -3516,7 +3470,7 @@ fn assert_canonical_job_start_fork_rejects_changed_mutation_precondition() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut cold = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut cold = MainControl::tex82_initex(&mut stores);
     register_source(&mut cold, old);
     let checkpoint = cold
         .capture_checkpoint_with_exact_identity(
@@ -3534,9 +3488,9 @@ fn assert_canonical_job_start_fork_rejects_changed_mutation_precondition() {
         .expect("unchanged paragraph input rehomes");
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (mut stores, _) = checkpoint
-        .fork_canonical_editor(
+        .fork_editor(
             &mut replay,
             &substrate,
             old,
@@ -3554,7 +3508,7 @@ fn assert_canonical_job_start_fork_rejects_changed_mutation_precondition() {
 }
 
 #[test]
-fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
+fn rebound_history_reaccepts_finished_lines_with_revised_owner() {
     let old = br"alpha beta\par\end";
     let prefix = b"% revised root\n";
     let mut revised = prefix.to_vec();
@@ -3562,7 +3516,7 @@ fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
     let revised: Arc<[u8]> = revised.into();
     let mut cold_stores = Universe::new_with_plain_catcodes();
     cold_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut cold = CanonicalMainControl::tex82_initex(&mut cold_stores);
+    let mut cold = MainControl::tex82_initex(&mut cold_stores);
     register_source(&mut cold, old);
     run_to_end(&mut cold, &mut cold_stores);
     let cold_resolver = cold_stores.paragraph_origin_resolver();
@@ -3581,14 +3535,14 @@ fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
 
     let mut replay_stores = Universe::new_with_plain_catcodes();
     replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    let mut replay = MainControl::tex82_initex(&mut replay_stores);
     register_source(&mut replay, &revised);
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
     let revised_resolver = replay_stores.paragraph_origin_resolver();
     let mut memo = replay_stores.take_pure_memo_runtime();
     memo.accept_paragraph_history(Arc::clone(&revised_resolver));
-    let accepted = &memo.accepted_canonical_paragraphs()[0];
+    let accepted = &memo.accepted_paragraph_history()[0];
     assert!(accepted.finished_lines.is_some());
     let tex_state::ParagraphLineProvenance::Accepted(owner) = &accepted.line_provenance else {
         panic!("accepted finished lines own a provenance resolver");
@@ -3598,10 +3552,10 @@ fn canonical_rebound_history_reaccepts_finished_lines_with_revised_owner() {
 }
 
 #[test]
-fn canonical_paragraph_diagnostic_writes_replay_without_a_world_barrier() {
+fn paragraph_diagnostic_writes_replay_without_a_world_barrier() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"alpha\\message{visible} beta\\par\\end");
     run_to_end(&mut control, &mut stores);
     let mut region = control
@@ -3617,7 +3571,7 @@ fn canonical_paragraph_diagnostic_writes_replay_without_a_world_barrier() {
     let before = stores.world().effect_records().len();
     let mut replay_stores = Universe::new_with_plain_catcodes();
     replay_stores.enable_pure_memo(tex_state::PureMemoConfig::default());
-    let mut replay = CanonicalMainControl::tex82_initex(&mut replay_stores);
+    let mut replay = MainControl::tex82_initex(&mut replay_stores);
     register_source(&mut replay, b"alpha\\message{visible} beta\\par\\end");
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
@@ -3630,9 +3584,9 @@ fn canonical_paragraph_diagnostic_writes_replay_without_a_world_barrier() {
 }
 
 #[test]
-fn canonical_display_interruption_publishes_its_direction_continuation() {
+fn display_interruption_publishes_its_direction_continuation() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"alpha$$x$$\\end");
     run_to_end(&mut control, &mut stores);
     let region = control
@@ -3651,19 +3605,19 @@ fn canonical_display_interruption_publishes_its_direction_continuation() {
     );
 }
 
-/// The shared display interruption can run for a canonical paragraph that is
+/// The shared display interruption can run for a paragraph that is
 /// not owned by the outer-paragraph recorder. Dependency recording is
 /// optional at this boundary, so its absent phase must remain balanced.
 #[test]
-fn canonical_unrecorded_display_interruption_keeps_dependency_phases_balanced() {
+fn unrecorded_display_interruption_keeps_dependency_phases_balanced() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control
         .modes
         .push(Mode::Horizontal)
-        .expect("enter unrecorded canonical paragraph");
+        .expect("enter unrecorded paragraph");
 
-    let interrupted = crate::canonical_paragraph_end::interrupt_canonical_paragraph_for_display(
+    let interrupted = crate::paragraph_end::interrupt_paragraph_for_display(
         &mut control.modes,
         &mut stores,
         control.fuel.fuel_mut(),
@@ -3675,10 +3629,10 @@ fn canonical_unrecorded_display_interruption_keeps_dependency_phases_balanced() 
 }
 
 #[test]
-fn canonical_paragraph_rehome_rejects_an_overlapping_edit() {
+fn paragraph_rehome_rejects_an_overlapping_edit() {
     let old = br"alpha beta\par\end";
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, old);
     run_to_end(&mut control, &mut stores);
     let region = control
@@ -3696,9 +3650,9 @@ fn canonical_paragraph_rehome_rejects_an_overlapping_edit() {
 }
 
 #[test]
-fn vertical_only_canonical_run_publishes_no_paragraph_region() {
+fn vertical_only_run_publishes_no_paragraph_region() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\count0=7\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -3709,7 +3663,7 @@ fn vertical_only_canonical_run_publishes_no_paragraph_region() {
 #[test]
 fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox0=\vbox{\hbox{}}\setbox1=\hbox{\kern1pt}",
@@ -3719,7 +3673,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
     let hbox = stores.box_reg(1);
     let source = "\\unhbox0\\par\\unhcopy0\\par\\unvbox1\\unvcopy1";
 
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, source.as_bytes());
     let checkpoint = control
         .capture_checkpoint(
@@ -3745,7 +3699,7 @@ fn incompatible_unbox_commands_preserve_registers_and_replay_state() {
 #[test]
 fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\vsize=1000pt \setbox0=\vbox{\hrule\hbox{}}\unvbox0",
@@ -3764,7 +3718,7 @@ fn unvbox_splices_vertical_nodes_without_inserting_baseline_glue() {
 #[test]
 fn badness_reads_most_recent_pack_and_is_not_assignable() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"{\setbox0=\hbox to 10pt{\hskip0pt plus1pt}}\count0=\badness\edef\x{\the\badness}",
@@ -3784,7 +3738,7 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
         .collect();
     assert_eq!(rendered, "10000");
 
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\badness=0");
     run_to_end(&mut control, &mut stores);
     assert!(terminal_text(&stores).contains("You can't use `\\badness'"));
@@ -3793,7 +3747,7 @@ fn badness_reads_most_recent_pack_and_is_not_assignable() {
 #[test]
 fn vbox_sets_overfull_badness_when_the_box_cannot_shrink() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox0=\vbox to10pt{\hrule height20pt}\count0=\badness",
@@ -3812,7 +3766,7 @@ fn etex_lastnodetype_reads_each_live_mode_tail_without_mutation() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\xdef\outerempty{\the\lastnodetype}
@@ -3850,7 +3804,7 @@ fn etex_lastnodetype_covers_every_node_code() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -3900,7 +3854,7 @@ fn etex_lastnodetype_code_seven_after_unboxing_ligature() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -3919,7 +3873,7 @@ fn outer_vertical_kern_joins_contributions_without_running_page_builder() {
     let mut stores = Universe::new_with_plain_catcodes();
     tex_command::install_tex82_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::TEX82);
+    let mut control = MainControl::prepared_initex(CommandProfile::TEX82);
     register_source(&mut control, br"\kern-50pt");
 
     run_to_end(&mut control, &mut stores);
@@ -3946,7 +3900,7 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\def\payload{expanded}
@@ -4002,7 +3956,7 @@ fn etex_marks_scans_extended_classes_and_expanded_text_in_every_mode() {
 #[test]
 fn tex82_profile_leaves_numbered_marks_undefined() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let _control = CanonicalMainControl::tex82_initex(&mut stores);
+    let _control = MainControl::tex82_initex(&mut stores);
     let marks = stores.intern("marks");
     assert_eq!(stores.meaning(marks), Meaning::Undefined);
     assert_eq!(stores.primitive_meaning("marks"), None);
@@ -4011,9 +3965,9 @@ fn tex82_profile_leaves_numbered_marks_undefined() {
 #[test]
 fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     let mut stores = Universe::new();
-    let _initialized = CanonicalMainControl::tex82_initex(&mut stores);
+    let _initialized = MainControl::tex82_initex(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::with_profile(tex_command::CommandProfile::ETEX26);
+    let mut control = MainControl::with_profile(tex_command::CommandProfile::ETEX26);
     register_source(
         &mut control,
         b"\\nonstopmode\n\\tracingonline=1\n\\showgroups\n\\begingroup\\showgroups\\endgroup\n\\global\\showgroups\\count0=7\n\\end",
@@ -4037,7 +3991,7 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
         shift: None,
     });
     let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+    crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::MathShift, 7);
@@ -4045,18 +3999,18 @@ fn etex_showgroups_detaches_nested_save_and_mode_diagnostics() {
     stores.enter_group_with_kind_at_line(GroupKind::Math, 7);
     modes.push(Mode::Math).expect("test mode push");
     let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+    crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     stores.enter_group_with_kind_at_line(GroupKind::Align, 8);
     let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+    crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
     stores.enter_group_with_kind_at_line(GroupKind::NoAlign, 8);
     let diagnostic = detached_showgroups(&stores, &None, &boxes, &[], &[], &[], &[]);
-    crate::diagnostics::execute_canonical_showgroups(&mut stores, &diagnostic, String::new())
+    crate::diagnostics::execute_showgroups(&mut stores, &diagnostic, String::new())
         .expect("\\showgroups reports no fatal error");
 
     let output = terminal_text(&stores);
@@ -4091,25 +4045,25 @@ fn macro_tokens<'a>(stores: &'a Universe, name: &str) -> &'a [Token] {
     stores.tokens(meaning.replacement_text())
 }
 
-fn pdftex_random_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_random_control(stores: &mut Universe) -> MainControl {
     let set_seed = stores.intern("pdfsetrandomseed");
     stores.set_meaning(
         set_seed,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfSetRandomSeed),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_timer_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_timer_control(stores: &mut Universe) -> MainControl {
     let reset_timer = stores.intern("pdfresettimer");
     stores.set_meaning(
         reset_timer,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfResetTimer),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_interword_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         (
             "pdfinterwordspaceon",
@@ -4130,10 +4084,10 @@ fn pdftex_interword_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_font_action_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_font_action_control(stores: &mut Universe) -> MainControl {
     let nullfont = stores.intern("nullfont");
     stores.set_meaning(nullfont, Meaning::Font(tex_state::font::NULL_FONT));
     for (name, primitive) in [
@@ -4154,11 +4108,11 @@ fn pdftex_font_action_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
-fn pdftex_font_actions_route_through_canonical_expansion_and_font_state() {
+fn pdftex_font_actions_route_through_command_expansion_and_font_state() {
     // pdftex.web §§1601--1607, 1680--1682: general text is expanded before
     // the action mutates the selected font or the global map/ToUnicode state.
     let mut stores = Universe::new_with_plain_catcodes();
@@ -4263,7 +4217,7 @@ fn pdftex_font_actions_preserve_exact_dvi_mode_gate_and_tounicode_exceptions() {
     assert!(stores.pdf_builtin_to_unicode_disabled(tex_state::font::NULL_FONT));
 }
 
-fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_snapping_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
         ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
@@ -4272,10 +4226,10 @@ fn pdftex_snapping_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_graphics_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_graphics_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfliteral", UnexpandablePrimitive::PdfLiteral),
         ("pdfsetmatrix", UnexpandablePrimitive::PdfSetMatrix),
@@ -4287,7 +4241,7 @@ fn pdftex_graphics_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -4425,16 +4379,16 @@ fn pdf_color_stack_recovery_reports_help_and_preserves_action_order() {
     assert!(terminal.contains("Proceed, with fingers crossed."));
 }
 
-fn pdftex_outline_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_outline_control(stores: &mut Universe) -> MainControl {
     let outline = stores.intern("pdfoutline");
     stores.set_meaning(
         outline,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfOutline),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_thread_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfthread", UnexpandablePrimitive::PdfThread),
         ("pdfstartthread", UnexpandablePrimitive::PdfStartThread),
@@ -4443,10 +4397,10 @@ fn pdftex_thread_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_object_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfobj", UnexpandablePrimitive::PdfObject),
         ("pdfrefobj", UnexpandablePrimitive::PdfReferenceObject),
@@ -4455,10 +4409,10 @@ fn pdftex_object_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_form_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfxform", UnexpandablePrimitive::PdfXForm),
         ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
@@ -4467,10 +4421,10 @@ fn pdftex_form_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
-fn pdftex_image_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_image_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfximage", UnexpandablePrimitive::PdfXImage),
         ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
@@ -4479,7 +4433,7 @@ fn pdftex_image_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 fn test_pdf_image_source() -> tex_state::PdfExternalImageSource {
@@ -4963,7 +4917,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         .advance(&mut stores)
         .expect("PDF image request suspends")
     {
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+        StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
         other => panic!("expected image suspension, got {other:?}"),
     };
     assert_eq!(stores.testing_state_hash(), pdf_state_before);
@@ -4985,7 +4939,7 @@ fn pdf_image_create_rejects_dvi_before_operands_allocation_or_resource_lookup() 
         control
             .advance(&mut stores)
             .expect("fulfilled retry preserves and consumes the complete request"),
-        CanonicalStepResult::Progress(MainControlStep::Continue)
+        StepResult::Progress(MainControlStep::Continue)
     );
     let image = stores
         .pdf_last_external_image()
@@ -5033,7 +4987,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         .advance(&mut stores)
         .expect("immediate image suspends")
     {
-        CanonicalStepResult::Suspended(CanonicalResourceNeed::PdfImage { request }) => request,
+        StepResult::Suspended(ResourceNeed::PdfImage { request }) => request,
         other => panic!("expected immediate image suspension, got {other:?}"),
     };
     assert_eq!(stores.testing_state_hash(), pdf_state_before);
@@ -5053,7 +5007,7 @@ fn immediate_pdf_image_uses_the_same_preflight_and_transactional_retry() {
         control
             .advance(&mut stores)
             .expect("immediate image retry allocates in the same operation"),
-        CanonicalStepResult::Progress(MainControlStep::Continue)
+        StepResult::Progress(MainControlStep::Continue)
     );
     assert_eq!(stores.pdf_external_images().len(), 1);
     assert!(control.modes.current_list().nodes().is_empty());
@@ -5125,7 +5079,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
         control
             .advance(&mut stores)
             .expect("PDF retry preserves the reference integer"),
-        CanonicalStepResult::Progress(MainControlStep::Continue)
+        StepResult::Progress(MainControlStep::Continue)
     );
     assert!(matches!(
         control.modes.current_list().nodes(),
@@ -5155,7 +5109,7 @@ fn pdf_image_reference_preflights_all_modes_before_scan_lookup_or_list_mutation(
     assert!(missing.modes.current_list().nodes().is_empty());
 }
 
-fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_annotation_control(stores: &mut Universe) -> MainControl {
     for (name, primitive) in [
         ("pdfannot", UnexpandablePrimitive::PdfAnnot),
         ("pdfstartlink", UnexpandablePrimitive::PdfStartLink),
@@ -5164,7 +5118,7 @@ fn pdftex_annotation_control(stores: &mut Universe) -> CanonicalMainControl {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
     }
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -5332,13 +5286,13 @@ fn pdf_thread_family_rejects_dvi_before_operand_scan() {
     }
 }
 
-fn pdftex_destination_control(stores: &mut Universe) -> CanonicalMainControl {
+fn pdftex_destination_control(stores: &mut Universe) -> MainControl {
     let destination = stores.intern("pdfdest");
     stores.set_meaning(
         destination,
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::PdfDest),
     );
-    CanonicalMainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
+    MainControl::with_profile(tex_command::CommandProfile::PDFTEX14029)
 }
 
 #[test]
@@ -5825,9 +5779,9 @@ fn pdf_snapping_checkpoint_restore_retries_without_duplicate_nodes() {
     ));
 }
 
-fn step_until_pdf_seed(control: &mut CanonicalMainControl, stores: &mut Universe, expected: i32) {
+fn step_until_pdf_seed(control: &mut MainControl, stores: &mut Universe, expected: i32) {
     for _ in 0..4 {
-        control.step(stores).expect("canonical random command");
+        control.step(stores).expect("random command");
         if stores.world().pdf_random_seed() == expected {
             return;
         }
@@ -6425,7 +6379,7 @@ fn macro_parameter_errors_have_distinct_tex82_diagnostics_and_commit_scope() {
 
     for case in cases {
         let mut stores = crate::test_harness::universe_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, case.source);
         run_to_end(&mut control, &mut stores);
         let output = terminal_text(&stores);
@@ -6467,7 +6421,7 @@ fn macro_tenth_parameter_reports_exact_limit_error() {
     // definition. The resulting macro therefore still has exactly the nine
     // legal parameters and can be called normally.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\def\nine#1#2#3#4#5#6#7#8#9#0{[#1#9]}\message{RESULT:\nine abcdefghi}\end",
@@ -6526,7 +6480,7 @@ fn etex_identical_local_integer_parameter_reassignment_is_not_a_mutation() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\endlinechar=13 \endlinechar=12 \global\endlinechar=12 \end",
@@ -6581,7 +6535,7 @@ fn etex_sparse_word_reassignment_retains_its_observed_boundary() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"{\count0=0 \dimen0=0pt \count300=0 \dimen301=0pt}\end",
@@ -6618,7 +6572,7 @@ fn etex_sparse_register_reads_keep_the_extended_index_after_group_exit() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\begingroup\tracingrestores=1\count20=5\count2000=5\endgroup
@@ -6641,7 +6595,7 @@ fn etex_toks_assignment_and_rhs_keep_sparse_register_indices() {
     // e-TeX 2.6 [49.1226--1227] uses `scan_register_num` for both the direct
     // token-register assignment target and a direct token-register RHS.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(&mut control, br"\toks2000={a b c} \toks2001=\toks2000 \end");
     let mut observations = ObservationRecorder::default();
     run_to_end_observed(&mut control, &mut stores, &mut observations);
@@ -6676,7 +6630,7 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
     let source = br"{\toks20={} \everypar={} \toks300={}
                       \global\toks20={} \global\everypar={}}\end";
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(&mut control, source);
     let mut observations = ObservationRecorder::default();
     run_to_end_observed(&mut control, &mut stores, &mut observations);
@@ -6703,7 +6657,7 @@ fn etex_dense_token_list_reassignments_use_eq_define_shortcut() {
     );
 
     let mut tex82 = Universe::new_with_plain_catcodes();
-    let mut tex82_control = CanonicalMainControl::tex82_initex(&mut tex82);
+    let mut tex82_control = MainControl::tex82_initex(&mut tex82);
     register_source(&mut tex82_control, br"\toks20={} \everypar={} \end");
     let mut tex82_observations = ObservationRecorder::default();
     run_to_end_observed(&mut tex82_control, &mut tex82, &mut tex82_observations);
@@ -6725,7 +6679,7 @@ fn etex_sparse_setbox_observes_delayed_and_immediate_commits() {
     // `sa_def_box`, so those delayed writes (and immediate void operands) are
     // sparse mutation boundaries; the dense `eq_define` target stays silent.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"{\setbox20=\hbox{} \setbox300=\hbox{}
@@ -6763,7 +6717,7 @@ fn etex_sparse_copy_keeps_a_nested_constructed_source_box() {
     // TeX82 §§1079--1081 make `\copy` a non-destructive read. e-TeX 2.6
     // [47.1077] extends the same operation to sparse box registers.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode
@@ -6795,7 +6749,7 @@ fn etex_sparse_box_dimension_assignment_is_visible_to_internal_scans() {
     // `scan_register_num`; [26.420] uses the same sparse fetch when `\ht`
     // is subsequently scanned as an internal dimension.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox32101=\hbox{} \ht32101=2pt
@@ -6822,7 +6776,7 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(&mut control, br"{\lccode`A=`a \global\lccode`A=`z}\end");
     let mut observations = ObservationRecorder::default();
     loop {
@@ -6863,7 +6817,7 @@ fn etex_identical_local_code_reassignment_is_a_save_stack_noop() {
     let format = stores.dump_format().expect("dump extended e-TeX format");
     let mut loaded = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore extended e-TeX format");
-    let mut loaded_control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
+    let mut loaded_control = MainControl::with_profile(CommandProfile::ETEX26);
     register_source(
         &mut loaded_control,
         br"{\lccode`A=`z \global\lccode`A=`q}\end",
@@ -6903,7 +6857,7 @@ fn etex_zero_glue_parameter_reassignment_uses_canonical_pointer_identity() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\parfillskip=0pt \parfillskip=1pt \parfillskip=1pt \end",
@@ -6951,7 +6905,7 @@ fn etex_glue_expression_reassignment_retains_source_pointer_identity() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\skip0=1pt \skip0=\glueexpr\skip0\relax \skip0=1pt \skip0=\glueexpr\skip0+0pt\relax \global\skip0=\glueexpr\skip0\relax \end",
@@ -6991,7 +6945,7 @@ fn etex_sparse_skip_reassignment_keeps_sa_def_mutation_boundary() {
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\skipdef\alias=32767 \alias=1pt \alias=\glueexpr\alias\relax \end",
@@ -7040,7 +6994,7 @@ fn etex_penalty_array_assignments_are_mode_complete_and_consume_exactly_their_va
     for (name, kind) in ARRAYS {
         for mode in MODES {
             let mut stores = Universe::new_with_plain_catcodes();
-            let mut control = canonical_etex_initex(&mut stores);
+            let mut control = etex_initex(&mut stores);
             if mode != Mode::Vertical {
                 control.modes.push(mode).expect("test mode push");
             }
@@ -7071,7 +7025,7 @@ fn etex_penalty_array_mutations_use_their_extended_token_register_slots() {
     // e-TeX 2.6 [17.230] inserts these eqtb entries after the 256 dense token
     // registers, and [49.1248] assigns each with `define`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\interlinepenalties=1 10
@@ -7112,7 +7066,7 @@ fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
     // boxes, while an hbox must leave the array alone.
     for (box_command, expected_mutations) in [("vbox", 2), ("vtop", 2), ("hbox", 1)] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = canonical_etex_initex(&mut stores);
+        let mut control = etex_initex(&mut stores);
         let source = format!(r"\interlinepenalties=1 10 \setbox0=\{box_command}{{}} \end");
         register_source(&mut control, source.as_bytes());
         let mut observations = ObservationRecorder::default();
@@ -7139,7 +7093,7 @@ fn etex_vertical_box_normal_paragraph_observes_interline_penalty_reset() {
 #[test]
 fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_tokens() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\interlinepenalties=1 11 \interlinepenalties=0
@@ -7169,7 +7123,7 @@ fn etex_nonpositive_penalty_array_counts_clear_without_consuming_following_token
 #[test]
 fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\clubpenalties=2 200 100
@@ -7209,7 +7163,7 @@ fn etex_penalty_array_scope_enquiries_and_afterassignment_match_set_shape() {
 #[test]
 fn etex_penalty_array_assignment_restores_checkpoint_and_retries_atomically() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(&mut control, br"\clubpenalties=2 7 5 \count0=23 \end");
     let checkpoint = control
         .capture_checkpoint(
@@ -7258,7 +7212,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
 
     for mode in MODES {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         if mode != Mode::Vertical {
             control.modes.push(mode).expect("test mode push");
         }
@@ -7312,7 +7266,7 @@ fn main_control_dispatch_matrix_consumes_each_command_once() {
 #[test]
 fn main_control_error_privilege_and_stop_paths_are_finite() {
     let mut internal_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut internal = CanonicalMainControl::tex82_initex(&mut internal_stores);
+    let mut internal = MainControl::tex82_initex(&mut internal_stores);
     internal
         .modes
         .push(Mode::InternalVertical)
@@ -7324,7 +7278,7 @@ fn main_control_error_privilege_and_stop_paths_are_finite() {
     assert!(terminal_text(&internal_stores).contains("can't use `\\end'"));
 
     let mut page_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut page = CanonicalMainControl::tex82_initex(&mut page_stores);
+    let mut page = MainControl::tex82_initex(&mut page_stores);
     register_source(&mut page, br"\hrule\end");
     let mut observations = ObservationRecorder::default();
     for _ in 0..32 {
@@ -7349,7 +7303,7 @@ fn illegal_case_command_spelling_uses_live_escapechar() {
     // through `print_cmd_chr`; its primitive cases use `print_esc`, whose
     // escape prefix is omitted when `\escapechar` is outside 0..255.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control
         .modes
         .push(Mode::InternalVertical)
@@ -7372,7 +7326,7 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
     // and make `\closein` restore the stream's closed/EOF state.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     for (name, bytes) in [("first.tex", &b"one"[..]), ("second.dat", &b"two"[..])] {
         control.capabilities_mut().register_input(
             name,
@@ -7405,7 +7359,7 @@ fn openin_closein_replace_stream_state_and_apply_filename_rules() {
 fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control
         .capabilities_mut()
         .mark_input_unavailable("absent.tex");
@@ -7415,7 +7369,7 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
 
     let first = control
         .advance(&mut stores)
-        .expect_err("unavailable input is a captured canonical diagnostic");
+        .expect_err("unavailable input is a captured diagnostic");
     let first_site = first.diagnostic_site();
     let first_origin = first_site
         .primary_origin()
@@ -7446,7 +7400,7 @@ fn unavailable_input_diagnostic_site_survives_failed_step_retry() {
 fn a_macro_context_level_names_the_macro_and_shows_its_parameter_text() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_int_param(tex_state::env::banks::IntParam::new(54), 5);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\def\a#1{ x #1 \undefinedthing y}\a{Q}\end");
     run_to_end(&mut control, &mut stores);
     let terminal = terminal_text(&stores);
@@ -7471,7 +7425,7 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
         .world_mut()
         .push_memory_terminal_line("replacement")
         .expect("terminal line queues");
-    let mut control = canonical_etex_initex(&mut stores);
+    let mut control = etex_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\line{\begingroup\scantokens{\message{level=\the\currentgrouplevel}}}\tracingassigns=1\tracingcommands=2\readline16to\line\endlinechar=-1\end",
@@ -7495,7 +7449,7 @@ fn readline_assignment_trace_precedes_the_next_command_trace() {
 #[test]
 fn a_stray_right_brace_names_the_group_opener_it_replaced() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\hbox{$x}$}\begingroup}\end");
     run_to_end(&mut control, &mut stores);
     let terminal = terminal_text(&stores);
@@ -7517,7 +7471,7 @@ fn extra_right_brace_in_an_argument_names_the_macro() {
     // extra }" -- `sprint_cs(warning_index)`, the macro whose argument was
     // being matched, not a placeholder.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\def\a#1{[#1]}\a}\end");
     run_to_end(&mut control, &mut stores);
     let terminal = terminal_text(&stores);
@@ -7547,7 +7501,7 @@ fn out_of_range_read_selector_reaches_the_terminal_without_a_report() {
         .world_mut()
         .push_memory_terminal_line("recovered")
         .expect("terminal line queues");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\read16 to \line\end");
     let mut observations = ObservationRecorder::default();
     for _ in 0..64 {
@@ -7611,7 +7565,7 @@ fn read_to_definition_preserves_effective_scope_and_replay() {
             .push_memory_terminal_line(line)
             .expect("memory terminal accepts a line");
     }
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\local{old}{\read-1to\local}\def\explicit{old}{\global\read-1to\explicit}\globaldefs=1\def\forcedglobal{old}{\read-1to\forcedglobal}\globaldefs=-1\gdef\forcedlocal{old}{\global\read-1to\forcedlocal}\globaldefs=0\end",
@@ -7657,7 +7611,7 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
         .world_mut()
         .push_memory_terminal_line("alpha")
         .expect("memory terminal accepts a line");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\target{old}\afterassignment\relax\global\read-1to\target\end",
@@ -7722,7 +7676,7 @@ fn read_to_mutation_precedes_afterassignment_replay_and_carries_exact_meaning() 
 #[test]
 fn message_expands_balanced_text_and_applies_terminal_line_spacing() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\value{expanded}\message{left {\value} right}\count0=7\end",
@@ -7737,7 +7691,7 @@ fn message_slow_prints_nonprintable_character_tokens() {
     // tex.web §§59, 1279: message text is a string, so character 13 uses the
     // one-character string spelling rather than §58's raw `print_char` path.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\newlinechar=10\message{READLINE:[macro:->Alpha ^^M]}\end",
@@ -7749,7 +7703,7 @@ fn message_slow_prints_nonprintable_character_tokens() {
 #[test]
 fn errmessage_selects_user_or_once_only_builtin_help_and_clears_flag() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\value{expanded}\errmessage{bad \value}\count0=8\end",
@@ -7766,7 +7720,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
     // only character-token codes, preserving their command/category; zero
     // table entries and control-sequence tokens remain byte-for-byte tokens.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\uccode`!=`Z\lccode`?=`y\catcode126=13\uccode126=88\uppercase{\gdef\up{!\relax}}\lowercase{\gdef\down{?\relax}}\uppercase{\gdef\active{~}}\uppercase{\gdef\zero{@}}\end",
@@ -7808,7 +7762,7 @@ fn case_shift_preserves_raw_token_structure_at_code_table_boundaries() {
 #[test]
 fn show_dispatch_selects_activities_box_meaning_or_value_without_mode_dependence() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\shown{expanded}\show\shown\count0=17\showthe\count0\setbox0=\hbox{}\showbox0\end",
@@ -7846,7 +7800,7 @@ fn show_uses_print_nl_at_closed_terminal_and_log_selector_boundaries() {
                 .expect("memory terminal accepts the show response");
         }
         stores.printer().print("\\show\\errorstopmode").print_ln();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         stores.set_interaction_mode(mode);
         register_source(&mut control, br"\show\errorstopmode\end");
         run_to_end(&mut control, &mut stores);
@@ -7878,7 +7832,7 @@ fn errorstop_show_reports_live_source_context_before_prompting_and_resumes() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts the show response");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\show\errorstopmode\count0=23\end");
 
     run_to_end(&mut control, &mut stores);
@@ -7914,7 +7868,7 @@ fn error_stop_deletes_requested_tokens_before_retry() {
         .world_mut()
         .push_memory_terminal_line("")
         .expect("retry response queues");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\show\errorstopmode ab\count0=17\end");
 
     run_to_end(&mut control, &mut stores);
@@ -7941,7 +7895,7 @@ fn error_stop_inserts_replacement_line_before_suspended_input_once() {
         .world_mut()
         .push_memory_terminal_line("\\count0=17")
         .expect("replacement line queues");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\show\errorstopmode\advance\count1 by 23\end",
@@ -7975,7 +7929,7 @@ fn consecutive_shows_and_following_error_preserve_only_canonical_separators() {
     // TeX82 §§82/90/1293 leave one blank separator after each noninteractive
     // show completion. The following `print_nl` must not add another.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\show\errorstopmode\show\scrollmode\undefined\end",
@@ -8011,7 +7965,7 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
     // only actual engine effects such as messages, writes, and termination
     // are published as effect observations.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\showlists\end");
     let mut observations = ObservationRecorder::default();
     loop {
@@ -8036,7 +7990,7 @@ fn showlists_is_a_diagnostic_without_a_canonical_effect_event() {
 #[test]
 fn show_meaning_reads_raw_token_and_formats_each_macro_meaning_kind() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\macro{body}\show\undefined\show\relax\show\macro\end",
@@ -8115,9 +8069,9 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
     for extended in [false, true] {
         let mut stores = Universe::new_with_plain_catcodes();
         let mut control = if extended {
-            canonical_etex_initex(&mut stores)
+            etex_initex(&mut stores)
         } else {
-            CanonicalMainControl::tex82_initex(&mut stores)
+            MainControl::tex82_initex(&mut stores)
         };
         register_source(&mut control, SOURCE);
 
@@ -8184,7 +8138,7 @@ fn show_meaning_prints_all_named_glue_and_register_symbols() {
 #[test]
 fn showbox_scans_register_and_distinguishes_void_from_box_contents() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\showboxbreadth=10\showboxdepth=10\setbox0=\hbox{\kern1pt}\setbox255=\hbox{}\showbox0\showbox255\showbox1\end",
@@ -8204,16 +8158,14 @@ fn etex_showbox_invalid_register_loaded_format_checkpoint_retry_recovers_to_zero
     // with `scan_register_num`, whose restricted scan diagnoses -1, recovers
     // it to zero, and leaves the following token for the next command.
     let mut initex_stores = crate::test_harness::universe_with_plain_catcodes();
-    let _ = canonical_etex_initex(&mut initex_stores);
+    let _ = etex_initex(&mut initex_stores);
     let format = initex_stores
         .dump_format()
         .expect("dump extended e-TeX format");
     let mut stores = Universe::from_format(tex_state::World::memory(), &format)
         .expect("restore extended e-TeX format");
-    let mut control = CanonicalMainControl::with_profile(CommandProfile::ETEX26);
-    control
-        .set_fuel_limit(1_000)
-        .expect("bounded canonical fuel");
+    let mut control = MainControl::with_profile(CommandProfile::ETEX26);
+    control.set_fuel_limit(1_000).expect("bounded fuel");
     register_source(&mut control, br"\showbox-1\count0=23\end");
     let checkpoint = control
         .capture_checkpoint(
@@ -8266,7 +8218,7 @@ fn showthe_uses_the_toks_for_each_internal_value_family_and_releases_output() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let nullfont = stores.intern("nullfont");
     stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\count0=17\skip0=1pt plus 2fil\toks0={abc}\showthe\count0\showthe\skip0\showthe\font\showthe\toks0\end",
@@ -8285,7 +8237,7 @@ fn showthe_token_lists_use_print_cs_separator_rules() {
     // token-list values. Hash-table control words always gain a separator;
     // direct-address control symbols and active characters do not.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\catcode`\~=13 \toks0={A\count1\!B\?C~D\relax\!}\showthe\toks0\end",
@@ -8304,7 +8256,7 @@ fn showthe_token_lists_use_print_cs_separator_rules() {
 fn show_completion_routes_transcript_and_adjusts_error_count_by_interaction() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\showthe\count0\count1=9\end");
     run_to_end(&mut control, &mut stores);
     assert!(terminal_text(&stores).contains("> 0."));
@@ -8314,7 +8266,7 @@ fn show_completion_routes_transcript_and_adjusts_error_count_by_interaction() {
 #[test]
 fn final_cleanup_retires_inputs_reports_open_state_and_selects_end_or_dump() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\def\stop{\end}\stop");
     let mut observations = ObservationRecorder::default();
     loop {
@@ -8348,9 +8300,9 @@ fn end_and_dump_run_profile_specific_cleanup_in_observable_order() {
         for dump in [false, true] {
             let mut stores = Universe::new_with_plain_catcodes();
             let mut control = if profile == CommandProfile::ETEX26 {
-                canonical_etex_initex(&mut stores)
+                etex_initex(&mut stores)
             } else {
-                CanonicalMainControl::tex82_initex(&mut stores)
+                MainControl::tex82_initex(&mut stores)
             };
             control.begin_job(&mut stores, "lifecycle.tex");
             register_source(
@@ -8413,7 +8365,7 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
     stores.set_int_param(IntParam::YEAR, 2026);
     stores.set_int_param(IntParam::MONTH, 7);
     stores.set_int_param(IntParam::DAY, 9);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control
         .capabilities_mut()
         .set_startup_job_name("bounded-dump.tex");
@@ -8435,7 +8387,7 @@ fn initex_dump_owns_identifier_but_waits_for_publication_receipt() {
 #[test]
 fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\catcode`\#=6 \catcode`\&=4
@@ -8456,7 +8408,7 @@ fn valign_cell_endv_closes_an_open_paragraph_before_fin_col() {
 #[test]
 fn final_cleanup_reports_nested_condition_kinds_lines_and_order_exactly() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\iftrue\n\\ifcase0\n\\ifnum1=1\n\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -8492,7 +8444,7 @@ fn language_whatsits(stores: &Universe) -> Vec<(u8, u8, u8)> {
 #[test]
 fn language_normalization_and_same_language_append_boundaries_match_tex82() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     // TeX82 §1377 normalizes `cur_val` in both out-of-range directions to
     // language zero, and §1091's `norm_min` clamps each hyphen minimum into
     // `1..=63`. The exact 255/256 boundary proves that 255 is retained while
@@ -8513,7 +8465,7 @@ fn language_normalization_and_same_language_append_boundaries_match_tex82() {
 #[test]
 fn setlanguage_illegal_mode_recovers_without_scan_or_append() {
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     // TeX82 §1377 tests `abs(mode)<>hmode` before `new_whatsit` and before
     // `scan_int`, so the operand is never consumed: the following assignment
     // is the very next command main control sees.
@@ -8570,7 +8522,7 @@ fn spanning_alignment_source(spans: &str) -> Vec<u8> {
 #[test]
 fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     // 128+64+32+16+8+4+2+1 = 255 `\span` delimiters, so §798's `n` is exactly
     // `max_quarterword` and the guard `n>max_quarterword` does not fire.
     register_source(
@@ -8587,7 +8539,7 @@ fn two_hundred_fifty_five_span_steps_stay_within_section_798s_bound() {
 #[test]
 fn two_hundred_fifty_six_span_steps_succumb_to_section_798s_confusion() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     // `\i` is 2^8 = 256 `\span` delimiters, so §798's `n` is 256 and
     // `if n>max_quarterword then confusion("256 spans")` fires.
     register_source(&mut control, &spanning_alignment_source(r"\i"));
@@ -8605,7 +8557,7 @@ fn two_hundred_fifty_six_span_steps_succumb_to_section_798s_confusion() {
 #[test]
 fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, &spanning_alignment_source(r"\i"));
 
     run_to_end(&mut control, &mut stores);
@@ -8626,7 +8578,7 @@ fn a_succumbed_session_stays_terminal_without_delivering_another_command() {
 #[test]
 fn succumbing_commits_fatal_diagnostic_then_engine_termination() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, &spanning_alignment_source(r"\i"));
 
     let mut observations = ObservationRecorder::default();
@@ -8657,7 +8609,7 @@ fn setbox_scope_is_globaldefs_adjusted_before_the_box_is_scanned() {
     // `prefixed_command`, so a positive `\globaldefs` makes an unprefixed
     // `\setbox` global and a negative one makes `\global\setbox` local.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\globaldefs=1 {\setbox0=\hbox{\kern1pt}}\globaldefs=-1 {\global\setbox1=\hbox{\kern1pt}}\globaldefs=0 \end",
@@ -8674,7 +8626,7 @@ fn effective_scope_is_shared_by_provisional_and_committed_meaning_mutations() {
     // install their provisional meanings. §§277-279 then expose that same
     // resolved choice for both provisional and final definitions.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"{\globaldefs=1\chardef\forcedchar=65\countdef\forcedregister=2}{\globaldefs=-1\global\chardef\localchar=66\global\countdef\localregister=3}\globaldefs=0\end",
@@ -8736,7 +8688,7 @@ fn every_non_eqtb_assignment_family_fires_afterassignment_once() {
     // §1269 reaches `done` after each completed assignment. The saved token
     // must enter through ordinary §325 back_input exactly once.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\mark{\global\advance\count0 by1}\afterassignment\mark\nullfont\afterassignment\mark\textfont0=\nullfont\afterassignment\mark\setbox0=\hbox{}\afterassignment\mark\prevdepth=0pt x\afterassignment\mark\spacefactor=1000\par\afterassignment\mark\prevgraf=0\afterassignment\mark\pagegoal=1pt\afterassignment\mark\deadcycles=0\afterassignment\mark\hyphenation{word}\afterassignment\mark\nonstopmode\end",
@@ -8751,7 +8703,7 @@ fn every_non_eqtb_assignment_family_fires_afterassignment_once() {
 fn openin_supplies_the_default_tex_extension() {
     // TeX82 §1275's `if cur_ext="" then cur_ext:=".tex"; pack_cur_name`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     control.capabilities_mut().register_input(
         "child.tex",
         SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"body"[..])),
@@ -8783,7 +8735,7 @@ fn fontdimen_reports_an_unusable_parameter_number_and_leaves_the_font_alone() {
     // TeX82 §578 resolves `n<=0` to the scratch `fmem_ptr`; §579 reports it
     // and §1253 still consumes `=<dimen>`, so the next command runs.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\fontdimen0\nullfont=1pt \count0=1\end");
     run_to_end(&mut control, &mut stores);
 
@@ -8841,7 +8793,7 @@ fn fontdimen_identifier_and_bound_recovery_matrix_is_exact() {
         let original: Vec<_> = (1..=7)
             .map(|number| stores.font_parameter(tex_state::font::NULL_FONT, number))
             .collect();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(&mut control, source);
         run_to_end(&mut control, &mut stores);
 
@@ -8885,7 +8837,7 @@ fn font_definition_size_boundaries_use_exact_replacements() {
     // value is 1..(2048pt-1sp); each adjacent invalid value becomes 1000 or
     // 10pt respectively before §1257 interns the font.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_source(
         &mut control,
@@ -8928,7 +8880,7 @@ fn malformed_tfm_recovers_to_nullfont_with_assignment_scope() {
     // A local failed definition must roll back at group end, while a global
     // failed definition leaves the selector bound to nullfont.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     stores
         .world_mut()
@@ -9018,9 +8970,8 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
     let family_before = stores.math_family_font(MathFontSize::Text, 0);
     let state_before = stores.testing_state_hash();
 
-    let error =
-        assign_canonical_math_family_font(&mut stores, MathFontSize::Text, 0, unsupported, true)
-            .expect_err("OpenType-only font cannot enter a classic math family");
+    let error = assign_math_family_font(&mut stores, MathFontSize::Text, 0, unsupported, true)
+        .expect_err("OpenType-only font cannot enter a classic math family");
 
     assert!(matches!(error, ExecError::OpenTypeMathUnsupported));
     assert_eq!(
@@ -9028,7 +8979,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
         family_before
     );
     assert_eq!(stores.testing_state_hash(), state_before);
-    assign_canonical_math_family_font(
+    assign_math_family_font(
         &mut stores,
         MathFontSize::Text,
         0,
@@ -9043,7 +8994,7 @@ fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
     // TeX82 §1257 compares the case-sensitive name and size when reusing a
     // font, then assigns font_id_text(f):=u even on the reuse path.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_cmr10_as(&mut control, &mut stores, "cmr10.tfm");
     register_cmr10_as(&mut control, &mut stores, "CMR10.tfm");
     register_source(
@@ -9081,7 +9032,7 @@ fn font_definition_identity_is_case_sensitive_and_tracks_newest_identifier() {
 fn arithmetic_overflow_reports_and_leaves_the_target_unchanged() {
     // TeX82 §1236 returns before `word_define` when `arith_error` is set.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\count0=2000000000 \multiply\count0 by2 \count1=7 \divide\count1 by0 \count2=1\end",
@@ -9104,7 +9055,7 @@ fn invalid_arithmetic_target_recovers_and_fires_afterassignment() {
     // TeX82 §1236 consumes an invalid target, reports the error, and returns
     // through §1269's common path, which still replays `\afterassignment`.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\prevdepth=2pt \def\mark{\global\count0=7}\afterassignment\mark\advance\prevdepth \count1=9\end",
@@ -9131,7 +9082,7 @@ fn frozen_page_scalar_rejection_is_checkpoint_atomic() {
     // the live frozen page values and the rejected target for an identical
     // retry through §1269's recovery path.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode \topskip=0pt \setbox0=\hbox{}\copy0
@@ -9180,7 +9131,7 @@ fn invalid_arithmetic_target_uses_live_escapechar_for_operator() {
         tex_state::env::banks::IntParam::ESCAPE_CHAR,
         i32::from(b'|'),
     );
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\advance\prevdepth\end");
     run_to_end(&mut control, &mut stores);
 
@@ -9197,7 +9148,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
     // and return through §1269 once. Prefix scope is therefore immaterial,
     // including both \globaldefs overrides.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\mark{\global\advance\count0 by1}
@@ -9247,7 +9198,7 @@ fn invalid_arithmetic_targets_use_print_cmd_chr_and_commit_without_mutation() {
     );
 
     let mut isolated_stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut isolated = CanonicalMainControl::tex82_initex(&mut isolated_stores);
+    let mut isolated = MainControl::tex82_initex(&mut isolated_stores);
     register_source(&mut isolated, br"\advance x");
     let mut isolated_observations = ObservationRecorder::default();
     isolated
@@ -9268,7 +9219,7 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
     // The §1236 recovery and §1269 afterassignment replay are a committed
     // operation. A later missing-resource rollback cannot duplicate either.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\def\mark{\global\advance\count0 by1}
@@ -9282,7 +9233,7 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
         }
         assert!(matches!(
             control.advance(&mut stores).expect("setup executes"),
-            CanonicalStepResult::Progress(ReplayStep::Continue)
+            StepResult::Progress(ReplayStep::Continue)
         ));
     }
     assert_eq!(stores.count(0), 1);
@@ -9292,7 +9243,7 @@ fn invalid_arithmetic_target_commit_survives_later_resource_retry() {
     for _ in 0..3 {
         assert!(matches!(
             control.advance(&mut stores).expect("missing input suspends"),
-            CanonicalStepResult::Suspended(CanonicalResourceNeed::Input {
+            StepResult::Suspended(ResourceNeed::Input {
                 name,
                 original_name,
             }) if name == "child.tex" && original_name == "child"
@@ -9308,7 +9259,7 @@ fn message_spacing_follows_the_texweb_1280_offset_rule() {
     // TeX82 §1280 separates consecutive `\message` texts with one space when
     // a line is already open.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\message{a}\message{b}\end");
     run_to_end(&mut control, &mut stores);
 
@@ -9324,7 +9275,7 @@ fn errmessage_prefers_errhelp_over_the_builtin_help() {
     // TeX82 §1283: `if err_help<>null then use_err_help:=true`, and §90 shows
     // it on the transcript.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode\errhelp={user help}\errmessage{bad}\count0=1\end",
@@ -9342,8 +9293,8 @@ fn errmessage_prefers_errhelp_over_the_builtin_help() {
 fn patterns_and_dump_are_initex_only_and_reported_in_a_production_session() {
     // TeX82 §1252 and §1335 are both `init`-guarded.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let _initex = CanonicalMainControl::tex82_initex(&mut stores);
-    let mut control = CanonicalMainControl::new();
+    let _initex = MainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::new();
     register_source(&mut control, br"\patterns{a1b}\count0=1\dump");
     run_to_end(&mut control, &mut stores);
 
@@ -9371,7 +9322,7 @@ fn initex_late_patterns_absorbs_its_discarded_group() {
     // `scan_toks(false,false)`, so §473 enters absorbing status before §403
     // reads the group's left brace.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     stores.close_hyphenation_patterns();
     register_source(
         &mut control,
@@ -9428,7 +9379,7 @@ fn initex_late_patterns_prompts_at_the_pre_scan_section_960_context() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts the error response");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     stores.close_hyphenation_patterns();
     register_source(&mut control, b"\\patterns{toolate}\\count0=1\\end");
 
@@ -9451,7 +9402,7 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
     // The schema-v1 TeX82 instrumentation publishes no diagnostic event for
     // either the scanner or apply sites.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\nonstopmode
@@ -9463,7 +9414,7 @@ fn hyphenation_diagnostics_preserve_tex82_recovery_and_apply_order() {
     loop {
         match control
             .step_with_observer(&mut stores, &mut observations)
-            .expect("canonical program executes")
+            .expect("program executes")
         {
             MainControlStep::End | MainControlStep::EndOfInput => break,
             MainControlStep::Continue => {}
@@ -9512,7 +9463,7 @@ fn nonletter_zero_pattern_uses_the_edge_sentinel() {
     // and overlapping 0B2B0 patterns are negative controls for max-level
     // resolution: only the maximal odd positions survive.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode \\lccode`A=1 \\chardef\\?=`b \\patterns{\\?50AA1b3 bb bb1 0B2B0 b1c}\\end",
@@ -9535,7 +9486,7 @@ fn bad_patterns_reports_the_live_section_961_source_context() {
     // classifies the offending command. The context cursor is therefore
     // immediately after `\relax`, before scanning resumes.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\n\\patterns{ab\\relax cd}\n\\end",
@@ -9561,7 +9512,7 @@ fn pattern_nonletter_prompts_at_the_live_section_962_source_context() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts the error response");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\patterns{ab!cd ef1gh}\\count0=1\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -9590,7 +9541,7 @@ fn duplicate_pattern_prompts_at_the_live_section_963_separator_context() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts the error response");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, b"\\patterns{a1b a2b next}\\count0=1\\end");
 
     run_to_end(&mut control, &mut stores);
@@ -9612,7 +9563,7 @@ fn duplicate_pattern_prompts_at_the_live_section_963_separator_context() {
 #[test]
 fn distinct_pattern_paths_do_not_report_section_963_duplicate() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\\patterns{a1b a2c}\\count0=1\\end",
@@ -9639,7 +9590,7 @@ fn pending_pattern_duplicate_view_follows_section_963_replacement_order() {
         ("bb bb bb", 0),   // repeated operationless
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         register_source(
             &mut control,
             format!("\\nonstopmode\\patterns{{{patterns}}}\\count0=1\\end").as_bytes(),
@@ -9661,7 +9612,7 @@ fn pending_pattern_duplicate_view_follows_section_963_replacement_order() {
 #[test]
 fn operationless_pattern_path_is_not_a_section_963_duplicate() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\\patterns{bb bb1 b2b}\\count0=1\\end",
@@ -9682,7 +9633,7 @@ fn operationless_pattern_path_is_not_a_section_963_duplicate() {
 #[test]
 fn pattern_duplicate_paths_are_partitioned_by_language() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\\language=1\\patterns{b1b}\\language=2\\patterns{b2b}\\count0=1\\end",
@@ -9713,7 +9664,7 @@ fn committed_and_pending_pattern_paths_share_replacement_order() {
             )
             .expect("pattern fits the default trie capacity")
     );
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\\patterns{bb b2b}\\count0=1\\end",
@@ -9736,7 +9687,7 @@ fn first_pattern_digit_is_a_level_not_a_section_962_nonletter() {
     // TeX82 §962's `digit_sensed=false` branch treats the first ASCII digit
     // as a hyphen level and therefore never consults its zero `\lccode`.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         b"\\nonstopmode\\patterns{ab1cd}\\count0=1\\end",
@@ -9765,7 +9716,7 @@ fn pattern_length_bound_preserves_section_962_digit_state() {
         (2, "1a", 0),
     ] {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+        let mut control = MainControl::tex82_initex(&mut stores);
         let source = format!(
             "\\nonstopmode\\patterns{{{}{suffix}}}\\count0=1\\end",
             "a".repeat(letters)
@@ -9793,7 +9744,7 @@ fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
         .world_mut()
         .push_memory_terminal_line("s")
         .expect("memory terminal accepts a line");
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\showthe\count0 \count1=1\end");
     run_to_end(&mut control, &mut stores);
 
@@ -9810,7 +9761,7 @@ fn show_completion_prompts_in_error_stop_mode_and_honors_the_answer() {
 #[test]
 fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\nonstopmode\missing\count0=17\end");
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.count(0), 17, "the following command remains live");
@@ -9834,7 +9785,7 @@ fn undefined_control_sequence_reports_once_and_drops_only_its_token() {
 #[test]
 fn misplaced_tab_reports_once_and_drops_only_the_delimiter() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\nonstopmode&\count0=19\end");
     run_to_end(&mut control, &mut stores);
     assert_eq!(stores.count(0), 19, "the delimiter was not backed up");
@@ -9903,13 +9854,13 @@ fn math_group_collapses_only_one_undecorated_ord_nucleus() {
     }
 }
 
-fn run_canonical_etex(source: &[u8]) -> Universe {
+fn run_etex(source: &[u8]) -> Universe {
     let mut stores = Universe::new_with_plain_catcodes();
     tex_command::install_tex82_expandable_primitives(&mut stores);
     tex_command::install_etex_expandable_primitives(&mut stores);
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(&mut control, source);
     run_to_end(&mut control, &mut stores);
     stores
@@ -9923,7 +9874,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
     // standard nonstop test host so §82 tests the recovery instead of ending
     // at an exhausted interactive terminal while asking for error advice.
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\hbox{A\end");
 
     let mut terminal_step = None;
@@ -9958,8 +9909,7 @@ fn end_inside_unterminated_box_reaches_outer_cleanup() {
 
 #[test]
 fn parshape_and_hanging_parameters_reset_after_paragraph() {
-    let stores =
-        run_canonical_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2 x\par");
+    let stores = run_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2 x\par");
     assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
     assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
     assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
@@ -9968,8 +9918,7 @@ fn parshape_and_hanging_parameters_reset_after_paragraph() {
 
 #[test]
 fn vertical_par_resets_normal_paragraph_parameters_without_material() {
-    let stores =
-        run_canonical_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2\par");
+    let stores = run_etex(br"\parshape=1 3pt 40pt\hangindent=5pt\hangafter=2\looseness=2\par");
     assert_eq!(stores.dimen_param(DimenParam::HANG_INDENT).raw(), 0);
     assert_eq!(stores.int_param(IntParam::HANG_AFTER), 1);
     assert_eq!(stores.int_param(IntParam::LOOSENESS), 0);
@@ -9980,17 +9929,17 @@ fn vertical_par_resets_normal_paragraph_parameters_without_material() {
 
 #[test]
 fn parshape_assignment_obeys_local_and_global_grouping() {
-    let local = run_canonical_etex(br"\parshape=1 3pt 40pt{\parshape=0}\end");
+    let local = run_etex(br"\parshape=1 3pt 40pt{\parshape=0}\end");
     assert_eq!(local.paragraph_shape().len(), 1);
     assert_eq!(local.paragraph_shape()[0].indent.raw(), 3 * 65_536);
-    let global = run_canonical_etex(br"{\global\parshape=1 7pt 80pt}\end");
+    let global = run_etex(br"{\global\parshape=1 7pt 80pt}\end");
     assert_eq!(global.paragraph_shape().len(), 1);
     assert_eq!(global.paragraph_shape()[0].indent.raw(), 7 * 65_536);
 }
 
 #[test]
 fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
-    let stores = run_canonical_etex(
+    let stores = run_etex(
         br"\parshape=2 1pt 2pt 3pt 4pt
           \edef\result{\the\parshapeindent1/\the\parshapelength1/\the\parshapedimen3/\the\parshapedimen4/\the\parshapeindent8/\the\parshapelength8/\the\parshapeindent0}\end",
     );
@@ -10002,7 +9951,7 @@ fn etex_parshape_enquiries_return_explicit_and_repeated_components() {
 
 #[test]
 fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
-    let stores = run_canonical_etex(
+    let stores = run_etex(
         br"\clubpenalties=2 200 100 \widowpenalties=2 300 400
           \displaywidowpenalties=1 500 {\clubpenalties=1 7}
           \interlinepenalties=2 8 7
@@ -10019,7 +9968,7 @@ fn etex_penalty_arrays_assign_query_restore_and_reset_interline_at_par() {
 #[test]
 fn long_prefix_on_let_reports_tex_prefix_error() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, br"\nonstopmode\long\let\a=b");
     run_to_end(&mut control, &mut stores);
     assert!(terminal_text(&stores).contains("You can't use `\\long'"));
@@ -10035,7 +9984,7 @@ fn long_prefix_on_let_reports_tex_prefix_error() {
 
 #[test]
 fn interactionmode_reads_and_assigns_globally() {
-    let stores = run_canonical_etex(
+    let stores = run_etex(
         br"\edef\before{\the\interactionmode}\begingroup\interactionmode=1\endgroup\edef\after{\the\interactionmode}",
     );
     assert_eq!(macro_character_text(&stores, "before"), "3");
@@ -10054,7 +10003,7 @@ fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
     crate::install_unexpandable_primitives(&mut stores);
     crate::install_etex_unexpandable_primitives(&mut stores);
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::prepared_initex(CommandProfile::ETEX26);
+    let mut control = MainControl::prepared_initex(CommandProfile::ETEX26);
     register_source(
         &mut control,
         br"\interactionmode=-1\edef\result{\the\interactionmode}",
@@ -10066,8 +10015,7 @@ fn interactionmode_rejects_out_of_range_values_without_changing_mode() {
 
 #[test]
 fn etex_showgroups_and_showifs_render_live_nested_stacks() {
-    let stores =
-        run_canonical_etex(br"\nonstopmode\begingroup\iftrue\showgroups\showifs\fi\endgroup");
+    let stores = run_etex(br"\nonstopmode\begingroup\iftrue\showgroups\showifs\fi\endgroup");
     let output = terminal_text(&stores);
     assert!(
         output.contains("### semi simple group (level 1) entered at line 1 (\\begingroup)"),
@@ -10079,7 +10027,7 @@ fn etex_showgroups_and_showifs_render_live_nested_stacks() {
 
 #[test]
 fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
-    let mut stores = run_canonical_etex(
+    let mut stores = run_etex(
         br"\let\bgroup={\protected\def\two{}\let\three=\two\protected\unexpanded\bgroup\two\protected\three\protected\def\one{\two}}",
     );
     let one = stores.intern("one");
@@ -10098,7 +10046,7 @@ fn protected_prefix_resumes_command_demand_after_unexpanded_tokens() {
 
 #[test]
 fn global_prefix_resumes_command_demand_inside_unexpanded_tokens() {
-    let mut stores = run_canonical_etex(
+    let mut stores = run_etex(
         br"\let\flag\iftrue\def\setfalse{\let\flag\iffalse}\begingroup\global\unexpanded{\setfalse}\endgroup",
     );
     let flag = stores.intern("flag");

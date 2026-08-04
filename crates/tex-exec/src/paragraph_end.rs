@@ -19,7 +19,7 @@ pub(crate) use hyphenation::{apply_scanned_hyphenation_exceptions, apply_scanned
 pub use runtime::cached_pretolerance_plan;
 pub(crate) use runtime::{
     ParagraphBreakResult, break_current_paragraph, display_line_dimensions, normal_paragraph,
-    start_canonical_paragraph,
+    start_paragraph,
 };
 #[cfg(any())]
 pub(crate) use runtime::{
@@ -27,7 +27,7 @@ pub(crate) use runtime::{
     test_discretionary_diagnostics_differ, test_materialize_pdf_line, test_pretolerance_memo_key,
 };
 
-use crate::canonical_box_runtime::{commit_current_list, flush_pending_hchars_with_fuel};
+use crate::box_runtime::{commit_current_list, flush_pending_hchars_with_fuel};
 use crate::vertical::build_page_if_outer_vertical;
 use crate::{ExecError, Mode, ModeNest};
 
@@ -39,12 +39,12 @@ pub(crate) enum ParagraphEndContinuation {
 }
 
 /// Command-owned paragraph completion inputs.
-pub(crate) struct CanonicalParagraphEnd {
+pub(crate) struct ParagraphEnd {
     continuation: ParagraphEndContinuation,
     error_context: Option<String>,
 }
 
-impl CanonicalParagraphEnd {
+impl ParagraphEnd {
     pub(crate) fn end(error_context: Option<String>) -> Self {
         Self {
             continuation: ParagraphEndContinuation::End,
@@ -95,38 +95,38 @@ impl CanonicalParagraphEnd {
 }
 
 /// TeX82 §1096 `end_graf` with command-owned diagnostic context.
-pub(crate) fn end_canonical_paragraph_with_fuel(
+pub(crate) fn end_paragraph_with_fuel(
     nest: &mut ModeNest,
     stores: &mut Universe,
     command: &tex_command::CommandState,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
-    let result = CanonicalParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
+    let result = ParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
     if !result.finished_nodes.is_empty() {
         nest.publish_completed_paragraph_nodes(result.finished_nodes);
     }
     Ok(())
 }
 
-pub(crate) fn end_canonical_paragraph_without_source(
+pub(crate) fn end_paragraph_without_source(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let result = CanonicalParagraphEnd::end(None).finish(nest, stores, fuel)?;
+    let result = ParagraphEnd::end(None).finish(nest, stores, fuel)?;
     if !result.finished_nodes.is_empty() {
         nest.publish_completed_paragraph_nodes(result.finished_nodes);
     }
     Ok(())
 }
 
-pub(crate) fn interrupt_canonical_paragraph_for_display(
+pub(crate) fn interrupt_paragraph_for_display(
     nest: &mut ModeNest,
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
-    let result = CanonicalParagraphEnd::display_interruption().finish(nest, stores, fuel)?;
+    let result = ParagraphEnd::display_interruption().finish(nest, stores, fuel)?;
     if !result.finished_nodes.is_empty() {
         nest.publish_completed_paragraph_nodes(result.finished_nodes.clone());
     }

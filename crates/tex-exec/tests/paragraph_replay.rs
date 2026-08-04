@@ -5,8 +5,7 @@ use tex_command::{
     InputTransition, RegisteredSourceKind, SourceRegistration,
 };
 use tex_exec::{
-    CanonicalMainControl, CanonicalParagraphRegion, EngineBoundary, ExecutionBudgetCounters,
-    MainControlStep,
+    EngineBoundary, ExecutionBudgetCounters, MainControl, MainControlStep, ParagraphRegion,
 };
 use tex_state::Universe;
 
@@ -34,7 +33,7 @@ fn terminal_text(stores: &Universe) -> String {
     committed + &pending
 }
 
-fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
+fn register_source(control: &mut MainControl, bytes: &[u8]) {
     let source = control
         .command_mut()
         .register_source(SourceRegistration::new(
@@ -48,7 +47,7 @@ fn register_source(control: &mut CanonicalMainControl, bytes: &[u8]) {
         .expect("source opens");
 }
 
-fn run_to_end(control: &mut CanonicalMainControl, stores: &mut Universe) {
+fn run_to_end(control: &mut MainControl, stores: &mut Universe) {
     loop {
         match control.step(stores).expect("canonical program executes") {
             MainControlStep::End | MainControlStep::EndOfInput => break,
@@ -63,7 +62,7 @@ fn overfull_rule_requires_excess_beyond_hfuzz() {
     // within `\hfuzz`, but §663 appends `\overfullrule` only when the excess
     // is greater than `\hfuzz`. The glue therefore remains §174's space.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingonline=1\hbadness=0\hfuzz=2pt\overfullrule=5pt
@@ -92,7 +91,7 @@ fn explicit_rule_remains_a_short_display_rule_marker() {
     // TeX82 §174 prints `|` for a real rule node independently of §663's
     // overfull-rule insertion condition.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingonline=1\hbadness=0\hfuzz=2pt\overfullrule=0pt
@@ -110,7 +109,7 @@ fn explicit_rule_remains_a_short_display_rule_marker() {
 #[test]
 fn vbox_restores_local_parameters_before_reporting_outer_overfull_box() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingonline=1\tracingrestores=1\vbadness=10000\vfuzz=0pt
@@ -131,7 +130,7 @@ fn vbox_restores_local_parameters_before_reporting_outer_overfull_box() {
 #[test]
 fn vbox_diagnostic_uses_restored_enclosing_vfuzz() {
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingonline=1\global\vbadness=10000\global\vfuzz=100pt
@@ -151,7 +150,7 @@ fn vbox_diagnostic_uses_restored_enclosing_vfuzz() {
     );
 }
 
-fn run_to_end_observed(control: &mut CanonicalMainControl, stores: &mut Universe) {
+fn run_to_end_observed(control: &mut MainControl, stores: &mut Universe) {
     struct Observer;
     impl tex_command::CommandObserver for Observer {
         fn committed(&mut self, _observation: tex_command::CommandObservation) {}
@@ -177,10 +176,7 @@ impl CommandObserver for ObservationRecorder {
     }
 }
 
-fn collect_to_end(
-    control: &mut CanonicalMainControl,
-    stores: &mut Universe,
-) -> ObservationRecorder {
+fn collect_to_end(control: &mut MainControl, stores: &mut Universe) -> ObservationRecorder {
     let mut observations = ObservationRecorder::default();
     loop {
         match control
@@ -201,7 +197,7 @@ fn one_token_everydisplay_traces_its_named_context_before_final_token_execution(
     // its sole token. The following assignment executes normally, and §357
     // retires the exhausted level on the next input demand.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingmacros=2\tracingcommands=3\tracingonline=1\everydisplay{\global}\noindent$$\count7=19$$\end",
@@ -233,7 +229,7 @@ fn exhausted_ordinary_token_replay_does_not_gain_a_named_hook_trace() {
     // Negative control: §§323/307 name the every... token_type family, not
     // every arbitrary stored or transient token list that reaches loc=null.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingmacros=2\tracingonline=1\toks0{\global}\the\toks0\count7=23\end",
@@ -254,7 +250,7 @@ fn deferred_write_trace_precedes_improper_spacefactor_report_with_live_context()
     // error, whose §82 context still displays that same live write level.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\tracingmacros=2\tracingonline=1 \shipout\vbox{\write16{\the\spacefactor}}\end",
@@ -287,7 +283,7 @@ fn immediate_write_reads_horizontal_spacefactor_without_improper_report() {
     // Negative control: §1370's temporary mode zero, rather than the box's
     // surrounding horizontal mode, makes the deferred read improper.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\setbox0=\hbox{A\spacefactor=2345\immediate\write16{\the\spacefactor}}\end",
@@ -306,7 +302,7 @@ fn output_token_list_push_precedes_its_scanner_owned_opening_brace() {
     // consumes the routine's opening brace.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\maxdeadcycles=1\output={\dimen0=1pt}
@@ -359,7 +355,7 @@ fn pending_every_par_push_precedes_later_output_push_and_output_brace() {
     // scanner-owned opening brace.
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\maxdeadcycles=1\vsize=1pt\everypar{\relax}\output={\dimen0=1pt}
@@ -413,7 +409,7 @@ fn default_page_output_publishes_no_output_token_list_push() {
     // entering `output_text`; only a selected non-null \output routine owns
     // the named token-list publication.
     let mut stores = Universe::new_with_plain_catcodes();
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(
         &mut control,
         br"\topskip=0pt\setbox0=\vbox to1pt{}\copy0\penalty-10000\end",
@@ -447,11 +443,11 @@ fn editor_layout_for(bytes: &[u8]) -> (tex_state::FragmentStore, tex_state::Edit
 fn fork_after_first_paragraph(
     old: &[u8],
     revised: Arc<[u8]>,
-) -> (CanonicalMainControl, Universe, CanonicalParagraphRegion) {
+) -> (MainControl, Universe, ParagraphRegion) {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut control = MainControl::tex82_initex(&mut stores);
     register_source(&mut control, old);
     let checkpoint = loop {
         assert!(
@@ -489,15 +485,15 @@ fn fork_after_first_paragraph(
         .expect("stable suffix rehomes");
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (forked, _) = checkpoint
-        .fork_canonical_editor(&mut replay, &substrate, old, revised, &fragments, &layout)
+        .fork_editor(&mut replay, &substrate, old, revised, &fragments, &layout)
         .expect("canonical editor checkpoint forks");
     (replay, forked, region)
 }
 
 #[test]
-fn canonical_checkpoint_fork_keeps_rehomed_suffix_replay_key() {
+fn checkpoint_fork_keeps_rehomed_suffix_replay_key() {
     let old = br"first\par
 beta\par
 stable suffix\par
@@ -521,7 +517,7 @@ stable suffix\par
 }
 
 #[test]
-fn canonical_job_start_fork_replays_after_unrelated_prefix_assignment() {
+fn job_start_fork_replays_after_unrelated_prefix_assignment() {
     let old = br"stateful \count5=41 paragraph text\par
 stateful \count5=42 paragraph text\par
 \end";
@@ -533,7 +529,7 @@ stateful \count5=42 paragraph text\par
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut cold = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut cold = MainControl::tex82_initex(&mut stores);
     register_source(&mut cold, old);
     let checkpoint = cold
         .capture_checkpoint_with_exact_identity(
@@ -554,9 +550,9 @@ stateful \count5=42 paragraph text\par
         .collect::<Vec<_>>();
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (mut stores, _) = checkpoint
-        .fork_canonical_editor(
+        .fork_editor(
             &mut replay,
             &substrate,
             old,
@@ -572,7 +568,7 @@ stateful \count5=42 paragraph text\par
 }
 
 #[test]
-fn canonical_job_start_fork_rejects_changed_mutation_precondition() {
+fn job_start_fork_rejects_changed_mutation_precondition() {
     let old = br"stateful \count5=41 paragraph text\par
 \end";
     let prefix = br"\count5=99 ";
@@ -583,7 +579,7 @@ fn canonical_job_start_fork_rejects_changed_mutation_precondition() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.enable_pure_memo(tex_state::PureMemoConfig::default());
     stores.set_root_editor_content_hash(tex_state::ContentHash::from_bytes(old));
-    let mut cold = CanonicalMainControl::tex82_initex(&mut stores);
+    let mut cold = MainControl::tex82_initex(&mut stores);
     register_source(&mut cold, old);
     let checkpoint = cold
         .capture_checkpoint_with_exact_identity(
@@ -601,9 +597,9 @@ fn canonical_job_start_fork_rejects_changed_mutation_precondition() {
         .expect("unchanged paragraph input rehomes");
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
-    let mut replay = CanonicalMainControl::with_profile(CommandProfile::TEX82);
+    let mut replay = MainControl::with_profile(CommandProfile::TEX82);
     let (mut stores, _) = checkpoint
-        .fork_canonical_editor(
+        .fork_editor(
             &mut replay,
             &substrate,
             old,

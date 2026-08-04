@@ -1,4 +1,4 @@
-//! Retained, host-neutral entry point for canonical TeX command execution.
+//! Retained, host-neutral entry point for TeX command execution.
 //!
 //! TeX82 §24 (`get_next`) and §25 (`expand`/`get_x_token`) retain input and
 //! expansion inside the command machine.  §1030 (`main_control`) consumes the
@@ -14,10 +14,9 @@ use tex_command::{
     SourceRegistrationError,
 };
 use tex_exec::{
-    CanonicalDiagnosticStep, CanonicalDiagnosticStepResult, CanonicalMainControl,
-    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
-    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalStepResult, CheckpointSink,
-    EngineBoundary, ExecutionBudgetCounters, MainControlStep, canonical_font_resource_path,
+    CheckpointSink, DiagnosticStep, DiagnosticStepResult, EngineBoundary, ExecutionBudgetCounters,
+    MainControl, MainControlStep, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
+    ResourceWorld, StepResult, canonical_font_resource_path,
 };
 use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
@@ -26,13 +25,13 @@ use tex_state::{FileContent, Universe};
 use crate::RunResult;
 
 /// Default bound for a host that repeatedly declines the same typed need.
-pub const DEFAULT_CANONICAL_NO_PROGRESS_LIMIT: u8 = 8;
+pub const DEFAULT_NO_PROGRESS_LIMIT: u8 = 8;
 
-/// Typed, host-neutral statistics projected from committed canonical command
+/// Typed, host-neutral statistics projected from committed command
 /// deliveries. The counters are observational and never participate in TeX
 /// execution or user-facing CLI behavior.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct CanonicalExpansionStats {
+pub struct ExpansionStats {
     pub token_frame_steps: u64,
     pub provenance_resolutions: u64,
     pub character_tokens: u64,
@@ -57,7 +56,7 @@ pub struct CanonicalExpansionStats {
     pub builder_append_timer_samples: u64,
 }
 
-impl CanonicalExpansionStats {
+impl ExpansionStats {
     #[must_use]
     pub fn character_fraction(self) -> f64 {
         if self.token_frame_steps == 0 {
@@ -95,13 +94,13 @@ impl CanonicalExpansionStats {
 }
 
 #[derive(Default)]
-struct CanonicalExpansionObserver {
-    stats: CanonicalExpansionStats,
+struct ExpansionObserver {
+    stats: ExpansionStats,
     in_source_span: bool,
     in_literal_span: bool,
 }
 
-impl CommandObserver for CanonicalExpansionObserver {
+impl CommandObserver for ExpansionObserver {
     fn committed(&mut self, observation: CommandObservation) {
         let CommandObservation::Command(command) = observation else {
             return;
@@ -141,13 +140,13 @@ impl CommandObserver for CanonicalExpansionObserver {
 ///
 /// Engine crates never read ambient stdin. Native, WebAssembly, and test
 /// drivers provide the bounded line source appropriate to their host.
-pub trait CanonicalStartupInput {
+pub trait StartupInput {
     /// Returns the next line after presenting `prompt`, or `None` at EOF.
     fn read_line(&mut self, prompt: &str) -> Option<String>;
 }
 
-fn same_run_input_fulfillment(name: &str, content: FileContent) -> CanonicalResourceFulfillment {
-    CanonicalResourceFulfillment::Input {
+fn same_run_input_fulfillment(name: &str, content: FileContent) -> ResourceFulfillment {
+    ResourceFulfillment::Input {
         name: name.to_owned(),
         // TeX82 §537 prints the name of the file that was actually opened,
         // not the spelling scanned after `\input`. The same-run fallback
@@ -161,14 +160,14 @@ fn same_run_input_fulfillment(name: &str, content: FileContent) -> CanonicalReso
 /// Result of driving the retained engine until it either completes or awaits
 /// an immutable host response.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CanonicalSessionState {
-    NeedResource(CanonicalResourceNeed),
+pub enum SessionState {
+    NeedResource(ResourceNeed),
     Complete(RunResult),
 }
 
 /// Failure of the retained host/session protocol.
 #[derive(Debug)]
-pub enum CanonicalSessionError {
+pub enum SessionError {
     RootAlreadyRegistered,
     RootNotRegistered,
     StartupInputExhausted,
@@ -176,11 +175,11 @@ pub enum CanonicalSessionError {
         name: String,
     },
     UnexpectedFulfillment {
-        need: CanonicalResourceNeed,
-        fulfillment: Box<CanonicalResourceFulfillment>,
+        need: ResourceNeed,
+        fulfillment: Box<ResourceFulfillment>,
     },
     NoProgress {
-        need: CanonicalResourceNeed,
+        need: ResourceNeed,
         attempts: u8,
     },
     CooperativeStopRequested,
@@ -189,15 +188,11 @@ pub enum CanonicalSessionError {
     Execution(tex_exec::ExecError),
 }
 
-impl fmt::Display for CanonicalSessionError {
+impl fmt::Display for SessionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RootAlreadyRegistered => {
-                formatter.write_str("canonical root is already registered")
-            }
-            Self::RootNotRegistered => {
-                formatter.write_str("canonical root has not been registered")
-            }
+            Self::RootAlreadyRegistered => formatter.write_str("root is already registered"),
+            Self::RootNotRegistered => formatter.write_str("root has not been registered"),
             Self::StartupInputExhausted => {
                 formatter.write_str("startup terminal input was exhausted")
             }
@@ -210,10 +205,10 @@ impl fmt::Display for CanonicalSessionError {
             ),
             Self::NoProgress { need, attempts } => write!(
                 formatter,
-                "canonical resource retry made no progress after {attempts} attempts: {need:?}"
+                "resource retry made no progress after {attempts} attempts: {need:?}"
             ),
             Self::CooperativeStopRequested => {
-                formatter.write_str("canonical session stopped by its cooperative guard")
+                formatter.write_str("session stopped by its cooperative guard")
             }
             Self::SourceRegistration(error) => error.fmt(formatter),
             Self::CommandSummary(error) => error.fmt(formatter),
@@ -222,35 +217,35 @@ impl fmt::Display for CanonicalSessionError {
     }
 }
 
-impl std::error::Error for CanonicalSessionError {}
+impl std::error::Error for SessionError {}
 
-impl From<SourceRegistrationError> for CanonicalSessionError {
+impl From<SourceRegistrationError> for SessionError {
     fn from(error: SourceRegistrationError) -> Self {
         Self::SourceRegistration(error)
     }
 }
 
-impl From<tex_command::CommandSummaryError> for CanonicalSessionError {
+impl From<tex_command::CommandSummaryError> for SessionError {
     fn from(error: tex_command::CommandSummaryError) -> Self {
         Self::CommandSummary(error)
     }
 }
 
-impl From<tex_exec::ExecError> for CanonicalSessionError {
+impl From<tex_exec::ExecError> for SessionError {
     fn from(error: tex_exec::ExecError) -> Self {
         Self::Execution(error)
     }
 }
 
-/// Standalone retained canonical engine contract.
+/// Standalone retained engine contract.
 ///
 /// Unlike the legacy composition bridge, this type has no `InputStack`,
 /// `Executor`, `ExecutionContext`, or file-resolver dependency. Its only
 /// mutable engine input is the shared aggregate `Universe`; all source and
 /// resource bytes enter through retained typed registrations.
-pub struct CanonicalEngineSession<'a> {
+pub struct EngineSession<'a> {
     stores: &'a mut Universe,
-    control: CanonicalMainControl,
+    control: MainControl,
     initex: bool,
     loaded_job_framing: bool,
     root_registered: bool,
@@ -270,28 +265,28 @@ pub struct CanonicalEngineSession<'a> {
     mode_transitions: Vec<tex_exec::Mode>,
 }
 
-impl<'a> CanonicalEngineSession<'a> {
+impl<'a> EngineSession<'a> {
     /// Advances the retained command machine in analysis mode without
     /// invoking ordinary typesetting main control.
     pub fn diagnostic_expand_step(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
-    ) -> Result<CanonicalDiagnosticStep, CanonicalSessionError> {
+        host: &mut dyn ResourceHost,
+    ) -> Result<DiagnosticStep, SessionError> {
         let mut declined: u8 = 0;
         loop {
             match self.control.diagnostic_expand_step(self.stores)? {
-                CanonicalDiagnosticStepResult::Progress(step) => return Ok(step),
-                CanonicalDiagnosticStepResult::Suspended(need) => {
+                DiagnosticStepResult::Progress(step) => return Ok(step),
+                DiagnosticStepResult::Suspended(need) => {
                     let outcome = {
-                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        let mut world = ResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
                     match outcome {
-                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                        ResourceOutcome::Fulfilled(fulfillment) => {
                             self.fulfill(&need, fulfillment)?;
                             declined = 0;
                         }
-                        CanonicalResourceOutcome::Unavailable => {
+                        ResourceOutcome::Unavailable => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -300,7 +295,7 @@ impl<'a> CanonicalEngineSession<'a> {
                                 declined = declined.saturating_add(1);
                             }
                         }
-                        CanonicalResourceOutcome::Declined => {
+                        ResourceOutcome::Declined => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -310,7 +305,7 @@ impl<'a> CanonicalEngineSession<'a> {
                         }
                     }
                     if declined >= self.no_progress_limit {
-                        return Err(CanonicalSessionError::NoProgress {
+                        return Err(SessionError::NoProgress {
                             need,
                             attempts: declined,
                         });
@@ -328,7 +323,7 @@ impl<'a> CanonicalEngineSession<'a> {
             project_root_body_terminal_text: false,
             terminal_input_cursor: None,
             stores,
-            control: CanonicalMainControl::with_profile(profile),
+            control: MainControl::with_profile(profile),
             initex: false,
             loaded_job_framing: false,
             root_registered: false,
@@ -338,7 +333,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             headline_printed: false,
             terminated: false,
-            no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
@@ -356,7 +351,7 @@ impl<'a> CanonicalEngineSession<'a> {
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,
             terminal_input_cursor: None,
-            control: CanonicalMainControl::tex82_initex(stores),
+            control: MainControl::tex82_initex(stores),
             stores,
             initex: true,
             loaded_job_framing: false,
@@ -367,7 +362,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             headline_printed: false,
             terminated: false,
-            no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
@@ -382,7 +377,7 @@ impl<'a> CanonicalEngineSession<'a> {
             terminal_text_cursor: stores.world().effect_pos(),
             project_root_body_terminal_text: false,
             terminal_input_cursor: None,
-            control: CanonicalMainControl::prepared_initex(profile),
+            control: MainControl::prepared_initex(profile),
             stores,
             initex: true,
             loaded_job_framing: false,
@@ -393,7 +388,7 @@ impl<'a> CanonicalEngineSession<'a> {
             started: false,
             headline_printed: false,
             terminated: false,
-            no_progress_limit: DEFAULT_CANONICAL_NO_PROGRESS_LIMIT,
+            no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
         }
     }
@@ -403,7 +398,7 @@ impl<'a> CanonicalEngineSession<'a> {
         self.control.command_profile()
     }
 
-    /// Configures a positive finite canonical command-work limit.
+    /// Configures a positive finite command-work limit.
     pub fn set_fuel_limit(&mut self, limit: u64) -> Result<(), tex_command::CommandFuelLimitError> {
         self.control.set_fuel_limit(limit)
     }
@@ -465,7 +460,7 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         startup_input_name: &str,
         source: SourceRegistration,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_root_with_invocation(startup_input_name, startup_input_name, source)
     }
 
@@ -478,7 +473,7 @@ impl<'a> CanonicalEngineSession<'a> {
         startup_input_name: &str,
         startup_invocation_line: &str,
         source: SourceRegistration,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_root_with_policy(
             startup_input_name,
             startup_invocation_line,
@@ -497,7 +492,7 @@ impl<'a> CanonicalEngineSession<'a> {
         startup_input_name: &str,
         startup_invocation_line: &str,
         source: SourceRegistration,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_root_with_policy(
             startup_input_name,
             startup_invocation_line,
@@ -512,9 +507,9 @@ impl<'a> CanonicalEngineSession<'a> {
         startup_invocation_line: &str,
         source: SourceRegistration,
         completion: tex_exec::RootCompletionPolicy,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         if self.root_registered {
-            return Err(CanonicalSessionError::RootAlreadyRegistered);
+            return Err(SessionError::RootAlreadyRegistered);
         }
         self.control
             .capabilities_mut()
@@ -537,7 +532,7 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         startup_input_name: &str,
         content: FileContent,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_root(startup_input_name, SourceRegistration::world(content))
     }
 
@@ -551,7 +546,7 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         startup_input_name: &str,
         bytes: Arc<[u8]>,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_root(
             startup_input_name,
             SourceRegistration::new(RegisteredSourceKind::Generated, bytes),
@@ -563,7 +558,7 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         startup_input_name: &str,
         bytes: Arc<[u8]>,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+    ) -> Result<tex_state::SourceId, SessionError> {
         self.register_retained_fragment_with_invocation(
             startup_input_name,
             startup_input_name,
@@ -579,42 +574,42 @@ impl<'a> CanonicalEngineSession<'a> {
     /// the canonical fatal file outcome without consulting another line.
     pub fn acquire_startup_root(
         &mut self,
-        input: &mut dyn CanonicalStartupInput,
-        host: &mut dyn CanonicalResourceHost,
-    ) -> Result<tex_state::SourceId, CanonicalSessionError> {
+        input: &mut dyn StartupInput,
+        host: &mut dyn ResourceHost,
+    ) -> Result<tex_state::SourceId, SessionError> {
         if self.root_registered {
-            return Err(CanonicalSessionError::RootAlreadyRegistered);
+            return Err(SessionError::RootAlreadyRegistered);
         }
         self.print_startup_headline();
         let mut prompt = "**";
         loop {
             let line = input
                 .read_line(prompt)
-                .ok_or(CanonicalSessionError::StartupInputExhausted)?;
+                .ok_or(SessionError::StartupInputExhausted)?;
             let name = startup_file_name(&line);
-            let need = CanonicalResourceNeed::Input {
+            let need = ResourceNeed::Input {
                 name: name.clone(),
                 original_name: name.clone(),
             };
             let outcome = {
-                let mut world = CanonicalResourceWorld::new(self.stores);
+                let mut world = ResourceWorld::new(self.stores);
                 host.fulfill(&mut world, &need)
             };
-            if let CanonicalResourceOutcome::Fulfilled(fulfillment) = outcome {
-                let CanonicalResourceFulfillment::Input {
+            if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
+                let ResourceFulfillment::Input {
                     name: fulfilled_name,
                     source,
                 } = fulfillment
                 else {
-                    return Err(CanonicalSessionError::UnexpectedFulfillment {
+                    return Err(SessionError::UnexpectedFulfillment {
                         need,
                         fulfillment: Box::new(fulfillment),
                     });
                 };
                 if fulfilled_name != name {
-                    return Err(CanonicalSessionError::UnexpectedFulfillment {
+                    return Err(SessionError::UnexpectedFulfillment {
                         need,
-                        fulfillment: Box::new(CanonicalResourceFulfillment::Input {
+                        fulfillment: Box::new(ResourceFulfillment::Input {
                             name: fulfilled_name,
                             source,
                         }),
@@ -640,7 +635,7 @@ impl<'a> CanonicalEngineSession<'a> {
                 let mut report = self.stores.print_err("Emergency stop");
                 report.help(&["*** (job aborted, file error in nonstop mode)"]);
                 report.succumb();
-                return Err(CanonicalSessionError::StartupFileUnavailable { name });
+                return Err(SessionError::StartupFileUnavailable { name });
             }
             Printer::new(self.stores, Selector::TermOnly)
                 .print_nl(&format!("! I can't find file `{name}'."))
@@ -655,9 +650,9 @@ impl<'a> CanonicalEngineSession<'a> {
     pub fn advance_until_waiting(
         &mut self,
         checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<CanonicalSessionState, CanonicalSessionError> {
+    ) -> Result<SessionState, SessionError> {
         if !self.root_registered {
-            return Err(CanonicalSessionError::RootNotRegistered);
+            return Err(SessionError::RootNotRegistered);
         }
         if !self.started {
             self.started = true;
@@ -685,14 +680,14 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         loop {
             match self.control.advance(self.stores)? {
-                CanonicalStepResult::Suspended(need) => {
-                    return Ok(CanonicalSessionState::NeedResource(need));
+                StepResult::Suspended(need) => {
+                    return Ok(SessionState::NeedResource(need));
                 }
-                CanonicalStepResult::Progress(step) => {
+                StepResult::Progress(step) => {
                     self.record_current_mode();
                     self.publish_completed_boundaries(checkpoints)?;
                     if checkpoints.stop_requested() {
-                        return Err(CanonicalSessionError::CooperativeStopRequested);
+                        return Err(SessionError::CooperativeStopRequested);
                     }
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                         self.terminated = true;
@@ -740,7 +735,7 @@ impl<'a> CanonicalEngineSession<'a> {
         let startup_input_name = self
             .startup_input_name
             .as_deref()
-            .expect("a started canonical session has a registered root");
+            .expect("a started session has a registered root");
         self.control
             .open_startup_input(self.stores, startup_input_name);
     }
@@ -755,9 +750,9 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         checkpoints: &mut dyn CheckpointSink,
         observer: &mut dyn tex_command::CommandObserver,
-    ) -> Result<CanonicalSessionState, CanonicalSessionError> {
+    ) -> Result<SessionState, SessionError> {
         if !self.root_registered {
-            return Err(CanonicalSessionError::RootNotRegistered);
+            return Err(SessionError::RootNotRegistered);
         }
         if !self.started {
             self.started = true;
@@ -782,14 +777,14 @@ impl<'a> CanonicalEngineSession<'a> {
         }
         loop {
             match self.control.advance_with_observer(self.stores, observer)? {
-                CanonicalStepResult::Suspended(need) => {
-                    return Ok(CanonicalSessionState::NeedResource(need));
+                StepResult::Suspended(need) => {
+                    return Ok(SessionState::NeedResource(need));
                 }
-                CanonicalStepResult::Progress(step) => {
+                StepResult::Progress(step) => {
                     self.record_current_mode();
                     self.publish_completed_boundaries(checkpoints)?;
                     if checkpoints.stop_requested() {
-                        return Err(CanonicalSessionError::CooperativeStopRequested);
+                        return Err(SessionError::CooperativeStopRequested);
                     }
                     if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
                         // TeX82 §§81, 93, 1332, 1335: source exhaustion and
@@ -813,47 +808,47 @@ impl<'a> CanonicalEngineSession<'a> {
     /// Installs an answer only when it exactly matches the active suspension.
     pub fn fulfill(
         &mut self,
-        need: &CanonicalResourceNeed,
-        fulfillment: CanonicalResourceFulfillment,
-    ) -> Result<(), CanonicalSessionError> {
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
+    ) -> Result<(), SessionError> {
         let matches = match (&fulfillment, need) {
             (
-                CanonicalResourceFulfillment::Input { name, .. },
-                CanonicalResourceNeed::Input { name: expected, .. },
+                ResourceFulfillment::Input { name, .. },
+                ResourceNeed::Input { name: expected, .. },
             ) => name == expected,
             (
-                CanonicalResourceFulfillment::InputProbe { request, .. },
-                CanonicalResourceNeed::InputProbe { request: expected },
+                ResourceFulfillment::InputProbe { request, .. },
+                ResourceNeed::InputProbe { request: expected },
             ) => request == expected,
             (
-                CanonicalResourceFulfillment::Font { request, .. },
-                CanonicalResourceNeed::Font { request: expected },
+                ResourceFulfillment::Font { request, .. },
+                ResourceNeed::Font { request: expected },
             ) => request == expected,
             (
-                CanonicalResourceFulfillment::PdfImage { request, .. },
-                CanonicalResourceNeed::PdfImage { request: expected },
+                ResourceFulfillment::PdfImage { request, .. },
+                ResourceNeed::PdfImage { request: expected },
             ) => request == expected,
             _ => false,
         };
         if !matches {
-            return Err(CanonicalSessionError::UnexpectedFulfillment {
+            return Err(SessionError::UnexpectedFulfillment {
                 need: need.clone(),
                 fulfillment: Box::new(fulfillment),
             });
         }
         match fulfillment {
-            CanonicalResourceFulfillment::Input { name, source } => {
+            ResourceFulfillment::Input { name, source } => {
                 self.control.capabilities_mut().register_input(name, source)
             }
-            CanonicalResourceFulfillment::InputProbe { request, resource } => self
+            ResourceFulfillment::InputProbe { request, resource } => self
                 .control
                 .capabilities_mut()
                 .register_input_probe(request.name, resource),
-            CanonicalResourceFulfillment::Font { request, resource } => self
+            ResourceFulfillment::Font { request, resource } => self
                 .control
                 .capabilities_mut()
                 .register_font(canonical_font_resource_path(&request.name), *resource),
-            CanonicalResourceFulfillment::PdfImage { request, resource } => self
+            ResourceFulfillment::PdfImage { request, resource } => self
                 .control
                 .capabilities_mut()
                 .register_pdf_image(request, *resource),
@@ -861,57 +856,55 @@ impl<'a> CanonicalEngineSession<'a> {
         Ok(())
     }
 
-    fn mark_unavailable(&mut self, need: &CanonicalResourceNeed) {
+    fn mark_unavailable(&mut self, need: &ResourceNeed) {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => {
+            ResourceNeed::Input { name, .. } => {
                 let capabilities = self.control.capabilities_mut();
                 capabilities.mark_input_unavailable(name);
                 if !name.contains(['/', '\\', ':']) {
                     capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
                 }
             }
-            CanonicalResourceNeed::InputProbe { request } => {
+            ResourceNeed::InputProbe { request } => {
                 self.control
                     .capabilities_mut()
                     .mark_input_probe_unavailable(&request.name);
             }
-            CanonicalResourceNeed::Font { request } => {
-                self.control.capabilities_mut().register_font(
-                    canonical_font_resource_path(&request.name),
-                    FontResource::Unavailable,
-                )
-            }
-            CanonicalResourceNeed::PdfImage { request } => self
+            ResourceNeed::Font { request } => self.control.capabilities_mut().register_font(
+                canonical_font_resource_path(&request.name),
+                FontResource::Unavailable,
+            ),
+            ResourceNeed::PdfImage { request } => self
                 .control
                 .capabilities_mut()
                 .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
         }
     }
 
-    /// Runs the canonical engine using host policy only for typed immutable
+    /// Runs the engine using host policy only for typed immutable
     /// needs. Repeated declines or definitive absences are bounded; successful
     /// fulfillment resets the no-progress epoch because the next operation is
     /// replayed atomically.
     pub fn run(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
         checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<RunResult, CanonicalSessionError> {
+    ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;
         loop {
             match self.advance_until_waiting(checkpoints)? {
-                CanonicalSessionState::Complete(result) => return Ok(result),
-                CanonicalSessionState::NeedResource(need) => {
+                SessionState::Complete(result) => return Ok(result),
+                SessionState::NeedResource(need) => {
                     let outcome = {
-                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        let mut world = ResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
                     match outcome {
-                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                        ResourceOutcome::Fulfilled(fulfillment) => {
                             self.fulfill(&need, fulfillment)?;
                             declined = 0;
                         }
-                        CanonicalResourceOutcome::Unavailable => {
+                        ResourceOutcome::Unavailable => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -920,7 +913,7 @@ impl<'a> CanonicalEngineSession<'a> {
                                 declined = declined.saturating_add(1);
                             }
                         }
-                        CanonicalResourceOutcome::Declined => {
+                        ResourceOutcome::Declined => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -930,7 +923,7 @@ impl<'a> CanonicalEngineSession<'a> {
                         }
                     }
                     if declined >= self.no_progress_limit {
-                        return Err(CanonicalSessionError::NoProgress {
+                        return Err(SessionError::NoProgress {
                             need,
                             attempts: declined,
                         });
@@ -944,10 +937,10 @@ impl<'a> CanonicalEngineSession<'a> {
     /// committed expanded-delivery and provenance counters for profiling.
     pub fn run_with_expansion_stats(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
         checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<(RunResult, CanonicalExpansionStats), CanonicalSessionError> {
-        let mut observer = CanonicalExpansionObserver::default();
+    ) -> Result<(RunResult, ExpansionStats), SessionError> {
+        let mut observer = ExpansionObserver::default();
         let result = self.run_with_observer(host, checkpoints, &mut observer)?;
         Ok((result, observer.stats))
     }
@@ -955,25 +948,25 @@ impl<'a> CanonicalEngineSession<'a> {
     /// Observed variant of [`Self::run`] over the same production session.
     pub fn run_with_observer(
         &mut self,
-        host: &mut dyn CanonicalResourceHost,
+        host: &mut dyn ResourceHost,
         checkpoints: &mut dyn CheckpointSink,
         observer: &mut dyn tex_command::CommandObserver,
-    ) -> Result<RunResult, CanonicalSessionError> {
+    ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;
         loop {
             match self.advance_until_waiting_with_observer(checkpoints, observer)? {
-                CanonicalSessionState::Complete(result) => return Ok(result),
-                CanonicalSessionState::NeedResource(need) => {
+                SessionState::Complete(result) => return Ok(result),
+                SessionState::NeedResource(need) => {
                     let outcome = {
-                        let mut world = CanonicalResourceWorld::new(self.stores);
+                        let mut world = ResourceWorld::new(self.stores);
                         host.fulfill(&mut world, &need)
                     };
                     match outcome {
-                        CanonicalResourceOutcome::Fulfilled(fulfillment) => {
+                        ResourceOutcome::Fulfilled(fulfillment) => {
                             self.fulfill(&need, fulfillment)?;
                             declined = 0;
                         }
-                        CanonicalResourceOutcome::Unavailable => {
+                        ResourceOutcome::Unavailable => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -982,7 +975,7 @@ impl<'a> CanonicalEngineSession<'a> {
                                 declined = declined.saturating_add(1);
                             }
                         }
-                        CanonicalResourceOutcome::Declined => {
+                        ResourceOutcome::Declined => {
                             if let Some(fulfillment) = self.same_run_output(&need) {
                                 self.fulfill(&need, fulfillment)?;
                                 declined = 0;
@@ -992,7 +985,7 @@ impl<'a> CanonicalEngineSession<'a> {
                         }
                     }
                     if declined >= self.no_progress_limit {
-                        return Err(CanonicalSessionError::NoProgress {
+                        return Err(SessionError::NoProgress {
                             need,
                             attempts: declined,
                         });
@@ -1009,14 +1002,11 @@ impl<'a> CanonicalEngineSession<'a> {
     /// the resulting file. The active World is the owner of those committed
     /// effects, so this fallback must remain inside the session instead of
     /// requiring every host search policy to mirror relative output paths.
-    fn same_run_output(
-        &mut self,
-        need: &CanonicalResourceNeed,
-    ) -> Option<CanonicalResourceFulfillment> {
+    fn same_run_output(&mut self, need: &ResourceNeed) -> Option<ResourceFulfillment> {
         let name = match need {
-            CanonicalResourceNeed::Input { name, .. } => name,
-            CanonicalResourceNeed::InputProbe { request } => &request.name,
-            CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
+            ResourceNeed::Input { name, .. } => name,
+            ResourceNeed::InputProbe { request } => &request.name,
+            ResourceNeed::Font { .. } | ResourceNeed::PdfImage { .. } => {
                 return None;
             }
         };
@@ -1027,11 +1017,11 @@ impl<'a> CanonicalEngineSession<'a> {
             .ok()
             .flatten()?;
         Some(match need {
-            CanonicalResourceNeed::Input { .. } => same_run_input_fulfillment(name, content),
-            CanonicalResourceNeed::InputProbe { request } => {
-                CanonicalResourceFulfillment::world_input_probe(request.clone(), content)
+            ResourceNeed::Input { .. } => same_run_input_fulfillment(name, content),
+            ResourceNeed::InputProbe { request } => {
+                ResourceFulfillment::world_input_probe(request.clone(), content)
             }
-            CanonicalResourceNeed::Font { .. } | CanonicalResourceNeed::PdfImage { .. } => {
+            ResourceNeed::Font { .. } | ResourceNeed::PdfImage { .. } => {
                 unreachable!("non-file resources returned above")
             }
         })
@@ -1040,7 +1030,7 @@ impl<'a> CanonicalEngineSession<'a> {
     fn publish_completed_boundaries(
         &mut self,
         checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<(), CanonicalSessionError> {
+    ) -> Result<(), SessionError> {
         for boundary in self.control.take_completed_boundaries() {
             self.publish_checkpoint(boundary, checkpoints)?;
         }
@@ -1058,7 +1048,7 @@ impl<'a> CanonicalEngineSession<'a> {
         &mut self,
         boundary: EngineBoundary,
         checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<(), CanonicalSessionError> {
+    ) -> Result<(), SessionError> {
         if checkpoints.wants_checkpoint(boundary) {
             let checkpoint = self.control.capture_checkpoint(
                 boundary,
@@ -1070,7 +1060,7 @@ impl<'a> CanonicalEngineSession<'a> {
         Ok(())
     }
 
-    fn finish(&mut self) -> Result<CanonicalSessionState, CanonicalSessionError> {
+    fn finish(&mut self) -> Result<SessionState, SessionError> {
         let receipts = self.control.take_prepared_dvi_pages();
         let dvi_pages = receipts
             .iter()
@@ -1081,9 +1071,9 @@ impl<'a> CanonicalEngineSession<'a> {
             None
         } else {
             let dvi = crate::dvi_from_page_plans(&dvi_pages).map_err(|error| {
-                CanonicalSessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(
-                    format!("canonical DVI serialization failed before job framing: {error}"),
-                ))
+                SessionError::Execution(tex_exec::ExecError::InvalidShipoutArtifact(format!(
+                    "DVI serialization failed before job framing: {error}"
+                )))
             })?;
             Some(tex_exec::DviJobOutput {
                 file_name: self.control.dvi_output_name(self.stores)?,
@@ -1107,9 +1097,9 @@ impl<'a> CanonicalEngineSession<'a> {
                 .zip(&artifacts)
                 .any(|(receipt, hash)| receipt.hash() != *hash)
         {
-            return Err(CanonicalSessionError::Execution(
+            return Err(SessionError::Execution(
                 tex_exec::ExecError::InvalidShipoutArtifact(
-                    "canonical DVI receipts are not aligned with committed artifacts".into(),
+                    "DVI receipts are not aligned with committed artifacts".into(),
                 ),
             ));
         }
@@ -1142,7 +1132,7 @@ impl<'a> CanonicalEngineSession<'a> {
         if let Some(position) = self.terminal_input_cursor.take() {
             self.stores.restore_terminal_input_position(position);
         }
-        Ok(CanonicalSessionState::Complete(RunResult {
+        Ok(SessionState::Complete(RunResult {
             terminal_text,
             mode_transitions: self.mode_transitions.clone(),
             fatal: self.control.fatal_error(),
@@ -1206,7 +1196,7 @@ mod tests {
         }
     }
 
-    impl CanonicalStartupInput for StartupLines {
+    impl StartupInput for StartupLines {
         fn read_line(&mut self, prompt: &str) -> Option<String> {
             self.prompts.push(prompt.to_owned());
             self.lines.pop_front()
@@ -1222,37 +1212,37 @@ mod tests {
         }
     }
 
-    impl CanonicalResourceHost for WorldHost {
+    impl ResourceHost for WorldHost {
         fn fulfill(
             &mut self,
-            world: &mut CanonicalResourceWorld<'_>,
-            need: &CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
             match need {
-                CanonicalResourceNeed::Input { name, .. } => world.read_file(name).ok().map_or(
-                    CanonicalResourceOutcome::Unavailable,
+                ResourceNeed::Input { name, .. } => {
+                    world
+                        .read_file(name)
+                        .ok()
+                        .map_or(ResourceOutcome::Unavailable, |content| {
+                            ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(
+                                name, content,
+                            ))
+                        })
+                }
+                ResourceNeed::InputProbe { request } => world.read_file(&request.name).ok().map_or(
+                    ResourceOutcome::Unavailable,
                     |content| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::world_input(name, content),
-                        )
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                            request.clone(),
+                            content,
+                        ))
                     },
                 ),
-                CanonicalResourceNeed::InputProbe { request } => world
-                    .read_file(&request.name)
-                    .ok()
-                    .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::world_input_probe(
-                                request.clone(),
-                                content,
-                            ),
-                        )
-                    }),
-                CanonicalResourceNeed::Font { request } => world
+                ResourceNeed::Font { request } => world
                     .read_file(canonical_font_resource_path(&request.name))
                     .ok()
-                    .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
-                        CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                    .map_or(ResourceOutcome::Unavailable, |metrics| {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                             request: request.clone(),
                             resource: Box::new(FontResource::Tfm {
                                 metrics,
@@ -1260,31 +1250,29 @@ mod tests {
                             }),
                         })
                     }),
-                CanonicalResourceNeed::PdfImage { request } => world
-                    .read_file(&request.name)
-                    .ok()
-                    .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                        CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::PdfImage {
-                                request: request.clone(),
-                                resource: Box::new(PdfImageResource::Available(
-                                    tex_state::PdfExternalImageSource {
-                                        identity: content.hash(),
-                                        metadata: tex_state::PdfExternalImageMetadata::Raster(
-                                            tex_state::PdfRasterImageMetadata::placeholder(),
-                                        ),
-                                        natural_width: tex_state::scaled::Scaled::from_raw(
-                                            tex_state::scaled::Scaled::UNITY,
-                                        ),
-                                        natural_height: tex_state::scaled::Scaled::from_raw(
-                                            tex_state::scaled::Scaled::UNITY,
-                                        ),
-                                        bytes: content.shared_bytes(),
-                                    },
-                                )),
-                            },
-                        )
-                    }),
+                ResourceNeed::PdfImage { request } => world.read_file(&request.name).ok().map_or(
+                    ResourceOutcome::Unavailable,
+                    |content| {
+                        ResourceOutcome::Fulfilled(ResourceFulfillment::PdfImage {
+                            request: request.clone(),
+                            resource: Box::new(PdfImageResource::Available(
+                                tex_state::PdfExternalImageSource {
+                                    identity: content.hash(),
+                                    metadata: tex_state::PdfExternalImageMetadata::Raster(
+                                        tex_state::PdfRasterImageMetadata::placeholder(),
+                                    ),
+                                    natural_width: tex_state::scaled::Scaled::from_raw(
+                                        tex_state::scaled::Scaled::UNITY,
+                                    ),
+                                    natural_height: tex_state::scaled::Scaled::from_raw(
+                                        tex_state::scaled::Scaled::UNITY,
+                                    ),
+                                    bytes: content.shared_bytes(),
+                                },
+                            )),
+                        })
+                    },
+                ),
             }
         }
     }
@@ -1302,7 +1290,7 @@ mod tests {
     #[test]
     fn startup_acquisition_orders_banner_log_echo_and_root_open() {
         let mut stores = startup_session(tex_state::InteractionMode::ErrorStop);
-        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut session = EngineSession::tex82_initex(&mut stores);
         let mut lines = StartupLines::new(&["paper.tex"]);
         session
             .acquire_startup_root(&mut lines, &mut WorldHost)
@@ -1335,7 +1323,7 @@ mod tests {
     #[test]
     fn expansion_stats_project_only_committed_expanded_deliveries_with_provenance() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut session = EngineSession::tex82_initex(&mut stores);
         session
             .register_authored_job("stats.tex", b"\\number42\\end".to_vec().into())
             .expect("stats root registers");
@@ -1344,7 +1332,7 @@ mod tests {
             .expect("stats fixture completes");
         assert_eq!(
             stats,
-            CanonicalExpansionStats {
+            ExpansionStats {
                 token_frame_steps: 10,
                 provenance_resolutions: 9,
                 character_tokens: 5,
@@ -1354,7 +1342,7 @@ mod tests {
                 source_text_span_attempts: 10,
                 source_text_spans: 1,
                 source_text_tokens: 3,
-                ..CanonicalExpansionStats::default()
+                ..ExpansionStats::default()
             }
         );
         assert!(stats.character_fraction().is_finite());
@@ -1364,7 +1352,7 @@ mod tests {
     #[test]
     fn startup_acquisition_retries_once_and_applies_default_tex_extension() {
         let mut stores = startup_session(tex_state::InteractionMode::Scroll);
-        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut session = EngineSession::tex82_initex(&mut stores);
         let mut lines = StartupLines::new(&["missing", "paper"]);
         session
             .acquire_startup_root(&mut lines, &mut WorldHost)
@@ -1397,7 +1385,7 @@ mod tests {
             tex_state::InteractionMode::Batch,
         ] {
             let mut stores = startup_session(interaction);
-            let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+            let mut session = EngineSession::tex82_initex(&mut stores);
             let mut lines = StartupLines::new(&["missing", "paper"]);
             let error = session
                 .acquire_startup_root(&mut lines, &mut WorldHost)
@@ -1405,7 +1393,7 @@ mod tests {
 
             assert!(matches!(
                 error,
-                CanonicalSessionError::StartupFileUnavailable { ref name }
+                SessionError::StartupFileUnavailable { ref name }
                     if name == "missing.tex"
             ));
             assert_eq!(lines.prompts, ["**"]);
@@ -1420,22 +1408,22 @@ mod tests {
         calls: usize,
     }
 
-    impl CanonicalResourceHost for OneInputHost {
+    impl ResourceHost for OneInputHost {
         fn fulfill(
             &mut self,
-            _world: &mut CanonicalResourceWorld<'_>,
-            need: &CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
             self.calls += 1;
             match need {
-                CanonicalResourceNeed::Input { name, .. } if name == "child.tex" => {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                ResourceNeed::Input { name, .. } if name == "child.tex" => {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::input(
                         "child.tex",
                         RegisteredSourceKind::Generated,
                         Arc::from(&b"\\relax"[..]),
                     ))
                 }
-                _ => CanonicalResourceOutcome::Declined,
+                _ => ResourceOutcome::Declined,
             }
         }
     }
@@ -1445,20 +1433,20 @@ mod tests {
         calls: usize,
     }
 
-    impl CanonicalResourceHost for UnavailableThenInputHost {
+    impl ResourceHost for UnavailableThenInputHost {
         fn fulfill(
             &mut self,
-            _world: &mut CanonicalResourceWorld<'_>,
-            need: &CanonicalResourceNeed,
-        ) -> CanonicalResourceOutcome {
+            _world: &mut ResourceWorld<'_>,
+            need: &ResourceNeed,
+        ) -> ResourceOutcome {
             self.calls += 1;
             if self.calls <= self.unavailable {
-                return CanonicalResourceOutcome::Unavailable;
+                return ResourceOutcome::Unavailable;
             }
-            let CanonicalResourceNeed::Input { name, .. } = need else {
-                return CanonicalResourceOutcome::Unavailable;
+            let ResourceNeed::Input { name, .. } = need else {
+                return ResourceOutcome::Unavailable;
             };
-            CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+            ResourceOutcome::Fulfilled(ResourceFulfillment::input(
                 name,
                 RegisteredSourceKind::Generated,
                 Arc::from(&b"\\relax"[..]),
@@ -1510,7 +1498,7 @@ mod tests {
                 tex_exec::install_unexpandable_primitives(&mut stores);
                 stores
             };
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session
                 .register_authored_job("observer", Arc::clone(&source))
                 .expect("root registers");
@@ -1574,7 +1562,7 @@ mod tests {
         source.push_str("\\end");
         let (mut stores, _) = prepared_session(b"");
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .set_fuel_limit(100_000)
             .expect("bounded fatal microfixture fuel");
@@ -1614,7 +1602,7 @@ mod tests {
         source.push_str("}\\end");
         let (mut stores, _) = prepared_session(b"");
         stores.set_interaction_mode(tex_state::InteractionMode::Nonstop);
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .set_fuel_limit(100_000)
             .expect("bounded fatal microfixture fuel");
@@ -1656,7 +1644,7 @@ mod tests {
     #[test]
     fn source_exhaustion_terminates_once_after_stop_under_finite_fuel() {
         let (mut stores, root) = prepared_session(b"");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_fuel_limit(16).expect("finite fuel");
         session
             .register_authored_fragment("empty.tex", root)
@@ -1667,7 +1655,7 @@ mod tests {
             session
                 .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
                 .expect("empty source completes"),
-            CanonicalSessionState::Complete(_)
+            SessionState::Complete(_)
         ));
         let stop = observations
             .0
@@ -1701,7 +1689,7 @@ mod tests {
             session
                 .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
                 .expect("completed session remains complete"),
-            CanonicalSessionState::Complete(_)
+            SessionState::Complete(_)
         ));
         assert_eq!(session.fuel_burned(), burned);
         assert_eq!(
@@ -1724,7 +1712,7 @@ mod tests {
             .world_mut()
             .push_memory_terminal_line("\\global\\count0=99\\end")
             .expect("terminal line is staged");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_fragment("fragment", root)
             .expect("fragment registers");
@@ -1751,7 +1739,7 @@ mod tests {
         ] {
             let (mut stores, root) = prepared_session(b"");
             stores.set_interaction_mode(interaction);
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session.set_fuel_limit(32).expect("finite EOF fuel");
             session
                 .register_authored_job("missing-end.tex", root)
@@ -1783,7 +1771,7 @@ mod tests {
                 session
                     .advance_until_waiting(&mut Vec::new())
                     .expect("fatal completion stays latched"),
-                CanonicalSessionState::Complete(_)
+                SessionState::Complete(_)
             ));
             assert_eq!(session.fuel_burned(), burned);
         }
@@ -1805,7 +1793,7 @@ mod tests {
                 .world_mut()
                 .push_memory_terminal_line("\\global\\count0=42\\end")
                 .expect("terminating terminal line is staged");
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session.set_fuel_limit(64).expect("finite terminal fuel");
             session
                 .register_authored_job("terminal-end.tex", root)
@@ -1828,7 +1816,7 @@ mod tests {
     #[test]
     fn unobserved_completion_does_not_republish_termination() {
         let (mut stores, root) = prepared_session(b"");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_fragment("empty.tex", root)
             .expect("root registers");
@@ -1837,14 +1825,14 @@ mod tests {
             session
                 .advance_until_waiting(&mut Vec::new())
                 .expect("unobserved source completes"),
-            CanonicalSessionState::Complete(_)
+            SessionState::Complete(_)
         ));
         let mut observations = ObservationRecorder::default();
         assert!(matches!(
             session
                 .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
                 .expect("completion remains latched"),
-            CanonicalSessionState::Complete(_)
+            SessionState::Complete(_)
         ));
         assert!(observations.0.is_empty());
     }
@@ -1852,7 +1840,7 @@ mod tests {
     #[test]
     fn resource_suspension_does_not_publish_or_latch_termination() {
         let (mut stores, root) = prepared_session(br"\input child\end");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
             .expect("root registers");
@@ -1862,8 +1850,8 @@ mod tests {
             .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
             .expect("missing child suspends")
         {
-            CanonicalSessionState::NeedResource(need) => need,
-            CanonicalSessionState::Complete(_) => panic!("missing child must suspend"),
+            SessionState::NeedResource(need) => need,
+            SessionState::Complete(_) => panic!("missing child must suspend"),
         };
         assert!(
             !observations.0.iter().any(|observation| matches!(
@@ -1876,7 +1864,7 @@ mod tests {
         session
             .fulfill(
                 &need,
-                CanonicalResourceFulfillment::input(
+                ResourceFulfillment::input(
                     "child.tex",
                     RegisteredSourceKind::Generated,
                     Arc::from(&b""[..]),
@@ -1887,7 +1875,7 @@ mod tests {
             session
                 .advance_until_waiting_with_observer(&mut Vec::new(), &mut observations)
                 .expect("retry completes"),
-            CanonicalSessionState::Complete(_)
+            SessionState::Complete(_)
         ));
         assert_eq!(
             observations
@@ -1908,7 +1896,7 @@ mod tests {
         let mut stores = Universe::new_with_plain_catcodes();
         tex_command::install_tex82_expandable_primitives(&mut stores);
         tex_exec::install_unexpandable_primitives(&mut stores);
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::ETEX26);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::ETEX26);
         session
             .register_authored_job("alphabetic.tex", source)
             .expect("root registers");
@@ -1947,7 +1935,7 @@ mod tests {
     fn retained_session_retries_input_without_duplicate_effect_or_receipt() {
         let (mut stores, root) =
             prepared_session(b"\\message{once}\\input child x\\par\\shipout\\hbox{x}\\end");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
             .expect("root registers");
@@ -2001,7 +1989,7 @@ mod tests {
     #[test]
     fn initex_prints_tex82_startup_headline_before_the_first_command() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut session = EngineSession::tex82_initex(&mut stores);
         session.set_fuel_limit(64).expect("finite fuel");
         session
             .register_authored_job("headline.tex", Arc::from(&b"\\end"[..]))
@@ -2046,9 +2034,9 @@ mod tests {
                 tex_exec::install_unexpandable_primitives(&mut stores);
             }
             let mut session = if initex {
-                CanonicalEngineSession::prepared_initex(&mut stores, CommandProfile::TEX82)
+                EngineSession::prepared_initex(&mut stores, CommandProfile::TEX82)
             } else {
-                CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82)
+                EngineSession::new(&mut stores, CommandProfile::TEX82)
             };
             session
                 .register_authored_job("./trip.tex", Arc::from(SOURCE))
@@ -2080,7 +2068,7 @@ mod tests {
         const SOURCE: &[u8] = br"\patterns{o1ce eed3i}\lefthyphenmin=2 \righthyphenmin=3 \end";
 
         let (mut cold_stores, cold_root) = prepared_session(SOURCE);
-        let mut cold = CanonicalEngineSession::new(&mut cold_stores, CommandProfile::TEX82);
+        let mut cold = EngineSession::new(&mut cold_stores, CommandProfile::TEX82);
         cold.register_authored_job("cold.tex", cold_root)
             .expect("cold root registers");
         cold.run(&mut WorldHost, &mut Vec::new())
@@ -2093,7 +2081,7 @@ mod tests {
         );
 
         let mut initex_stores = Universe::new_with_plain_catcodes();
-        let mut initex = CanonicalEngineSession::tex82_initex(&mut initex_stores);
+        let mut initex = EngineSession::tex82_initex(&mut initex_stores);
         initex
             .register_authored_job("initex.tex", Arc::from(SOURCE))
             .expect("INITEX root registers");
@@ -2112,7 +2100,7 @@ mod tests {
     #[test]
     fn initex_dump_receipt_survives_the_direct_session_boundary() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+        let mut session = EngineSession::tex82_initex(&mut stores);
         session
             .register_authored_job("plain.tex", Arc::from(&b"\\dump"[..]))
             .expect("INITEX root registers");
@@ -2131,7 +2119,7 @@ mod tests {
     #[test]
     fn declining_host_is_bounded_without_mutating_effects() {
         let (mut stores, root) = prepared_session(b"\\input never\\end");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_no_progress_limit(2);
         session
             .register_authored_job("job.tex", root)
@@ -2143,7 +2131,7 @@ mod tests {
             .expect_err("host declines");
         assert!(matches!(
             error,
-            CanonicalSessionError::NoProgress { attempts: 2, .. }
+            SessionError::NoProgress { attempts: 2, .. }
         ));
         assert_eq!(
             transcript_channels(session.stores()),
@@ -2161,7 +2149,7 @@ mod tests {
         ] {
             let (mut stores, root) = prepared_session(b"\\input missing\\end");
             stores.set_interaction_mode(interaction);
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session
                 .register_authored_job("job.tex", root)
                 .expect("root registers");
@@ -2182,7 +2170,7 @@ mod tests {
         ] {
             let (mut stores, root) = prepared_session(b"\\input missing\\end");
             stores.set_interaction_mode(interaction);
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session
                 .register_authored_job("job.tex", root)
                 .expect("root registers");
@@ -2209,7 +2197,7 @@ mod tests {
 \input same.out
 \end",
         );
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session.set_no_progress_limit(1);
         session
             .register_authored_job("job.tex", root)
@@ -2252,7 +2240,7 @@ mod tests {
             .read_file("same.out")
             .expect("selected bytes are retained");
 
-        let CanonicalResourceFulfillment::Input { name, source } =
+        let ResourceFulfillment::Input { name, source } =
             same_run_input_fulfillment("same.out", content)
         else {
             panic!("same-run input helper returned a non-input fulfillment");
@@ -2276,7 +2264,7 @@ mod tests {
 \input same.out
 \end",
         );
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
             .expect("root registers");
@@ -2310,7 +2298,7 @@ mod tests {
             .world_mut()
             .set_memory_file("child.tex", b"\\message{child}")
             .expect("child is seeded");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
             .expect("root registers");
@@ -2342,7 +2330,7 @@ mod tests {
             .world_mut()
             .set_memory_file("cmr10.tfm", CMR10)
             .expect("font is seeded");
-        let mut font_session = CanonicalEngineSession::new(&mut font_stores, CommandProfile::TEX82);
+        let mut font_session = EngineSession::new(&mut font_stores, CommandProfile::TEX82);
         font_session
             .register_authored_job("font.tex", font_root)
             .expect("font root registers");
@@ -2365,8 +2353,7 @@ mod tests {
             .world_mut()
             .set_memory_file("image.png", b"world-selected image")
             .expect("image is seeded");
-        let mut image_session =
-            CanonicalEngineSession::new(&mut image_stores, CommandProfile::PDFTEX14029);
+        let mut image_session = EngineSession::new(&mut image_stores, CommandProfile::PDFTEX14029);
         image_session
             .register_authored_job("image.tex", Arc::from(&b"\\pdfximage {image.png}\\end"[..]))
             .expect("image root registers");
@@ -2392,7 +2379,7 @@ mod tests {
     #[test]
     fn fulfillment_rejects_mismatched_typed_need() {
         let (mut stores, root) = prepared_session(b"\\input child\\end");
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
             .expect("root registers");
@@ -2400,29 +2387,26 @@ mod tests {
             .advance_until_waiting(&mut Vec::new())
             .expect("input suspends")
         {
-            CanonicalSessionState::NeedResource(need) => need,
+            SessionState::NeedResource(need) => need,
             other => panic!("expected resource need, got {other:?}"),
         };
         let error = session
             .fulfill(
                 &need,
-                CanonicalResourceFulfillment::input(
+                ResourceFulfillment::input(
                     "other",
                     RegisteredSourceKind::Generated,
                     Arc::from(&b"\\end"[..]),
                 ),
             )
             .expect_err("mismatched input is rejected");
-        assert!(matches!(
-            error,
-            CanonicalSessionError::UnexpectedFulfillment { .. }
-        ));
+        assert!(matches!(error, SessionError::UnexpectedFulfillment { .. }));
     }
 
     #[test]
-    fn canonical_session_has_finite_configurable_command_fuel() {
+    fn engine_session_has_finite_configurable_command_fuel() {
         let mut stores = Universe::new_with_plain_catcodes();
-        let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+        let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         assert_eq!(
             session.fuel_limit(),
             tex_command::DEFAULT_COMMAND_FUEL_LIMIT
@@ -2438,10 +2422,10 @@ mod tests {
     }
 
     #[test]
-    fn tiny_limit_stops_a_cyclic_canonical_run_with_typed_error() {
-        fn run(observed: bool) -> (CanonicalSessionError, u64) {
+    fn tiny_limit_stops_a_cyclic_run_with_typed_error() {
+        fn run(observed: bool) -> (SessionError, u64) {
             let (mut stores, root) = prepared_session(b"\\def\\cycle{\\cycle}\\cycle");
-            let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+            let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
             session
                 .register_authored_job("cycle.tex", root)
                 .expect("root registers");
@@ -2472,7 +2456,7 @@ mod tests {
         for error in [&unobserved_error, &observed_error] {
             assert!(matches!(
                 error,
-                CanonicalSessionError::Execution(tex_exec::ExecError::Command(
+                SessionError::Execution(tex_exec::ExecError::Command(
                     tex_command::CommandError::FuelExhausted {
                         limit: 19,
                         burned: 19

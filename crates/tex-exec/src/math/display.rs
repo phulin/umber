@@ -6,7 +6,7 @@ use tex_state::scaled::Scaled;
 use tex_typeset::PackSpec;
 use tex_typeset::math::{MathParams, Style};
 
-use crate::canonical_box_runtime::{hpack_with_overfull_rule, split_hpack_migrations};
+use crate::box_runtime::{hpack_with_overfull_rule, split_hpack_migrations};
 use crate::mode::EqNoSide;
 use crate::packing_params::{hpack as hpack_nodes, hpack_params};
 use crate::vertical::{

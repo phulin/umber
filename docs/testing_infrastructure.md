@@ -247,9 +247,9 @@ test binary, so the regeneration path drives exactly the code the gate does.
 The test binary holds only the assertions.
 
 The runner drives each input through instrumented
-`tex_exec::CanonicalMainControl` in the exact TeX82 INITEX profile. A run is a
+`tex_exec::MainControl` in the exact TeX82 INITEX profile. A run is a
 real TeX job, not a bare command loop: it is framed with
-`CanonicalMainControl::begin_job`/`finish_job` exactly the way
+`MainControl::begin_job`/`finish_job` exactly the way
 `docs/job_framing.md` describes -- the start-up banner, the `**` line, the
 root source registered by name so §537/§362 bracket it in `(name`/`)`, and
 §642's page report and transcript line once the run ends -- and it runs in
@@ -1062,7 +1062,7 @@ rewriting either fixture.
 `e2e_conformance_gentle_canonical` in the same
 `crates/umber/tests/it/e2e_conformance.rs` check canonical/reference DVI
 parity: the canonical `tex-command`/
-`CanonicalEngineSession` architecture's assembled DVI for `story.tex` and
+`EngineSession` architecture's assembled DVI for `story.tex` and
 `gentle.tex` must remain byte-identical to real pdfTeX's output, normalized
 only the same way the separately named conformance tests already are. All four
 now execute through the same persistent loaded-Plain provider path. Each shares
@@ -1627,8 +1627,8 @@ expectation. The same font-set digest is also the fixture manifest's
 `distribution_sha256`, because the staged metric set _is_ this tier's
 distribution.
 
-Because `CanonicalMainControl::resolve_font_resource` returns
-`ExecError::MissingCanonicalFont` immediately instead of suspending, the
+Because `MainControl::resolve_font_resource` returns
+`ExecError::MissingFont` immediately instead of suspending, the
 tracer registers the whole staged TFM set through
 `CommandHostCapabilities::register_font` before the first replay step rather
 than through a lazy resource-host retry loop. Replay is bounded by
@@ -1651,9 +1651,7 @@ It stages `third_party/corpus/{plain,<source>}.tex`,
 `third_party/hyphen/hyphen.tex`, and the plain-format CM/`manfnt` TFMs into an
 in-memory `World` (reusing the same `parity_harness::CORPUS_TFMS`/`locate_tfm`
 resolution as the harness above), then drives them directly through
-`umber::CanonicalEngineSession` -- no `tex-lex::InputStack`, no legacy
-`Executor` -- so it exercises exactly the same canonical command-core path the
-migration is converging:
+`umber::EngineSession`, so it exercises the ordinary command-core path:
 
 ```bash
 cargo run --profile test -p umber --example first_failure_locator -- gentle
@@ -1662,12 +1660,12 @@ cargo run --profile test -p umber --example first_failure_locator -- story
 
 Use `--profile test` (matching `cargo run-dev`'s alias) rather than the plain
 `dev` profile: Gentle and Story are large documents, and an unoptimized
-`opt-level = 0` debug build of the still-unmigrated canonical path can take
+`opt-level = 0` debug build of the engine path can take
 several minutes where the `test` profile's `opt-level = 1` finishes in
 seconds.
 
 It reports the first failure it hits: the live execution mode, the
-`ExecError`/`CanonicalSessionError` rendered with provenance-resolved TeX
+`ExecError`/`SessionError` rendered with provenance-resolved TeX
 source context (`ExecError::format_with_provenance`), or, for a Rust panic,
 lets the default panic hook report the Rust-side `file:line` origin (rerun
 with `RUST_BACKTRACE=1` for a full backtrace). As a first-failure locator (see
@@ -1714,7 +1712,7 @@ format-loaded TRIP phases in process.
 Cargo conformance tests do not launch Umber as a subprocess. Story and Gentle
 call the engine directly through the staged fixture callback. The ignored
 `e2e_conformance_trip_canonical` probe uses retained
-`CanonicalEngineSession`, `World` roots, and typed resource fulfillment for
+`EngineSession`, `World` roots, and typed resource fulfillment for
 both phases without an `Executor`/`InputStack` fallback; TRIP and e-TRIP share
 the surrounding two-phase fixture helper.
 `scripts/check-and-test.sh` preflights the gitignored e2e oracles before

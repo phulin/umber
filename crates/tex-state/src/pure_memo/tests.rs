@@ -1,11 +1,11 @@
 use super::*;
 
 #[test]
-fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
+fn paragraph_history_and_telemetry_follow_acceptance() {
     let mut runtime = PureMemoRuntime::default();
     runtime.enable(PureMemoConfig::default());
     runtime.begin_paragraph_history(false);
-    let record = CanonicalParagraphHistoryRecord {
+    let record = ParagraphHistoryRecord {
         identity: 7,
         root_start: Some(10),
         root_end: Some(20),
@@ -27,13 +27,13 @@ fn canonical_paragraph_history_and_telemetry_follow_acceptance() {
         ending_provenance: crate::provenance::ProvenanceStats::default(),
         line_provenance: ParagraphLineProvenance::Pending,
     };
-    runtime.record_canonical_paragraph_region(record.clone());
-    runtime.record_canonical_paragraph_lookup(false, 0, 0);
-    runtime.record_canonical_paragraph_lookup(true, 3, 2);
-    assert!(runtime.accepted_canonical_paragraphs().is_empty());
+    runtime.record_accepted_paragraph_region(record.clone());
+    runtime.record_accepted_paragraph_lookup(false, 0, 0);
+    runtime.record_accepted_paragraph_lookup(true, 3, 2);
+    assert!(runtime.accepted_paragraph_history().is_empty());
     runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
     assert_eq!(
-        runtime.accepted_canonical_paragraphs()[0].identity,
+        runtime.accepted_paragraph_history()[0].identity,
         record.identity
     );
     let stats = runtime.stats();

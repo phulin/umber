@@ -552,7 +552,7 @@ fn run_explicit_fresh_compatibility(
     let mut universe = Universe::with_world(test_world());
     recipe.engine.prepare_initex(&mut universe);
     let mut session =
-        CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
+        EngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session
         .set_fuel_limit(recipe.guards.command_fuel)
         .expect("finite fresh fuel");

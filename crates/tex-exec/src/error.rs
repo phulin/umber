@@ -12,7 +12,7 @@ use tex_state::token::{OriginId, Token, TracedTokenWord};
 
 use crate::Mode;
 
-/// Arena-independent source evidence frozen before a failed canonical step
+/// Arena-independent source evidence frozen before a failed step
 /// rolls speculative provenance back.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FrozenDiagnosticOrigin {
@@ -42,7 +42,7 @@ pub enum ExecError {
         site: DiagnosticSite,
         frozen: Option<FrozenDiagnosticOrigin>,
     },
-    NeedResource(crate::ResourceNeed),
+    NeedResource(crate::ResolverResourceNeed),
     World(WorldError),
     FontParse(tex_fonts::ParseError),
     PdfFontMap(tex_fonts::PdfFontMapError),
@@ -111,7 +111,7 @@ pub enum ExecError {
     ///
     /// This is deliberately distinct from `UnsupportedCommand` (an opcode
     /// `meaning.rs` itself does not recognize): every variant here is a real,
-    /// named TeX82/e-TeX/pdfTeX primitive that canonical main control simply
+    /// named TeX82/e-TeX/pdfTeX primitive that main control simply
     /// does not route yet in the current mode, either because no dispatch
     /// arm has been written for it or because it is legal only in a
     /// different mode (e.g. a math-noad primitive reached outside math
@@ -136,7 +136,7 @@ pub enum ExecError {
     /// dispatch" into "succeeded and consumed nothing" and left the
     /// command's own operand tokens to be typeset as literal text
     /// arbitrarily far downstream. Every variant reported here is a real
-    /// TeX82/e-TeX/pdfTeX command class that canonical main control does not
+    /// TeX82/e-TeX/pdfTeX command class that main control does not
     /// route yet; the `Meaning` payload names the exact gap.
     UnimplementedMeaning {
         meaning: tex_state::meaning::Meaning,
@@ -162,29 +162,29 @@ pub enum ExecError {
     MissingToken {
         context: &'static str,
     },
-    /// A canonical command-core operation scanned an input name, but its
+    /// A command-core operation scanned an input name, but its
     /// borrow-scoped host capability has not supplied immutable bytes yet.
-    MissingCanonicalInput {
+    MissingInput {
         name: String,
         original_name: String,
     },
     /// A non-opening file probe has not received bytes or authoritative
     /// absence from the retained host yet.
-    MissingCanonicalInputProbe {
+    MissingInputProbe {
         request: tex_command::FileEnquiryRequest,
     },
-    /// A canonical font definition completed scanning, but its transient
+    /// A font definition completed scanning, but its transient
     /// host capability has not supplied the immutable resource yet.
-    MissingCanonicalFont {
+    MissingFont {
         request: tex_command::FontLoadRequest,
     },
-    MissingCanonicalPdfImage {
+    MissingPdfImage {
         request: tex_command::PdfImageRequest,
     },
     MissingTracedToken {
         context: TracedTokenWord,
     },
-    /// A canonical command-core operation failed with a `CommandError` other
+    /// A command-core operation failed with a `CommandError` other
     /// than `MissingInput` or `PdfNavigation`, which map to their own
     /// dedicated variants above. This preserves the originating variant and
     /// message instead of collapsing it into a generic `MissingToken`.
@@ -378,11 +378,11 @@ impl fmt::Display for ExecError {
             }
             Self::UnimplementedPrimitive { primitive, mode, .. } => write!(
                 f,
-                "canonical execution does not dispatch \\{primitive:?} in {mode:?} mode yet"
+                "main-control execution does not dispatch \\{primitive:?} in {mode:?} mode yet"
             ),
             Self::UnimplementedMeaning { meaning, mode, .. } => write!(
                 f,
-                "canonical execution does not dispatch {meaning:?} in {mode:?} mode yet"
+                "main-control execution does not dispatch {meaning:?} in {mode:?} mode yet"
             ),
             Self::MissingPrefixedCommand => write!(f, "You can't use a prefix with `end of input'"),
             Self::PrefixWithNonAssignment { token, .. } => {
@@ -401,16 +401,16 @@ impl fmt::Display for ExecError {
                 )
             }
             Self::MissingToken { context } => write!(f, "missing token while scanning {context}"),
-            Self::MissingCanonicalInput { name, .. } => {
+            Self::MissingInput { name, .. } => {
                 write!(f, "input source `{name}` is unavailable")
             }
-            Self::MissingCanonicalInputProbe { request } => {
+            Self::MissingInputProbe { request } => {
                 write!(f, "input enquiry `{}` is unresolved", request.name)
             }
-            Self::MissingCanonicalFont { request } => {
+            Self::MissingFont { request } => {
                 write!(f, "font resource `{}` is unavailable", request.name)
             }
-            Self::MissingCanonicalPdfImage { request } => {
+            Self::MissingPdfImage { request } => {
                 write!(f, "image resource `{}` is unavailable", request.name)
             }
             Self::MissingTracedToken { .. } => f.write_str("missing token while scanning input"),
@@ -594,10 +594,10 @@ impl std::error::Error for ExecError {
             | Self::MissingControlSequence { .. }
             | Self::ExpectedControlSequence { .. }
             | Self::MissingToken { .. }
-            | Self::MissingCanonicalInput { .. }
-            | Self::MissingCanonicalInputProbe { .. }
-            | Self::MissingCanonicalFont { .. }
-            | Self::MissingCanonicalPdfImage { .. }
+            | Self::MissingInput { .. }
+            | Self::MissingInputProbe { .. }
+            | Self::MissingFont { .. }
+            | Self::MissingPdfImage { .. }
             | Self::MissingTracedToken { .. }
             | Self::InvalidLetRhs { .. }
             | Self::UnsupportedAssignmentTarget
@@ -705,10 +705,10 @@ impl ExecError {
             | Self::MissingPrefixedCommand
             | Self::MissingControlSequence { .. }
             | Self::MissingToken { .. }
-            | Self::MissingCanonicalInput { .. }
-            | Self::MissingCanonicalInputProbe { .. }
-            | Self::MissingCanonicalFont { .. }
-            | Self::MissingCanonicalPdfImage { .. }
+            | Self::MissingInput { .. }
+            | Self::MissingInputProbe { .. }
+            | Self::MissingFont { .. }
+            | Self::MissingPdfImage { .. }
             | Self::Fatal(_)
             | Self::Command(_)
             | Self::UnsupportedAssignmentTarget
@@ -767,16 +767,14 @@ impl ExecError {
         }
     }
 
-    /// Attaches the command delivery which owns a failed canonical step when
+    /// Attaches the command delivery which owns a failed step when
     /// the error did not already identify a more specific source origin.
     /// Scanner and expansion errors keep their nested diagnostic site; only
     /// an originless boundary error inherits the triggering command span.
     pub(crate) fn capture_command_origin(self, origin: OriginId) -> Self {
         if matches!(
             self,
-            Self::NeedResource(_)
-                | Self::MissingCanonicalFont { .. }
-                | Self::MissingCanonicalPdfImage { .. }
+            Self::NeedResource(_) | Self::MissingFont { .. } | Self::MissingPdfImage { .. }
         ) {
             return self;
         }

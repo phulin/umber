@@ -209,7 +209,7 @@ fn current_format_schema_receipts_cover_every_release_surface() {
             reason: "schema-agnostic distribution parser fixtures",
         },
         HistoricalSchema10Use {
-            path: "crates/tex-exec/src/canonical_shipout/transaction.rs",
+            path: "crates/tex-exec/src/shipout/transaction.rs",
             marker: "artifact_schema: 10,",
             expected_count: 1,
             reason: "memo artifact schema, not the frozen-format schema",

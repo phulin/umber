@@ -506,7 +506,7 @@ replay-frame pop, not across provenance rollback. Any diagnostic that must
 outlive rollback past its origin/source-map watermark is rendered to owned text
 before rollback.
 
-Canonical executor operations pair their `CommandState` snapshot with this
+Main-control operations pair their `CommandState` snapshot with this
 aggregate watermark in one private rollback value. Rollback removes all
 invocation records created by a failed macro scan or a resource-suspended
 nested expansion at the same time that it restores macro activations and

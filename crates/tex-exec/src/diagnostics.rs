@@ -1,4 +1,4 @@
-//! Source-free canonical diagnostic reporting and rendering.
+//! Source-free diagnostic reporting and rendering.
 
 use std::fmt::Write as _;
 
@@ -239,7 +239,7 @@ pub(crate) fn render_showgroups(diagnostic: &ShowGroupsDiagnostic) -> String {
 
 /// Emits e-TeX 2.6 [49.1292]'s `show_save_groups` display through the shared
 /// §245 diagnostic selector, followed by §1293's ordinary show completion.
-pub(crate) fn execute_canonical_showgroups(
+pub(crate) fn execute_showgroups(
     stores: &mut Universe,
     diagnostic: &ShowGroupsDiagnostic,
     context: String,
@@ -708,7 +708,7 @@ pub(crate) fn append_token_show_text(stores: &Universe, token: Token, text: &mut
 /// tex.web §310's `show_context` display for the gullet's replay stack.
 ///
 /// The implementation is [`tex_state::InputSummary::show_context`]; the
-/// pseudoprint arithmetic it shares with the canonical command core's own
+/// pseudoprint arithmetic it shares with the command core.s own
 /// stack is [`tex_state::print::render_error_context`].
 pub(crate) fn show_context(stores: &Universe, input: &tex_state::InputSummary) -> String {
     input.show_context(stores)

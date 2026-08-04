@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use tex_exec::{
-    CanonicalResourceFulfillment, CanonicalResourceHost, CanonicalResourceNeed,
-    CanonicalResourceOutcome, CanonicalResourceWorld, PdfImageRequest,
+    PdfImageRequest, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
+    ResourceWorld,
 };
 use tex_fonts::{
     AcceptedFontContainers, FontFeaturePolicy, FontLayoutPolicy, FontMappingFallbackPolicy,
@@ -137,16 +137,12 @@ impl<'a> VirtualRunResolvers<'a> {
     }
 }
 
-impl CanonicalResourceHost for VirtualRunResolvers<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for VirtualRunResolvers<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         let request_index = self.request_index;
         self.request_index = self.request_index.saturating_add(1);
         let result = match need {
-            CanonicalResourceNeed::Input {
+            ResourceNeed::Input {
                 name,
                 original_name,
             } => world
@@ -155,72 +151,70 @@ impl CanonicalResourceHost for VirtualRunResolvers<'_> {
                         .open(input, FileKind::TexInput, original_name, request_index)
                 })
                 .map(|lookup| {
-                    lookup.map(|content| CanonicalResourceFulfillment::world_input(name, content))
+                    lookup.map(|content| ResourceFulfillment::world_input(name, content))
                 }),
-            CanonicalResourceNeed::InputProbe { request } => world
+            ResourceNeed::InputProbe { request } => world
                 .with_input_read_state(|input| {
                     self.input
                         .probe(input, FileKind::TexInput, &request.name, request_index)
                 })
                 .map(|lookup| {
                     lookup.map(|content| {
-                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content)
+                        ResourceFulfillment::world_input_probe(request.clone(), content)
                     })
                 }),
-            CanonicalResourceNeed::Font { request } => world
+            ResourceNeed::Font { request } => world
                 .with_input_read_state(|input| {
                     self.font
-                        .open_canonical_font(input, Path::new(&request.name), request_index)
+                        .open_command_font(input, Path::new(&request.name), request_index)
                 })
                 .map(|lookup| {
-                    lookup.map(|source| CanonicalResourceFulfillment::Font {
+                    lookup.map(|source| ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(source),
                     })
                 }),
-            CanonicalResourceNeed::PdfImage { request } => world
+            ResourceNeed::PdfImage { request } => world
                 .with_input_read_state(|input| {
-                    self.image.open_canonical_image(
+                    self.image.open_command_image(
                         input,
-                        &legacy_image_request(request),
+                        &output_image_request(request),
                         request_index,
                     )
                 })
                 .map(|lookup| {
-                    lookup.map(|resource| CanonicalResourceFulfillment::PdfImage {
+                    lookup.map(|resource| ResourceFulfillment::PdfImage {
                         request: request.clone(),
                         resource: Box::new(resource),
                     })
                 }),
         };
         match result {
-            Ok(HostLookup::Available(fulfillment)) => {
-                CanonicalResourceOutcome::Fulfilled(fulfillment)
-            }
-            Ok(HostLookup::Unavailable) => CanonicalResourceOutcome::Unavailable,
-            Ok(HostLookup::NeedResource) => CanonicalResourceOutcome::Declined,
+            Ok(HostLookup::Available(fulfillment)) => ResourceOutcome::Fulfilled(fulfillment),
+            Ok(HostLookup::Unavailable) => ResourceOutcome::Unavailable,
+            Ok(HostLookup::NeedResource) => ResourceOutcome::Declined,
             Err(error) => {
                 match need {
-                    CanonicalResourceNeed::Input { .. } => {
+                    ResourceNeed::Input { .. } => {
                         self.input.record_fatal(CompileError::World(error))
                     }
-                    CanonicalResourceNeed::InputProbe { .. } => {
+                    ResourceNeed::InputProbe { .. } => {
                         self.input.record_fatal(CompileError::World(error))
                     }
-                    CanonicalResourceNeed::Font { .. } => {
+                    ResourceNeed::Font { .. } => {
                         self.font.files.record_fatal(CompileError::Font(error))
                     }
-                    CanonicalResourceNeed::PdfImage { .. } => {
+                    ResourceNeed::PdfImage { .. } => {
                         self.image.files.record_fatal(CompileError::Output(error))
                     }
                 }
-                CanonicalResourceOutcome::Declined
+                ResourceOutcome::Declined
             }
         }
     }
 }
 
-fn legacy_image_request(request: &tex_command::PdfImageRequest) -> PdfImageRequest {
+fn output_image_request(request: &tex_command::PdfImageRequest) -> PdfImageRequest {
     PdfImageRequest {
         name: request.name.clone(),
         page: match &request.page {
@@ -249,7 +243,7 @@ struct VirtualImageResolver<'a> {
 }
 
 impl VirtualImageResolver<'_> {
-    fn open_canonical_image(
+    fn open_command_image(
         &mut self,
         input: &mut dyn InputReadState,
         request: &PdfImageRequest,
@@ -723,7 +717,7 @@ impl<'a> VirtualFontResolver<'a> {
 }
 
 impl VirtualFontResolver<'_> {
-    fn open_canonical_font(
+    fn open_command_font(
         &mut self,
         input: &mut dyn InputReadState,
         path: &Path,

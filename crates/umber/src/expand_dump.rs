@@ -1,15 +1,13 @@
 use std::path::Path;
 
 use tex_command::{CommandProfile, SourceRegistration};
-use tex_exec::CanonicalDiagnosticStep;
+use tex_exec::DiagnosticStep;
 use tex_state::meaning::Meaning;
 use tex_state::token::Token;
 use tex_state::{Universe, World, WorldError};
 
 use crate::format_token;
-use umber::{
-    CanonicalEngineSession, CanonicalSessionError, FileSessionResolvers, prepare_run_stores,
-};
+use umber::{EngineSession, FileSessionResolvers, SessionError, prepare_run_stores};
 
 /// Runs the diagnostic expansion surface through the retained canonical
 /// command machine. Ordinary typesetting is intentionally not entered: this
@@ -22,7 +20,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
     let root_bytes = content.bytes().to_vec();
     prepare_run_stores(&mut stores);
     let startup_name = path.to_string_lossy();
-    let mut session = CanonicalEngineSession::new(&mut stores, CommandProfile::TEX82);
+    let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
     session.register_retained_root(
         &startup_name,
         SourceRegistration::world(content).with_name(startup_name.as_ref()),
@@ -31,7 +29,7 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
 
     loop {
         match session.diagnostic_expand_step(&mut host)? {
-            CanonicalDiagnosticStep::Token {
+            DiagnosticStep::Token {
                 spelling,
                 meaning,
                 control_sequence,
@@ -51,8 +49,8 @@ pub fn expand_dump(path: &str) -> Result<(), ExpandDumpError> {
                 }
                 println!("{}", format_token(semantic, session.stores()));
             }
-            CanonicalDiagnosticStep::Assignment => {}
-            CanonicalDiagnosticStep::EndOfInput => return Ok(()),
+            DiagnosticStep::Assignment => {}
+            DiagnosticStep::EndOfInput => return Ok(()),
         }
     }
 }
@@ -124,7 +122,7 @@ fn render_undefined(
 #[derive(Debug)]
 pub enum ExpandDumpError {
     World(WorldError),
-    Canonical(Box<CanonicalSessionError>),
+    Session(Box<SessionError>),
     Rendered(String),
 }
 
@@ -132,7 +130,7 @@ impl std::fmt::Display for ExpandDumpError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::World(error) => error.fmt(formatter),
-            Self::Canonical(error) => error.fmt(formatter),
+            Self::Session(error) => error.fmt(formatter),
             Self::Rendered(message) => formatter.write_str(message),
         }
     }
@@ -146,8 +144,8 @@ impl From<WorldError> for ExpandDumpError {
     }
 }
 
-impl From<CanonicalSessionError> for ExpandDumpError {
-    fn from(error: CanonicalSessionError) -> Self {
-        Self::Canonical(Box::new(error))
+impl From<SessionError> for ExpandDumpError {
+    fn from(error: SessionError) -> Self {
+        Self::Session(Box::new(error))
     }
 }

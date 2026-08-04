@@ -6,9 +6,9 @@
 //! `tex-state`'s (`tex_state::print::Printer` over §54's `selector`), file
 //! opening is `tex-command`'s (§537's `start_input` is an input-stack
 //! operation), and the job lifecycle -- when a job starts and how it ends --
-//! is `CanonicalMainControl`'s, because it is the one layer that sees a
+//! is `MainControl`'s, because it is the one layer that sees a
 //! `Universe` and a driver both. This module is where that lifecycle lives;
-//! `canonical_main_control.rs` only exposes it.
+//! `main_control.rs` only exposes it.
 //!
 //! The per-file `(name`/`)` bracketing is the one piece that is *not* here:
 //! §362 prints its `)` from inside `get_next`, ahead of the
@@ -98,8 +98,8 @@ pub(crate) struct StartupLineFraming<'a> {
 /// Enough job state to make [`begin_job_with_terminal_banner`] a one-shot.
 ///
 /// This is engine state that lives outside `Universe`, alongside
-/// `CanonicalMainControl`'s other replay-owned fields
-/// (`next_alignment_identity`, `boxes`, ...), so `CanonicalStepSnapshot`
+/// `MainControl`'s other replay-owned fields
+/// (`next_alignment_identity`, `boxes`, ...), so `StepSnapshot`
 /// captures and restores it exactly as it does those.
 ///
 /// §54's `open_parens` is deliberately *not* here. It is print-adjacent state
@@ -293,7 +293,7 @@ fn clock_suffix(stores: &Universe) -> String {
 /// Idempotent: only the first call prints anything, matching tex.web's own
 /// one-shot start-up (`job_name=0` guards `open_log_file`). A driver calls
 /// this before it opens the root source (via
-/// [`crate::CanonicalMainControl::register_root_source`] or a wrapper over
+/// [`crate::MainControl::register_root_source`] or a wrapper over
 /// it), so the banner and `**` line precede the root file's own `(`.
 #[cfg(any())]
 pub(crate) fn begin_job(
@@ -518,13 +518,13 @@ fn terminal_exhausted_context(
 ///
 /// A driver calls this the moment a step reports
 /// [`crate::MainControlStep::EndOfInput`], mirroring how
-/// [`crate::CanonicalMainControl`]'s own `end_of_job_final_cleanup` runs on
+/// [`crate::MainControl`]'s own `end_of_job_final_cleanup` runs on
 /// [`crate::MainControlStep::End`]. The two are siblings, not the same path:
 /// §93's `succumb` sets `interaction` to `scroll_mode`, calls `error` (which
 /// is what actually prints everything below), sets `history` to
 /// `fatal_error_stop`, and then §81's `jump_out` transfers control straight
 /// to §1333's `close_files_and_terminate` ([`finish_job`]) -- skipping
-/// §1335's `final_cleanup` ([`crate::CanonicalMainControl`]'s
+/// §1335's `final_cleanup` ([`crate::MainControl`]'s
 /// `end_of_job_final_cleanup`) entirely, so this prints no paren-closing,
 /// incomplete-conditions report, or history note of its own; a driver's own
 /// unconditional `finish_job` call is what §642's report and the transcript

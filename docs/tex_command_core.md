@@ -15,17 +15,17 @@ control-sequence meanings, enforces scanner status, updates `align_state`, and
 intercepts alignment delimiters. Its real downstream boundary is the delivery
 of an unexpandable current command to main control.
 
-`tex-exec::CanonicalMainControl` is the production main-control seam for that boundary:
+`tex-exec::MainControl` is the production main-control seam for that boundary:
 it accepts no `InputStack`, obtains each `CurrentCommand` and every assignment
 operand through `CommandProcessor`, then applies only the completed typed
 structural mutation after the processor borrow ends. Macro calls and
 registered `\\input` nesting therefore remain command-core operations; the
 executor never rereads their source text.
 
-`umber::CanonicalEngineSession` constructs that command machine at startup and registers
+`umber::EngineSession` constructs that command machine at startup and registers
 its retained root plus already-acquired nested `World` resources through typed
 capabilities. A session with a registered root executes its bounded operations
-through `CanonicalMainControl`; resource acquisition, transaction rollback,
+through `MainControl`; resource acquisition, transaction rollback,
 and final effect/artifact commit remain host-owned. Direct, CLI, virtual,
 format-loaded, editor/incremental, and WebAssembly entry points all compose
 this same command-owned transition machine; there is no runtime command-path
@@ -72,7 +72,7 @@ capability.
 
 Math-shift pairing is command-owned: entry and display-closing lookahead
 either consumes the second shift or restores a non-shift through the ordinary
-backup level. Canonical main control then owns only typed math-shift
+backup level. Main control then owns only typed math-shift
 group/mode transitions, `\everymath` or `\everydisplay` replay, paragraph
 interruption/resumption, Appendix-G lowering, equation-number subformula
 packaging, and vertical display contribution.
@@ -117,7 +117,7 @@ unrelated following material into it.
 Text `\\accent` and `\\discretionary` use the same completed-scanner boundary:
 the command processor owns the accent number, expanded base-character lookup,
 and non-character replay, and freezes each discretionary group as traced,
-immutable material. `CanonicalMainControl` replays each frozen part as its own
+immutable material. `MainControl` replays each frozen part as its own
 stored command level inside a `disc_group` restricted-horizontal episode,
 flushes and freezes the completed node list, then applies the typed `Disc`
 node. Group-local definitions and recovery remain live command/Universe state;
@@ -298,7 +298,7 @@ a `.` other-character), while the other three cases each need exactly one.
 redefinition-proof control-sequence token backing a primitive by name (e.g.
 `"endgroup"`, `"right"`), shared with the pre-existing `check_outer_validity`
 frozen-insertion recoveries (`\par`/`\fi`/`\cr`) rather than duplicated.
-`tex-exec`'s `scan_off_save` (`canonical_main_control.rs`) is the executor-side
+`tex-exec`'s `scan_off_save` (`main_control.rs`) is the executor-side
 half: given a command and the innermost `GroupKind`, it selects and issues the
 matching closer (`SemiSimple` → `\endgroup`, `MathShift` → `$`, `MathLeft` →
 `\right.`, otherwise → `}`, or the bottom-level drop when no group is open),
@@ -345,7 +345,7 @@ Once `its_all_over` is true, §1335's `final_cleanup` unwinds every input
 level main control has abandoned -- the root file at end of text, an
 unfinished macro body, a live token list -- without reading any of them.
 Normal stop, fatal §93 `succumb`, and terminal exhaustion then converge at
-§1332's `end_of_TEX` label. Canonical main control publishes the following
+§1332's `end_of_TEX` label. Main control publishes the following
 `close_files_and_terminate` observation after either a scanned stop's cleanup
 records or a fatal diagnostic. Terminal exhaustion has no scanned command, so
 the retained session publishes the same boundary after its source-stop record.
@@ -656,7 +656,7 @@ therefore restores the complete future input state after every structured scan.
 
 ### 5.3.1 Canonical main-control ownership gate
 
-`tex-exec::CanonicalMainControl` is the only production executor-facing command driver.
+`tex-exec::MainControl` is the only production executor-facing command driver.
 It may classify `CurrentCommand::meaning()` and apply completed typed values,
 but it must not construct an independent input stack, call raw-token delivery,
 or inspect a raw token carried by a delivered command. The retired executor,
@@ -711,12 +711,12 @@ mutation, which is emitted only after `Universe` applies the frozen list.
 TeX82 `\let` and `\futurelet` likewise cross replay as completed typed
 meaning assignments. `CommandProcessor` owns their raw target and source
 deliveries, optional-equals handling, and `\futurelet`'s two-token lookahead
-the canonical driver; `CanonicalMainControl` applies the captured meaning only after that
+the canonical driver; `MainControl` applies the captured meaning only after that
 processor borrow ends and then publishes the committed meaning mutation.
 
 TeX82 §1224 `\chardef` and `\mathchardef` use that same completed-definition
 boundary. `CommandProcessor` owns the raw control-sequence target, optional
-equals sign, and complete integer scan. `CanonicalMainControl` selects the
+equals sign, and complete integer scan. `MainControl` selects the
 effective `\global`/`\globaldefs` scope for TeX82's provisional
 `\relax`, validates the eight- or fifteen-bit code, emits the recoverable
 restricted-code diagnostic where required, and commits the resulting character
@@ -725,7 +725,7 @@ or math-character meaning without raw input.
 TeX82 §1224 `\countdef`, `\dimendef`, `\skipdef`, `\muskipdef`, and
 `\toksdef` follow the same split. `CommandProcessor` installs the scoped
 provisional `\relax`, then owns target delivery, optional-equals handling,
-and the `scan_eight_bit_int` register selector. `CanonicalMainControl` maps
+and the `scan_eight_bit_int` register selector. `MainControl` maps
 the completed selector to the corresponding named register meaning under the
 effective `\global`/`\globaldefs` scope. Those meanings re-enter the same
 typed count, dimension, glue, muglue, and token-list assignment scanners as
@@ -907,7 +907,7 @@ dispatch at all (umber2-johp.194). Three of its members carry no
 `UnexpandablePrimitive`: `non_math(sup_mark)` and `non_math(sub_mark)` are
 character categories, and `non_math(math_given)` is a `\mathchardef` target,
 whose math code lives in the delivered `Meaning::MathCharGiven` itself.
-`scan_canonical_math_request` is therefore keyed on the delivered `Meaning`,
+`scan_math_request` is therefore keyed on the delivered `Meaning`,
 not on the primitive, so `math_given` joins `math_char_num` in the same
 §1154/§1155 `set_math_char` path instead of falling through to a loud
 `UnimplementedMeaning`.
@@ -921,7 +921,7 @@ the diagnostic. This keeps an exhausted backup level visible as
 `<recently read> \accent` instead of retiring it while scanning the operand.
 
 The rest of the table is the math-noad, math-style, and math-delimiter
-primitive family that `scan_canonical_math_request` (§5's math-request
+primitive family that `scan_math_request` (§5's math-request
 vocabulary above) and the `\left`/`\right`/`\middle` gate otherwise dispatch
 only under `Mode::Math`/`Mode::DisplayMath`: `\mathchar`,
 `\delimiter`, the eight `mathord`/`.../mathinner` component primitives plus
@@ -1183,8 +1183,8 @@ This is the command half of an executor savepoint. It is never independently
 committed from the paired `Universe`, mode nest, execution state, effects,
 generated writes, and output state.
 
-The canonical executor enforces that rule with one private
-`CanonicalStepSnapshot`: capture records `CommandState` and the aggregate
+Main control enforces that rule with one private
+`StepSnapshot`: capture records `CommandState` and the aggregate
 `Universe` watermark together, and rollback restores both before returning to
 the host. In particular, a resource suspension after nested macro expansion
 cannot retain either the activation/argument ranges or the invocation records
@@ -2603,7 +2603,7 @@ At ordinary EOF, TeX82 §343 calls `end_file_reading`, checks outer validity,
 and restarts raw delivery at the caller. Thus a nested `\input` retirement and
 the parent source's normalized line-ending space can each occupy later
 main-control operations before the parent delivers `\end`. The composed
-canonical bridge must delegate that sequence to `CanonicalMainControl`'s
+canonical bridge must delegate that sequence to `MainControl`'s
 command loop; it must neither consume legacy input nor impose a host-side
 post-input step count.
 
@@ -3137,7 +3137,7 @@ typed values and stable identities. The test-only fixture adapter maps those
 owned records to a deterministic replay capture outside the production command
 dependency graph. It validates the locked TeX82 suite, scans the terminal root
 filename through the command processor, opens only that selected root, and
-drives command/executor execution through `CanonicalMainControl` with a
+drives command/executor execution through `MainControl` with a
 source-byte-derived bound. Remaining manifest sources are registered only as
 immutable `\\input` capabilities, so nested input remains command-owned;
 ordered schema comparison remains separate.
@@ -3292,7 +3292,7 @@ An explicit `CurrentCommand` is consumed once. Re-execution after resource
 rollback begins from the enclosing executor step, not from a retained command
 value.
 
-Each bounded `CanonicalMainControl` operation captures the aggregate command
+Each bounded `MainControl` operation captures the aggregate command
 state, discardable command runtime, mode nest, Universe roots, replay-local
 box/alignment/output state, and pending World effects/artifacts before it
 creates a processor. A command-core `MissingInput` is translated to a typed
@@ -3318,10 +3318,10 @@ this matrix and remains Beads `.4.2`.
 | Canonical family                                                                                   | WEB authority                                                                                                        | Canonical owner and committed test inventory                                                                                                                                                                                                                                                                  |
 | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Delivery, expansion, recovery, and scanner state                                                   | TeX82 §§24--25; §1030                                                                                                | `CommandProcessor::{get_next,get_x_token}` is the only source path; `tex-command` raw/expanded delivery, macro, conditional, and structured-scanner tests plus `tex-exec` architecture gate.                                                                                                                  |
-| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Typed `ScannedStep` application; `canonical_assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                           |
-| Paragraph and horizontal material                                                                  | TeX82 §1030+ horizontal/vertical branches                                                                            | Typed paragraph start/backup, `\\everypar`, characters, spaces, ligatures, accents, discretionary, kern/glue, parshape, line breaking, and page contribution; `production_driver_*paragraph*`, `production_driver_*horizontal*`, and `canonical_paragraph_page_builder_is_observer_neutral`.                  |
+| Mode selection, groups, prefixes, definitions, registers, parameters, code tables, and diagnostics | TeX82 §1030+ mode tables; §§1064, 1066, 1095, 1131; §1257 (`new_font`)                                               | Typed `ScannedStep` application; `assignments_*`, `canonical_definition_*`, `canonical_font_definition_*`, `canonical_grouping_*`, and `canonical_display_diagnostics_*`.                                                                                                                           |
+| Paragraph and horizontal material                                                                  | TeX82 §1030+ horizontal/vertical branches                                                                            | Typed paragraph start/backup, `\\everypar`, characters, spaces, ligatures, accents, discretionary, kern/glue, parshape, line breaking, and page contribution; `production_driver_*paragraph*`, `production_driver_*horizontal*`, and `paragraph_page_builder_is_observer_neutral`.                  |
 | Boxes, leaders, packing, splitting, and explicit shipment                                          | TeX82 §1071 (`box_end`/`\\shipout`) and §1030+ box branches                                                          | Typed box construction/selection/unboxing/leaders/vsplit; `canonical_box_*`, `canonical_vsplit_*`, `canonical_initex_replay_scans_setbox_*`, and `shipout_box_completion_*`.                                                                                                                                  |
-| Math and display material                                                                          | TeX82 §§691--734 and §1030+ math branches                                                                            | Typed `CanonicalMathRequest`/`MathDelimiterBoundary`; `canonical_math_*`, `canonical_math_replay_observer_does_not_change_frozen_mlist`, and math scanner recovery tests.                                                                                                                                     |
+| Math and display material                                                                          | TeX82 §§691--734 and §1030+ math branches                                                                            | Typed `MathRequest`/`MathDelimiterBoundary`; `canonical_math_*`, `canonical_math_replay_observer_does_not_change_frozen_mlist`, and math scanner recovery tests.                                                                                                                                     |
 | Alignment preamble, cells, templates, recovery, and final packing                                  | TeX82 §§760--780; §1131 recovery                                                                                     | Command-owned `AlignmentDelivery`; `canonical_alignment_*`, `command_owned_endv_*`, `nested_alignment_*`, `noalign_*`, and committed TeX82 alignment fixtures.                                                                                                                                                |
 | Input, font, and image resources                                                                   | TeX82 §529 (`start_input`/filename scan), §1254; pdfTeX `scan_image`/`scan_pdf_box_spec`                             | Immutable typed suspension only; `missing_canonical_input_*`, `canonical_missing_font_*`, `canonical_openin_*`, `canonical_pdfximage_*`, and `canonical_pdf_resource_retry_*`. Host-byte fulfillment is a deliberate modern envelope, not a TeX82 semantic substitute.                                        |
 | Page building, output routines, DVI/PDF lowering, streams, effects, and artifacts                  | TeX82 §46, §§608--642, §§1006--1028, §1071, §§1337--1338; pdfTeX `pdf_ship_out`, `hlist_out`/`vlist_out`, `out_what` | Typed page/output lifecycle and detached receipts; `canonical_*shipout*`, `canonical_stream_effects_*`, `canonical_pdf_whatsits_*`, and `tex-out` artifact/DVI tests.                                                                                                                                         |
@@ -3349,10 +3349,10 @@ processor episode.
 
 ### 33.2 Dispatch-completeness invariant
 
-`canonical_main_control.rs`'s `scan_command` is the sole place an
+`main_control.rs`'s `scan_command` is the sole place an
 `UnexpandablePrimitive` reaches stomach dispatch. Every variant must be either
 routed by a named arm (directly, or through an explicit generic path such as
-`scan_canonical_math_request` for the math-noad family) or must fail loudly
+`scan_math_request` for the math-noad family) or must fail loudly
 and name itself. A silent catch-all that treats "no dispatch arm" as
 "succeeded and consumed nothing" is a standing defect, not a placeholder: main
 control has already consumed the primitive's own token, so if its scanner
@@ -3414,7 +3414,7 @@ case to `scan_unclassified_char_token`, an **exhaustive match over
 `Catcode`**. Both use the same buckets as `scan_unclassified_primitive`, plus
 one more:
 
-- `Ok(...)` for meanings tex.web routes somewhere canonical main control
+- `Ok(...)` for meanings tex.web routes somewhere in main control
   already implements generically, cited per arm. This bucket is where
   "consume nothing and proceed" is now allowed to appear -- but only as a
   named, tex.web-cited decision (`any_mode(relax): do_nothing`, §1045), never
@@ -3479,7 +3479,7 @@ it has collapsed two distinct labels into one, and the extra expanded
 deliveries desynchronize the semantic stream from the first word of body text
 onward.
 
-`CanonicalMainControl::main_loop_active` carries the live label. It is set
+`MainControl::main_loop_active` carries the live label. It is set
 only by §1030's four `main_loop` entries -- `hmode+letter`,
 `hmode+other_char`, `hmode+char_given`, `hmode+char_num` -- and only when
 both of the tests those entries then pass hold:
@@ -3515,17 +3515,17 @@ character must not park the enclosing context at the lookahead.
 ### 33.5 Host-applied step routing
 
 Most `ScannedStep`s are applied by the free function `apply_scanned_step`,
-which owns no `CanonicalMainControl`. A few cannot be: TeX82 §1137's
+which owns no `MainControl`. A few cannot be: TeX82 §1137's
 `init_math`, §1193's `after_math`, §1190's `math_left_right`, §1116's
 `append_discretionary`, the math-noad family, and the end of a replay episode
 all need the mode nest, the save stack, and the command processor's
 token-list scheduling at once, plus the ability to run nested episodes. Those
-steps are applied by `CanonicalMainControl` itself, and `apply_scanned_step`
+steps are applied by `MainControl` itself, and `apply_scanned_step`
 carries an `unreachable!()` arm for each.
 
 There are three step-delivery entry points -- unobserved, observed, and the
 alignment cell's. The host-applied set is named exactly once, in
-`CanonicalMainControl::apply_host_owned_step`, and all three route through
+`MainControl::apply_host_owned_step`, and all three route through
 it. It used to be an `if let` chain copied into each entry point, and the
 observed copy omitted `ScannedStep::MathShift`: an observed `$` fell through
 to `apply_scanned_step`'s `unreachable!()` and panicked while the identical
@@ -3561,7 +3561,7 @@ run a different artifact from the shipped one.
 So the construction is named once too. `command_processor` is the only
 `CommandProcessor::new` call in `tex-exec`, and it takes the operation's
 commit slot as a parameter, so an episode cannot be constructed without
-stating which buffer it publishes into. `CanonicalMainControl` holds that slot
+stating which buffer it publishes into. `MainControl` holds that slot
 as engine state (`operation_observations`) rather than threading an observer
 argument, precisely because a nested episode is several frames below the entry
 point that knows whether the operation is observed. Deliberate silence -- the
@@ -3760,7 +3760,7 @@ the `align_state` change from the token's own category, exactly as §325 does.
 ### 33.10 Runtime command-entry audit
 
 The 2026-08-04 cutover audit found one production command transition machine.
-`CanonicalMainControl` explicitly owns `CommandState`, discardable
+`MainControl` explicitly owns `CommandState`, discardable
 `CommandRuntime`, the shared command-fuel ledger, and
 `CommandHostCapabilities`. Its private `command_processor` helper is the only
 `CommandProcessor::new` site in `tex-exec`; each bounded episode borrows those
@@ -3768,13 +3768,13 @@ roots and creates a borrow-scoped `CommandHostContext`.
 
 Every supported runtime reaches that boundary without a command-path selector:
 
-- direct and retained native jobs use `CanonicalEngineSession`;
+- direct and retained native jobs use `EngineSession`;
 - the CLI composes `VirtualCompileSession`, while `expand-dump` uses the same
   retained session and `lex-dump` uses `CommandState` tokenization directly;
 - virtual compilation retains a `tex-incr::RevisionCandidate` and canonical
   resource host across suspension;
 - fresh INITEX construction and format-loaded execution create
-  `CanonicalEngineSession` with the selected immutable `CommandProfile`;
+  `EngineSession` with the selected immutable `CommandProfile`;
 - editor and fixed-point sessions compose `VirtualCompileSession` and
   `tex-incr` candidates; and
 - the WebAssembly `CompilerSession` is a representation adapter over
@@ -3891,7 +3891,7 @@ flush.
 
 Direct fresh and format-loaded jobs acquire their root through the active
 `World`, transfer that exact `SourceRegistration` into
-`CanonicalEngineSession`, and then drive bounded `CanonicalMainControl`
+`EngineSession`, and then drive bounded `MainControl`
 operations. Resource policy sees only typed input, font, and image needs plus a
 borrow-scoped `World` capability. It returns immutable matching
 registrations; aggregate rollback owns retry. The host never receives command

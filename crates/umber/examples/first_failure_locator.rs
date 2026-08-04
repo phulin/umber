@@ -1,7 +1,7 @@
 //! First-failure locator for the canonical Gentle/Story e2e path.
 //!
 //! This is a *first-failure locator*: it drives Plain bootstrap plus a corpus
-//! source directly through `CanonicalEngineSession` and reports where
+//! source directly through `EngineSession` and reports where
 //! execution first stops. It can only show that execution stopped, never that
 //! completed output is wrong -- see the Glossary in
 //! `docs/canonical_divergence_workflow.md`. The `umber2-johp` epic converges
@@ -33,7 +33,7 @@
 //! `parity_harness::locate_tfm`).
 //!
 //! On success it reports the number of artifacts and DVI pages produced. On
-//! the first failure -- an `ExecError`/`CanonicalSessionError`, or a Rust
+//! the first failure -- an `ExecError`/`SessionError`, or a Rust
 //! panic -- it reports the live execution mode, the canonical error (with
 //! provenance-resolved TeX source context when the error carries an origin),
 //! and, for panics, lets the default panic hook report the Rust-side
@@ -54,11 +54,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use tex_command::FontResource;
-use tex_exec::{CanonicalResourceNeed, EngineCheckpoint, ExecError, canonical_font_resource_path};
+use tex_exec::{EngineCheckpoint, ExecError, ResourceNeed, canonical_font_resource_path};
 use tex_state::{JobClock, Universe, World};
 use umber::{
-    CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError,
+    EngineSession, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld, SessionError,
 };
 
 const DEFAULT_SOURCE: &str = "gentle";
@@ -98,7 +97,7 @@ fn main() -> ExitCode {
     seed_corpus_tfms(&mut world, &root);
 
     let mut stores = Universe::with_world(world);
-    let mut session = CanonicalEngineSession::tex82_initex(&mut stores);
+    let mut session = EngineSession::tex82_initex(&mut stores);
     let root_source = format!("\\input plain.tex \\input {source}.tex\n");
     session
         .register_authored_job("job.tex", Arc::from(root_source.into_bytes()))
@@ -154,16 +153,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn report_error(source: &str, session: &CanonicalEngineSession<'_>, error: &CanonicalSessionError) {
+fn report_error(source: &str, session: &EngineSession<'_>, error: &SessionError) {
     eprintln!("first_failure_locator: {source} run stopped");
     eprintln!("current mode: {:?}", session.current_mode());
     match error {
-        CanonicalSessionError::Execution(exec_error) => {
+        SessionError::Execution(exec_error) => {
             eprintln!("{}", exec_error.format_with_provenance(session.stores()));
             if let ExecError::Command(command_error) = exec_error {
                 eprintln!(
                     "note: this is a canonical command-core failure ({command_error:?}); \
-                     `command_error()` in crates/tex-exec/src/canonical_main_control.rs \
+                     `command_error()` in crates/tex-exec/src/main_control.rs \
                      names every `CommandError` variant explicitly (see umber2-johp.59), so \
                      this message and variant identify the true origin directly -- no debug \
                      panic needed."
@@ -174,11 +173,7 @@ fn report_error(source: &str, session: &CanonicalEngineSession<'_>, error: &Cano
     }
 }
 
-fn report_panic(
-    source: &str,
-    session: &CanonicalEngineSession<'_>,
-    payload: &(dyn std::any::Any + Send),
-) {
+fn report_panic(source: &str, session: &EngineSession<'_>, payload: &(dyn std::any::Any + Send)) {
     // The default panic hook already printed the Rust-side "panicked at
     // src/file.rs:LINE:COL" location (and a backtrace under
     // RUST_BACKTRACE=1) before unwinding reached this catch_unwind boundary.
@@ -238,34 +233,29 @@ fn canonical_input_path(name: &str) -> PathBuf {
 
 struct CorpusHost;
 
-impl CanonicalResourceHost for CorpusHost {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for CorpusHost {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => world
+            ResourceNeed::Input { name, .. } => world
                 .read_file(canonical_input_path(name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::world_input(
-                        name, content,
-                    ))
+                .map_or(ResourceOutcome::Unavailable, |content| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input(name, content))
                 }),
-            CanonicalResourceNeed::InputProbe { request } => world
+            ResourceNeed::InputProbe { request } => world
                 .read_file(canonical_input_path(&request.name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |content| {
-                    CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::world_input_probe(request.clone(), content),
-                    )
+                .map_or(ResourceOutcome::Unavailable, |content| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::world_input_probe(
+                        request.clone(),
+                        content,
+                    ))
                 }),
-            CanonicalResourceNeed::Font { request } => world
+            ResourceNeed::Font { request } => world
                 .read_file(canonical_font_resource_path(&request.name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                .map_or(ResourceOutcome::Unavailable, |metrics| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(FontResource::Tfm {
                             metrics,
@@ -273,7 +263,7 @@ impl CanonicalResourceHost for CorpusHost {
                         }),
                     })
                 }),
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+            ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
 }

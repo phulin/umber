@@ -78,9 +78,9 @@ impl TexInputSearchPath {
         read_first_world(world, candidates)
     }
 
-    pub(crate) fn read_from_canonical_world(
+    pub(crate) fn read_from_resource_world(
         &self,
-        world: &mut crate::CanonicalResourceWorld<'_>,
+        world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Result<FileContent, String> {
         let name = Path::new(name);
@@ -97,15 +97,15 @@ impl TexInputSearchPath {
                 }
             }
         }
-        read_first_canonical(world, candidates)
+        read_first_resource(world, candidates)
     }
 
-    pub(crate) fn read_exact_from_canonical_world(
+    pub(crate) fn read_exact_from_resource_world(
         &self,
-        world: &mut crate::CanonicalResourceWorld<'_>,
+        world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Result<FileContent, String> {
-        read_first_canonical(
+        read_first_resource(
             world,
             search_candidates(&self.user_area, &self.system_areas, Path::new(name)),
         )
@@ -132,9 +132,9 @@ impl TexInputSearchPath {
         )
     }
 
-    pub(crate) fn read_restricted_pipe_from_canonical_world(
+    pub(crate) fn read_restricted_pipe_from_resource_world(
         &self,
-        world: &mut crate::CanonicalResourceWorld<'_>,
+        world: &mut crate::ResourceWorld<'_>,
         name: &str,
     ) -> Option<Result<String, String>> {
         let command = name.trim();
@@ -145,7 +145,7 @@ impl TexInputSearchPath {
             ));
         }
         Some(
-            self.read_from_canonical_world(world, requested)
+            self.read_from_resource_world(world, requested)
                 .map(|content| format!("{}\n", content.path().display())),
         )
     }
@@ -183,13 +183,13 @@ impl TexFontSearchPath {
         )
     }
 
-    pub(crate) fn read_from_canonical_world(
+    pub(crate) fn read_from_resource_world(
         &self,
-        world: &mut crate::CanonicalResourceWorld<'_>,
+        world: &mut crate::ResourceWorld<'_>,
         path: &Path,
     ) -> Result<FileContent, String> {
         let requested = with_default_extension(path, "tfm");
-        read_first_canonical(
+        read_first_resource(
             world,
             font_candidates(&self.user_area, &self.system_areas, &requested),
         )
@@ -223,8 +223,8 @@ impl TexFontSearchPath {
     }
 }
 
-fn read_first_canonical(
-    world: &mut crate::CanonicalResourceWorld<'_>,
+fn read_first_resource(
+    world: &mut crate::ResourceWorld<'_>,
     candidates: Vec<PathBuf>,
 ) -> Result<FileContent, String> {
     let mut failures = Vec::with_capacity(candidates.len());

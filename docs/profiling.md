@@ -35,7 +35,7 @@ Bounded synthetic streams and focused unit tests are the suitable regression
 coverage for comparison and translation kernels.
 
 Issue `umber2-dz4x` found that the index itself was already retained with the
-rollback-coupled source region, but canonical main control asked to register
+rollback-coupled source region, but main control asked to register
 the same immutable source before every delivery. `Universe::register_source`
 therefore rebuilt and discarded the complete newline index before
 `SourceMap` recognized the identical registration. Registration now validates

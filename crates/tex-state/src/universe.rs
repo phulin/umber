@@ -2606,31 +2606,28 @@ impl Universe {
     }
 
     #[doc(hidden)]
-    pub fn record_canonical_paragraph_region(
-        &mut self,
-        record: crate::CanonicalParagraphHistoryRecord,
-    ) {
-        self.pure_memo.record_canonical_paragraph_region(record);
+    pub fn record_accepted_paragraph_region(&mut self, record: crate::ParagraphHistoryRecord) {
+        self.pure_memo.record_accepted_paragraph_region(record);
     }
 
     #[doc(hidden)]
-    pub fn record_carried_canonical_paragraph_region(
+    pub fn record_carried_accepted_paragraph_region(
         &mut self,
-        record: crate::CanonicalParagraphHistoryRecord,
+        record: crate::ParagraphHistoryRecord,
     ) {
         self.pure_memo
-            .record_carried_canonical_paragraph_region(record);
+            .record_carried_accepted_paragraph_region(record);
     }
 
     #[doc(hidden)]
-    pub fn record_canonical_paragraph_lookup(
+    pub fn record_accepted_paragraph_lookup(
         &mut self,
         hit: bool,
         commands: usize,
         mutations: usize,
     ) {
         self.pure_memo
-            .record_canonical_paragraph_lookup(hit, commands, mutations);
+            .record_accepted_paragraph_lookup(hit, commands, mutations);
     }
 
     #[doc(hidden)]

@@ -150,7 +150,7 @@ pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
 };
 pub use pure_memo::{
-    CanonicalParagraphHistoryRecord, MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason,
+    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphHistoryRecord,
     ParagraphLineProvenance, ParagraphOpportunityMetric, ParagraphOpportunityStats,
     ParagraphProvenanceNode, ParagraphProvenanceRecipe, ParagraphProvenanceSpan,
     ParagraphRecordingPhase, ParagraphRecordingStats, ParagraphValidationFailure,

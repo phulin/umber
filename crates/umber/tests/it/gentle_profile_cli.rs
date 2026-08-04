@@ -46,7 +46,7 @@ fn omitted_repo_root_reports_non_git_working_directory() {
 #[cfg(feature = "profiling")]
 #[test]
 #[allow(clippy::disallowed_methods)] // CLI regression launches the built profiling binary.
-fn canonical_direct_profile_preserves_gentle_output_and_provenance_stats() {
+fn direct_profile_preserves_gentle_output_and_provenance_stats() {
     let repository = test_support::repository_root();
     let output = Command::new(env!("CARGO_BIN_EXE_gentle-profile"))
         .args([

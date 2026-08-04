@@ -479,10 +479,7 @@ mod tests {
         FileModificationDate, JobClock, PdfDocumentFragmentKind, ShellEscapePolicy, World,
     };
 
-    fn run_pdf_memory(
-        source: &str,
-        stores: &mut Universe,
-    ) -> Result<String, crate::CanonicalSessionError> {
+    fn run_pdf_memory(source: &str, stores: &mut Universe) -> Result<String, crate::SessionError> {
         // Every pinned oracle consumed by this module was generated with
         // `-interaction=nonstopmode`. Own that harness fact here instead of
         // weakening TeX82 §82's ErrorStop dialog or changing the production
@@ -1841,7 +1838,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_pdfmatch_options_capture_limits_and_nul_boundary_match_pdftex() {
+    fn pdfmatch_options_capture_limits_and_nul_boundary_match_pdftex() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = run_pdf_memory(
@@ -2061,7 +2058,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_pdffiledump_retries_world_inputs_and_obeys_ranges() {
+    fn pdffiledump_retries_world_inputs_and_obeys_ranges() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         seed_pdftex_file_facts(&mut stores);
@@ -2571,7 +2568,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_pdf_insert_height_scans_an_expanded_register() {
+    fn pdf_insert_height_scans_an_expanded_register() {
         let mut stores = Universe::default();
         prepare_pdftex_run_stores(&mut stores);
         let output = run_pdf_memory(

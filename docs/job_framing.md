@@ -31,9 +31,9 @@ and no normalization makes one the evidence for the other, which is why
 pinned oracle -- was blocked behind this document's subject.
 
 The retained public driver exposes startup acquisition through
-`CanonicalStartupInput` and `CanonicalEngineSession::acquire_startup_root`.
+`StartupInput` and `EngineSession::acquire_startup_root`.
 The adapter supplies the initial `**` line and any §530 replacement lines;
-the existing `CanonicalResourceHost` still selects immutable bytes or reports
+the existing `ResourceHost` still selects immutable bytes or reports
 absence. This keeps terminal interaction out of engine crates and gives native,
 browser, and test drivers the same bounded protocol.
 
@@ -85,7 +85,7 @@ Three of those lines are conditional:
 
 Printing is `tex-state`'s (`Printer` over §54's `selector`), file opening is
 `tex-command`'s (§537 is an input-stack operation), and the job lifecycle is
-`tex-exec`'s (`CanonicalMainControl` is what starts a job and what reaches
+`tex-exec`'s (`MainControl` is what starts a job and what reaches
 §1332). No one layer sees all three, so the framing is assembled rather than
 placed:
 
@@ -121,7 +121,7 @@ placed:
   tex.web had already closed.
 - **`tex-exec`** gains `job.rs`, which owns the banner, the `**` line, and
   the §1332 tail, and drains whatever residue the command core could not
-  render once per step. A retained `CanonicalEngineSession` has already
+  render once per step. A retained `EngineSession` has already
   opened its root before command execution, so it routes that §537 opening
   directly through `tex_state::file_framing` as a terminal-only print, and
   §1335 can close an unconsumed root with `␣)`.

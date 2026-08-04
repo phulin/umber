@@ -18,7 +18,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/code_tables/global.rs`: Persistent global-assignment delta history used to rebase saved group roots without depth-sensitive writes.
 - `src/code_tables/tests.rs`: Unit tests for code-table defaults, writes, sparse pages, generations, and snapshots.
 - `src/command_context.rs`: Interpretation-neutral aggregate access boundary
-  reserved for the canonical command processor. Exposes `begin_diagnostic`
+  reserved for the command processor. Exposes `begin_diagnostic`
   (e-TeX `\tracingifs`), `printer` (e-TeX `\tracingnesting`'s
   not-`stat`-gated `file_warning`), and `group_frames_from` (the same
   per-group display `\showgroups` uses) so `tex-command` can render those
@@ -30,9 +30,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env.rs`: Barriered mutable environment storage for meanings, registers, parameters, font values, grouping, and journals.
 - `src/engine_state.rs`: Read-only execution mode and state projection consumed by expansion-time enquiries.
 - `src/expansion_diagnostic.rs`: Detached recoverable expansion diagnostic
-  values shared by the legacy gullet and execution-side presentation.
+  values shared by command expansion and execution-side presentation.
 - `src/expansion_recovery.rs`: Detached main-control recovery vocabulary that
-  keeps execution independent of the retired expansion error tree.
+  keeps execution independent of the command expansion error tree.
 - `src/env/banks.rs`: Dense fixed-size bank codecs, parameter ids, and typed bank access helpers.
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.

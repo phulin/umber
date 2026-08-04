@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tex_command::{
     CommandObserver, FileEnquiryResource, FontResource, RegisteredSourceKind, SourceRegistration,
 };
-use tex_exec::{CanonicalResourceNeed, CheckpointSink};
+use tex_exec::{CheckpointSink, ResourceNeed};
 use tex_observe::{
     DetachedEvidence, LiveSessionTranslator, LiveSource, decode_detached_evidence,
     encode_detached_evidence,
@@ -23,8 +23,8 @@ use umber_fetch::{
 };
 
 use crate::{
-    CanonicalEngineSession, CanonicalResourceFulfillment, CanonicalResourceHost,
-    CanonicalResourceOutcome, CanonicalResourceWorld, CanonicalSessionError, EngineMode, RunResult,
+    EngineMode, EngineSession, ResourceFulfillment, ResourceHost, ResourceOutcome, ResourceWorld,
+    RunResult, SessionError,
 };
 
 const IDENTITY_DOMAIN: &[u8] = b"umber.loaded-format-fixture.v2\0";
@@ -361,7 +361,7 @@ impl LoadedFormatFixture {
     ) -> Result<LoadedFormatRun, FormatFixtureError> {
         let guards = config.guards.validate()?;
         let mut session =
-            CanonicalEngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
+            EngineSession::new(&mut self.universe, self.recipe.engine.command_profile());
         session.set_preloaded_format(tex_exec::PreloadedFormat {
             dump_name: self.recipe.format_name.clone(),
             format_name: self.recipe.format_ident_name.clone(),
@@ -410,14 +410,10 @@ impl<'a> LoadedResourceHost<'a> {
     }
 }
 
-impl CanonicalResourceHost for LoadedResourceHost<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for LoadedResourceHost<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => self
+            ResourceNeed::Input { name, .. } => self
                 .job_resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -426,11 +422,54 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         resolved_name,
                         source_kind,
                         bytes,
-                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::Input {
+                    } if logical_name == name => {
+                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Input {
                             name: logical_name.clone(),
                             source: SourceRegistration::new(*source_kind, Arc::clone(bytes))
                                 .with_name(resolved_name.clone()),
+                        }))
+                    }
+                    _ => None,
+                })
+                .or_else(|| {
+                    self.format_resources
+                        .iter()
+                        .find_map(|resource| match resource {
+                            FormatResource::Input {
+                                logical_name,
+                                source_kind,
+                                bytes,
+                            } if logical_name == name => {
+                                Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Input {
+                                    name: logical_name.clone(),
+                                    source: SourceRegistration::new(
+                                        *source_kind,
+                                        Arc::clone(bytes),
+                                    )
+                                    .with_name(format!("./{logical_name}")),
+                                }))
+                            }
+                            _ => None,
+                        })
+                })
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::InputProbe { request } => self
+                .job_resources
+                .iter()
+                .find_map(|resource| match resource {
+                    LoadedFormatResource::Input {
+                        logical_name,
+                        resolved_name,
+                        source_kind,
+                        bytes,
+                    } if logical_name == &request.name => Some(ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::InputProbe {
+                            request: request.clone(),
+                            resource: FileEnquiryResource::new(
+                                SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                    .with_name(resolved_name.clone()),
+                                None,
+                            ),
                         },
                     )),
                     _ => None,
@@ -443,71 +482,21 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                                 logical_name,
                                 source_kind,
                                 bytes,
-                            } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                                CanonicalResourceFulfillment::Input {
-                                    name: logical_name.clone(),
-                                    source: SourceRegistration::new(
-                                        *source_kind,
-                                        Arc::clone(bytes),
-                                    )
-                                    .with_name(format!("./{logical_name}")),
+                            } if logical_name == &request.name => Some(ResourceOutcome::Fulfilled(
+                                ResourceFulfillment::InputProbe {
+                                    request: request.clone(),
+                                    resource: FileEnquiryResource::new(
+                                        SourceRegistration::new(*source_kind, Arc::clone(bytes))
+                                            .with_name(format!("./{logical_name}")),
+                                        None,
+                                    ),
                                 },
                             )),
                             _ => None,
                         })
                 })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::InputProbe { request } => self
-                .job_resources
-                .iter()
-                .find_map(|resource| match resource {
-                    LoadedFormatResource::Input {
-                        logical_name,
-                        resolved_name,
-                        source_kind,
-                        bytes,
-                    } if logical_name == &request.name => {
-                        Some(CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::InputProbe {
-                                request: request.clone(),
-                                resource: FileEnquiryResource::new(
-                                    SourceRegistration::new(*source_kind, Arc::clone(bytes))
-                                        .with_name(resolved_name.clone()),
-                                    None,
-                                ),
-                            },
-                        ))
-                    }
-                    _ => None,
-                })
-                .or_else(|| {
-                    self.format_resources
-                        .iter()
-                        .find_map(|resource| match resource {
-                            FormatResource::Input {
-                                logical_name,
-                                source_kind,
-                                bytes,
-                            } if logical_name == &request.name => {
-                                Some(CanonicalResourceOutcome::Fulfilled(
-                                    CanonicalResourceFulfillment::InputProbe {
-                                        request: request.clone(),
-                                        resource: FileEnquiryResource::new(
-                                            SourceRegistration::new(
-                                                *source_kind,
-                                                Arc::clone(bytes),
-                                            )
-                                            .with_name(format!("./{logical_name}")),
-                                            None,
-                                        ),
-                                    },
-                                ))
-                            }
-                            _ => None,
-                        })
-                })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::Font { request } => self
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::Font { request } => self
                 .job_resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -520,15 +509,13 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                         let content = world
                             .register_selected_file(logical_name, Arc::clone(bytes))
                             .ok()?;
-                        Some(CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::Font {
-                                request: request.clone(),
-                                resource: Box::new(FontResource::Tfm {
-                                    metrics: content,
-                                    opentype: None,
-                                }),
-                            },
-                        ))
+                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Tfm {
+                                metrics: content,
+                                opentype: None,
+                            }),
+                        }))
                     }
                     _ => None,
                 })
@@ -545,21 +532,19 @@ impl CanonicalResourceHost for LoadedResourceHost<'_> {
                                 let content = world
                                     .register_selected_file(logical_name, Arc::clone(bytes))
                                     .ok()?;
-                                Some(CanonicalResourceOutcome::Fulfilled(
-                                    CanonicalResourceFulfillment::Font {
-                                        request: request.clone(),
-                                        resource: Box::new(FontResource::Tfm {
-                                            metrics: content,
-                                            opentype: None,
-                                        }),
-                                    },
-                                ))
+                                Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                                    request: request.clone(),
+                                    resource: Box::new(FontResource::Tfm {
+                                        metrics: content,
+                                        opentype: None,
+                                    }),
+                                }))
                             }
                             _ => None,
                         })
                 })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
 }
@@ -610,7 +595,7 @@ pub(crate) fn construct_format_in_worker(
     universe.set_interaction_mode(recipe.construction_interaction);
     universe.set_error_context_widths(recipe.construction_error_context_widths);
     let mut session =
-        CanonicalEngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
+        EngineSession::prepared_initex(&mut universe, recipe.engine.command_profile());
     session.set_fuel_limit(recipe.guards.command_fuel)?;
     let root = session.register_authored_job(
         &recipe.construction_source_name,
@@ -706,14 +691,14 @@ impl CheckpointSink for &GuardCheckpoints {
 }
 
 fn finish_guarded_run<T>(
-    result: Result<T, CanonicalSessionError>,
+    result: Result<T, SessionError>,
     guards: &GuardCheckpoints,
 ) -> Result<T, FormatFixtureError> {
     match (result, guards.failure.get()) {
-        (Err(CanonicalSessionError::CooperativeStopRequested), Some(GuardFailure::WallTime)) => {
+        (Err(SessionError::CooperativeStopRequested), Some(GuardFailure::WallTime)) => {
             Err(FormatFixtureError::WallTimeExceeded)
         }
-        (Err(CanonicalSessionError::CooperativeStopRequested), Some(GuardFailure::ResidentSet)) => {
+        (Err(SessionError::CooperativeStopRequested), Some(GuardFailure::ResidentSet)) => {
             Err(FormatFixtureError::ResidentSetExceeded)
         }
         (result, _) => result.map_err(FormatFixtureError::from),
@@ -730,14 +715,10 @@ impl<'a> RecipeResourceHost<'a> {
     }
 }
 
-impl CanonicalResourceHost for RecipeResourceHost<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for RecipeResourceHost<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => self
+            ResourceNeed::Input { name, .. } => self
                 .resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -745,17 +726,13 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                         logical_name,
                         source_kind,
                         bytes,
-                    } if logical_name == name => Some(CanonicalResourceOutcome::Fulfilled(
-                        CanonicalResourceFulfillment::input(
-                            logical_name,
-                            *source_kind,
-                            Arc::clone(bytes),
-                        ),
+                    } if logical_name == name => Some(ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::input(logical_name, *source_kind, Arc::clone(bytes)),
                     )),
                     _ => None,
                 })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::InputProbe { request } => self
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::InputProbe { request } => self
                 .resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -763,21 +740,19 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                         logical_name,
                         source_kind,
                         bytes,
-                    } if logical_name == &request.name => {
-                        Some(CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::InputProbe {
-                                request: request.clone(),
-                                resource: FileEnquiryResource::new(
-                                    SourceRegistration::new(*source_kind, Arc::clone(bytes)),
-                                    None,
-                                ),
-                            },
-                        ))
-                    }
+                    } if logical_name == &request.name => Some(ResourceOutcome::Fulfilled(
+                        ResourceFulfillment::InputProbe {
+                            request: request.clone(),
+                            resource: FileEnquiryResource::new(
+                                SourceRegistration::new(*source_kind, Arc::clone(bytes)),
+                                None,
+                            ),
+                        },
+                    )),
                     _ => None,
                 })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::Font { request } => self
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::Font { request } => self
                 .resources
                 .iter()
                 .find_map(|resource| match resource {
@@ -790,20 +765,18 @@ impl CanonicalResourceHost for RecipeResourceHost<'_> {
                         let content = world
                             .register_selected_file(logical_name, Arc::clone(bytes))
                             .ok()?;
-                        Some(CanonicalResourceOutcome::Fulfilled(
-                            CanonicalResourceFulfillment::Font {
-                                request: request.clone(),
-                                resource: Box::new(FontResource::Tfm {
-                                    metrics: content,
-                                    opentype: None,
-                                }),
-                            },
-                        ))
+                        Some(ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
+                            request: request.clone(),
+                            resource: Box::new(FontResource::Tfm {
+                                metrics: content,
+                                opentype: None,
+                            }),
+                        }))
                     }
                     _ => None,
                 })
-                .unwrap_or(CanonicalResourceOutcome::Unavailable),
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+                .unwrap_or(ResourceOutcome::Unavailable),
+            ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
 }
@@ -918,7 +891,7 @@ pub enum FormatFixtureError {
     Format(String),
     Evidence(String),
     Cache(FormatCacheError),
-    Session(Box<CanonicalSessionError>),
+    Session(Box<SessionError>),
     Fuel(tex_command::CommandFuelLimitError),
     WorkerSpawn(String),
     WorkerBootstrapUnregistered,
@@ -955,8 +928,8 @@ impl From<FormatCacheError> for FormatFixtureError {
     }
 }
 
-impl From<CanonicalSessionError> for FormatFixtureError {
-    fn from(error: CanonicalSessionError) -> Self {
+impl From<SessionError> for FormatFixtureError {
+    fn from(error: SessionError) -> Self {
         Self::Session(Box::new(error))
     }
 }

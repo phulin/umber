@@ -90,10 +90,10 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
     let mut command = CommandState::new(CommandProfile::unicode_extended(CommandDialect::Tex82));
     let source = command
         .register_source(SourceRegistration::world(content))
-        .map_err(|error| CliError::CanonicalLex(error.to_string()))?;
+        .map_err(|error| CliError::Lex(error.to_string()))?;
     command
         .open_registered_source(source)
-        .map_err(|error| CliError::CanonicalLex(error.to_string()))?;
+        .map_err(|error| CliError::Lex(error.to_string()))?;
     loop {
         let step = command.next_unicode_source_step(
             stores.int_param(IntParam::END_LINE_CHAR),
@@ -104,7 +104,7 @@ fn lex_dump(path: &str) -> Result<(), CliError> {
         match step {
             SourceTokenizationStep::Token(token) => println!("{}", format_source_token(&token)),
             SourceTokenizationStep::InvalidCharacter(invalid) => {
-                return Err(CliError::CanonicalLex(format!(
+                return Err(CliError::Lex(format!(
                     "invalid character {}",
                     invalid.code().to_char().expect("Unicode command profile") as u32
                 )));
@@ -877,7 +877,7 @@ fn format_source_token(token: &SourceToken) -> String {
 enum CliError {
     Usage(&'static str),
     World(WorldError),
-    CanonicalLex(String),
+    Lex(String),
     ExpandDump(expand_dump::ExpandDumpError),
     FormatCache(format_cache_cli::FormatCacheCliError),
     Exec(tex_exec::ExecError),
@@ -898,7 +898,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Usage(message) => f.write_str(message),
             Self::World(err) => write!(f, "{err}"),
-            Self::CanonicalLex(err) => write!(f, "{err}"),
+            Self::Lex(err) => write!(f, "{err}"),
             Self::ExpandDump(err) => write!(f, "{err}"),
             Self::FormatCache(err) => write!(f, "{err}"),
             Self::Exec(err) => write!(f, "{err}"),

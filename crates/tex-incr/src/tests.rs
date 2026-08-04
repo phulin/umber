@@ -372,7 +372,7 @@ fn template() -> Universe {
     universe
 }
 
-fn canonical_template_without_preinstalled_primitives() -> Universe {
+fn template_without_preinstalled_primitives() -> Universe {
     let mut universe = Universe::with_world(tex_state::World::memory()).with_plain_catcodes();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     universe
@@ -549,7 +549,7 @@ fn paragraph_recording_keeps_line_provenance_opaque() {
 
     let region = session
         .pure_memo
-        .accepted_canonical_paragraphs()
+        .accepted_paragraph_history()
         .iter()
         .find(|region| region.finished_lines.is_some())
         .expect("literal paragraph is retained");
@@ -585,7 +585,7 @@ fn paragraph_history_interns_changed_observations_per_generation() {
 
     let regions = session
         .pure_memo
-        .accepted_canonical_paragraphs()
+        .accepted_paragraph_history()
         .iter()
         .filter(|region| region.finished_lines.is_some())
         .collect::<Vec<_>>();
@@ -642,7 +642,7 @@ fn replayed_paragraph_provenance_tracks_current_then_deleted_layout() {
     assert!(
         session
             .pure_memo
-            .accepted_canonical_paragraphs()
+            .accepted_paragraph_history()
             .iter()
             .any(|region| matches!(
                 region.line_provenance,
@@ -831,7 +831,7 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
         .insert("refs".to_owned(), "\\def\\refwidth{1pt}".to_owned());
     let mut initial_candidate = session.start_cold_candidate().expect("cold candidate");
     initial_candidate.set_cumulative_fuel_limit(1_000_000);
-    let mut initial_host = StagedCanonicalHost::new(&mut old_inputs);
+    let mut initial_host = StagedResourceHost::new(&mut old_inputs);
     assert!(matches!(
         initial_candidate
             .drive_with_resource_resolvers(&mut initial_host, &Cancellation::new())
@@ -877,7 +877,7 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     new_inputs
         .files
         .insert("refs".to_owned(), "\\def\\refwidth{2pt}".to_owned());
-    let mut host = StagedCanonicalHost::new(&mut new_inputs);
+    let mut host = StagedResourceHost::new(&mut new_inputs);
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(&mut host, &Cancellation::new())
@@ -924,7 +924,7 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     let mut cold_candidate = cold
         .start_cold_candidate()
         .expect("cold comparison candidate");
-    let mut cold_host = StagedCanonicalHost::new(&mut new_inputs);
+    let mut cold_host = StagedResourceHost::new(&mut new_inputs);
     assert!(matches!(
         cold_candidate
             .drive_with_resource_resolvers(&mut cold_host, &Cancellation::new())
@@ -972,7 +972,7 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     newest_inputs
         .files
         .insert("refs".to_owned(), "\\def\\refwidth{3pt}".to_owned());
-    let mut host = StagedCanonicalHost::new(&mut newest_inputs);
+    let mut host = StagedResourceHost::new(&mut newest_inputs);
     assert!(matches!(
         second_candidate
             .drive_with_resource_resolvers(&mut host, &Cancellation::new())
@@ -1007,7 +1007,7 @@ fn external_input_delta_replays_paragraphs_from_job_start_without_new_revision()
     let mut newest_cold_candidate = newest_cold
         .start_cold_candidate()
         .expect("second cold comparison candidate");
-    let mut newest_cold_host = StagedCanonicalHost::new(&mut newest_inputs);
+    let mut newest_cold_host = StagedResourceHost::new(&mut newest_inputs);
     assert!(matches!(
         newest_cold_candidate
             .drive_with_resource_resolvers(&mut newest_cold_host, &Cancellation::new())
@@ -1064,7 +1064,7 @@ fn forced_job_start_fallback_is_private_and_attributed() {
         .start_advance_candidate_from_job_start(RevisionId::new(2), edit.clone())
         .expect("private fallback candidate");
     failed.set_cumulative_fuel_limit(0);
-    let mut host = StagedCanonicalHost::default();
+    let mut host = StagedResourceHost::default();
     assert!(
         failed
             .drive_with_resource_resolvers(&mut host, &Cancellation::new())
@@ -1087,7 +1087,7 @@ fn forced_job_start_fallback_is_private_and_attributed() {
     let mut completed = session
         .start_advance_candidate_from_job_start(RevisionId::new(2), edit)
         .expect("retry fallback candidate");
-    let mut host = StagedCanonicalHost::default();
+    let mut host = StagedResourceHost::default();
     assert!(matches!(
         completed
             .drive_with_resource_resolvers(&mut host, &Cancellation::new())
@@ -1130,7 +1130,7 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
         .register_input_file(Path::new("cmr10.tfm"), CMR10.to_vec())
         .expect("font fixture");
     session.cold().expect("cold revision");
-    let original_identity = session.pure_memo.accepted_canonical_paragraphs()[0].identity;
+    let original_identity = session.pure_memo.accepted_paragraph_history()[0].identity;
 
     let changed = source.find("changed").expect("changed paragraph");
     let before = session.pure_memo_stats();
@@ -1152,7 +1152,7 @@ fn cold_middle_paragraph_and_carried_suffix_keep_generation_observation_tables()
     );
     let accepted = session
         .pure_memo
-        .accepted_canonical_paragraphs()
+        .accepted_paragraph_history()
         .iter()
         .filter(|region| region.finished_lines.is_some())
         .collect::<Vec<_>>();
@@ -2707,7 +2707,7 @@ fn paragraph_with_inline_math_replays_with_explicit_math_dependencies() {
     session.cold().expect("cold revision");
     let inline_region = session
         .pure_memo
-        .accepted_canonical_paragraphs()
+        .accepted_paragraph_history()
         .iter()
         .find(|region| {
             region.dependencies.iter().any(|dependency| {
@@ -2880,7 +2880,7 @@ fn inline_math_family_binding_change_rejects_retained_lines() {
     let before = session.pure_memo_stats();
     let inline_region = session
         .pure_memo
-        .accepted_canonical_paragraphs()
+        .accepted_paragraph_history()
         .iter()
         .find(|region| {
             region.dependencies.iter().any(|dependency| {
@@ -3340,7 +3340,7 @@ fn macro_started_group_transitions_are_paragraph_replay_barriers() {
             "{name}: {stats:?}"
         );
         assert!(
-            session.pure_memo.accepted_canonical_paragraphs().is_empty(),
+            session.pure_memo.accepted_paragraph_history().is_empty(),
             "{name}: a macro-started group transition must not publish a replay record"
         );
     }
@@ -3685,7 +3685,7 @@ fn paragraph_recording_rejects_pdf_microtype_until_font_code_dependencies_are_co
         .expect("font fixture");
     session.cold().expect("microtype paragraphs execute");
     assert!(
-        session.pure_memo.accepted_canonical_paragraphs().is_empty(),
+        session.pure_memo.accepted_paragraph_history().is_empty(),
         "finished lines must not be retained until mutable PDF font-code dependencies are tracked"
     );
 }
@@ -3844,7 +3844,7 @@ fn break_dependency_cold_fallback_keeps_current_output_provenance() {
     );
     assert_eq!(after.paragraph_hits, before.paragraph_hits, "{after:?}");
     assert!(
-        !session.pure_memo.accepted_canonical_paragraphs().is_empty(),
+        !session.pure_memo.accepted_paragraph_history().is_empty(),
         "the cold fallback must preserve, not rebuild or discard, the prior accepted history"
     );
     assert!(
@@ -3935,7 +3935,7 @@ fn paragraph_entry_validation_rejects_changed_indent_then_backdates_equal_state(
     assert!(
         session
             .pure_memo
-            .accepted_canonical_paragraphs()
+            .accepted_paragraph_history()
             .iter()
             .all(|region| {
                 region.dependencies.len()
@@ -4880,11 +4880,11 @@ struct StagedInputResolver {
 }
 
 #[derive(Default)]
-struct StagedCanonicalHost<'a> {
+struct StagedResourceHost<'a> {
     files: Option<&'a mut BTreeMap<String, String>>,
 }
 
-impl<'a> StagedCanonicalHost<'a> {
+impl<'a> StagedResourceHost<'a> {
     fn new(inputs: &'a mut StagedInputResolver) -> Self {
         Self {
             files: Some(&mut inputs.files),
@@ -4892,14 +4892,10 @@ impl<'a> StagedCanonicalHost<'a> {
     }
 }
 
-impl CanonicalResourceHost for StagedCanonicalHost<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for StagedResourceHost<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match need {
-            CanonicalResourceNeed::Input { name, .. } => self
+            ResourceNeed::Input { name, .. } => self
                 .files
                 .as_deref()
                 .and_then(|files| {
@@ -4907,14 +4903,14 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                         .get(name)
                         .or_else(|| name.strip_suffix(".tex").and_then(|stem| files.get(stem)))
                 })
-                .map_or(CanonicalResourceOutcome::Unavailable, |source| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::input(
+                .map_or(ResourceOutcome::Unavailable, |source| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::input(
                         name,
                         RegisteredSourceKind::Generated,
                         Arc::<[u8]>::from(source.as_bytes()),
                     ))
                 }),
-            CanonicalResourceNeed::InputProbe { request } => self
+            ResourceNeed::InputProbe { request } => self
                 .files
                 .as_deref()
                 .and_then(|files| {
@@ -4925,8 +4921,8 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                             .and_then(|stem| files.get(stem))
                     })
                 })
-                .map_or(CanonicalResourceOutcome::Unavailable, |source| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::InputProbe {
+                .map_or(ResourceOutcome::Unavailable, |source| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::InputProbe {
                         request: request.clone(),
                         resource: tex_command::FileEnquiryResource::new(
                             tex_command::SourceRegistration::new(
@@ -4937,11 +4933,11 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                         ),
                     })
                 }),
-            CanonicalResourceNeed::Font { request } => world
+            ResourceNeed::Font { request } => world
                 .read_file(canonical_font_resource_path(&request.name))
                 .ok()
-                .map_or(CanonicalResourceOutcome::Unavailable, |metrics| {
-                    CanonicalResourceOutcome::Fulfilled(CanonicalResourceFulfillment::Font {
+                .map_or(ResourceOutcome::Unavailable, |metrics| {
+                    ResourceOutcome::Fulfilled(ResourceFulfillment::Font {
                         request: request.clone(),
                         resource: Box::new(tex_command::FontResource::Tfm {
                             metrics,
@@ -4949,15 +4945,15 @@ impl CanonicalResourceHost for StagedCanonicalHost<'_> {
                         }),
                     })
                 }),
-            CanonicalResourceNeed::PdfImage { .. } => CanonicalResourceOutcome::Unavailable,
+            ResourceNeed::PdfImage { .. } => ResourceOutcome::Unavailable,
         }
     }
 }
 
 #[test]
-fn canonical_candidate_root_eof_is_one_fatal_completion() {
+fn candidate_root_eof_is_one_fatal_completion() {
     let session = Session::start(
-        canonical_template_without_preinstalled_primitives(),
+        template_without_preinstalled_primitives(),
         "missing-end",
         RevisionId::new(1),
         "\\endinput",
@@ -4969,7 +4965,7 @@ fn canonical_candidate_root_eof_is_one_fatal_completion() {
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(
-                &mut StagedCanonicalHost::default(),
+                &mut StagedResourceHost::default(),
                 &Cancellation::new(),
             )
             .expect("fatal root EOF reaches completion"),
@@ -4994,7 +4990,7 @@ fn canonical_candidate_root_eof_is_one_fatal_completion() {
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(
-                &mut StagedCanonicalHost::default(),
+                &mut StagedResourceHost::default(),
                 &Cancellation::new(),
             )
             .expect("completion remains latched"),
@@ -5012,9 +5008,9 @@ fn canonical_candidate_root_eof_is_one_fatal_completion() {
 }
 
 #[test]
-fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
+fn candidate_retries_staged_missing_input_without_losing_state() {
     let mut session = Session::start(
-        canonical_template_without_preinstalled_primitives(),
+        template_without_preinstalled_primitives(),
         "staged-canonical-input",
         RevisionId::new(1),
         "\\input child \\end",
@@ -5025,13 +5021,13 @@ fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
     let mut candidate = session.start_cold_candidate().expect("cold candidate");
     let awaiting = candidate
         .drive_with_resource_resolvers(
-            &mut DecliningStagedCanonicalHost::new(&mut inputs),
+            &mut DecliningStagedResourceHost::new(&mut inputs),
             &Cancellation::new(),
         )
         .expect("missing input suspends");
     assert!(matches!(
         awaiting,
-        RevisionCandidateResult::AwaitingResources(CanonicalResourceNeed::Input { ref name, .. })
+        RevisionCandidateResult::AwaitingResources(ResourceNeed::Input { ref name, .. })
             if name == "child.tex"
     ));
     inputs
@@ -5040,7 +5036,7 @@ fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
     assert!(matches!(
         candidate
             .drive_with_resource_resolvers(
-                &mut DecliningStagedCanonicalHost::new(&mut inputs),
+                &mut DecliningStagedResourceHost::new(&mut inputs),
                 &Cancellation::new(),
             )
             .expect("provisioned retry completes"),
@@ -5052,9 +5048,9 @@ fn canonical_candidate_retries_staged_missing_input_without_losing_state() {
 }
 
 #[test]
-fn canonical_initex_session_installs_everybox_hooks_for_its_profile() {
+fn initex_session_installs_everybox_hooks_for_its_profile() {
     let mut session = Session::start(
-        canonical_template_without_preinstalled_primitives(),
+        template_without_preinstalled_primitives(),
         "canonical-initex-hooks",
         RevisionId::new(1),
         "\\unless\\iffalse\\message{ETEX=1}\\fi\\everyhbox{\\message{HOOKS=1}}\\setbox0=\\hbox{X}\\end",
@@ -5065,10 +5061,7 @@ fn canonical_initex_session_installs_everybox_hooks_for_its_profile() {
     let mut candidate = session.start_cold_candidate().expect("cold candidate");
     assert!(matches!(
         candidate
-            .drive_with_resource_resolvers(
-                &mut StagedCanonicalHost::default(),
-                &Cancellation::new()
-            )
+            .drive_with_resource_resolvers(&mut StagedResourceHost::default(), &Cancellation::new())
             .expect("canonical INITEX session completes"),
         RevisionCandidateResult::Complete
     ));
@@ -5084,22 +5077,18 @@ fn canonical_initex_session_installs_everybox_hooks_for_its_profile() {
     }));
 }
 
-struct DecliningStagedCanonicalHost<'a>(StagedCanonicalHost<'a>);
+struct DecliningStagedResourceHost<'a>(StagedResourceHost<'a>);
 
-impl<'a> DecliningStagedCanonicalHost<'a> {
+impl<'a> DecliningStagedResourceHost<'a> {
     fn new(inputs: &'a mut StagedInputResolver) -> Self {
-        Self(StagedCanonicalHost::new(inputs))
+        Self(StagedResourceHost::new(inputs))
     }
 }
 
-impl CanonicalResourceHost for DecliningStagedCanonicalHost<'_> {
-    fn fulfill(
-        &mut self,
-        world: &mut CanonicalResourceWorld<'_>,
-        need: &CanonicalResourceNeed,
-    ) -> CanonicalResourceOutcome {
+impl ResourceHost for DecliningStagedResourceHost<'_> {
+    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
         match self.0.fulfill(world, need) {
-            CanonicalResourceOutcome::Unavailable => CanonicalResourceOutcome::Declined,
+            ResourceOutcome::Unavailable => ResourceOutcome::Declined,
             outcome => outcome,
         }
     }
@@ -5136,7 +5125,7 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
             .advance_with_resolvers(
                 RevisionId::new(2),
                 edit.clone(),
-                &mut DecliningStagedCanonicalHost::new(&mut inputs),
+                &mut DecliningStagedResourceHost::new(&mut inputs),
             )
             .expect_err("unresolved input rejects this attempt");
         peak_live_bytes = peak_live_bytes.max(session.fragments.source_bytes());
@@ -5149,7 +5138,7 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
         .advance_with_resolvers(
             RevisionId::new(2),
             edit,
-            &mut DecliningStagedCanonicalHost::new(&mut inputs),
+            &mut DecliningStagedResourceHost::new(&mut inputs),
         )
         .expect("fully provisioned retry succeeds");
     assert_eq!(session.fragments.source_bytes(), replacement.len());
@@ -5169,7 +5158,7 @@ fn multi_round_resource_retry_drops_orphan_fragment_bytes_and_keeps_parity() {
     .expect("cold session");
     let mut cold_inputs = inputs;
     let cold = cold
-        .cold_with_resolvers(&mut StagedCanonicalHost::new(&mut cold_inputs))
+        .cold_with_resolvers(&mut StagedResourceHost::new(&mut cold_inputs))
         .expect("cold comparison succeeds");
     assert_eq!(
         accepted.dvi_bytes().expect("incremental DVI"),
@@ -5758,7 +5747,7 @@ fn root_framing_name_is_distinct_from_editor_provenance_path() {
     // tex.web §537 prints the startup filename. The editor's canonical VFS
     // path remains the source/provenance identity and must not leak there.
     let mut universe = template();
-    let _control = canonical_candidate_control(
+    let _control = candidate_control(
         &mut universe,
         CandidateControlOptions {
             job_name: "job",
