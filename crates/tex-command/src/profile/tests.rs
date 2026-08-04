@@ -182,6 +182,21 @@ fn capabilities_are_semantic_and_validated_during_decode() {
 }
 
 #[test]
+fn control_sequence_capacity_is_profile_derived_and_survives_stable_projection() {
+    for (profile, hash_size, hash_extra) in [
+        (CommandProfile::TEX82, 15_000, 0),
+        (CommandProfile::ETEX26, 15_000, 600_000),
+        (CommandProfile::PDFTEX14027, 15_000, 600_000),
+    ] {
+        let restored = CommandProfile::from_stable_bytes(profile.to_stable_bytes())
+            .expect("stable profile loads");
+        let capacity = restored.control_sequence_capacity();
+        assert_eq!(capacity.hash_size(), hash_size);
+        assert_eq!(capacity.hash_extra(), hash_extra);
+    }
+}
+
+#[test]
 fn profile_decode_rejects_every_unrecognized_identity_component() {
     let mut unsupported_version = CommandProfile::TEX82.to_stable_bytes();
     unsupported_version[0] = 2;

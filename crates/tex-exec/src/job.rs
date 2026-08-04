@@ -624,7 +624,7 @@ pub(crate) fn finish_job(
     dvi: Option<DviJobOutput>,
     pdf: Option<&mut PdfJobFinalizationReport>,
 ) {
-    print_usage_statistics(stores);
+    print_usage_statistics(stores, profile);
     print_dvi_report(stores, dvi);
     print_pdf_report(stores, profile, pdf);
     print_transcript_note(stores, job_name);
@@ -670,7 +670,7 @@ fn print_u32(printer: &mut Printer<'_>, value: u32) {
     printer.print_int(i32::try_from(value).unwrap_or(i32::MAX));
 }
 
-fn print_usage_statistics(stores: &mut Universe) {
+fn print_usage_statistics(stores: &mut Universe, profile: CommandProfile) {
     if stores.int_param(IntParam::TRACING_STATS) <= 0 {
         return;
     }
@@ -698,9 +698,12 @@ fn print_usage_statistics(stores: &mut Universe) {
     print_usize(&mut printer, usage.memory_word_capacity);
     printer.print_nl(" ");
     print_usize(&mut printer, usage.control_sequences);
-    printer
-        .print(" multiletter control sequences out of 2100")
-        .print_nl(" ");
+    let capacity = profile.control_sequence_capacity();
+    printer.print(" multiletter control sequences out of ");
+    print_u32(&mut printer, capacity.hash_size());
+    printer.print_char('+');
+    print_u32(&mut printer, capacity.hash_extra());
+    printer.print_nl(" ");
     print_usize(&mut printer, usage.font_info_words);
     printer.print(" words of font info for ");
     print_usize(&mut printer, usage.fonts);
