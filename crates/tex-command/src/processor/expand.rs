@@ -1796,8 +1796,16 @@ pub(crate) fn print_cs_text(
     symbol: tex_state::interner::Symbol,
 ) -> String {
     let name = state.resolve(symbol);
-    if state.control_sequence_kind(symbol) == ControlSequenceKind::ActiveCharacter {
-        return name.to_owned();
+    match state.control_sequence_kind(symbol) {
+        ControlSequenceKind::ActiveCharacter => return name.to_owned(),
+        ControlSequenceKind::Null => {
+            return format!(
+                "{}{} ",
+                print_esc_text(state, "csname"),
+                print_esc_text(state, "endcsname")
+            );
+        }
+        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {}
     }
 
     let mut text = string_text(state, Token::Cs(symbol));

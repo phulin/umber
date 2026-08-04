@@ -3860,6 +3860,7 @@ fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
     let undefined = universe.intern("undefined").symbol();
     let active = universe.intern_active_character('~').symbol();
     let symbol = universe.intern("!").symbol();
+    let null = universe.intern("").symbol();
     let empty = universe.intern_token_list(&[]);
     let definition = universe.intern_macro(MacroMeaning::new(MeaningFlags::EMPTY, empty, empty));
     universe.set_meaning(primitive, Meaning::Relax);
@@ -3877,6 +3878,7 @@ fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
         (undefined, "\\undefined "),
         (active, "~"),
         (symbol, "\\!"),
+        (null, "\\csname\\endcsname "),
     ] {
         assert_eq!(
             print_cs_text(&mut universe.command_context(), symbol),
@@ -3890,6 +3892,12 @@ fn print_cs_delimits_words_but_not_active_characters_or_control_symbols() {
     assert_eq!(
         print_cs_text(&mut universe.command_context(), symbol),
         "\\! "
+    );
+
+    universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'!'));
+    assert_eq!(
+        print_cs_text(&mut universe.command_context(), null),
+        "!csname!endcsname "
     );
 }
 
