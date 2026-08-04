@@ -60,6 +60,28 @@ pub(crate) fn execute_scanned_unbox(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
+    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, None)
+}
+
+pub(crate) fn execute_scanned_unbox_with_error_context(
+    primitive: UnexpandablePrimitive,
+    index: u16,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+    error_context: &str,
+) -> Result<(), ExecError> {
+    execute_scanned_unbox_impl(primitive, index, nest, stores, fuel, Some(error_context))
+}
+
+fn execute_scanned_unbox_impl(
+    primitive: UnexpandablePrimitive,
+    index: u16,
+    nest: &mut ModeNest,
+    stores: &mut Universe,
+    fuel: &mut tex_command::CommandFuel,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
     let destructive = matches!(
         primitive,
         UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
@@ -72,21 +94,32 @@ pub(crate) fn execute_scanned_unbox(
     } else {
         UnboxKind::Vertical
     };
+    let Some(register) = stores.box_reg(index) else {
+        return Ok(());
+    };
+    // TeX82 §1110 first returns for a void register, then refuses every
+    // nonvoid box in math mode before testing its horizontal/vertical kind.
+    // In particular, a matching hbox still cannot be opened in an mlist.
+    if matches!(nest.current_mode(), Mode::Math | Mode::DisplayMath) {
+        report_incompatible_unbox(stores, error_context)?;
+        return Ok(());
+    }
     let source = if destructive {
         match stores.take_unbox_children_same_level(index, expected) {
-            TakeUnboxResult::Void => None,
+            TakeUnboxResult::Void => unreachable!("register presence was checked above"),
             TakeUnboxResult::Incompatible => {
-                report_incompatible_unbox(stores)?;
+                report_incompatible_unbox(stores, error_context)?;
                 return Ok(());
             }
             TakeUnboxResult::Children(children) => Some(UnboxSource::PinnedSurvivor(children)),
         }
     } else {
-        let Some(node) = first_box_node(stores, stores.box_reg(index)) else {
+        let Some(node) = first_box_node(stores, Some(register)) else {
+            report_incompatible_unbox(stores, error_context)?;
             return Ok(());
         };
         if !unbox_kind_matches(primitive, &node) {
-            report_incompatible_unbox(stores)?;
+            report_incompatible_unbox(stores, error_context)?;
             return Ok(());
         }
         let children = match node {
@@ -421,10 +454,16 @@ fn unbox_kind_matches(primitive: UnexpandablePrimitive, node: &Node) -> bool {
 
 /// TeX.web §1110's `unpackage` refusal, which leaves the register alone.
 ///
-/// Canonical replay owns no live scanner, so §82's display comes from the last
-/// published input summary.
-fn report_incompatible_unbox(stores: &mut Universe) -> Result<(), ExecError> {
-    let context = crate::diagnostics::show_context(stores, stores.input_summary());
+/// Canonical replay prefers the context frozen at the completed register scan;
+/// retired callers without that boundary fall back to the published summary.
+fn report_incompatible_unbox(
+    stores: &mut Universe,
+    error_context: Option<&str>,
+) -> Result<(), ExecError> {
+    let context = error_context.map_or_else(
+        || crate::diagnostics::show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
     crate::error_report::report_error(
         stores,
         "Incompatible list can't be unboxed",

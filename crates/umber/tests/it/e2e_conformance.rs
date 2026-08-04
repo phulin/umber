@@ -2644,6 +2644,28 @@ fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     run_loaded_trip_source(source)
 }
 
+/// TeX82 §1110 distinguishes a void register from a nonempty incompatible
+/// register. TRIP line 396's void `\unhbox234` is silent, while nonvoid
+/// `\unhcopy3` in math mode reports before §1166 dispatches the following
+/// text accent.
+#[test]
+fn trip_loaded_math_unboxing_diagnoses_before_following_accent() {
+    let log = run_focused_loaded_trip_through(396);
+    let incompatible = log
+        .find("Incompatible list can't be unboxed")
+        .expect("unhcopy diagnostic");
+    let accent = log
+        .find("Please use \\mathaccent for accents in math mode")
+        .expect("following accent diagnostic");
+
+    assert!(incompatible < accent, "diagnostic order:\n{log}");
+    assert_eq!(
+        log.matches("Incompatible list can't be unboxed").count(),
+        1,
+        "void unhbox must remain silent:\n{log}"
+    );
+}
+
 #[test]
 fn trip_loaded_nested_empty_math_box_does_not_republish_source_hpack() {
     let trip: Arc<[u8]> = Arc::from(

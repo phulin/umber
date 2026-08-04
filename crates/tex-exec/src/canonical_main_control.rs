@@ -6403,6 +6403,7 @@ enum ScannedStep {
     Unbox {
         primitive: UnexpandablePrimitive,
         index: u16,
+        error_context: String,
     },
     /// e-TeX 2.6 `etex.ch` [45.999]'s operand-free extensions of TeX82's
     /// `un_vbox` command. The selected saved list is detached and spliced
@@ -9265,6 +9266,7 @@ fn scan_command(
             Ok(ScannedStep::Unbox {
                 primitive,
                 index: register.index,
+                error_context: processor.error_context(),
             })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::LastBox) => {
@@ -15698,7 +15700,11 @@ fn apply_scanned_step(
             box_end(context, node, modes, stores, prepared_dvi_pages, command)?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::Unbox { primitive, index } => {
+        ScannedStep::Unbox {
+            primitive,
+            index,
+            error_context,
+        } => {
             if !stores.paragraph_box_is_locally_owned(index) {
                 stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
                     bank: tex_state::DependencyBank::Box,
@@ -15716,12 +15722,13 @@ fn apply_scanned_step(
                     tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
                 );
             }
-            crate::canonical_box_runtime::execute_scanned_unbox(
+            crate::canonical_box_runtime::execute_scanned_unbox_with_error_context(
                 primitive,
                 index,
                 modes,
                 stores,
                 command.fuel,
+                &error_context,
             )?;
             Ok(ReplayStep::Continue)
         }

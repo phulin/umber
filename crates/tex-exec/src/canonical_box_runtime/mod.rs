@@ -29,12 +29,15 @@ pub(crate) use leaders::{
     append_leader_contribution, leader_glue_kind, payload_from_node, take_register_payload,
 };
 #[cfg(any())]
+pub(crate) use material::execute_scanned_unbox;
+#[cfg(any())]
 pub(crate) use material::{
     acquire_box_register, append_box_register, assign_box_dimension, box_dimension_for_primitive,
 };
 pub(crate) use material::{
     append_box_node_to_current_list, apply_box_shift_delta, execute_delete_last,
-    execute_scanned_saved_vertical_discards, execute_scanned_unbox, split_hpack_migrations,
+    execute_scanned_saved_vertical_discards, execute_scanned_unbox_with_error_context,
+    split_hpack_migrations,
 };
 
 pub(crate) use hmode::{indent_in_hmode, norm_min};
