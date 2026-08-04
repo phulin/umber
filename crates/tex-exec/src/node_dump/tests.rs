@@ -17,6 +17,7 @@ use tex_state::token::{Catcode, OriginId, Token};
 /// make a null delimiter visible nor appear in a non-null diagnostic.
 #[test]
 fn fraction_dump_renders_the_packed_delimiter_field() {
+    let stores = Universe::new();
     for (left, right, expected) in [
         (None, None, "\\fraction, thickness = default\n"),
         (Some(0), Some(0), "\\fraction, thickness = default\n"),
@@ -42,7 +43,7 @@ fn fraction_dump_renders_the_packed_delimiter_field() {
         ),
     ] {
         let mut out = String::new();
-        dump_fraction_header(FractionThickness::Default, left, right, &mut out);
+        dump_fraction_header(&stores, FractionThickness::Default, left, right, &mut out);
         assert_eq!(out, expected);
     }
 }

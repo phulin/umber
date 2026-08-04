@@ -75,6 +75,7 @@ pub(crate) fn dump_incomplete_fraction(
 ) -> String {
     let mut out = String::new();
     dump_fraction_header(
+        stores,
         fraction.thickness,
         fraction.left_delimiter,
         fraction.right_delimiter,
@@ -629,6 +630,7 @@ fn dump_fraction(
     out: &mut String,
 ) {
     dump_fraction_header(
+        stores,
         fraction.thickness,
         fraction.left_delimiter,
         fraction.right_delimiter,
@@ -639,12 +641,15 @@ fn dump_fraction(
 }
 
 fn dump_fraction_header(
+    stores: &Universe,
     thickness: FractionThickness,
     left_delimiter: Option<u32>,
     right_delimiter: Option<u32>,
     out: &mut String,
 ) {
-    out.push_str("\\fraction, thickness");
+    // TeX82 §697 passes the complete fraction heading through `print_esc`,
+    // so it observes the current `\escapechar` just like every noad name.
+    append_escaped_name(stores, "fraction, thickness", out);
     match thickness {
         FractionThickness::Default => out.push_str(" = default"),
         FractionThickness::Explicit(value) => {
@@ -1374,6 +1379,41 @@ mod unset_diagnostic_tests {
                 "S|mathord\nS.|fam1 a\n",
                 "s|mathord\ns.|fam1 a\n",
             ),
+        );
+    }
+
+    /// TeX82 §§63/697 route the complete fraction heading through the live
+    /// `print_esc` projection, including when it is nested in a choice arm.
+    #[test]
+    fn fraction_dump_uses_live_escape_character_inside_choice_arm() {
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        let empty = stores.freeze_node_list(&[]);
+        let fraction = stores.freeze_node_list(&[Node::FractionNoad(MathFraction {
+            numerator: empty,
+            denominator: empty,
+            thickness: FractionThickness::Default,
+            left_delimiter: None,
+            right_delimiter: None,
+        })]);
+        let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
+            display: empty,
+            text: empty,
+            script: fraction,
+            script_script: empty,
+        })]);
+
+        assert_eq!(
+            dump_node_list(
+                &stores,
+                list,
+                DumpConfig {
+                    breadth: 100,
+                    depth: 100,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "|mathchoice\nS|fraction, thickness = default\nS\\{}\nS/{}\n",
         );
     }
 }
