@@ -106,6 +106,7 @@ pub(crate) fn shipout_node_with_input_summary(
             ],
             context,
         )?;
+        report_huge_page_deleted_box(stores, &node, stores.int_param(IntParam::TRACING_OUTPUT));
         return Ok(None);
     }
     if stores.pure_memo_enabled() && !stores.shipout_memo_enabled() {
@@ -236,6 +237,29 @@ pub(crate) fn shipout_node_with_input_summary(
         plan,
         committed_effects,
     }))
+}
+
+/// TeX82 §641's huge-page recovery tail.
+///
+/// Positive `\tracingoutput` has already displayed the page at §638. At
+/// zero or below, `ship_out` must identify and display the rejected box here
+/// before its caller prints the closing page marker.
+fn report_huge_page_deleted_box(stores: &mut Universe, node: &Node, tracing_output: i32) {
+    if tracing_output > 0 {
+        return;
+    }
+    let frozen = stores.freeze_node_list(std::slice::from_ref(node));
+    let dump = crate::node_dump::dump_node_list(
+        stores,
+        frozen,
+        crate::node_dump::DumpConfig::read(stores),
+    );
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("The following box has been deleted:")
+        .print_ln()
+        .print_rendered(&dump);
+    diagnostic.end(true);
 }
 
 fn shipout_error_context(
