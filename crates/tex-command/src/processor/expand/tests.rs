@@ -3688,6 +3688,43 @@ fn meaning_renders_tex82_long_and_outer_macro_command_identity() {
 }
 
 #[test]
+fn end_template_alias_retains_outer_command_identity_and_meaning() {
+    // TeX82 §§298, 336, 780: `frozen_end_template` has the inaccessible
+    // `end_template` command code, which lies above `outer_call`. A `\let`
+    // alias therefore remains outer and pseudoprints that command identity;
+    // its user-authored control-sequence spelling must not replace it.
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let alias = universe.intern("endt").symbol();
+    universe.set_meaning(
+        alias,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate),
+    );
+    let command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(alias)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+
+    assert!(command.is_outer());
+    assert_eq!(
+        print_cmd_chr_text(
+            &universe.command_context(),
+            PrintCommand::from_current(&command),
+        ),
+        "\\outer endtemplate"
+    );
+    assert_eq!(
+        meaning_text(&universe.command_context(), &command),
+        "\\outer endtemplate:"
+    );
+}
+
+#[test]
 fn meaning_macro_prefixes_use_live_escape_character() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));

@@ -351,6 +351,9 @@ impl CurrentCommand {
         matches!(
             self.meaning,
             Meaning::Macro { flags, .. } if flags.contains(tex_state::meaning::MeaningFlags::OUTER)
+        ) || matches!(
+            self.meaning,
+            Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate)
         )
     }
 

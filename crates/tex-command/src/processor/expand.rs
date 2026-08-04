@@ -1851,6 +1851,9 @@ pub(crate) fn meaning_text(
                 token_list_text(state, macro_meaning.replacement_text()),
             )
         }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
+            format!("{} endtemplate:", print_esc_text(state, "outer"))
+        }
         Meaning::ExpandablePrimitive(
             primitive @ (ExpandablePrimitive::TopMark
             | ExpandablePrimitive::FirstMark
@@ -1924,6 +1927,9 @@ pub fn print_cmd_chr_text(state: &tex_state::CommandContext<'_>, command: PrintC
             }
             text.push_str("macro");
             text
+        }
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate) => {
+            format!("{} endtemplate", print_esc_text(state, "outer"))
         }
         Meaning::CharToken { ch, cat } => character_command_text(ch, cat),
         Meaning::CharGiven(ch) => format!("{}\"{:X}", print_esc_text(state, "char"), ch as u32),

@@ -651,6 +651,28 @@ fn show_moves_singular_mark_contents_to_the_next_line() {
 }
 
 #[test]
+fn show_of_end_template_alias_retains_outer_identity_and_empty_body_line() {
+    // TeX82 §§296, 298, 780: `end_template` is an intrinsically outer
+    // call-class command. Its empty token list still puts the completion
+    // diagnostic on the line after the colon.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let alias = universe.intern("endt").symbol();
+    universe.set_meaning(
+        alias,
+        Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate),
+    );
+    push(&mut command, [Token::Cs(alias)]);
+
+    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        .scan_show()
+        .expect("show operand scans");
+    assert_eq!(shown.content, "> \\endt=\\outer endtemplate:\n");
+}
+
+#[test]
 fn show_does_not_scan_or_render_etex_mark_class_contents() {
     // e-TeX change [20.296] leaves plural mark enquiries at print_cmd_chr:
     // `\show\botmarks` neither scans a class number nor appends class zero.

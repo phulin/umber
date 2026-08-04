@@ -2697,6 +2697,10 @@ impl CommandProcessor<'_> {
         let breaks_after_colon = matches!(command.meaning(), Meaning::Macro { .. })
             || matches!(
                 command.meaning(),
+                Meaning::ExpandablePrimitive(tex_state::meaning::ExpandablePrimitive::EndTemplate)
+            )
+            || matches!(
+                command.meaning(),
                 Meaning::ExpandablePrimitive(
                     tex_state::meaning::ExpandablePrimitive::TopMark
                         | tex_state::meaning::ExpandablePrimitive::FirstMark
