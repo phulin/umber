@@ -143,6 +143,9 @@ impl EngineCheckpoint {
                     | tex_state::interner::ControlSequenceKind::Named => {
                         destination.intern(&spelling).symbol()
                     }
+                    tex_state::interner::ControlSequenceKind::Internal => destination
+                        .intern_internal_control_sequence(&spelling)
+                        .symbol(),
                 };
                 (raw, symbol)
             })
