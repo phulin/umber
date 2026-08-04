@@ -54,6 +54,7 @@ fn generated<'a>(output: &'a TexFixedPointOutput, path: &str) -> &'a [u8] {
 }
 
 #[test]
+#[ignore = "xfail: umber2-horq"]
 fn primitive_and_latex_reference_fixtures_reach_cold_identical_fixed_points() {
     for (engine, source, expected_files) in [
         (

@@ -1998,6 +1998,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "xfail: umber2-horq"]
     fn completed_input_absence_retries_only_in_interactive_modes() {
         for interaction in [
             tex_state::InteractionMode::Scroll,

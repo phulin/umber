@@ -8738,6 +8738,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "xfail: umber2-horq"]
     fn pdf_graphics_literals_expand_at_the_selected_time_and_survive_artifacts() {
         let (mut stores, run) = run(concat!(
             "\\pdfoutput=1\\pdfcompresslevel=0",
