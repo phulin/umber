@@ -1165,6 +1165,49 @@ impl CommandProcessor<'_> {
         self.command
             .finish_read_line(level, name_class, line.into_bytes())
             .map_err(|_| CommandError::input_invariant())?;
+        if file_ended && !raw_catcodes && self.command.alignment.align_state != TEMPLATE_ALIGN_STATE
+        {
+            // TeX82 §486 reports the live `def_ref` before `limit:=0` makes
+            // the appended empty line available to §483 and before that
+            // line's `end_file_reading`.  Keeping the report at this
+            // boundary preserves both §306's `->...` pseudoprint and §82's
+            // still-live read-stream context.
+            let endlinechar = self
+                .state
+                .int_param(tex_state::env::banks::IntParam::END_LINE_CHAR);
+            self.command.load_next_source_line(endlinechar);
+            let mut partial = vec![
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '-',
+                        cat: Catcode::Other,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch: '>',
+                        cat: Catcode::Other,
+                    },
+                    OriginId::UNKNOWN,
+                ),
+            ];
+            partial.extend(tokens.iter().copied());
+            self.command
+                .semantic_diagnostics
+                .push(crate::CommandSemanticDiagnostic::Recoverable {
+                    identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
+                    runaway: Some(crate::state::RunawayPrelude {
+                        heading: "Runaway definition?",
+                        partial: String::new(),
+                    }),
+                    message: "File ended within \\read".into(),
+                    help: &["This \\read has unbalanced braces."],
+                    context: self.command.output_open_context(&self.state),
+                });
+            self.set_runaway_partial(&partial);
+            self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
+        }
         if raw_catcodes {
             self.collect_read_line_verbatim(level, tokens)?;
             if file_ended {
@@ -1223,18 +1266,6 @@ impl CommandProcessor<'_> {
                 return Ok(());
             }
             tokens.push(command.spelling());
-        }
-        if file_ended && self.command.alignment.align_state != TEMPLATE_ALIGN_STATE {
-            self.command
-                .semantic_diagnostics
-                .push(crate::CommandSemanticDiagnostic::Recoverable {
-                    identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
-                    runaway: None,
-                    message: "File ended within \\read".into(),
-                    help: &["This \\read has unbalanced braces."],
-                    context: self.command.output_open_context(&self.state),
-                });
-            self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
         }
         Ok(())
     }

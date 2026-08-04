@@ -2825,9 +2825,11 @@ fn read_terminal_in_nonstop_mode_reports_canonical_fatal() {
 
 #[test]
 fn read_unbalanced_eof_reports_file_ended_within_read() {
-    // TeX82 §486: EOF during an unbalanced `\read` reports the exact error,
-    // resets only the temporary brace state, and keeps the supplied tokens;
-    // recovery must not invent a closing brace.
+    // TeX82 §§306/486: EOF during an unbalanced `\read` pseudoprints the
+    // live `def_ref` before the exact error, resets only the temporary brace
+    // state, and keeps the supplied tokens. The report precedes tokenizing
+    // the appended empty line, so its partial excludes that line and its
+    // context still owns the read-stream frame.
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
@@ -2855,16 +2857,26 @@ fn read_unbalanced_eof_reports_file_ended_within_read() {
         processor.command.scanner.status(),
         crate::processor::status::ScannerStatus::Normal
     ));
-    assert_eq!(
-        processor.take_semantic_diagnostics(),
-        [crate::CommandSemanticDiagnostic::Recoverable {
-            identity: FILE_ENDED_WITHIN_READ_DIAGNOSTIC,
-            runaway: None,
-            message: "File ended within \\read".into(),
-            help: &["This \\read has unbalanced braces."],
-            context: String::new(),
-        }]
-    );
+    let diagnostics = processor.take_semantic_diagnostics();
+    let [
+        crate::CommandSemanticDiagnostic::Recoverable {
+            identity,
+            runaway: Some(runaway),
+            message,
+            help,
+            context,
+        },
+    ] = diagnostics.as_slice()
+    else {
+        panic!("expected one §486 runaway diagnostic: {diagnostics:?}");
+    };
+    assert_eq!(*identity, FILE_ENDED_WITHIN_READ_DIAGNOSTIC);
+    assert_eq!(runaway.heading, "Runaway definition?");
+    assert_eq!(runaway.partial, "->{open ");
+    assert_eq!(message, "File ended within \\read");
+    assert_eq!(*help, &["This \\read has unbalanced braces."]);
+    assert!(context.contains("<read 1>"), "{context:?}");
+    assert!(!context.contains("\\par"), "{context:?}");
 }
 
 #[test]
