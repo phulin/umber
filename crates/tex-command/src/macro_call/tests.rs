@@ -241,6 +241,18 @@ fn run_observed_macro_call(
     Result<MacroCallOutcome, CommandError>,
     Recorder,
 ) {
+    run_observed_macro_call_with_parameters(source, flags, &[Token::param(1)])
+}
+
+fn run_observed_macro_call_with_parameters(
+    source: &[u8],
+    flags: MeaningFlags,
+    parameters: &[Token],
+) -> (
+    CommandState,
+    Result<MacroCallOutcome, CommandError>,
+    Recorder,
+) {
     let mut command = CommandState::default();
     let source = command
         .register_source(SourceRegistration::new(
@@ -258,7 +270,7 @@ fn run_observed_macro_call(
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Par),
     );
     let name = universe.intern("m").symbol();
-    let parameters = universe.intern_token_list(&[Token::param(1)]);
+    let parameters = universe.intern_token_list(parameters);
     let replacement = universe.intern_token_list(&[Token::param(1)]);
     let definition = universe.intern_macro(MacroMeaning::new(flags, parameters, replacement));
     universe.set_meaning(name, Meaning::Macro { flags, definition });
@@ -717,6 +729,35 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
         observation,
         CommandObservation::Input(record) if record.transition == InputTransition::Backup
     )));
+}
+
+#[test]
+fn delimited_argument_reports_top_level_extra_right_brace_before_runaway() {
+    let (command, outcome, _) = run_observed_macro_call_with_parameters(
+        b"\\m}",
+        MeaningFlags::LONG,
+        &[
+            Token::param(1),
+            Token::Char {
+                ch: 'x',
+                cat: Catcode::Letter,
+            },
+        ],
+    );
+    assert_eq!(outcome, Err(CommandError::ParagraphInMacroArgument));
+    assert!(matches!(
+        command.semantic_diagnostics.as_slice(),
+        [
+            crate::CommandSemanticDiagnostic::Recoverable {
+                identity: crate::macro_call::EXTRA_RIGHT_BRACE_ARGUMENT_DIAGNOSTIC,
+                ..
+            },
+            crate::CommandSemanticDiagnostic::Recoverable {
+                identity: crate::macro_call::RUNAWAY_ARGUMENT_DIAGNOSTIC,
+                ..
+            }
+        ]
+    ));
 }
 
 #[test]

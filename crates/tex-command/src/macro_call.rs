@@ -576,6 +576,27 @@ impl CommandProcessor<'_> {
             });
     }
 
+    /// TeX82 §395's complete extra-right-brace recovery, shared by the
+    /// undelimited and delimited branches of §394's parameter matcher.
+    fn recover_extra_right_brace_argument(
+        &mut self,
+        command: crate::CurrentCommand,
+    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+        self.back_input(command)?;
+        self.insert_macro_argument_recovery_par()?;
+        // §395 ends with `ins_error`, so §82 renders the context with
+        // the inserted `\par` level already on the stack.
+        self.report_extra_right_brace_argument();
+        let par = self
+            .get_token()?
+            .ok_or(CommandError::ParagraphInMacroArgument)?;
+        self.back_input(par)?;
+        // §395's `goto continue` immediately reads the inserted `\par`;
+        // `long_state := call` makes §396 abort even a `\long` macro.
+        self.report_paragraph_ended_before_complete(&[]);
+        Err(CommandError::ParagraphInMacroArgument)
+    }
+
     fn scan_undelimited_argument(
         &mut self,
         flags: MeaningFlags,
@@ -603,25 +624,7 @@ impl CommandProcessor<'_> {
                     ..
                 }
             ) {
-                // TeX82 §395 backs up a bare extra `}`, inserts frozen
-                // `\par`, and sets `long_state := call`. The inserted
-                // paragraph therefore takes §394's ordinary back_error path
-                // even when this macro was originally declared `\long`.
-                self.back_input(command)?;
-                self.insert_macro_argument_recovery_par()?;
-                // §395 ends with `ins_error`, so §82 renders the context with
-                // the inserted `\par` level already on the stack.
-                self.report_extra_right_brace_argument();
-                let par = self
-                    .get_token()?
-                    .ok_or(CommandError::ParagraphInMacroArgument)?;
-                self.back_input(par)?;
-                // §395's `goto continue` returns to the matching loop, which
-                // immediately reads the `\par` it just inserted and takes
-                // §394's abort. `long_state:=call` above is there precisely so
-                // that §396 reports even for a `\long` macro.
-                self.report_paragraph_ended_before_complete(&[]);
-                return Err(CommandError::ParagraphInMacroArgument);
+                return self.recover_extra_right_brace_argument(command);
             }
             break command;
         };
@@ -754,6 +757,13 @@ impl CommandProcessor<'_> {
                     continue;
                 }
 
+                // TeX82 §394 contributes a failed delimiter prefix first,
+                // then applies §395 to the current token. A top-level `}`
+                // therefore never becomes delimited argument material.
+                if depth == 0 && is_end_group(token) {
+                    return self.recover_extra_right_brace_argument(command);
+                }
+
                 // The mismatching token cannot continue the delimiter, so it
                 // becomes ordinary argument material after the committed
                 // prefix. TeX.web §394 permits a recovered `\par` prefix;
@@ -762,6 +772,10 @@ impl CommandProcessor<'_> {
                 self.check_argument_paragraph(&command, flags, &tokens)?;
                 push_delimited_argument_token(&mut tokens, &mut depth, command.spelling());
                 continue;
+            }
+
+            if depth == 0 && is_end_group(token) {
+                return self.recover_extra_right_brace_argument(command);
             }
 
             self.check_argument_paragraph(&command, flags, &tokens)?;
