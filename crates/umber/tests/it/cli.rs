@@ -911,7 +911,7 @@ fn format_output_rejects_a_successful_run_that_did_not_dump() {
     let temp_dir = tempfile::tempdir().expect("create format output temp dir");
     let source = temp_dir.path().join("format.tex");
     let format = temp_dir.path().join("format.fmt");
-    fs::write(&source, "\\message{NO-DUMP}\\endinput\n").expect("write format source");
+    fs::write(&source, "\\message{NO-DUMP}\\end\n").expect("write format source");
 
     let output = Command::new(env!("CARGO_BIN_EXE_umber"))
         .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
