@@ -175,41 +175,43 @@ fn dump_node(
 ) {
     write_prefix(depth, out);
     match node {
+        // TeX82 §184 names both ordinary and mu kerns through `print_esc`,
+        // so their headers observe the live `\escapechar` just like the
+        // neighboring glue, math, and discretionary node headers.
         Node::Kern { amount, kind } => match kind {
             KernKind::Explicit => {
-                let _ = writeln!(out, "\\kern {}", format_scaled_without_unit(*amount));
+                append_escaped_name(stores, "kern", out);
+                let _ = writeln!(out, " {}", format_scaled_without_unit(*amount));
             }
             KernKind::Font => {
-                let _ = writeln!(out, "\\kern{}", format_scaled_without_unit(*amount));
+                append_escaped_name(stores, "kern", out);
+                let _ = writeln!(out, "{}", format_scaled_without_unit(*amount));
             }
             KernKind::Auto => {
+                append_escaped_name(stores, "kern", out);
                 let _ = writeln!(
                     out,
-                    "\\kern {} (for \\pdfprependkern/\\pdfappendkern)",
+                    " {} (for \\pdfprependkern/\\pdfappendkern)",
                     format_scaled_without_unit(*amount)
                 );
             }
             KernKind::Accent => {
-                let _ = writeln!(
-                    out,
-                    "\\kern {} (for accent)",
-                    format_scaled_without_unit(*amount)
-                );
+                append_escaped_name(stores, "kern", out);
+                let _ = writeln!(out, " {} (for accent)", format_scaled_without_unit(*amount));
             }
             KernKind::Mu => {
-                let _ = writeln!(out, "\\mkern{}mu", format_scaled_without_unit(*amount));
+                append_escaped_name(stores, "mkern", out);
+                let _ = writeln!(out, "{}mu", format_scaled_without_unit(*amount));
             }
             KernKind::LeftMargin => {
-                let _ = writeln!(
-                    out,
-                    "\\kern{} (left margin)",
-                    format_scaled_without_unit(*amount)
-                );
+                append_escaped_name(stores, "kern", out);
+                let _ = writeln!(out, "{} (left margin)", format_scaled_without_unit(*amount));
             }
             KernKind::RightMargin => {
+                append_escaped_name(stores, "kern", out);
                 let _ = writeln!(
                     out,
-                    "\\kern{} (right margin)",
+                    "{} (right margin)",
                     format_scaled_without_unit(*amount)
                 );
             }
@@ -219,9 +221,10 @@ fn dump_node(
                 tex_state::node::MarginKernSide::Left => "left",
                 tex_state::node::MarginKernSide::Right => "right",
             };
+            append_escaped_name(stores, "kern", out);
             let _ = writeln!(
                 out,
-                "\\kern{} ({side} margin)",
+                "{} ({side} margin)",
                 format_scaled_without_unit(*amount)
             );
         }
@@ -1316,6 +1319,48 @@ mod unset_diagnostic_tests {
                 },
             ),
             "|glue(|lineskip) 0.0\n"
+        );
+    }
+
+    #[test]
+    fn kern_headers_use_the_live_escape_character() {
+        // TeX82 §§63/184: `show_node_list` routes both kern names through
+        // `print_esc`; a negative `\escapechar` suppresses the prefix entirely.
+        let mut stores = Universe::new();
+        let nodes = [
+            Node::Kern {
+                amount: Scaled::from_raw(2 * Scaled::UNITY),
+                kind: KernKind::Font,
+            },
+            Node::Kern {
+                amount: Scaled::from_raw(3 * Scaled::UNITY),
+                kind: KernKind::Mu,
+            },
+        ];
+        let config = DumpConfig {
+            breadth: 5,
+            depth: 0,
+            profile: CommandProfile::TEX82,
+        };
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        assert_eq!(
+            dump_node_slice(&stores, &nodes, config),
+            "|kern2.0\n|mkern3.0mu\n"
+        );
+
+        stores.set_int_param(IntParam::ESCAPE_CHAR, -1);
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &nodes,
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "kern2.0\nmkern3.0mu\n"
         );
     }
 
