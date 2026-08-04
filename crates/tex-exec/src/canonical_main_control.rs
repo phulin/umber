@@ -5893,6 +5893,7 @@ enum ScannedStep {
     /// delimiter and drop it without a backup or inserted brace.
     MisplacedAlignmentDelimiter {
         token: Token,
+        context: String,
     },
     /// TeX82 §1129's command-specific misplaced-alignment report.
     MisplacedAlignmentCommand {
@@ -10474,7 +10475,14 @@ fn scan_align_error(
         .recover_align_error(command)
         .map_err(command_error)?
     {
-        None => Ok(ScannedStep::MisplacedAlignmentDelimiter { token }),
+        // TeX82 §1128 calls §82's `error` synchronously, while the delimiter's
+        // input level is still current. Split scan/apply must therefore carry
+        // that exact context rather than reconstructing it after a retained
+        // alignment v-template has advanced or retired.
+        None => Ok(ScannedStep::MisplacedAlignmentDelimiter {
+            token,
+            context: processor.error_context(),
+        }),
         Some(tex_state::token::Token::Char {
             cat: brace @ (Catcode::BeginGroup | Catcode::EndGroup),
             ..
@@ -16007,8 +16015,7 @@ fn apply_scanned_step(
             crate::diagnostics::report_undefined_control_sequence(stores, Some(context))?;
             Ok(ReplayStep::Continue)
         }
-        ScannedStep::MisplacedAlignmentDelimiter { token } => {
-            let context = command.state.output_open_context(&stores.command_context());
+        ScannedStep::MisplacedAlignmentDelimiter { token, context } => {
             crate::diagnostics::report_misplaced_alignment_delimiter(stores, token, Some(context))?;
             Ok(ReplayStep::Continue)
         }

@@ -172,6 +172,55 @@ fn alignment_closing_brace_reports_inserted_cr_and_followup_brace() {
 }
 
 #[test]
+fn misplaced_tab_in_v_template_retains_synchronous_error_context() {
+    let mut stores = Universe::new_with_plain_catcodes();
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    let mut control = CanonicalMainControl::tex82_initex(&mut stores);
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(
+                br"\let\lb={\let\rb=}\halign\relax{\span\iffalse}\fi\cr#&\ifnum0=`{\fi\cr\cr}\end"
+                    .as_slice(),
+            ),
+        ))
+        .expect("alignment-template context source registers");
+
+    loop {
+        match control
+            .step(&mut stores)
+            .expect("alignment-template context source executes")
+        {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    let committed = stores
+        .world()
+        .memory_log_output()
+        .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
+        .unwrap_or_default();
+    let pending: String = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite {
+                sink: PrintSink::Terminal | PrintSink::Log | PrintSink::TerminalAndLog,
+                text,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let transcript = committed + &pending;
+    assert!(
+        transcript.contains("<template> &\n            \\ifnum 0=`{\\fi \\endtemplate "),
+        "TeX82 §§82,1128 diagnose before the retained v-template retires: {transcript}"
+    );
+}
+
+#[test]
 fn paragraph_start_page_build_reports_backed_up_context_before_help() {
     let mut stores = Universe::new_with_plain_catcodes();
     stores.set_interaction_mode(InteractionMode::Nonstop);

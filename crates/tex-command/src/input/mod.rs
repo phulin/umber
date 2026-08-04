@@ -377,15 +377,21 @@ impl InputState {
                 RetirementBehavior::RetainExhaustedVTemplate
                     | RetirementBehavior::AwaitingVTemplateRetirement
             )
-            && after.is_empty()
         {
             let sentinel = crate::processor::expand::token_list_token_text(
                 stores,
                 stores.frozen_end_template_token(),
             );
             match tokens.retirement {
+                // TeX82 §760 stores `end_template_token` at the physical end
+                // of every v-part. Umber keeps it structural, so §319's
+                // pseudoprint must project it after all still-unread v-part
+                // tokens, not only once the ordinary payload is exhausted.
                 RetirementBehavior::RetainExhaustedVTemplate => after.push_str(&sentinel),
-                RetirementBehavior::AwaitingVTemplateRetirement => before.push_str(&sentinel),
+                RetirementBehavior::AwaitingVTemplateRetirement => {
+                    debug_assert!(after.is_empty());
+                    before.push_str(&sentinel);
+                }
                 _ => unreachable!("matched retained v-template retirement above"),
             }
         }

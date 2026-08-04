@@ -130,6 +130,10 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
         RetirementBehavior::RetainExhaustedVTemplate,
         ReplayTrace::VTemplate,
     );
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<template> \n           \\A \\endtemplate "
+    );
     let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("v-template") else {
         panic!("token-list level expected");
     };
