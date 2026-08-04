@@ -166,6 +166,11 @@ pub struct CanonicalMainControl {
     /// shipout is not given a duplicate trio either.
     end_job_ejection_pending: bool,
     active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+    /// A retained output episode owns every delayed shipout produced while
+    /// rebuilding its revision suffix. Ordinary page episodes each replace
+    /// the active handle, but a retained handle stays active until candidate
+    /// completion finalizes the whole provisional group.
+    retained_page_output_receipt_active: bool,
     /// tex.web's `init`/`tini` compile-time split as a session flag.
     ///
     /// tex.web builds INITEX and production TeX from the same source with
@@ -515,6 +520,7 @@ struct CanonicalStepSnapshot {
     /// Delayed shipouts remain part of that page-output publication until the
     /// incremental candidate explicitly finalizes it.
     active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+    retained_page_output_receipt_active: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -547,6 +553,7 @@ impl CanonicalStepSnapshot {
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
             active_page_output_receipt: control.active_page_output_receipt,
+            retained_page_output_receipt_active: control.retained_page_output_receipt_active,
             job: control.job.clone(),
             universe: stores.snapshot(),
         }
@@ -589,6 +596,7 @@ impl CanonicalStepSnapshot {
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
         control.active_page_output_receipt = self.active_page_output_receipt;
+        control.retained_page_output_receipt_active = self.retained_page_output_receipt_active;
         control.job = self.job;
     }
 
@@ -1506,6 +1514,19 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    fn activate_page_output_receipt(
+        &mut self,
+        episode: tex_state::PageOutputEpisodeId,
+        retained: bool,
+    ) {
+        if retained || !self.retained_page_output_receipt_active {
+            self.active_page_output_receipt = Some(tex_state::PageOutputPublicationReceiptId::new(
+                episode.identity(),
+            ));
+        }
+        self.retained_page_output_receipt_active |= retained;
+    }
+
     /// Finalizes every delayed artifact committed under the active typed
     /// page-output receipt. Candidate construction calls this only after the
     /// command run has completed successfully; ordinary rollback restores
@@ -1530,6 +1551,7 @@ impl CanonicalMainControl {
                 .discard_provisional_page_output_receipt(receipt);
         }
         self.active_page_output_receipt = None;
+        self.retained_page_output_receipt_active = false;
     }
 
     /// Reports aggregate-operation/savepoint accounting without exposing the
@@ -4177,10 +4199,7 @@ impl CanonicalMainControl {
                     });
                     let active_episode = active_episode.map(tex_state::PageOutputEpisodeId::new);
                     if let Some(active_episode) = active_episode {
-                        self.active_page_output_receipt =
-                            Some(tex_state::PageOutputPublicationReceiptId::new(
-                                active_episode.identity(),
-                            ));
+                        self.activate_page_output_receipt(active_episode, episode.is_some());
                     }
                     stores.world_mut().set_active_output_episode(active_episode);
                     stores.world_mut().set_active_artifact_publication_group(
@@ -4306,9 +4325,7 @@ impl CanonicalMainControl {
                         );
                         let active = active.map(tex_state::PageOutputEpisodeId::new);
                         if let Some(active) = active {
-                            self.active_page_output_receipt = Some(
-                                tex_state::PageOutputPublicationReceiptId::new(active.identity()),
-                            );
+                            self.activate_page_output_receipt(active, false);
                         }
                         stores.world_mut().set_active_output_episode(active);
                         if let Some(active) = active {
@@ -19878,6 +19895,51 @@ mod discretionary_hyphen_tests {
 #[cfg(any())]
 #[path = "canonical_main_control/tests.rs"]
 mod direct_tests;
+
+#[cfg(test)]
+mod page_output_receipt_tests {
+    use super::*;
+
+    #[test]
+    fn retained_receipt_survives_delayed_activation_and_rollback() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::default();
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(1), false);
+        let snapshot = CanonicalStepSnapshot::capture(&mut control, &mut stores);
+
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(19), false);
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(20), false);
+        assert_eq!(
+            control.active_page_output_receipt,
+            Some(tex_state::PageOutputPublicationReceiptId::new(2))
+        );
+
+        snapshot.rollback(&mut control, &mut stores);
+        assert_eq!(
+            control.active_page_output_receipt,
+            Some(tex_state::PageOutputPublicationReceiptId::new(1))
+        );
+        assert!(!control.retained_page_output_receipt_active);
+    }
+
+    #[test]
+    fn finalization_releases_retained_receipt_for_standalone_episode() {
+        let mut stores = Universe::new_with_plain_catcodes();
+        let mut control = CanonicalMainControl::default();
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
+
+        control.finalize_page_output_receipts(&mut stores);
+        assert_eq!(control.active_page_output_receipt, None);
+        assert!(!control.retained_page_output_receipt_active);
+
+        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(3), false);
+        assert_eq!(
+            control.active_page_output_receipt,
+            Some(tex_state::PageOutputPublicationReceiptId::new(3))
+        );
+    }
+}
 
 #[cfg(any())]
 #[path = "effects/tests.rs"]
