@@ -172,6 +172,14 @@ pub enum CommandSemanticDiagnostic {
     /// The command stack is the sole owner of that backed-up level, so its
     /// display crosses the deferred-report boundary with the diagnostic.
     MissingNumber { context: String },
+    /// TeX82 §§578--579's failed `find_font_dimen(false)` enquiry.
+    ///
+    /// The scanner owns both the bound decision and the live input context;
+    /// the executor owns selector-aware rendering and the font identifier.
+    FontDimenUnavailable {
+        font: tex_state::ids::FontId,
+        context: String,
+    },
 }
 
 /// The output TeX's `runaway` procedure emits before its caller's error.

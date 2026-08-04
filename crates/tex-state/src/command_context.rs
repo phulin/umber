@@ -808,6 +808,14 @@ impl CommandContext<'_> {
         self.universe.font_dimen_writable(font, number)
     }
 
+    /// TeX82 §578's `find_font_dimen(false)` decision for an internal
+    /// `\\fontdimen` enquiry. Unlike the assignment form, an enquiry cannot
+    /// extend even the most recently loaded font.
+    #[must_use]
+    pub fn font_dimen_readable(&self, font: FontId, number: u32) -> bool {
+        number > 0 && number <= self.universe.font_parameter_count(font)
+    }
+
     /// Reads a font's immutable external name without `\fontname`'s size
     /// suffix.
     #[must_use]

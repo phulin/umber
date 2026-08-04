@@ -18482,6 +18482,9 @@ fn report_pending_diagnostics(
                     .context(context);
                 report.error().jump_out()?;
             }
+            PendingDiagnostic::Command(
+                tex_command::CommandSemanticDiagnostic::FontDimenUnavailable { font, context },
+            ) => report_font_parameter_recovery(stores, font, context)?,
             PendingDiagnostic::PrefixOnNonPrefixedCommand(command, context, etex) => {
                 let command = tex_command::print_cmd_chr_text(&stores.command_context(), command);
                 let mut report = stores.print_err("You can't use a prefix with `");

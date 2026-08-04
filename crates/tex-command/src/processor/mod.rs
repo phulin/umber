@@ -143,6 +143,14 @@ impl CommandProcessor<'_> {
             .filter(|number| *number > 0)
             .is_some_and(|number| self.state.font_dimen_writable(font, number))
     }
+
+    /// TeX82 §578's `find_font_dimen(false)` decision for enquiries.
+    #[must_use]
+    pub fn font_dimen_readable(&self, font: tex_state::ids::FontId, number: i32) -> bool {
+        u32::try_from(number)
+            .ok()
+            .is_some_and(|number| self.state.font_dimen_readable(font, number))
+    }
 }
 
 enum ProcessorFuel<'a> {

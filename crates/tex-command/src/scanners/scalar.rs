@@ -2091,6 +2091,18 @@ impl CommandProcessor<'_> {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::FontDimen) => {
                 let number = self.scan_integer()?.value;
                 let font = self.scan_font_selector()?;
+                // TeX82 §§578--579 calls `find_font_dimen(false)` for
+                // enquiries: unlike assignment, even the newest font cannot
+                // grow. The rejected location is the zero-valued scratch
+                // cell, but the error context belongs at this scanner cursor.
+                if !self.font_dimen_readable(font, number) {
+                    self.command.semantic_diagnostics.push(
+                        crate::CommandSemanticDiagnostic::FontDimenUnavailable {
+                            font,
+                            context: self.error_context(),
+                        },
+                    );
+                }
                 let number = u32::try_from(number).unwrap_or(0);
                 InternalValue::Dimension(self.state.font_dimen(font, number))
             }

@@ -2768,6 +2768,14 @@ fn scan_internal_with(
     tokens: Vec<Token>,
     configure_host: impl FnOnce(&mut CommandHostCapabilities),
 ) -> InternalValue {
+    scan_internal_with_diagnostics(universe, tokens, configure_host).0
+}
+
+fn scan_internal_with_diagnostics(
+    universe: &mut Universe,
+    tokens: Vec<Token>,
+    configure_host: impl FnOnce(&mut CommandHostCapabilities),
+) -> (InternalValue, Vec<crate::CommandSemanticDiagnostic>) {
     let mut command = CommandState::default();
     push(&mut command, tokens);
     let mut runtime = CommandRuntime::default();
@@ -2783,10 +2791,12 @@ fn scan_internal_with(
         .get_x_token()
         .expect("internal target delivers")
         .expect("internal target exists");
-    processor
+    let value = processor
         .scan_the_internal_value(&target)
         .expect("internal target scans")
-        .expect("target is internal")
+        .expect("target is internal");
+    let diagnostics = processor.take_semantic_diagnostics();
+    (value, diagnostics)
 }
 
 fn internal_primitive(
@@ -3906,14 +3916,20 @@ fn internal_font_dimensions_cover_first_last_missing_and_named_font_selection() 
         .set_font_dimen(named, 7, Scaled::from_raw(77))
         .expect("later parameter");
     let fontdimen = internal_primitive(&mut universe, "fontdimen", P::FontDimen);
-    for (number, expected) in [(1, 11), (7, 77), (8, 0)] {
+    for (number, expected, unavailable) in [(1, 11, false), (7, 77, false), (8, 0, true)] {
         let mut tokens = vec![fontdimen];
         tokens.extend(number.to_string().chars().map(char_token));
         tokens.push(Token::Cs(named_symbol));
-        assert_eq!(
-            scan_internal_with(&mut universe, tokens, |_| {}),
-            InternalValue::Dimension(Scaled::from_raw(expected))
-        );
+        let (value, diagnostics) = scan_internal_with_diagnostics(&mut universe, tokens, |_| {});
+        assert_eq!(value, InternalValue::Dimension(Scaled::from_raw(expected)));
+        assert_eq!(diagnostics.len(), usize::from(unavailable));
+        if unavailable {
+            assert!(matches!(
+                diagnostics.as_slice(),
+                [crate::CommandSemanticDiagnostic::FontDimenUnavailable { font, .. }]
+                    if *font == named
+            ));
+        }
     }
 }
 
