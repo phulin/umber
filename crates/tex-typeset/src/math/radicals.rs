@@ -159,8 +159,16 @@ pub(super) fn make_math_accent(
     let style = ctx.style.cramped_style();
     let mut accentee = clean_box(ctx, &noad.nucleus, style);
     let Some(fetched) = fetch(ctx, accent, ctx.style) else {
+        // TeX82 §738 leaves the nucleus untouched when `fetch` cannot
+        // supply the accent. Preserve the already-cleaned nonempty nucleus
+        // instead of deleting the whole noad from the second-pass hlist.
+        let hlist = if matches!(noad.nucleus, MathField::Empty) {
+            ctx.layout.empty()
+        } else {
+            ctx.layout.hlist([MathNode::HList(accentee)])
+        };
         return AccentResult {
-            hlist: ctx.layout.empty(),
+            hlist,
             scripts_handled: false,
         };
     };

@@ -2154,6 +2154,33 @@ fn missing_math_accent_with_empty_nucleus_has_only_dimensions_pack() {
 }
 
 #[test]
+fn missing_math_accent_preserves_a_nonempty_nucleus_box() {
+    // TeX82 §738 does nothing when `fetch(accent_chr(q))` fails; the
+    // nucleus remains available to the ordinary second-pass conversion.
+    let mut universe = setup_universe();
+    let empty = universe.freeze_node_list(&[]);
+    let noad = MathNoad::new(
+        NoadKind::Accent {
+            accent: MathChar {
+                family: 13,
+                character: 'X',
+                origin: tex_state::token::OriginId::UNKNOWN,
+            },
+        },
+        MathField::SubBox(empty),
+    );
+    let input = universe.freeze_node_list(&[Node::MathNoad(noad)]);
+    let params = MathParams::read(&universe);
+
+    let layout = mlist_to_hlist(&universe, input, Style::TEXT, false, &params);
+
+    assert!(matches!(
+        root_nodes(&layout).as_slice(),
+        [MathNode::HList(_)]
+    ));
+}
+
+#[test]
 fn nested_math_accent_preserves_the_inner_vertical_box() {
     let mut universe = setup_universe();
     let inner = universe.freeze_node_list(&[Node::MathNoad(MathNoad::new(
