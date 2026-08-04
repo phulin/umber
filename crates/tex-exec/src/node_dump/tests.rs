@@ -1222,6 +1222,33 @@ fn discretionary_dump_suppresses_replacement_and_marks_post_break() {
 }
 
 #[test]
+fn discretionary_dump_uses_live_escape_character() {
+    let mut stores = Universe::new();
+    stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+    let empty = stores.freeze_node_list(&[]);
+    let disc = Node::Disc {
+        kind: DiscKind::Discretionary,
+        pre: empty,
+        post: empty,
+        replace: empty,
+        physical_replace_count: 0,
+    };
+
+    assert_eq!(
+        dump_node_slice(
+            &stores,
+            &[disc],
+            DumpConfig {
+                breadth: 10,
+                depth: 10,
+                profile: tex_command::CommandProfile::TEX82,
+            },
+        ),
+        "|discretionary\n",
+    );
+}
+
+#[test]
 fn discretionary_dump_retains_the_physical_replacement_span() {
     let mut stores = Universe::new();
     let empty = stores.freeze_node_list(&[]);

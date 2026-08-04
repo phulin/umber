@@ -805,10 +805,13 @@ fn dump_disc(
     depth: i32,
     out: &mut String,
 ) {
+    // TeX82 §187 names a discretionary through §63's `print_esc`, so the
+    // node header observes the live `\escapechar`.
+    append_escaped_name(stores, "discretionary", out);
     if physical_replace_count == 0 {
-        out.push_str("\\discretionary\n");
+        out.push('\n');
     } else {
-        let _ = writeln!(out, "\\discretionary replacing {}", physical_replace_count);
+        let _ = writeln!(out, " replacing {physical_replace_count}");
     }
     dump_list(stores, pre, config, depth + 1, ListContext::Neutral, out);
     if !stores.nodes(post).is_empty() {
