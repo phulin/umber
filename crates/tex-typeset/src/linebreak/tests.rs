@@ -48,7 +48,9 @@ fn params(width: i32) -> LineBreakParams {
 }
 
 #[test]
-fn tracing_records_second_and_emergency_pass_boundaries_without_effects() {
+fn tracing_omits_initial_second_pass_label_but_records_emergency_transition() {
+    // TeX82 §816 begins the diagnostic silently when `pretolerance<0`;
+    // `@secondpass` names only the transition from a failed first pass.
     let universe = Universe::new();
     let nodes = vec![rule(100), Node::Penalty(EJECT_PENALTY)];
     let mut parameters = params(10);
@@ -58,10 +60,11 @@ fn tracing_records_second_and_emergency_pass_boundaries_without_effects() {
 
     let (plan, trace) = line_break_hyphenated_traced(&universe, &nodes, &parameters, Vec::new());
     assert!(!plan.breaks.is_empty());
-    assert!(matches!(
-        trace.first(),
-        Some(LineBreakTrace::Pass(LineBreakPass::Second))
-    ));
+    assert!(
+        !trace
+            .iter()
+            .any(|event| matches!(event, LineBreakTrace::Pass(LineBreakPass::Second)))
+    );
     assert!(
         trace
             .iter()
@@ -179,7 +182,7 @@ fn positive_emergency_stretch_uses_the_real_tolerance_route() {
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        [LineBreakPass::Second, LineBreakPass::Emergency]
+        [LineBreakPass::Emergency]
     );
     assert!(
         trace.iter().any(|event| matches!(
@@ -963,7 +966,7 @@ fn etex_last_line_fit_is_applied_on_the_emergency_final_pass() {
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        [LineBreakPass::Second, LineBreakPass::Emergency]
+        [LineBreakPass::Emergency]
     );
     assert_eq!(
         result

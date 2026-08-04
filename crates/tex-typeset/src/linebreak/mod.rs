@@ -368,7 +368,12 @@ pub fn line_break_hyphenated_traced<S: TypesetState>(
 ) -> (BreakPlan, Vec<LineBreakTrace>) {
     // As above, diagnostic admission is replayed independently so the
     // observational switch remains semantically inert.
-    trace.push(LineBreakTrace::Pass(LineBreakPass::Second));
+    // TeX82 §816 prints `@secondpass` only when a failed pretolerance pass
+    // transitions into the hyphenating pass. With `pretolerance<0`, TeX opens
+    // the diagnostic in the second pass directly and prints no pass label.
+    if params.pretolerance >= 0 {
+        trace.push(LineBreakTrace::Pass(LineBreakPass::Second));
+    }
     let _ = run_pass(
         state,
         nodes,
