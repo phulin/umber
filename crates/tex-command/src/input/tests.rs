@@ -1,3 +1,4 @@
+use tex_state::ExpansionState;
 use tex_state::print::{ErrorContextLevel, ErrorContextWidths, render_error_context};
 
 use crate::CommandState;
@@ -143,6 +144,27 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
     assert_eq!(
         command.output_open_context(&universe.command_context()),
         "\n<template> \\A \n              \\endtemplate "
+    );
+
+    let backup = command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from([
+            tex_state::token::TracedTokenWord::pack(
+                universe.frozen_end_template_token(),
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+        ]))),
+        TokenBehavior::BackedUp(crate::input::BackupTreatment::Ordinary),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let InputLevel::Tokens(cursor) = command.input.levels.last_mut().expect("backup") else {
+        panic!("token-list level expected");
+    };
+    assert_eq!(cursor.identity, backup);
+    cursor.index = 1;
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<recently read> \\endtemplate \n                             \n<template> \\A \\endtemplate \n                           "
     );
 }
 

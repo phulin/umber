@@ -315,7 +315,7 @@ impl InputState {
             rendered
         }
 
-        let (before, mut after) = match &tokens.payload {
+        let (mut before, mut after) = match &tokens.payload {
             TokenPayload::Stored { tokens: list, .. } => {
                 let words = stores.tokens(*list);
                 let split = tokens.index.min(words.len());
@@ -367,9 +367,11 @@ impl InputState {
         };
         // tex.web §§354/390 leave `loc=null` on the exhausted v-template
         // while returning `frozen_end_template` as the current token. The
-        // sentinel is not part of the stored template list, but §315's
-        // pseudoprint must still put that current token on the unread side of
-        // the cursor until `do_endv` completes the cell.
+        // The sentinel is not part of the stored template list. While this is
+        // the current level, §315 shows the token on the unread side of its
+        // cursor. If a backed-up `endv` level is current instead, TeX's live
+        // `cur_tok` has already moved past the retained template, so it is on
+        // that template's read side.
         if matches!(tokens.behavior, TokenBehavior::VTemplate)
             && matches!(
                 tokens.retirement,
@@ -378,10 +380,15 @@ impl InputState {
             )
             && after.is_empty()
         {
-            after.push_str(&crate::processor::expand::token_list_token_text(
+            let sentinel = crate::processor::expand::token_list_token_text(
                 stores,
                 stores.frozen_end_template_token(),
-            ));
+            );
+            if current {
+                after.push_str(&sentinel);
+            } else {
+                before.push_str(&sentinel);
+            }
         }
         // §314's macro arm is `print_ln; print_cs(name)` -- the control
         // sequence being expanded, not a bracketed type name -- and §319
