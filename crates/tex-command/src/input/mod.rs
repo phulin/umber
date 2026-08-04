@@ -366,12 +366,11 @@ impl InputState {
             }
         };
         // tex.web §§354/390 leave `loc=null` on the exhausted v-template
-        // while returning `frozen_end_template` as the current token. The
-        // The sentinel is not part of the stored template list. While this is
-        // the current level, §315 shows the token on the unread side of its
-        // cursor. If a backed-up `endv` level is current instead, TeX's live
-        // `cur_tok` has already moved past the retained template, so it is on
-        // that template's read side.
+        // while returning its stored `frozen_end_template`. Umber represents
+        // that sentinel structurally instead of appending it to every stored
+        // template. Before §375 expansion it is the current token and belongs
+        // on §315's unread side; after §375 replaces it with a backed-up
+        // `frozen_endv`, the retained template has advanced past it.
         if matches!(tokens.behavior, TokenBehavior::VTemplate)
             && matches!(
                 tokens.retirement,
@@ -384,10 +383,10 @@ impl InputState {
                 stores,
                 stores.frozen_end_template_token(),
             );
-            if current {
-                after.push_str(&sentinel);
-            } else {
-                before.push_str(&sentinel);
+            match tokens.retirement {
+                RetirementBehavior::RetainExhaustedVTemplate => after.push_str(&sentinel),
+                RetirementBehavior::AwaitingVTemplateRetirement => before.push_str(&sentinel),
+                _ => unreachable!("matched retained v-template retirement above"),
             }
         }
         // §314's macro arm is `print_ln; print_cs(name)` -- the control

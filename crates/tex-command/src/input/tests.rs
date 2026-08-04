@@ -110,9 +110,10 @@ fn source_context_prints_physical_characters_through_live_newlinechar() {
 
 #[test]
 fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
-    // TeX82 §§354/390: `get_next` returns `frozen_end_template` when the
-    // v-template's stored list is exhausted. Although `loc=null`, §315 shows
-    // that synthetic current token after the cursor until `do_endv` finishes.
+    // TeX82 §§315/354/375/780: the stored `frozen_end_template` is current
+    // after raw delivery, then read once §375 replaces it with `frozen_endv`.
+    // Umber's structural sentinel must cross the pseudoprint cursor at that
+    // same retained-template lifecycle transition.
     let mut command = CommandState::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let relax = universe.intern("A").symbol();
@@ -143,7 +144,7 @@ fn retained_v_template_pseudoprints_its_current_endtemplate_token() {
 
     assert_eq!(
         command.output_open_context(&universe.command_context()),
-        "\n<template> \\A \n              \\endtemplate "
+        "\n<template> \\A \\endtemplate \n                           "
     );
 
     let backup = command.push_token_level(
