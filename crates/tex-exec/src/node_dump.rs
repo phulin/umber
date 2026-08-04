@@ -226,15 +226,11 @@ fn dump_node(
         }
         Node::Glue { spec, kind, leader } => {
             if let Some(leader) = leader {
-                let _ = writeln!(
-                    out,
-                    "{}{}",
-                    kind.leader_dump_prefix(),
-                    format_glue(stores.glue(*spec), kind.glue_unit())
-                );
+                kind.append_leader_dump_prefix(stores, out);
+                let _ = writeln!(out, "{}", format_glue(stores.glue(*spec), kind.glue_unit()));
                 dump_leader_payload(stores, leader, config, depth + 1, context, out);
             } else {
-                out.push_str(kind.glue_dump_prefix());
+                kind.append_glue_dump_prefix(stores, out);
                 if kind.prints_glue_spec() {
                     out.push_str(&format_glue(stores.glue(*spec), kind.glue_unit()));
                 }
@@ -1162,48 +1158,63 @@ fn order_unit(order: Order) -> &'static str {
 mod tests;
 
 trait GlueKindDump {
-    fn glue_dump_prefix(self) -> &'static str;
-    fn leader_dump_prefix(self) -> &'static str;
+    fn append_glue_dump_prefix(self, stores: &Universe, out: &mut String);
+    fn append_leader_dump_prefix(self, stores: &Universe, out: &mut String);
+    fn parameter_name(self) -> Option<&'static str>;
     fn glue_unit(self) -> &'static str;
     fn prints_glue_spec(self) -> bool;
 }
 
 impl GlueKindDump for GlueKind {
-    fn glue_dump_prefix(self) -> &'static str {
-        match self {
-            Self::Normal => "\\glue ",
-            Self::SpaceSkip => "\\glue(\\spaceskip) ",
-            Self::XSpaceSkip => "\\glue(\\xspaceskip) ",
-            Self::TabSkip => "\\glue(\\tabskip) ",
-            Self::BaselineSkip => "\\glue(\\baselineskip) ",
-            Self::LineSkip => "\\glue(\\lineskip) ",
-            Self::TopSkip => "\\glue(\\topskip) ",
-            Self::SplitTopSkip => "\\glue(\\splittopskip) ",
-            Self::LeftSkip => "\\glue(\\leftskip) ",
-            Self::RightSkip => "\\glue(\\rightskip) ",
-            Self::ParSkip => "\\glue(\\parskip) ",
-            Self::ParFillSkip => "\\glue(\\parfillskip) ",
-            Self::AboveDisplaySkip => "\\glue(\\abovedisplayskip) ",
-            Self::BelowDisplaySkip => "\\glue(\\belowdisplayskip) ",
-            Self::AboveDisplayShortSkip => "\\glue(\\abovedisplayshortskip) ",
-            Self::BelowDisplayShortSkip => "\\glue(\\belowdisplayshortskip) ",
-            Self::Leaders => "\\leaders \\glue ",
-            Self::Cleaders => "\\cleaders \\glue ",
-            Self::Xleaders => "\\xleaders \\glue ",
-            Self::MuSkip => "\\glue(\\mskip) ",
-            Self::ThinMuSkip => "\\glue(\\thinmuskip) ",
-            Self::MedMuSkip => "\\glue(\\medmuskip) ",
-            Self::ThickMuSkip => "\\glue(\\thickmuskip) ",
-            Self::NonScript => "\\glue(\\nonscript)",
+    /// TeX82 §189 renders both `glue` and every non-normal subtype through
+    /// `print_esc`, so each name observes the current `\escapechar`.
+    fn append_glue_dump_prefix(self, stores: &Universe, out: &mut String) {
+        append_escaped_name(stores, "glue", out);
+        if let Some(name) = self.parameter_name() {
+            out.push('(');
+            append_escaped_name(stores, name, out);
+            out.push(')');
+        }
+        if self != Self::NonScript {
+            out.push(' ');
         }
     }
 
-    fn leader_dump_prefix(self) -> &'static str {
+    /// TeX82 §189's leader branch calls `print_esc("")` before printing the
+    /// optional `c`/`x` and the common `leaders` suffix.
+    fn append_leader_dump_prefix(self, stores: &Universe, out: &mut String) {
         match self {
-            Self::Leaders => "\\leaders ",
-            Self::Cleaders => "\\cleaders ",
-            Self::Xleaders => "\\xleaders ",
-            _ => self.glue_dump_prefix(),
+            Self::Leaders => append_escaped_name(stores, "leaders", out),
+            Self::Cleaders => append_escaped_name(stores, "cleaders", out),
+            Self::Xleaders => append_escaped_name(stores, "xleaders", out),
+            _ => return self.append_glue_dump_prefix(stores, out),
+        }
+        out.push(' ');
+    }
+
+    fn parameter_name(self) -> Option<&'static str> {
+        match self {
+            Self::Normal | Self::Leaders | Self::Cleaders | Self::Xleaders => None,
+            Self::SpaceSkip => Some("spaceskip"),
+            Self::XSpaceSkip => Some("xspaceskip"),
+            Self::TabSkip => Some("tabskip"),
+            Self::BaselineSkip => Some("baselineskip"),
+            Self::LineSkip => Some("lineskip"),
+            Self::TopSkip => Some("topskip"),
+            Self::SplitTopSkip => Some("splittopskip"),
+            Self::LeftSkip => Some("leftskip"),
+            Self::RightSkip => Some("rightskip"),
+            Self::ParSkip => Some("parskip"),
+            Self::ParFillSkip => Some("parfillskip"),
+            Self::AboveDisplaySkip => Some("abovedisplayskip"),
+            Self::BelowDisplaySkip => Some("belowdisplayskip"),
+            Self::AboveDisplayShortSkip => Some("abovedisplayshortskip"),
+            Self::BelowDisplayShortSkip => Some("belowdisplayshortskip"),
+            Self::MuSkip => Some("mskip"),
+            Self::ThinMuSkip => Some("thinmuskip"),
+            Self::MedMuSkip => Some("medmuskip"),
+            Self::ThickMuSkip => Some("thickmuskip"),
+            Self::NonScript => Some("nonscript"),
         }
     }
 
@@ -1260,6 +1271,30 @@ mod unset_diagnostic_tests {
                 },
             ),
             "\\unsetbox(0.0+0.0)x0.0\n"
+        );
+    }
+
+    #[test]
+    fn named_glue_node_uses_live_escape_character_for_both_names() {
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        let spec = stores.intern_glue(GlueSpec::ZERO);
+
+        assert_eq!(
+            dump_node_slice(
+                &stores,
+                &[Node::Glue {
+                    spec,
+                    kind: GlueKind::LineSkip,
+                    leader: None,
+                }],
+                DumpConfig {
+                    breadth: 5,
+                    depth: 0,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            "|glue(|lineskip) 0.0\n"
         );
     }
 }
