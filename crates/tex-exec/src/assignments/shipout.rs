@@ -150,7 +150,7 @@ pub(crate) fn shipout_node_with_input_summary(
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let imported_bytes = entry.artifact.retained_bytes();
-            let hash = stores.commit_replayed_artifact(
+            let (hash, _artifact_publication) = stores.commit_replayed_artifact(
                 detached.payload,
                 entry.render_origin_ends,
                 entry.render_provenance,
@@ -221,7 +221,15 @@ pub(crate) fn shipout_node_with_input_summary(
                 .collect::<Vec<_>>();
             (artifact_bytes, render_origin_ends, render_origins)
         });
-    let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    let reservation = transaction
+        .world_mut()
+        .reserve_active_artifact_publication_at(effect_start);
+    let effect_end = transaction.world().effect_records().len();
+    transaction.world_mut().claim_effect_publication(
+        effect_start..effect_end,
+        reservation.record().publication(),
+    );
+    let (hash, publication) = transaction.commit(staged.artifact, staged.effect_pos, reservation)?;
     if let Some(geometry) = geometry {
         stores.record_geometry_observation(geometry);
     }
@@ -251,6 +259,7 @@ pub(crate) fn shipout_node_with_input_summary(
         hash,
         plan,
         committed_effects,
+        publication,
     }))
 }
 

@@ -143,7 +143,7 @@ pub use memo::{
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
-    PageFireUp, PageInteger,
+    PageFireUp, PageInteger, PageOutputEpisodeId, PagePrefixOwnership, ParagraphRegionOwner,
 };
 pub use provenance::ParagraphOriginResolver;
 pub use provenance_resolver::{
@@ -176,13 +176,18 @@ pub use universe::{
 #[cfg(feature = "profiling")]
 pub use world::ProfilingTimer;
 pub use world::{
-    ArtifactOrigin, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity, EffectPos,
-    EffectRecord, EffectRetrySafety, ExecutionTraceEvent, FileContent, FileModificationDate,
+    ArtifactOrigin, ArtifactPublicationId, ArtifactPublicationRecord,
+    ArtifactPublicationReservation, CommittedArtifact, ContentDomain, ContentHash, ContentIdentity,
+    EffectDomain, EffectPos, EffectPublicationId, EffectRecord, EffectRetrySafety,
+    EffectRootIdentity, EffectSequence, ExecutionTraceEvent, FileContent, FileModificationDate,
     InputDependency, InputDependencyAccess, InputDependencyOutcome, InputOrigin, InputRecord,
-    InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput, PrintSink, ReadTarget,
+    InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput,
+    OutputArtifactPublicationCandidate, OutputEpisodePublicationOutcome, OutputEpisodeStart,
+    PageOutputPublicationReceipt, PageOutputPublicationReceiptId, PrintSink, ReadTarget,
     RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot,
-    TerminalInputPosition, VerifiedArtifact, World, WorldCommitMode, WorldError, WorldSnapshot,
+    TerminalInputPosition, TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact,
+    World, WorldCommitMode, WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

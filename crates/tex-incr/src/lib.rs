@@ -335,6 +335,10 @@ pub struct PendingRevision {
     layout: EditorLayout,
     content_hash: ContentHash,
     effects: Vec<EffectRecord>,
+    effect_sequences: Vec<tex_state::EffectSequence>,
+    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
+    effect_domains: Vec<tex_state::EffectDomain>,
+    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
@@ -369,7 +373,7 @@ pub struct RevisionCandidate {
 }
 
 struct CanonicalCandidateCompletion {
-    dvi_pages: Vec<DviPagePlan>,
+    prepared_dvi_pages: Vec<tex_exec::PreparedDviPage>,
     dumped_format: bool,
     format_dump_receipt: Option<tex_exec::FormatDumpReceipt>,
     delivered_tokens: usize,
@@ -411,6 +415,10 @@ struct AdvanceSetup {
     old_source: String,
     old_history: Vec<BoundaryRecord>,
     old_effects: Vec<EffectRecord>,
+    old_effect_sequences: Vec<tex_state::EffectSequence>,
+    old_effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
+    old_effect_domains: Vec<tex_state::EffectDomain>,
+    old_artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     old_artifacts: Vec<CommittedArtifact>,
     old_pages: Vec<DviPagePlan>,
     next: String,
@@ -749,14 +757,11 @@ impl RevisionCandidate {
                         CandidateSink::Advance(sink) => sink.stop_requested(),
                     };
                     if stop || matches!(step, MainControlStep::End) {
-                        let dvi_pages = self
-                            .control
-                            .take_prepared_dvi_pages()
-                            .into_iter()
-                            .map(tex_exec::PreparedDviPage::into_plan)
-                            .collect();
+                        self.control
+                            .finalize_page_output_receipts(&mut self.universe);
+                        let prepared_dvi_pages = self.control.take_prepared_dvi_pages();
                         self.completed = Some(CanonicalCandidateCompletion {
-                            dvi_pages,
+                            prepared_dvi_pages,
                             dumped_format: self.control.dumped_format(),
                             format_dump_receipt: self.control.format_dump_receipt().cloned(),
                             delivered_tokens: self.delivered_commands,
@@ -1026,6 +1031,10 @@ pub struct Session {
     layout: EditorLayout,
     content_hash: ContentHash,
     effects: Vec<EffectRecord>,
+    effect_sequences: Vec<tex_state::EffectSequence>,
+    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
+    effect_domains: Vec<tex_state::EffectDomain>,
+    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     history: Vec<BoundaryRecord>,
@@ -1178,6 +1187,10 @@ impl Session {
             fragments,
             layout,
             effects: Vec::new(),
+            effect_sequences: Vec::new(),
+            effect_publications: Vec::new(),
+            effect_domains: Vec::new(),
+            artifact_publications: Vec::new(),
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
             history: Vec::new(),
@@ -1480,6 +1493,10 @@ impl Session {
             old_source: self.source.clone(),
             old_history: self.history.clone(),
             old_effects: self.effects.clone(),
+            old_effect_sequences: self.effect_sequences.clone(),
+            old_effect_publications: self.effect_publications.clone(),
+            old_effect_domains: self.effect_domains.clone(),
+            old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
             next: self.source.clone(),
@@ -1567,6 +1584,10 @@ impl Session {
             old_source,
             old_history,
             old_effects: self.effects.clone(),
+            old_effect_sequences: self.effect_sequences.clone(),
+            old_effect_publications: self.effect_publications.clone(),
+            old_effect_domains: self.effect_domains.clone(),
+            old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
             next,
@@ -1657,6 +1678,31 @@ impl Session {
                     paragraphs: &replay_suffix,
                 },
             )?;
+        if let Some(owners) = materialized_replay_suffix
+            .iter()
+            .map(tex_exec::CanonicalParagraphRegion::output_effect_episode_owners)
+            .max_by_key(|owners| owners.len())
+        {
+            universe
+                .world_mut()
+                .install_output_effect_episode_owners(owners);
+        }
+        if let Some(publications) = materialized_replay_suffix
+            .iter()
+            .map(tex_exec::CanonicalParagraphRegion::output_effect_publications)
+            .max_by_key(|publications| publications.len())
+        {
+            universe
+                .world_mut()
+                .install_effect_publications(publications);
+        }
+        if let Some(domains) = materialized_replay_suffix
+            .iter()
+            .map(tex_exec::CanonicalParagraphRegion::effect_domains)
+            .max_by_key(|domains| domains.len())
+        {
+            universe.world_mut().install_effect_domains(domains);
+        }
         control.install_paragraph_replay_regions(materialized_replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
             universe.world_mut().set_memory_file(path, bytes.clone())?;
@@ -1809,15 +1855,33 @@ impl Session {
             record.revision = setup.next_revision;
         }
         let effects = candidate.universe.world().effect_records().to_vec();
+        let effect_sequences = candidate
+            .universe
+            .world()
+            .effect_sequences()
+            .as_ref()
+            .clone();
+        let effect_publications = candidate
+            .universe
+            .world()
+            .effect_publications()
+            .as_ref()
+            .clone();
+        let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+        let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
         let expansion_stats = ExpansionStats::default();
         let CanonicalCandidateCompletion {
-            dvi_pages,
+            prepared_dvi_pages,
             dumped_format,
             format_dump_receipt,
             delivered_tokens,
             main_control_dispatches,
         } = stats;
+        let dvi_pages: Vec<DviPagePlan> = prepared_dvi_pages
+            .into_iter()
+            .map(tex_exec::PreparedDviPage::into_plan)
+            .collect();
         let substrate = candidate.universe.freeze_generation();
         let history = retain_restorable_history(sink.records, &substrate)?;
         let reuse = ReuseMetrics {
@@ -1850,6 +1914,10 @@ impl Session {
             layout: setup.next_layout,
             content_hash,
             effects,
+            effect_sequences,
+            effect_publications,
+            effect_domains,
+            artifact_publications,
             artifacts,
             dvi_pages,
             history,
@@ -1870,6 +1938,7 @@ impl Session {
         &self,
         mut candidate: RevisionCandidate,
     ) -> Result<PendingRevision, SessionError> {
+        let superseded_output_episodes = candidate.control.take_superseded_page_output_episodes();
         let convergence_position = match &candidate.sink {
             CandidateSink::Advance(sink) if sink.convergence_old_index.is_some() => {
                 sink.records.last().map(|record| record.key.position)
@@ -1901,12 +1970,20 @@ impl Session {
             [break_dependency_index]
             > before_memo.paragraph_validation_failure_reasons[break_dependency_index];
         let CanonicalCandidateCompletion {
-            dvi_pages,
+            prepared_dvi_pages,
             dumped_format,
             format_dump_receipt: _,
             delivered_tokens,
             main_control_dispatches,
         } = stats;
+        let live_dvi_publications = prepared_dvi_pages
+            .iter()
+            .map(tex_exec::PreparedDviPage::publication)
+            .collect::<Vec<_>>();
+        let dvi_pages: Vec<DviPagePlan> = prepared_dvi_pages
+            .into_iter()
+            .map(tex_exec::PreparedDviPage::into_plan)
+            .collect();
         let reexecuted_paragraphs = sink
             .records
             .iter()
@@ -1929,7 +2006,13 @@ impl Session {
         };
         let expansion_stats = ExpansionStats::default();
         let effects = candidate.universe.world().effect_records().to_vec();
+        let live_effect_sequences = candidate.universe.world().effect_sequences();
+        let live_effect_publications = candidate.universe.world().effect_publications();
+        let live_effect_domains = candidate.universe.world().effect_domains();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+        let mut live_artifact_publications =
+            candidate.universe.world().artifact_publications().to_vec();
+        let effect_episode_owners = candidate.universe.world().output_effect_episode_owners();
         let artifact_base = candidate
             .universe
             .world()
@@ -1940,7 +2023,7 @@ impl Session {
             .max(artifact_base);
         let mut pages_through_stop =
             dvi_page_prefix(&setup.old_pages, retained_artifact_prefix).to_vec();
-        pages_through_stop.extend(dvi_pages);
+        pages_through_stop.extend(dvi_pages.iter().cloned());
 
         let roots = tex_exec::RootRehomeContext::new(&setup.old_source, &setup.next);
         let paragraph_history_transition_started = Timer::start();
@@ -1956,6 +2039,7 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
         let anchor = &setup.old_history[restart];
+        let mut assembled_effect_sidecars = None;
         let (effects, artifacts, pages, mut history, pending_substrate, mut reuse) =
             if let Some(old_index) = sink.convergence_old_index {
                 let old_effect_prefix = setup.old_history[old_index].effect_prefix;
@@ -1966,7 +2050,13 @@ impl Session {
                     .effect_prefix;
                 let scratch_effect_count = new_effect_prefix.saturating_sub(anchor.effect_prefix);
                 let mut joined_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
-                joined_effects.extend_from_slice(&effects[..scratch_effect_count]);
+                extend_live_effects_excluding_superseded_output(
+                    &mut joined_effects,
+                    &effects,
+                    &effect_episode_owners,
+                    0..scratch_effect_count,
+                    &superseded_output_episodes,
+                );
                 // A terminal retained checkpoint can include final-cleanup
                 // effects that the stopped scratch run has not executed. The
                 // scratch prefix is an absolute effect position even when its
@@ -1974,7 +2064,12 @@ impl Session {
                 // the retained tail from the earlier absolute prefix so the
                 // cleanup records are neither dropped nor replayed twice.
                 let adopted_effect_prefix = old_effect_prefix.min(new_effect_prefix);
-                joined_effects.extend_from_slice(&setup.old_effects[adopted_effect_prefix..]);
+                extend_adopted_effects_excluding_superseded_output(
+                    &mut joined_effects,
+                    &setup.old_effects,
+                    adopted_effect_prefix,
+                    &superseded_output_episodes,
+                );
 
                 let old_prefix = setup.old_history[old_index].artifact_prefix;
                 let new_prefix = sink
@@ -2068,16 +2163,24 @@ impl Session {
                 )
             } else {
                 let replayed_artifact_count = usize::try_from(paragraph_replay.hits).unwrap_or(0);
-                let mut candidate_effects = setup.old_effects[..anchor.effect_prefix].to_vec();
-                candidate_effects.extend(effects.iter().cloned());
-                append_retained_terminal_cleanup(&mut candidate_effects, &setup.old_effects);
-                let exact_retained_artifacts = pages_through_stop
-                    .len()
-                    .checked_add(replayed_artifact_count)
-                    == Some(setup.old_artifacts.len())
-                    && replayed_artifact_count > 1
-                    && retained_pages_are_subsequence(&pages_through_stop, &setup.old_pages)
-                    && candidate_effects == setup.old_effects;
+                let (
+                    candidate_effects,
+                    candidate_sequences,
+                    candidate_publications,
+                    candidate_domains,
+                ) = assemble_effect_ledger(
+                    &setup.old_effects,
+                    &setup.old_effect_sequences,
+                    &setup.old_effect_publications,
+                    &setup.old_effect_domains,
+                    &effects,
+                    &live_effect_sequences,
+                    &live_effect_publications,
+                    &live_effect_domains,
+                    anchor.effect_prefix,
+                    &superseded_output_episodes,
+                );
+                let _ = replayed_artifact_count;
                 let current_artifact_origins = if broke_retained_paragraph {
                     artifacts
                         .iter()
@@ -2114,22 +2217,30 @@ impl Session {
                 }
                 history.extend(sink.records);
                 let pages_retyped = artifacts.len();
-                let joined_artifacts = if exact_retained_artifacts {
-                    setup.old_artifacts.clone()
-                } else {
-                    let mut joined = setup.old_artifacts[..retained_artifact_prefix].to_vec();
-                    joined.extend(artifacts);
-                    joined
-                };
+                let (joined_artifacts, joined_artifact_publications, joined_pages) =
+                    assemble_artifact_ledger(
+                        &setup.old_artifacts,
+                        &setup.old_artifact_publications,
+                        &setup.old_pages,
+                        &artifacts,
+                        &live_artifact_publications,
+                        &dvi_pages,
+                        &live_dvi_publications,
+                        retained_artifact_prefix,
+                        &superseded_output_episodes,
+                        &candidate_publications,
+                    );
+                assembled_effect_sidecars = Some((
+                    candidate_sequences,
+                    candidate_publications.clone(),
+                    candidate_domains,
+                ));
                 let joined_effects = candidate_effects;
+                live_artifact_publications = joined_artifact_publications;
                 (
                     joined_effects,
                     joined_artifacts,
-                    if exact_retained_artifacts {
-                        setup.old_pages.clone()
-                    } else {
-                        pages_through_stop
-                    },
+                    joined_pages,
                     history,
                     PendingSubstrate::Replaced {
                         substrate: target,
@@ -2172,6 +2283,18 @@ impl Session {
         reuse.trace_retained_bytes = std::mem::size_of_val(history.as_slice());
         reuse.splice_latency = splice_started.elapsed();
         reuse.trace_replay_latency = reuse.splice_latency;
+        let (effect_sequences, effect_publications, effect_domains) = assembled_effect_sidecars
+            .unwrap_or_else(|| {
+                (
+                    (1..=effects.len())
+                        .map(|sequence| tex_state::EffectSequence::new(sequence as u64))
+                        .collect(),
+                    vec![None; effects.len()],
+                    (1..=effects.len())
+                        .map(|domain| tex_state::EffectDomain::World(domain as u64))
+                        .collect(),
+                )
+            });
         Ok(PendingRevision {
             session_output_id: self.output_id,
             base_revision: self.revision,
@@ -2182,6 +2305,10 @@ impl Session {
             fragments: setup.fragments,
             layout: setup.next_layout,
             effects,
+            effect_sequences,
+            effect_publications,
+            effect_domains,
+            artifact_publications: live_artifact_publications,
             artifacts,
             dvi_pages: pages,
             history,
@@ -2235,7 +2362,11 @@ impl Session {
             .substrate
             .as_ref()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(substrate.materialize_detached_outputs(self.effects.clone(), self.artifacts.clone())?)
+        Ok(substrate.materialize_detached_outputs(
+            self.effects.clone(),
+            self.artifacts.clone(),
+            self.artifact_publications.clone(),
+        )?)
     }
 
     /// Consumes the accepted session into the reached engine state with its
@@ -2246,7 +2377,11 @@ impl Session {
             .substrate
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        let mut universe = substrate.into_detached_universe(self.effects, self.artifacts)?;
+        let mut universe = substrate.into_detached_universe(
+            self.effects,
+            self.artifacts,
+            self.artifact_publications,
+        )?;
         let first_fallible_page =
             universe
                 .world()
@@ -2427,7 +2562,11 @@ impl Session {
             .substrate
             .take()
             .ok_or(SessionError::MissingAcceptedSubstrate)?;
-        Ok(substrate.export_detached_outputs(self.effects, self.artifacts)?)
+        Ok(substrate.export_detached_outputs(
+            self.effects,
+            self.artifacts,
+            self.artifact_publications,
+        )?)
     }
 
     #[allow(clippy::disallowed_methods)] // Session telemetry; no TeX state observes it.
@@ -2651,7 +2790,12 @@ impl Session {
                 let mut effects = old_effects[..restart_effect_prefix].to_vec();
                 effects.extend_from_slice(&advance.effects[..scratch_effect_count]);
                 let adopted_effect_prefix = old_effect_prefix.min(new_effect_prefix);
-                effects.extend_from_slice(&old_effects[adopted_effect_prefix..]);
+                extend_adopted_effects_excluding_superseded_output(
+                    &mut effects,
+                    &old_effects,
+                    adopted_effect_prefix,
+                    &advance.superseded_output_episodes,
+                );
                 let old_prefix = old_history[old_index].artifact_prefix;
                 let new_prefix = advance
                     .new_records
@@ -2858,8 +3002,15 @@ impl Session {
                 .ok_or(SessionError::MissingAcceptedSubstrate)?,
             PendingSubstrate::Replaced { substrate, .. } => substrate,
         };
-        Ok(substrate
-            .materialize_detached_outputs(pending.effects.clone(), pending.artifacts.clone())?)
+        let mut world = substrate.materialize_detached_outputs(
+            pending.effects.clone(),
+            pending.artifacts.clone(),
+            pending.artifact_publications.clone(),
+        )?;
+        world.install_effect_sequences(&pending.effect_sequences);
+        world.install_effect_publications(&pending.effect_publications);
+        world.install_effect_domains(&pending.effect_domains);
+        Ok(world)
     }
 
     /// Atomically replaces accepted editor state with one prepared revision.
@@ -2876,6 +3027,10 @@ impl Session {
             layout,
             content_hash,
             effects,
+            effect_sequences,
+            effect_publications,
+            effect_domains,
+            artifact_publications,
             artifacts,
             dvi_pages,
             history,
@@ -2969,6 +3124,10 @@ impl Session {
         self.layout = layout;
         self.content_hash = content_hash;
         self.effects = effects;
+        self.effect_sequences = effect_sequences;
+        self.effect_publications = effect_publications;
+        self.effect_domains = effect_domains;
+        self.artifact_publications = artifact_publications;
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
         self.history = history;
@@ -3047,6 +3206,10 @@ impl Session {
         self.history = history;
         self.canonical_paragraphs = run.canonical_paragraphs;
         self.effects = run.effects;
+        self.effect_sequences = run.effect_sequences;
+        self.effect_publications = run.effect_publications;
+        self.effect_domains = run.effect_domains;
+        self.artifact_publications = run.artifact_publications;
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
         self.dumped_format = run.dumped_format;
@@ -3073,7 +3236,7 @@ impl Session {
         AcceptedOutput {
             revision: self.revision,
             content_hash: self.content_hash,
-            effects: self.effects.clone(),
+            effects: materialize_effect_view(&self.effects, &self.effect_domains),
             artifacts: self.artifacts.clone(),
             dvi_pages: self.dvi_pages.clone(),
             history: self.history.clone(),
@@ -3147,6 +3310,10 @@ struct RevisionRun {
     history: Vec<BoundaryRecord>,
     canonical_paragraphs: Vec<CanonicalParagraphRegion>,
     effects: Vec<EffectRecord>,
+    effect_sequences: Vec<tex_state::EffectSequence>,
+    effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
+    effect_domains: Vec<tex_state::EffectDomain>,
+    artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
     output_bytes: usize,
@@ -3186,7 +3353,21 @@ fn finish_cold_candidate(
         .memo
         .accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
     let effects = candidate.universe.world().effect_records().to_vec();
+    let effect_sequences = candidate
+        .universe
+        .world()
+        .effect_sequences()
+        .as_ref()
+        .clone();
+    let effect_publications = candidate
+        .universe
+        .world()
+        .effect_publications()
+        .as_ref()
+        .clone();
+    let effect_domains = candidate.universe.world().effect_domains().as_ref().clone();
     let artifacts = candidate.universe.world().committed_artifacts().to_vec();
+    let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
     let expansion_stats = ExpansionStats::default();
     let executed_paragraphs = sink
@@ -3195,17 +3376,25 @@ fn finish_cold_candidate(
         .filter(|record| record.key.boundary == EngineBoundary::OuterParagraphEnd)
         .count();
     let CanonicalCandidateCompletion {
-        dvi_pages,
+        prepared_dvi_pages,
         dumped_format,
         format_dump_receipt,
         delivered_tokens,
         main_control_dispatches,
     } = stats;
+    let dvi_pages = prepared_dvi_pages
+        .into_iter()
+        .map(tex_exec::PreparedDviPage::into_plan)
+        .collect();
     Ok(FinishedColdCandidate {
         run: RevisionRun {
             history: sink.records,
             canonical_paragraphs,
             effects,
+            effect_sequences,
+            effect_publications,
+            effect_domains,
+            artifact_publications,
             artifacts,
             dvi_pages,
             output_bytes,
@@ -3304,6 +3493,9 @@ fn execute_revision(
     let expansion_stats = input.expansion_stats().into();
     pure_memo.accept_paragraph_history(universe.paragraph_origin_resolver());
     let effects = universe.world().effect_records().to_vec();
+    let effect_sequences = universe.world().effect_sequences().as_ref().clone();
+    let effect_publications = universe.world().effect_publications().as_ref().clone();
+    let effect_domains = universe.world().effect_domains().as_ref().clone();
     let artifacts = universe.world().committed_artifacts().to_vec();
     let output_bytes = universe.retained_output_bytes();
     let substrate = universe.freeze_generation();
@@ -3315,6 +3507,9 @@ fn execute_revision(
     Ok(RevisionRun {
         history: sink.records,
         effects,
+        effect_sequences,
+        effect_publications,
+        effect_domains,
         artifacts,
         dvi_pages,
         output_bytes,
@@ -3976,26 +4171,6 @@ fn output_bytes(effects: &[EffectRecord], artifacts: &[CommittedArtifact]) -> us
         )
 }
 
-fn retained_pages_are_subsequence(pages: &[DviPagePlan], old_pages: &[DviPagePlan]) -> bool {
-    let mut old = old_pages.iter();
-    pages
-        .iter()
-        .all(|page| old.by_ref().any(|candidate| candidate == page))
-}
-
-fn append_retained_terminal_cleanup(effects: &mut Vec<EffectRecord>, old_effects: &[EffectRecord]) {
-    let Some(last) = effects.last() else {
-        return;
-    };
-    let Some(index) = old_effects.iter().rposition(|effect| effect == last) else {
-        return;
-    };
-    let tail = &old_effects[index + 1..];
-    if !tail.is_empty() && tail.len() <= 2 {
-        effects.extend_from_slice(tail);
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ParagraphReplayDelta {
     lookups: u64,
@@ -4057,6 +4232,729 @@ fn rebase_and_validate_adopted_artifacts(
         }
     }
     Ok(())
+}
+
+fn extend_adopted_effects_excluding_superseded_output(
+    destination: &mut Vec<EffectRecord>,
+    accepted: &[EffectRecord],
+    adopted_start: usize,
+    superseded: &[tex_exec::SupersededPageOutputEpisode],
+) {
+    destination.extend(
+        accepted
+            .iter()
+            .enumerate()
+            .skip(adopted_start)
+            .filter(|(index, _)| {
+                !superseded.iter().any(|episode| {
+                    episode.effects().contains(index)
+                        && seal_revision_output_publication(episode).is_some_and(|sealed| {
+                            let _publication_identity = sealed.identity;
+                            sealed.outcome
+                                == tex_state::OutputEpisodePublicationOutcome::Regenerated
+                        })
+                })
+            })
+            .map(|(_, effect)| effect.clone()),
+    );
+}
+
+#[derive(Clone)]
+struct EffectAssemblyRecord {
+    sequence: tex_state::EffectSequence,
+    publication: Option<tex_state::EffectPublicationId>,
+    domain: tex_state::EffectDomain,
+    effects: Vec<EffectRecord>,
+    origin: EffectRecordOrigin,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum EffectRecordOrigin {
+    Accepted,
+    Live,
+}
+
+fn materialize_effect_view(
+    effects: &[EffectRecord],
+    domains: &[tex_state::EffectDomain],
+) -> Vec<EffectRecord> {
+    let (ordinary, mut terminal): (Vec<_>, Vec<_>) =
+        effects.iter().zip(domains).partition(|(_, domain)| {
+            !matches!(domain, tex_state::EffectDomain::TerminalPublication { .. })
+        });
+    terminal.sort_by_key(|(_, domain)| match domain {
+        tex_state::EffectDomain::TerminalPublication {
+            phase, intra_order, ..
+        } => (*phase, *intra_order),
+        _ => unreachable!(),
+    });
+    ordinary
+        .into_iter()
+        .chain(terminal)
+        .map(|(effect, _)| effect.clone())
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assemble_effect_ledger(
+    accepted: &[EffectRecord],
+    accepted_sequences: &[tex_state::EffectSequence],
+    accepted_publications: &[Option<tex_state::EffectPublicationId>],
+    accepted_domains: &[tex_state::EffectDomain],
+    live: &[EffectRecord],
+    live_sequences: &[tex_state::EffectSequence],
+    live_publications: &[Option<tex_state::EffectPublicationId>],
+    live_domains: &[tex_state::EffectDomain],
+    accepted_prefix: usize,
+    superseded: &[tex_exec::SupersededPageOutputEpisode],
+) -> (
+    Vec<EffectRecord>,
+    Vec<tex_state::EffectSequence>,
+    Vec<Option<tex_state::EffectPublicationId>>,
+    Vec<tex_state::EffectDomain>,
+) {
+    let mut rejected_accepted = std::collections::BTreeSet::new();
+    let mut rejected_live = std::collections::BTreeSet::new();
+    let mut inherited_live_sequences = std::collections::BTreeMap::new();
+    let mut retained_winners = std::collections::BTreeSet::new();
+    let mut selected_publications = std::collections::BTreeSet::new();
+    let accepted_publication_ids = accepted_publications
+        .iter()
+        .copied()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>();
+    let superseded_retained_ids = superseded
+        .iter()
+        .filter_map(tex_exec::SupersededPageOutputEpisode::retained_publication)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut publication_winners = std::collections::BTreeMap::new();
+    for receipt in superseded {
+        let Some(sealed) = seal_revision_output_publication(receipt) else {
+            continue;
+        };
+        let retained = receipt.retained_publication();
+        let regenerated = receipt
+            .committed_publication()
+            .map(|receipt| receipt.effect());
+        match sealed.outcome {
+            tex_state::OutputEpisodePublicationOutcome::Retained => {
+                if let Some(regenerated) = regenerated {
+                    rejected_live.insert(regenerated);
+                }
+                if let Some(retained) = retained {
+                    retained_winners.insert(retained);
+                }
+            }
+            tex_state::OutputEpisodePublicationOutcome::Regenerated => {
+                if let Some(retained) = retained {
+                    rejected_accepted.insert(retained);
+                }
+                if let (Some(regenerated), Some(sequence)) =
+                    (regenerated, receipt.retained_sequence())
+                {
+                    inherited_live_sequences.insert(regenerated, sequence);
+                }
+            }
+        }
+        selected_publications.insert(sealed.identity);
+        if let Some(retained) = retained {
+            publication_winners.insert(retained, sealed.identity);
+        }
+    }
+    let pending_sequences = superseded
+        .iter()
+        .filter(|receipt| seal_revision_output_publication(receipt).is_none())
+        .filter_map(tex_exec::SupersededPageOutputEpisode::retained_sequence)
+        .collect::<Vec<_>>();
+    let mut live_new_publications = Vec::new();
+    for publication in live_publications.iter().copied().flatten() {
+        if !accepted_publication_ids.contains(&publication)
+            && !inherited_live_sequences.contains_key(&publication)
+            && !live_new_publications.contains(&publication)
+        {
+            live_new_publications.push(publication);
+        }
+    }
+    let mut pending_live_publications = std::collections::BTreeSet::new();
+    for (publication, sequence) in live_new_publications.into_iter().zip(pending_sequences) {
+        inherited_live_sequences.insert(publication, sequence);
+        pending_live_publications.insert(publication);
+    }
+    let selected_live_publications = live_publications
+        .iter()
+        .copied()
+        .flatten()
+        .filter(|publication| {
+            accepted_publication_ids.contains(publication)
+                && !superseded_retained_ids.contains(publication)
+                || selected_publications.contains(publication)
+                || pending_live_publications.contains(publication)
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let accepted_paragraph_domains = ordered_paragraph_domains(accepted_domains);
+    let live_paragraph_domains = ordered_paragraph_domains(live_domains);
+    let mut domain_replacements = live_paragraph_domains
+        .into_iter()
+        .zip(accepted_paragraph_domains)
+        .collect::<std::collections::BTreeMap<_, _>>();
+    domain_replacements.extend(
+        ordered_world_domains(live_domains)
+            .into_iter()
+            .zip(ordered_world_domains(accepted_domains)),
+    );
+    let live_domains_set = live_domains
+        .iter()
+        .copied()
+        .map(|domain| domain_replacements.get(&domain).copied().unwrap_or(domain))
+        .collect::<std::collections::BTreeSet<_>>();
+    let retained_prefix_publication_sequences =
+        publication_sequence_set(accepted_sequences, accepted_publications, accepted_prefix);
+    let mut records = Vec::new();
+    collect_effect_assembly_records(
+        &mut records,
+        accepted,
+        accepted_sequences,
+        accepted_publications,
+        accepted_domains,
+        |index, _sequence, publication, domain| {
+            index < accepted_prefix
+                || publication.is_some_and(|id| retained_winners.contains(&id))
+                || matches!(domain, tex_state::EffectDomain::TerminalPublication { .. })
+                || publication.is_none() && !live_domains_set.contains(&domain)
+        },
+        &std::collections::BTreeMap::new(),
+        &std::collections::BTreeMap::new(),
+        EffectRecordOrigin::Accepted,
+    );
+    collect_effect_assembly_records(
+        &mut records,
+        live,
+        live_sequences,
+        live_publications,
+        live_domains,
+        |_, sequence, publication, _domain| {
+            publication.is_none_or(|id| {
+                !rejected_live.contains(&id)
+                    && !retained_prefix_publication_sequences.contains(&sequence)
+                    && (superseded.is_empty() || selected_live_publications.contains(&id))
+            })
+        },
+        &inherited_live_sequences,
+        &domain_replacements,
+        EffectRecordOrigin::Live,
+    );
+    let mut publications_by_semantic_record = std::collections::BTreeMap::new();
+    let mut unowned = Vec::new();
+    let mut terminal_candidates = Vec::new();
+    for record in records {
+        if let tex_state::EffectDomain::TerminalPublication {
+            intra_order,
+            committed,
+            ..
+        } = record.domain
+        {
+            let _ = (intra_order, committed);
+            terminal_candidates.push(record);
+            continue;
+        }
+        let Some(publication) = record.publication else {
+            unowned.push(record);
+            continue;
+        };
+        let key = record.sequence;
+        publications_by_semantic_record
+            .entry(key)
+            .and_modify(|current: &mut EffectAssemblyRecord| {
+                let record_selected = selected_publications.contains(&publication);
+                let current_selected = current
+                    .publication
+                    .is_some_and(|id| selected_publications.contains(&id));
+                if record_selected && !current_selected
+                    || record_selected == current_selected
+                        && record.origin == EffectRecordOrigin::Live
+                        && current.origin == EffectRecordOrigin::Accepted
+                {
+                    *current = record.clone();
+                }
+            })
+            .or_insert(record);
+    }
+    let selected_records = publications_by_semantic_record
+        .into_values()
+        .collect::<Vec<_>>();
+    let mut selected_order = selected_records
+        .iter()
+        .filter_map(|record| record.publication.map(|id| (record.sequence, id)))
+        .collect::<Vec<_>>();
+    selected_order.sort_unstable();
+    let selected_predecessors = selected_order
+        .iter()
+        .enumerate()
+        .map(|(index, (_, id))| {
+            (
+                *id,
+                index
+                    .checked_sub(1)
+                    .map(|previous| selected_order[previous].1),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let selected_sequences = selected_order
+        .iter()
+        .map(|(sequence, id)| (*id, *sequence))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let non_boundary_sequences = unowned
+        .iter()
+        .filter(|record| {
+            !matches!(
+                record.domain,
+                tex_state::EffectDomain::PublicationBoundary { .. }
+            )
+        })
+        .map(|record| record.sequence)
+        .collect::<std::collections::BTreeSet<_>>();
+    unowned.retain_mut(|record| {
+        let tex_state::EffectDomain::PublicationBoundary { left, right } = record.domain else {
+            return true;
+        };
+        let left = left.map(|id| publication_winners.get(&id).copied().unwrap_or(id));
+        let right = right.map(|id| publication_winners.get(&id).copied().unwrap_or(id));
+        match right {
+            Some(right) => {
+                let Some(expected_left) = selected_predecessors.get(&right).copied() else {
+                    return false;
+                };
+                if expected_left.is_none() && left.is_some() {
+                    return false;
+                }
+                if left != expected_left
+                    && expected_left
+                        .and_then(|left| selected_sequences.get(&left).copied())
+                        .is_some_and(|left_sequence| {
+                            left_sequence < record.sequence
+                                && non_boundary_sequences
+                                    .range((
+                                        std::ops::Bound::Excluded(left_sequence),
+                                        std::ops::Bound::Excluded(record.sequence),
+                                    ))
+                                    .next()
+                                    .is_some()
+                        })
+                {
+                    return false;
+                }
+                record.domain = tex_state::EffectDomain::PublicationBoundary {
+                    left: expected_left,
+                    right: Some(right),
+                };
+                if let Some((sequence, _)) = selected_order.iter().find(|(_, id)| *id == right) {
+                    record.sequence = *sequence;
+                }
+                true
+            }
+            None => left.is_some_and(|left| selected_predecessors.contains_key(&left)),
+        }
+    });
+    let mut boundaries = std::collections::BTreeMap::new();
+    let mut non_boundaries = std::collections::BTreeMap::new();
+    for record in unowned {
+        let tex_state::EffectDomain::PublicationBoundary { left, right } = record.domain else {
+            let semantic_domain = match record.domain {
+                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
+                domain => domain,
+            };
+            non_boundaries
+                .entry((record.sequence, semantic_domain))
+                .and_modify(|current: &mut EffectAssemblyRecord| {
+                    if record.origin == EffectRecordOrigin::Live
+                        && current.origin == EffectRecordOrigin::Accepted
+                    {
+                        *current = record.clone();
+                    }
+                })
+                .or_insert(record);
+            continue;
+        };
+        boundaries
+            .entry((left, right))
+            .and_modify(|current: &mut EffectAssemblyRecord| {
+                if record.origin == EffectRecordOrigin::Live
+                    && current.origin == EffectRecordOrigin::Accepted
+                {
+                    let mut replacement = record.clone();
+                    replacement.sequence = current.sequence;
+                    *current = replacement;
+                }
+            })
+            .or_insert(record);
+    }
+    let mut unowned = non_boundaries.into_values().collect::<Vec<_>>();
+    unowned.extend(boundaries.into_values());
+    let mut terminal = std::collections::BTreeMap::new();
+    for record in terminal_candidates {
+        let tex_state::EffectDomain::TerminalPublication {
+            phase,
+            intra_order,
+            committed,
+            ..
+        } = record.domain
+        else {
+            unreachable!();
+        };
+        if !committed {
+            continue;
+        }
+        terminal
+            .entry((phase, intra_order))
+            .and_modify(|current: &mut EffectAssemblyRecord| {
+                if record.origin == EffectRecordOrigin::Live
+                    && current.origin == EffectRecordOrigin::Accepted
+                {
+                    *current = record.clone();
+                }
+            })
+            .or_insert(record);
+    }
+    let mut records = unowned;
+    records.extend(terminal.into_values());
+    records.extend(selected_records);
+    records.sort_by_key(|record| {
+        (
+            record.sequence,
+            record.publication.is_some(),
+            record.publication,
+            record.domain,
+        )
+    });
+    let mut effects = Vec::new();
+    let mut sequences = Vec::new();
+    let mut publications = Vec::new();
+    let mut domains = Vec::new();
+    for record in records {
+        for effect in record.effects {
+            effects.push(effect);
+            sequences.push(record.sequence);
+            publications.push(record.publication);
+            domains.push(record.domain);
+        }
+    }
+    (effects, sequences, publications, domains)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn assemble_artifact_ledger(
+    accepted_artifacts: &[CommittedArtifact],
+    accepted_records: &[tex_state::ArtifactPublicationRecord],
+    accepted_pages: &[DviPagePlan],
+    live_artifacts: &[CommittedArtifact],
+    live_records: &[tex_state::ArtifactPublicationRecord],
+    live_pages: &[DviPagePlan],
+    live_dvi_records: &[tex_state::ArtifactPublicationRecord],
+    accepted_prefix: usize,
+    superseded: &[tex_exec::SupersededPageOutputEpisode],
+    selected_effect_publications: &[Option<tex_state::EffectPublicationId>],
+) -> (
+    Vec<CommittedArtifact>,
+    Vec<tex_state::ArtifactPublicationRecord>,
+    Vec<DviPagePlan>,
+) {
+    #[derive(Clone, Copy)]
+    enum Origin {
+        Accepted(usize),
+        Live(usize),
+    }
+
+    let mut rejected_accepted = std::collections::BTreeSet::new();
+    let mut rejected_live = std::collections::BTreeSet::new();
+    let mut retained_winners = std::collections::BTreeSet::new();
+    let mut inherited = std::collections::BTreeMap::new();
+    for receipt in superseded {
+        let Some(sealed) = seal_revision_output_publication(receipt) else {
+            continue;
+        };
+        let retained = receipt
+            .accepted_artifacts()
+            .clone()
+            .filter_map(|index| accepted_records.get(index))
+            .map(|record| record.publication())
+            .collect::<Vec<_>>();
+        let regenerated = receipt
+            .committed_publication()
+            .into_iter()
+            .flat_map(tex_state::PageOutputPublicationReceipt::artifacts)
+            .map(|record| record.publication())
+            .collect::<Vec<_>>();
+        match sealed.outcome {
+            tex_state::OutputEpisodePublicationOutcome::Retained => {
+                for regenerated in regenerated {
+                    rejected_live.insert(regenerated);
+                }
+                for retained in retained {
+                    retained_winners.insert(retained);
+                }
+            }
+            tex_state::OutputEpisodePublicationOutcome::Regenerated => {
+                for retained in retained {
+                    rejected_accepted.insert(retained);
+                }
+                let retained_records = receipt
+                    .accepted_artifacts()
+                    .clone()
+                    .filter_map(|index| accepted_records.get(index))
+                    .copied()
+                    .collect::<Vec<_>>();
+                let regenerated_records = receipt
+                    .committed_publication()
+                    .into_iter()
+                    .flat_map(tex_state::PageOutputPublicationReceipt::artifacts);
+                for regenerated in regenerated_records {
+                    let sequence = retained_records
+                        .iter()
+                        .find(|retained| retained.intra_order() == regenerated.intra_order())
+                        .map_or_else(|| regenerated.sequence(), |retained| retained.sequence());
+                    inherited.insert(regenerated.publication(), sequence);
+                }
+            }
+        }
+    }
+
+    let mut selected = std::collections::BTreeMap::new();
+    let selected_effect_publications = selected_effect_publications
+        .iter()
+        .copied()
+        .flatten()
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut accepted_effect_mapping = std::collections::BTreeMap::new();
+    for receipt in superseded {
+        let Some(sealed) = seal_revision_output_publication(receipt) else {
+            continue;
+        };
+        match sealed.outcome {
+            tex_state::OutputEpisodePublicationOutcome::Retained => {
+                for index in receipt.accepted_artifacts().clone() {
+                    accepted_effect_mapping.insert(index, sealed.identity);
+                }
+            }
+            tex_state::OutputEpisodePublicationOutcome::Regenerated => {
+                let _ = sealed;
+            }
+        }
+    }
+    for (index, record) in accepted_records.iter().copied().enumerate() {
+        let mapped_effect = accepted_effect_mapping
+            .get(&index)
+            .copied()
+            .or_else(|| record.effect_publication());
+        if !rejected_accepted.contains(&record.publication())
+            && (index < accepted_prefix
+                || retained_winners.contains(&record.publication())
+                || mapped_effect
+                    .is_some_and(|effect| selected_effect_publications.contains(&effect)))
+        {
+            selected.insert(
+                (
+                    record.sequence(),
+                    record.intra_order(),
+                    record.publication(),
+                ),
+                (record, Origin::Accepted(index)),
+            );
+        }
+    }
+    for (index, record) in live_records.iter().copied().enumerate() {
+        if rejected_live.contains(&record.publication()) {
+            continue;
+        }
+        // Regenerated artifacts keep their committed live order.  The
+        // retained sequence identifies the accepted winner to replace; using
+        // it as the regenerated record's sort key moves a later live page in
+        // front of pages that were committed earlier in this generation.
+        selected.retain(|_, (candidate, _)| candidate.publication() != record.publication());
+        let sequence = inherited
+            .get(&record.publication())
+            .copied()
+            .unwrap_or_else(|| record.sequence());
+        selected.insert(
+            (sequence, record.intra_order(), record.publication()),
+            (record, Origin::Live(index)),
+        );
+    }
+
+    let mut artifacts = Vec::with_capacity(selected.len());
+    let mut records = Vec::with_capacity(selected.len());
+    let mut pages = Vec::new();
+    let accepted_pages_by_publication = accepted_records
+        .iter()
+        .copied()
+        .zip(accepted_pages)
+        .map(|(record, page)| (record.publication(), page))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let live_pages_by_publication = live_dvi_records
+        .iter()
+        .copied()
+        .zip(live_pages)
+        .map(|(record, page)| (record.publication(), page))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (_, (record, origin)) in selected {
+        let (artifact, page) = match origin {
+            Origin::Accepted(index) => (
+                accepted_artifacts.get(index),
+                accepted_pages_by_publication
+                    .get(&record.publication())
+                    .copied(),
+            ),
+            Origin::Live(index) => (
+                live_artifacts.get(index),
+                live_pages_by_publication
+                    .get(&record.publication())
+                    .copied(),
+            ),
+        };
+        if let Some(artifact) = artifact {
+            artifacts.push(artifact.clone());
+            records.push(record);
+            if let Some(page) = page {
+                pages.push(page.clone());
+            }
+        }
+    }
+    (artifacts, records, pages)
+}
+
+fn publication_sequence_set(
+    sequences: &[tex_state::EffectSequence],
+    publications: &[Option<tex_state::EffectPublicationId>],
+    start_limit: usize,
+) -> std::collections::BTreeSet<tex_state::EffectSequence> {
+    let mut result = std::collections::BTreeSet::new();
+    let mut previous = None;
+    for (index, publication) in publications.iter().copied().enumerate() {
+        if publication != previous {
+            if index < start_limit
+                && let (Some(_), Some(sequence)) = (publication, sequences.get(index).copied())
+            {
+                result.insert(sequence);
+            }
+            previous = publication;
+        }
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_effect_assembly_records(
+    destination: &mut Vec<EffectAssemblyRecord>,
+    effects: &[EffectRecord],
+    sequences: &[tex_state::EffectSequence],
+    publications: &[Option<tex_state::EffectPublicationId>],
+    domains: &[tex_state::EffectDomain],
+    keep: impl Fn(
+        usize,
+        tex_state::EffectSequence,
+        Option<tex_state::EffectPublicationId>,
+        tex_state::EffectDomain,
+    ) -> bool,
+    inherited_sequences: &std::collections::BTreeMap<
+        tex_state::EffectPublicationId,
+        tex_state::EffectSequence,
+    >,
+    domain_replacements: &std::collections::BTreeMap<
+        tex_state::EffectDomain,
+        tex_state::EffectDomain,
+    >,
+    origin: EffectRecordOrigin,
+) {
+    let mut index = 0;
+    while index < effects.len() {
+        let publication = publications.get(index).copied().flatten();
+        let end = publication.map_or(index + 1, |publication| {
+            (index + 1..effects.len())
+                .find(|next| publications.get(*next).copied().flatten() != Some(publication))
+                .unwrap_or(effects.len())
+        });
+        let sequence = publication
+            .and_then(|id| inherited_sequences.get(&id).copied())
+            .or_else(|| sequences.get(index).copied())
+            .unwrap_or_else(|| tex_state::EffectSequence::new(u64::MAX));
+        let domain = domains
+            .get(index)
+            .copied()
+            .unwrap_or(tex_state::EffectDomain::World(u64::MAX));
+        let domain = domain_replacements.get(&domain).copied().unwrap_or(domain);
+        if keep(index, sequence, publication, domain) {
+            destination.push(EffectAssemblyRecord {
+                sequence,
+                publication,
+                domain,
+                effects: effects[index..end].to_vec(),
+                origin,
+            });
+        }
+        index = end;
+    }
+}
+
+fn ordered_paragraph_domains(domains: &[tex_state::EffectDomain]) -> Vec<tex_state::EffectDomain> {
+    let mut result = Vec::new();
+    for domain in domains.iter().copied() {
+        if matches!(domain, tex_state::EffectDomain::Paragraph(_)) && !result.contains(&domain) {
+            result.push(domain);
+        }
+    }
+    result
+}
+
+fn ordered_world_domains(domains: &[tex_state::EffectDomain]) -> Vec<tex_state::EffectDomain> {
+    let mut result = Vec::new();
+    for domain in domains.iter().copied() {
+        if matches!(domain, tex_state::EffectDomain::World(_)) && !result.contains(&domain) {
+            result.push(domain);
+        }
+    }
+    result
+}
+
+fn extend_live_effects_excluding_superseded_output(
+    destination: &mut Vec<EffectRecord>,
+    live: &[EffectRecord],
+    owners: &[Option<tex_state::PageOutputEpisodeId>],
+    range: std::ops::Range<usize>,
+    superseded: &[tex_exec::SupersededPageOutputEpisode],
+) {
+    destination.extend(range.filter_map(|index| {
+        let owner = owners.get(index).copied().flatten();
+        let rejected = owner.is_some_and(|owner| {
+            superseded.iter().any(|receipt| {
+                receipt.identity() == owner
+                    && receipt
+                        .regenerated_effects()
+                        .is_some_and(|range| range.contains(&index))
+                    && seal_revision_output_publication(receipt).is_some_and(|sealed| {
+                        sealed.outcome == tex_state::OutputEpisodePublicationOutcome::Retained
+                    })
+            })
+        });
+        (!rejected).then(|| live[index].clone())
+    }));
+}
+
+#[derive(Clone, Copy)]
+struct SealedRevisionOutputPublication {
+    identity: tex_state::EffectPublicationId,
+    outcome: tex_state::OutputEpisodePublicationOutcome,
+}
+
+fn seal_revision_output_publication(
+    receipt: &tex_exec::SupersededPageOutputEpisode,
+) -> Option<SealedRevisionOutputPublication> {
+    let committed = receipt.committed_publication()?;
+    let outcome = receipt.publication_candidate()?.revision_outcome();
+    let identity = match outcome {
+        tex_state::OutputEpisodePublicationOutcome::Retained => receipt.retained_publication()?,
+        tex_state::OutputEpisodePublicationOutcome::Regenerated => committed.effect(),
+    };
+    Some(SealedRevisionOutputPublication { identity, outcome })
 }
 
 #[derive(Debug)]

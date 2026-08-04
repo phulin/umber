@@ -5,7 +5,7 @@ use tex_state::node::Node;
 use tex_state::{InputSummary, PdfFormArtifact, PdfFormRecord, PrintSink, Universe};
 
 use crate::ExecError;
-use crate::dispatch::PreparedDviPage;
+use crate::dispatch::CommittedPagePublication;
 
 pub(crate) mod direct;
 mod transaction;
@@ -73,6 +73,7 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         Self { write, replay }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn stage_page(
         &mut self,
         node: Node,
@@ -80,7 +81,9 @@ impl<'a> CanonicalShipoutTransaction<'a> {
         origin: ShipoutOrigin,
         stores: &mut Universe,
         emit_dvi: bool,
-    ) -> Result<Option<PreparedDviPage>, ExecError> {
+        publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+        receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+    ) -> Result<Option<CommittedPagePublication>, ExecError> {
         transaction::stage_canonical_page(
             node,
             input_summary,
@@ -89,6 +92,8 @@ impl<'a> CanonicalShipoutTransaction<'a> {
             emit_dvi,
             self.write,
             self.replay,
+            publication_candidate,
+            receipt,
         )
     }
 

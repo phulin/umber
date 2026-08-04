@@ -1589,3 +1589,99 @@ fn real_output_open_outcome_does_not_create_or_probe_the_target() {
         "pre-commit availability must be effect-free"
     );
 }
+
+#[test]
+fn page_output_receipt_preserves_ordered_multi_artifact_group() {
+    let effect = EffectPublicationId::new(7);
+    let first = ArtifactPublicationRecord::new(
+        ArtifactPublicationId::new(20),
+        PageOutputPublicationReceiptId::new(9),
+        Some(effect),
+        EffectSequence::new(11),
+        EffectDomain::World(3),
+        0,
+    );
+    let second = ArtifactPublicationRecord::new(
+        ArtifactPublicationId::new(22),
+        PageOutputPublicationReceiptId::new(9),
+        Some(effect),
+        EffectSequence::new(11),
+        EffectDomain::World(3),
+        1,
+    );
+    let mut receipt = PageOutputPublicationReceipt::committed(effect, second);
+    receipt.extend(&PageOutputPublicationReceipt::committed(effect, first));
+
+    assert_eq!(receipt.artifacts(), &[first, second]);
+}
+
+#[test]
+fn failed_artifact_reservation_does_not_consume_effect_identity() {
+    let mut world = World::memory();
+    let failed =
+        world.reserve_artifact_publication(EffectSequence::new(1), EffectDomain::World(1), None);
+    let effect = world.reserve_effect_publication();
+    let committed =
+        world.reserve_artifact_publication(EffectSequence::new(2), EffectDomain::World(2), None);
+
+    assert_eq!(failed.record().publication, ArtifactPublicationId::new(1));
+    assert_eq!(
+        committed.record().publication,
+        ArtifactPublicationId::new(2)
+    );
+    assert_eq!(effect, EffectPublicationId::new(1));
+}
+
+#[test]
+fn provisional_page_output_receipts_clone_rollback_and_continue_ordered_group() {
+    fn commit(world: &mut World, reservation: ArtifactPublicationReservation, byte: u8) {
+        let bytes = vec![byte];
+        world.record_artifact_commit(
+            ContentHash::for_domain(ContentDomain::Artifact, &bytes),
+            bytes,
+            ArtifactRenderProvenance::live(Vec::new(), Vec::new()),
+            Vec::new(),
+            reservation,
+        );
+    }
+
+    let mut world = World::memory();
+    let receipt = PageOutputPublicationReceiptId::new(44);
+    let first = world.reserve_active_artifact_publication_at(0, Some(receipt));
+    commit(&mut world, first, 1);
+    let snapshot = world.snapshot();
+    let mut fork = world.clone();
+
+    let second = world.reserve_active_artifact_publication_at(0, Some(receipt));
+    commit(&mut world, second, 2);
+    assert_eq!(
+        world
+            .provisional_page_output_receipt(receipt)
+            .expect("live receipt")
+            .iter()
+            .map(|record| record.intra_order())
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+
+    world.rollback(&snapshot);
+    assert_eq!(
+        world
+            .provisional_page_output_receipt(receipt)
+            .expect("rolled-back receipt")
+            .len(),
+        1
+    );
+    let fork_second = fork.reserve_active_artifact_publication_at(0, Some(receipt));
+    commit(&mut fork, fork_second, 3);
+    assert_eq!(
+        fork.provisional_page_output_receipt(receipt)
+            .expect("fork receipt")[1]
+            .intra_order(),
+        1
+    );
+
+    fork.discard_provisional_page_output_receipt(receipt);
+    assert!(fork.provisional_page_output_receipt(receipt).is_none());
+    assert!(world.provisional_page_output_receipt(receipt).is_some());
+}

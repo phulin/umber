@@ -7,7 +7,7 @@ use tex_state::{
 };
 
 use crate::ExecError;
-use crate::dispatch::PreparedDviPage;
+use crate::dispatch::{CommittedPagePublication, PreparedDviPage};
 
 use super::direct;
 use super::{ShipoutOrigin, TextReplayHost, WriteReplayHost};
@@ -84,7 +84,9 @@ pub(crate) fn shipout_node_with_input_summary(
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
     replay_expander: &mut direct::ReplayTextExpander<'_>,
-) -> Result<Option<PreparedDviPage>, ExecError> {
+    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+) -> Result<Option<CommittedPagePublication>, ExecError> {
     let pending_end = origin.pending_end;
     prepare_pdf_output_policy(stores)?;
     let geometry = shipout_geometry(&node, stores);
@@ -135,10 +137,11 @@ pub(crate) fn shipout_node_with_input_summary(
         let detached = entry.artifact.artifact(MemoValueLimits::default());
         if let Ok(detached) = detached {
             let imported_bytes = entry.artifact.retained_bytes();
-            let hash = stores.commit_replayed_artifact(
+            let (hash, artifact, publication) = stores.commit_replayed_artifact(
                 detached.payload,
                 entry.render_origin_ends,
                 entry.render_provenance,
+                receipt,
             )?;
             stores.record_pure_memo_timing(
                 PureMemoLayer::Shipout,
@@ -162,10 +165,17 @@ pub(crate) fn shipout_node_with_input_summary(
                     .bytes(),
             )
             .map_err(|error| ExecError::InvalidShipoutArtifact(error.to_string()))?;
-            return Ok(Some(PreparedDviPage {
-                hash,
-                plan,
-                committed_effects: Box::new([]),
+            return Ok(Some(CommittedPagePublication {
+                artifact,
+                dvi: Some(PreparedDviPage {
+                    hash,
+                    plan,
+                    committed_effects: Box::new([]),
+                    publication,
+                    receipt: publication.receipt(),
+                }),
+                revision_candidate: publication_candidate,
+                effects: 0..0,
             }));
         }
         stores.record_pure_memo_timing(
@@ -206,7 +216,22 @@ pub(crate) fn shipout_node_with_input_summary(
                 .collect::<Vec<_>>();
             (artifact_bytes, render_origin_ends, render_origins)
         });
-    let hash = transaction.commit(staged.artifact, staged.effect_pos)?;
+    let reservation = transaction
+        .world_mut()
+        .reserve_active_artifact_publication_at(effect_start, receipt);
+    let effect_end = transaction.world().effect_records().len();
+    let (hash, publication) =
+        transaction.commit(staged.artifact, staged.effect_pos, reservation)?;
+    let effect_publication = stores.world_mut().reserve_effect_publication();
+    stores
+        .world_mut()
+        .claim_effect_publication(effect_start..effect_end, effect_publication);
+    stores
+        .world_mut()
+        .link_artifact_effect_publication(publication.publication(), effect_publication);
+    let publication = publication.with_effect_publication(effect_publication);
+    let artifact =
+        tex_state::PageOutputPublicationReceipt::committed(effect_publication, publication);
     if let Some(geometry) = geometry {
         stores.record_geometry_observation(geometry);
     }
@@ -232,10 +257,17 @@ pub(crate) fn shipout_node_with_input_summary(
             },
         );
     }
-    Ok(staged.dvi_plan.map(|plan| PreparedDviPage {
-        hash,
-        plan,
-        committed_effects,
+    Ok(Some(CommittedPagePublication {
+        artifact,
+        dvi: staged.dvi_plan.map(|plan| PreparedDviPage {
+            hash,
+            plan,
+            committed_effects,
+            publication,
+            receipt: publication.receipt(),
+        }),
+        revision_candidate: publication_candidate,
+        effects: 0..0,
     }))
 }
 
@@ -273,6 +305,7 @@ fn shipout_error_context(
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, input_summary))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_canonical_page(
     node: Node,
     input_summary: tex_state::InputSummary,
@@ -281,7 +314,9 @@ pub(crate) fn stage_canonical_page(
     emit_dvi: bool,
     write_expander: &mut WriteReplayHost<'_>,
     replay_expander: &mut TextReplayHost<'_>,
-) -> Result<Option<PreparedDviPage>, ExecError> {
+    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+) -> Result<Option<CommittedPagePublication>, ExecError> {
     shipout_node_with_input_summary(
         node,
         input_summary,
@@ -290,6 +325,8 @@ pub(crate) fn stage_canonical_page(
         emit_dvi,
         write_expander,
         replay_expander,
+        publication_candidate,
+        receipt,
     )
 }
 

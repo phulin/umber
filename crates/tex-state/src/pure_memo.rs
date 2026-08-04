@@ -459,6 +459,8 @@ pub enum ParagraphBarrierReason {
     UnsupportedEscapingWrite,
     UnsupportedInputTransition,
     UnsupportedGroupTransition,
+    MixedPageOwnership,
+    UnownedPageOwnership,
 }
 
 /// Stable current-revision rebinding recipe for the provenance slots reachable
@@ -1321,6 +1323,8 @@ impl PureMemoRuntime {
                         .paragraph_unsupported_group_transition_barriers
                         .saturating_add(1);
                 }
+                ParagraphBarrierReason::MixedPageOwnership
+                | ParagraphBarrierReason::UnownedPageOwnership => {}
             }
         }
     }

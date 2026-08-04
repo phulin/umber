@@ -165,6 +165,7 @@ pub struct CanonicalMainControl {
     /// explicit across command-sized steps so a suffix resumed after
     /// shipout is not given a duplicate trio either.
     end_job_ejection_pending: bool,
+    active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
     /// tex.web's `init`/`tini` compile-time split as a session flag.
     ///
     /// tex.web builds INITEX and production TeX from the same source with
@@ -510,6 +511,10 @@ struct CanonicalStepSnapshot {
     paragraph_replay_replaced_mode_journal: bool,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
+    /// Typed publication handle retained after the effect episode closes.
+    /// Delayed shipouts remain part of that page-output publication until the
+    /// incremental candidate explicitly finalizes it.
+    active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -541,6 +546,7 @@ impl CanonicalStepSnapshot {
             paragraph_replay_replaced_mode_journal: control.paragraph_replay_replaced_mode_journal,
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
+            active_page_output_receipt: control.active_page_output_receipt,
             job: control.job.clone(),
             universe: stores.snapshot(),
         }
@@ -582,6 +588,7 @@ impl CanonicalStepSnapshot {
             self.paragraph_replay_replaced_mode_journal;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
+        control.active_page_output_receipt = self.active_page_output_receipt;
         control.job = self.job;
     }
 
@@ -607,6 +614,103 @@ impl CanonicalStepSnapshot {
 /// stating which commit buffer it belongs to.
 type ObservationSlot = Option<ObservationBuffer>;
 
+#[derive(Clone, Debug, Default)]
+struct PageOutputEpisode {
+    identity: u64,
+    owners: Arc<[u64]>,
+    artifacts: std::ops::Range<usize>,
+    effects: Arc<[tex_state::EffectRecord]>,
+    effect_start: usize,
+    starting_cursor: Option<tex_state::StreamBufState>,
+    ending_cursor: Option<tex_state::StreamBufState>,
+    effect_root: Option<tex_state::EffectRootIdentity>,
+    publication: Option<tex_state::EffectPublicationId>,
+    publication_sequence: Option<tex_state::EffectSequence>,
+    artifact_publication_sequence: Option<tex_state::EffectSequence>,
+    artifact_publication_domain: Option<tex_state::EffectDomain>,
+}
+
+/// Typed receipt for an accepted-generation output publication superseded by
+/// a completed live page-output episode.
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupersededPageOutputEpisode {
+    identity: tex_state::PageOutputEpisodeId,
+    effects: std::ops::Range<usize>,
+    regenerated_effects: Option<std::ops::Range<usize>>,
+    accepted_artifacts: AcceptedArtifactPublicationRange,
+    live_artifacts: Option<LiveArtifactPublicationRange>,
+    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    committed_publication: Option<tex_state::PageOutputPublicationReceipt>,
+    retained_publication: Option<tex_state::EffectPublicationId>,
+    retained_sequence: Option<tex_state::EffectSequence>,
+    regenerated_sequence: Option<tex_state::EffectSequence>,
+}
+
+/// Absolute accepted-generation artifact positions owned by one publication.
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedArtifactPublicationRange(std::ops::Range<usize>);
+
+/// Absolute live-generation artifact positions owned by one publication.
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveArtifactPublicationRange(std::ops::Range<usize>);
+
+impl SupersededPageOutputEpisode {
+    #[must_use]
+    pub const fn identity(&self) -> tex_state::PageOutputEpisodeId {
+        self.identity
+    }
+
+    #[must_use]
+    pub const fn effects(&self) -> &std::ops::Range<usize> {
+        &self.effects
+    }
+
+    #[must_use]
+    pub const fn regenerated_effects(&self) -> Option<&std::ops::Range<usize>> {
+        self.regenerated_effects.as_ref()
+    }
+
+    #[must_use]
+    pub const fn accepted_artifacts(&self) -> &std::ops::Range<usize> {
+        &self.accepted_artifacts.0
+    }
+
+    #[must_use]
+    pub fn live_artifacts(&self) -> Option<&std::ops::Range<usize>> {
+        self.live_artifacts.as_ref().map(|range| &range.0)
+    }
+
+    #[must_use]
+    pub const fn publication_candidate(
+        &self,
+    ) -> Option<tex_state::OutputArtifactPublicationCandidate> {
+        self.publication_candidate
+    }
+
+    #[must_use]
+    pub const fn committed_publication(&self) -> Option<&tex_state::PageOutputPublicationReceipt> {
+        self.committed_publication.as_ref()
+    }
+
+    #[must_use]
+    pub const fn retained_publication(&self) -> Option<tex_state::EffectPublicationId> {
+        self.retained_publication
+    }
+
+    #[must_use]
+    pub const fn retained_sequence(&self) -> Option<tex_state::EffectSequence> {
+        self.retained_sequence
+    }
+
+    #[must_use]
+    pub const fn regenerated_sequence(&self) -> Option<tex_state::EffectSequence> {
+        self.regenerated_sequence
+    }
+}
+
 /// Identity and exact command-owned input transaction for one finished paragraph.
 #[derive(Clone, Debug)]
 pub struct CanonicalParagraphRegion {
@@ -614,6 +718,8 @@ pub struct CanonicalParagraphRegion {
     input: tex_command::ParagraphInputTransaction,
     owned_input: Arc<tex_command::OwnedCommandContinuation>,
     entry_outer_parskip: bool,
+    entry_prev_graf: i32,
+    entry_prev_graf_affects_break: bool,
     // Paragraph boundaries are immutable after capture and are copied into
     // every scalar command savepoint while a paragraph is active. Sharing
     // them keeps that rollback bookkeeping constant-time without changing
@@ -621,9 +727,17 @@ pub struct CanonicalParagraphRegion {
     starting_universe: Arc<tex_state::Snapshot>,
     ending_universe: Arc<tex_state::Snapshot>,
     artifact_count: usize,
+    starting_effect_pos: usize,
+    ending_artifact_pos: usize,
+    ending_effect_pos: usize,
     ending_modes: crate::ModeNestSummary,
     finished_lines: Option<tex_state::survivor::RetainedNodeList>,
     effects: std::sync::Arc<[tex_state::EffectRecord]>,
+    output_episode_ids: Arc<Vec<u64>>,
+    output_episodes: Arc<Vec<PageOutputEpisode>>,
+    output_effect_episode_owners: Arc<Vec<Option<tex_state::PageOutputEpisodeId>>>,
+    output_effect_publications: Arc<Vec<Option<tex_state::EffectPublicationId>>>,
+    effect_domains: Arc<Vec<tex_state::EffectDomain>>,
     starting_provenance: ProvenanceStats,
     ending_provenance: ProvenanceStats,
     dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
@@ -639,6 +753,21 @@ pub struct CanonicalParagraphRegion {
 }
 
 impl CanonicalParagraphRegion {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn output_effect_episode_owners(&self) -> &[Option<tex_state::PageOutputEpisodeId>] {
+        &self.output_effect_episode_owners
+    }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn output_effect_publications(&self) -> &[Option<tex_state::EffectPublicationId>] {
+        &self.output_effect_publications
+    }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn effect_domains(&self) -> &[tex_state::EffectDomain] {
+        &self.effect_domains
+    }
     pub(crate) fn materialize_owned_input_into(&mut self, destination: &mut Universe) {
         let (summary, mut inputs) = self.owned_input.materialize_with_paragraphs(destination);
         self.input = inputs
@@ -901,12 +1030,22 @@ struct CanonicalParagraphRecorder {
     pending: bool,
     lookup_attempted: bool,
     next_identity: u64,
+    pending_identity: Option<u64>,
     starting_universe: Option<Arc<tex_state::Snapshot>>,
     starting_artifact_pos: usize,
     replayed_artifact_prefix: usize,
     effect_start: usize,
     starting_provenance: Option<ProvenanceStats>,
     starting_prev_graf: i32,
+    starting_prev_graf_affects_break: bool,
+    next_output_episode_identity: u64,
+    output_episodes: Arc<Vec<PageOutputEpisode>>,
+    output_producers: std::collections::VecDeque<(u64, tex_state::StreamBufState, usize, usize)>,
+    pending_output_episode_ids: std::collections::VecDeque<u64>,
+    pending_output_owner_prefix: Vec<u64>,
+    shipout_observation_floor: usize,
+    replacing_output_publication: bool,
+    superseded_output_episodes: Vec<SupersededPageOutputEpisode>,
     entry_outer_parskip: bool,
     // Aggregate command savepoints clone the recorder before every command.
     // Paragraph histories must therefore remain persistent roots: copying all
@@ -914,6 +1053,19 @@ struct CanonicalParagraphRecorder {
     // paragraph it has already completed.
     finished: Arc<Vec<CanonicalParagraphRegion>>,
     replay: Arc<Vec<CanonicalParagraphRegion>>,
+}
+
+#[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
+enum RetainedOutputEpisodeMatch {
+    None,
+    Partial {
+        identity: u64,
+    },
+    Complete {
+        episode: PageOutputEpisode,
+        identity: u64,
+    },
 }
 
 #[cfg(test)]
@@ -941,6 +1093,75 @@ mod paragraph_recorder_tests {
 }
 
 impl CanonicalParagraphRecorder {
+    fn start_output_episode(
+        &mut self,
+        owners: &[tex_state::ParagraphRegionOwner],
+        starting_cursor: tex_state::StreamBufState,
+        producer_artifact: usize,
+        producer_effect: usize,
+        stores: &mut Universe,
+    ) -> Option<u64> {
+        let owners: Arc<[u64]> = owners.iter().map(|owner| owner.identity()).collect();
+        if owners.is_empty() {
+            return None;
+        }
+        let identity = stores.world_mut().allocate_output_episode_id().identity();
+        self.next_output_episode_identity = self.next_output_episode_identity.max(identity);
+        Arc::make_mut(&mut self.output_episodes).push(PageOutputEpisode {
+            identity,
+            owners,
+            ..PageOutputEpisode::default()
+        });
+        self.output_producers.push_back((
+            identity,
+            starting_cursor,
+            producer_artifact,
+            producer_effect,
+        ));
+        Some(identity)
+    }
+
+    fn take_matching_output_episode(
+        &mut self,
+        owners: &[tex_state::ParagraphRegionOwner],
+    ) -> RetainedOutputEpisodeMatch {
+        let Some(pending) = self.pending_output_episode_ids.front().copied() else {
+            return RetainedOutputEpisodeMatch::None;
+        };
+        let episode = self
+            .output_episodes
+            .iter()
+            .find(|episode| episode.identity == pending)
+            .expect("pending output episode identity remains in its immutable table");
+        let mut extended = false;
+        for owner in owners.iter().map(|owner| owner.identity()) {
+            if self.pending_output_owner_prefix.last() != Some(&owner) {
+                self.pending_output_owner_prefix.push(owner);
+                extended = true;
+            }
+        }
+        if !episode
+            .owners
+            .starts_with(&self.pending_output_owner_prefix)
+        {
+            self.pending_output_owner_prefix.clear();
+            return RetainedOutputEpisodeMatch::None;
+        }
+        if episode.owners.len() != self.pending_output_owner_prefix.len() {
+            return if extended {
+                RetainedOutputEpisodeMatch::Partial { identity: pending }
+            } else {
+                RetainedOutputEpisodeMatch::None
+            };
+        }
+        self.pending_output_episode_ids.pop_front();
+        self.pending_output_owner_prefix.clear();
+        RetainedOutputEpisodeMatch::Complete {
+            episode: episode.clone(),
+            identity: pending,
+        }
+    }
+
     fn begin(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
         if self.pending {
             return;
@@ -957,6 +1178,14 @@ impl CanonicalParagraphRecorder {
             let _ = stores.abandon_pure_paragraph_recording();
         }
         command.begin_paragraph_input_transaction();
+        self.next_identity = self.next_identity.wrapping_add(1);
+        self.pending_identity = Some(self.next_identity);
+        stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
+            self.next_identity,
+        )));
+        stores
+            .world_mut()
+            .set_active_effect_domain(Some(tex_state::EffectDomain::Paragraph(self.next_identity)));
         stores.begin_dependency_region();
         stores.begin_pure_paragraph_recording();
         modes.clear_completed_paragraph_nodes();
@@ -966,14 +1195,87 @@ impl CanonicalParagraphRecorder {
         self.effect_start = stores.world().effect_records().len();
         self.starting_provenance = Some(stores.provenance_stats());
         self.starting_prev_graf = modes.enclosing_vertical_prev_graf();
-        self.entry_outer_parskip = modes.current_mode() == Mode::Horizontal && modes.depth() == 2;
+        self.starting_prev_graf_affects_break = stores.paragraph_shape_len() != 0
+            || stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0
+                && stores.int_param(IntParam::HANG_AFTER) != 0;
+        self.entry_outer_parskip = modes.depth() == 1 && modes.current_mode() == Mode::Vertical
+            || modes.depth() == 2 && modes.current_mode() == Mode::Horizontal;
         self.pending = true;
+    }
+
+    fn capture_output_publication(
+        &mut self,
+        artifact_start: usize,
+        _effect_start: usize,
+        stores: &mut Universe,
+    ) {
+        if std::mem::take(&mut self.replacing_output_publication) {
+            return;
+        }
+        let artifact_end = stores.world().artifact_pos();
+        if artifact_end <= artifact_start {
+            return;
+        }
+        if self.output_producers.is_empty() {
+            return;
+        }
+        let effect_end = stores.world().effect_records().len();
+        while let Some((episode_id, starting_cursor, producer_artifact, producer_effect)) =
+            self.output_producers.pop_front()
+        {
+            let next_artifact = self
+                .output_producers
+                .front()
+                .map_or(artifact_end, |next| next.2);
+            let next_effect = self
+                .output_producers
+                .front()
+                .map_or(effect_end, |next| next.3);
+            let effects = stores.world().effect_records()[producer_effect..next_effect]
+                .to_vec()
+                .into();
+            let Some(episode) = Arc::make_mut(&mut self.output_episodes)
+                .iter_mut()
+                .find(|episode| episode.identity == episode_id)
+            else {
+                continue;
+            };
+            episode.artifacts = producer_artifact..next_artifact;
+            if let Some(publication) = stores.world().artifact_publication_at(producer_artifact) {
+                episode.artifact_publication_sequence = Some(publication.sequence());
+                episode.artifact_publication_domain = Some(publication.domain());
+            }
+            episode.effects = effects;
+            episode.effect_start = producer_effect;
+            episode.starting_cursor = Some(starting_cursor);
+            episode.ending_cursor = Some(stores.world().output_episode_cursor());
+            episode.effect_root = Some(stores.world().effect_root_identity());
+            let owners = Arc::clone(&episode.owners);
+            for region in Arc::make_mut(&mut self.finished)
+                .iter_mut()
+                .filter(|region| owners.contains(&region.identity))
+            {
+                Arc::make_mut(&mut region.output_episode_ids).push(episode_id);
+                region.ending_artifact_pos = next_artifact;
+                region.ending_effect_pos = next_effect;
+                region.ending_universe = Arc::new(stores.snapshot_with_exact_identity());
+            }
+            let effect_owners = stores.world().output_effect_episode_owners();
+            let effect_publications = stores.world().effect_publications();
+            for region in Arc::make_mut(&mut self.finished).iter_mut() {
+                region.output_effect_episode_owners = Arc::clone(&effect_owners);
+                region.output_effect_publications = Arc::clone(&effect_publications);
+                region.effect_domains = stores.world().effect_domains();
+            }
+        }
     }
 
     fn finish(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
         if !std::mem::take(&mut self.pending) {
             return;
         }
+        stores.set_active_paragraph_owner(None);
+        stores.world_mut().set_active_effect_domain(None);
         let Some(input) = command.finish_paragraph_input_transaction() else {
             return;
         };
@@ -998,6 +1300,10 @@ impl CanonicalParagraphRecorder {
             .unwrap_or_default()
             .to_vec()
             .into();
+        let artifact_count = stores
+            .world()
+            .artifact_pos()
+            .saturating_sub(self.starting_artifact_pos);
         let (front_dependencies, break_dependencies) = stores.finish_paragraph_dependency_region();
         let front_len = front_dependencies.len();
         let mut dependencies = front_dependencies;
@@ -1014,7 +1320,10 @@ impl CanonicalParagraphRecorder {
                 mutations: Vec::new(),
             },
         );
-        self.next_identity = self.next_identity.wrapping_add(1);
+        let identity = self
+            .pending_identity
+            .take()
+            .expect("pending paragraph owns its stable region identity");
         let display_active_directions = modes
             .current_list()
             .display_interrupt()
@@ -1039,22 +1348,29 @@ impl CanonicalParagraphRecorder {
         barriers.sort_unstable();
         barriers.dedup();
         let region = CanonicalParagraphRegion {
-            identity: self.next_identity,
+            identity,
             input,
             owned_input,
             entry_outer_parskip: self.entry_outer_parskip,
+            entry_prev_graf: self.starting_prev_graf,
+            entry_prev_graf_affects_break: self.starting_prev_graf_affects_break,
             starting_universe: self
                 .starting_universe
                 .take()
                 .expect("pending paragraph owns its starting Universe"),
             ending_universe: Arc::new(stores.snapshot_with_exact_identity()),
-            artifact_count: stores
-                .world()
-                .artifact_pos()
-                .saturating_sub(self.starting_artifact_pos),
+            artifact_count,
+            starting_effect_pos: self.effect_start,
+            ending_artifact_pos: stores.world().artifact_pos(),
+            ending_effect_pos: stores.world().effect_records().len(),
             ending_modes: modes.summary(),
             finished_lines,
             effects,
+            output_episode_ids: Arc::new(Vec::new()),
+            output_episodes: Arc::new(Vec::new()),
+            output_effect_episode_owners: Arc::new(Vec::new()),
+            output_effect_publications: Arc::new(Vec::new()),
+            effect_domains: stores.world().effect_domains(),
             starting_provenance: self
                 .starting_provenance
                 .take()
@@ -1190,6 +1506,32 @@ fn command_processor<'a>(
 }
 
 impl CanonicalMainControl {
+    /// Finalizes every delayed artifact committed under the active typed
+    /// page-output receipt. Candidate construction calls this only after the
+    /// command run has completed successfully; ordinary rollback restores
+    /// both this handle and World's provisional registry from its snapshot.
+    #[doc(hidden)]
+    pub fn finalize_page_output_receipts(&mut self, stores: &mut Universe) {
+        for superseded in &mut self.paragraph_recorder.superseded_output_episodes {
+            let Some(committed) = superseded.committed_publication.as_ref() else {
+                continue;
+            };
+            let receipt = committed.receipt();
+            let Some(records) = stores.world().provisional_page_output_receipt(receipt) else {
+                continue;
+            };
+            superseded.committed_publication =
+                tex_state::PageOutputPublicationReceipt::committed_group(
+                    committed.effect(),
+                    records,
+                );
+            stores
+                .world_mut()
+                .discard_provisional_page_output_receipt(receipt);
+        }
+        self.active_page_output_receipt = None;
+    }
+
     /// Reports aggregate-operation/savepoint accounting without exposing the
     /// mode journal or any rollback capability.
     #[must_use]
@@ -1676,7 +2018,14 @@ impl CanonicalMainControl {
         incomplete_conditions: Vec<tex_command::IncompleteCondition>,
     ) {
         self.job_body_effect_end = Some(stores.world().effect_pos());
+        stores
+            .world_mut()
+            .begin_terminal_publication(tex_state::TerminalPublicationPhase::CloseOpenParens);
         crate::job::close_open_parens(stores);
+        stores.world_mut().commit_terminal_publication();
+        stores
+            .world_mut()
+            .begin_terminal_publication(tex_state::TerminalPublicationPhase::Notices);
         crate::job::report_unclosed_groups(stores);
         report_incomplete_conditions(stores, incomplete_conditions);
         crate::job::print_history_note(stores);
@@ -1689,6 +2038,7 @@ impl CanonicalMainControl {
                 .printer()
                 .print_nl("(\\dump is performed only by INITEX)");
         }
+        stores.world_mut().commit_terminal_publication();
     }
 
     fn resolve_font_resource(&self, scanned: ScannedStep) -> Result<ScannedStep, ExecError> {
@@ -2154,7 +2504,21 @@ impl CanonicalMainControl {
     /// Drains completed canonical paragraph input regions in publication order.
     #[must_use]
     pub fn take_finished_paragraph_regions(&mut self) -> Vec<CanonicalParagraphRegion> {
-        Arc::unwrap_or_clone(std::mem::take(&mut self.paragraph_recorder.finished))
+        let episodes = Arc::clone(&self.paragraph_recorder.output_episodes);
+        let mut regions =
+            Arc::unwrap_or_clone(std::mem::take(&mut self.paragraph_recorder.finished));
+        for region in &mut regions {
+            region.output_episodes = Arc::clone(&episodes);
+        }
+        regions
+    }
+
+    /// Drains typed accepted-generation output publications replaced by this
+    /// live run. Incremental suffix adoption uses these receipts to avoid
+    /// remounting exactly those old effects.
+    #[doc(hidden)]
+    pub fn take_superseded_page_output_episodes(&mut self) -> Vec<SupersededPageOutputEpisode> {
+        std::mem::take(&mut self.paragraph_recorder.superseded_output_episodes)
     }
 
     /// Installs accepted regions for exact pre-delivery paragraph replay.
@@ -2175,6 +2539,23 @@ impl CanonicalMainControl {
                 .max()
                 .unwrap_or(0),
         );
+        for region in &regions {
+            for episode in region.output_episodes.iter() {
+                if !self
+                    .paragraph_recorder
+                    .output_episodes
+                    .iter()
+                    .any(|known| known.identity == episode.identity)
+                {
+                    Arc::make_mut(&mut self.paragraph_recorder.output_episodes)
+                        .push(episode.clone());
+                }
+                self.paragraph_recorder.next_output_episode_identity = self
+                    .paragraph_recorder
+                    .next_output_episode_identity
+                    .max(episode.identity);
+            }
+        }
         Arc::make_mut(&mut self.paragraph_recorder.replay).extend(regions);
     }
 
@@ -2232,6 +2613,13 @@ impl CanonicalMainControl {
             ) {
                 continue;
             }
+            if region.entry_prev_graf_affects_break
+                && region.entry_prev_graf != self.paragraph_recorder.starting_prev_graf
+            {
+                validation_failure
+                    .get_or_insert(tex_state::ParagraphValidationFailure::ParagraphStart);
+                continue;
+            }
             if let Some(key) =
                 crate::canonical_paragraph_memo::dependency_failure(stores, &region.dependencies)
             {
@@ -2284,6 +2672,9 @@ impl CanonicalMainControl {
         }
         let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
         if region.entry_outer_parskip {
+            stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
+                region.identity,
+            )));
             crate::vertical::append_vertical_contribution(
                 &mut self.modes,
                 stores,
@@ -2293,8 +2684,7 @@ impl CanonicalMainControl {
                     leader: None,
                 },
             );
-            crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
-                .expect("validated paragraph entry contribution must replay");
+            stores.set_active_paragraph_owner(None);
         }
         let finished_nodes = region.materialize_finished_nodes(stores);
         if finished_nodes.is_some() {
@@ -2307,6 +2697,9 @@ impl CanonicalMainControl {
         );
         self.command.abandon_paragraph_input_transaction();
         self.paragraph_recorder.pending = false;
+        self.paragraph_recorder.pending_identity = None;
+        stores.set_active_paragraph_owner(None);
+        stores.world_mut().set_active_effect_domain(None);
         self.paragraph_recorder.starting_universe = None;
         self.paragraph_recorder.starting_provenance = None;
         // `begin` opened both recorders before the front key was available.
@@ -2332,29 +2725,110 @@ impl CanonicalMainControl {
                 .push(MathShiftContext::from_paragraph_shift(*shift));
         }
         crate::canonical_paragraph_memo::replay_mutations(stores, &region.mutations);
-        for effect in region.effects() {
+        crate::canonical_paragraph_end::normal_paragraph(&mut self.modes, stores);
+        let effect_owner_start = region.starting_effect_pos;
+        for (offset, effect) in region.effects().enumerate() {
+            let owner = region
+                .output_effect_episode_owners
+                .get(effect_owner_start + offset)
+                .copied()
+                .flatten();
+            stores.world_mut().set_active_output_episode(owner);
+            let publication = region
+                .output_effect_publications
+                .get(effect_owner_start + offset)
+                .copied()
+                .flatten();
+            stores
+                .world_mut()
+                .set_active_effect_publication(publication);
+            let domain = region
+                .effect_domains
+                .get(effect_owner_start + offset)
+                .copied();
+            stores.world_mut().set_active_effect_domain(domain);
             assert!(
                 stores.world_mut().replay_paragraph_write(effect),
                 "barrier-free paragraph owns only replayable diagnostic writes"
             );
         }
+        stores.world_mut().set_active_output_episode(None);
+        stores.world_mut().set_active_effect_publication(None);
+        stores.world_mut().set_active_effect_domain(None);
         stores.record_carried_canonical_paragraph_region(region.history_record());
+        let entry_prev_graf = self.paragraph_recorder.starting_prev_graf;
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
+        self.modes
+            .set_enclosing_vertical_prev_graf(entry_prev_graf.saturating_add(region.line_count));
         self.paragraph_replay_replaced_mode_journal = true;
+        for episode_id in region.output_episode_ids.iter().copied() {
+            // Every co-owner can mount another portion of the same episode.
+            // Detach after replaying this region's effects even when the
+            // shared receipt is already queued by an earlier owner.
+            let _ = stores.remove_replayed_output_episode_effects(
+                tex_state::PageOutputEpisodeId::new(episode_id),
+            );
+            if !self
+                .paragraph_recorder
+                .pending_output_episode_ids
+                .contains(&episode_id)
+            {
+                // The retained region can carry effects from a page whose
+                // producer has not run on this generation yet.  Its typed
+                // episode receipt proves exactly which inherited publication
+                // the later live fire-up supersedes; detach it when the
+                // normal region replacement is mounted, before any partial
+                // mixed-owner fire-up can be attempted.
+                self.paragraph_recorder
+                    .pending_output_episode_ids
+                    .push_back(episode_id);
+                let episode = self
+                    .paragraph_recorder
+                    .output_episodes
+                    .iter()
+                    .find(|episode| episode.identity == episode_id)
+                    .expect("paragraph output receipt remains in its immutable table");
+                self.paragraph_recorder.superseded_output_episodes.push(
+                    SupersededPageOutputEpisode {
+                        identity: tex_state::PageOutputEpisodeId::new(episode_id),
+                        effects: episode.effect_start
+                            ..episode.effect_start.saturating_add(episode.effects.len()),
+                        regenerated_effects: None,
+                        accepted_artifacts: AcceptedArtifactPublicationRange(
+                            episode.artifacts.clone(),
+                        ),
+                        live_artifacts: None,
+                        publication_candidate: None,
+                        committed_publication: None,
+                        retained_publication: episode.publication,
+                        retained_sequence: episode.artifact_publication_sequence,
+                        regenerated_sequence: None,
+                    },
+                );
+            }
+        }
         if let Some(nodes) = finished_nodes {
+            stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
+                region.identity,
+            )));
             for node in nodes {
                 crate::vertical::append_vertical_contribution(&mut self.modes, stores, node);
             }
-            crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
-                .expect("prevalidated retained paragraph page contribution must replay");
+            stores.set_active_paragraph_owner(None);
         }
+        crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
+            .expect("prevalidated retained paragraph contribution batch must replay");
         self.paragraph_recorder.replayed_artifact_prefix = self
             .paragraph_recorder
             .replayed_artifact_prefix
             .saturating_add(region.artifact_count);
         self.pending_shipout_boundary |= region.artifact_count != 0;
-        self.finish_shipout_publication(stores.world().artifact_commits().len(), stores);
+        self.finish_shipout_publication(
+            stores.world().artifact_commits().len(),
+            stores.world().effect_records().len(),
+            stores,
+        );
         self.paragraph_recorder.next_identity =
             self.paragraph_recorder.next_identity.max(region.identity);
         Arc::make_mut(&mut self.paragraph_recorder.finished).push(region);
@@ -2365,7 +2839,14 @@ impl CanonicalMainControl {
 
     /// Records newly committed artifacts and releases their one outermost
     /// checkpoint boundary only after all continuation-owning work unwinds.
-    fn finish_shipout_publication(&mut self, artifact_count: usize, stores: &Universe) {
+    fn finish_shipout_publication(
+        &mut self,
+        artifact_count: usize,
+        effect_count: usize,
+        stores: &mut Universe,
+    ) {
+        self.paragraph_recorder
+            .capture_output_publication(artifact_count, effect_count, stores);
         self.pending_shipout_boundary |= stores.world().artifact_commits().len() != artifact_count;
         if self.pending_shipout_boundary
             && !self.boxes.output_routine_active
@@ -2811,9 +3292,12 @@ impl CanonicalMainControl {
                 // command state held across the transition, then the shipouts
                 // it committed, then the episode's own records.
                 records.extend(
-                    committed_shipout_observations(artifact_count, stores)
-                        .into_iter()
-                        .map(CommandObservation::Effect),
+                    committed_shipout_observations(
+                        artifact_count.max(self.paragraph_recorder.shipout_observation_floor),
+                        stores,
+                    )
+                    .into_iter()
+                    .map(CommandObservation::Effect),
                 );
                 records.extend(
                     committed_stream_effect_observations(
@@ -2830,7 +3314,7 @@ impl CanonicalMainControl {
             self.observe_committed(records);
             self.page_output_observations.clear();
         }
-        self.finish_shipout_publication(artifact_count, stores);
+        self.finish_shipout_publication(artifact_count, _effect_count, stores);
         self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
         Ok(applied)
     }
@@ -3374,11 +3858,12 @@ impl CanonicalMainControl {
         if mode == Mode::Vertical
             && self.modes.depth() == 1
             && scanned.starts_paragraph_from_vertical()
-            && !self.paragraph_recorder.replay.is_empty()
         {
             self.paragraph_recorder
                 .begin(&mut self.command, &mut self.modes, stores);
-            if self.try_replay_paragraph_before_delivery(stores) {
+            if !self.paragraph_recorder.replay.is_empty()
+                && self.try_replay_paragraph_before_delivery(stores)
+            {
                 return self.finish_host_owned_step(
                     Ok(ReplayStep::Continue),
                     outer_paragraph_was_active,
@@ -3462,7 +3947,7 @@ impl CanonicalMainControl {
         }
         self.fire_pending_page_output(stores)?;
         self.page_output_observations.clear();
-        self.finish_shipout_publication(artifact_count, stores);
+        self.finish_shipout_publication(artifact_count, effect_count, stores);
         self.finish_paragraph_boundary(outer_paragraph_was_active, stores);
         Ok(result)
     }
@@ -3619,12 +4104,98 @@ impl CanonicalMainControl {
             // Universe summary is published only at step boundaries, so the
             // report must receive context from the live command stack.
             let error_context = self.command.output_open_context(&stores.command_context());
+            let fire_up_snapshot = stores.snapshot_with_exact_identity();
+            let output_start = stores.world_mut().begin_replayed_output_episode();
+            let producer_cursor = stores.world().output_episode_cursor();
+            let producer_artifact = stores.world().artifact_pos();
+            let producer_effect = stores.world().effect_records().len();
+            let prepared_page_start = self.prepared_dvi_pages.len();
+            let observation_start = self.page_output_observations.len();
             match crate::canonical_page_output::select_pending_page_output(
                 stores,
                 fire_up,
                 error_context,
             )? {
-                crate::canonical_page_output::SelectedPageOutput::Default(page) => {
+                crate::canonical_page_output::SelectedPageOutput::Default(
+                    page,
+                    ownership,
+                    owners,
+                ) => {
+                    let retained = self
+                        .paragraph_recorder
+                        .take_matching_output_episode(&owners);
+                    let (episode, retained_active_episode) = match retained {
+                        RetainedOutputEpisodeMatch::None => (None, None),
+                        RetainedOutputEpisodeMatch::Partial { .. } => {
+                            stores.rollback(&fire_up_snapshot);
+                            stores.defer_page_fire_up();
+                            Arc::make_mut(&mut self.prepared_dvi_pages)
+                                .truncate(prepared_page_start);
+                            self.page_output_observations.truncate(observation_start);
+                            break;
+                        }
+                        RetainedOutputEpisodeMatch::Complete { episode, identity } => {
+                            (Some(episode), Some(identity))
+                        }
+                    };
+                    let replacement = episode.as_ref().map(|episode| {
+                        self.paragraph_recorder.replacing_output_publication = true;
+                        let artifact_candidate = stores
+                            .world_mut()
+                            .rewind_detached_artifacts(episode.artifacts.len());
+                        let inherited_effect_count = episode.effects.len();
+                        let replacement = output_start.clone();
+                        let retained_effect_root_mounted =
+                            stores.world().output_episode_was_mounted_at(
+                                &output_start,
+                                tex_state::PageOutputEpisodeId::new(episode.identity),
+                            );
+                        let cursor = episode
+                            .starting_cursor
+                            .clone()
+                            .expect("retained output episode owns its §638 pre-marker cursor");
+                        stores.world_mut().restore_output_episode_cursor(cursor);
+                        (
+                            replacement,
+                            inherited_effect_count,
+                            retained_effect_root_mounted,
+                            artifact_candidate,
+                        )
+                    });
+                    let active_episode = retained_active_episode.or_else(|| {
+                        (ownership != tex_state::PagePrefixOwnership::Unowned)
+                            .then(|| {
+                                self.paragraph_recorder.start_output_episode(
+                                    &owners,
+                                    producer_cursor.clone(),
+                                    producer_artifact,
+                                    producer_effect,
+                                    stores,
+                                )
+                            })
+                            .flatten()
+                    });
+                    let active_episode = active_episode.map(tex_state::PageOutputEpisodeId::new);
+                    if let Some(active_episode) = active_episode {
+                        self.active_page_output_receipt =
+                            Some(tex_state::PageOutputPublicationReceiptId::new(
+                                active_episode.identity(),
+                            ));
+                    }
+                    stores.world_mut().set_active_output_episode(active_episode);
+                    stores.world_mut().set_active_artifact_publication_group(
+                        episode.as_ref().and_then(|episode| {
+                            Some((
+                                episode.artifact_publication_sequence?,
+                                episode.artifact_publication_domain?,
+                            ))
+                        }),
+                    );
+                    if let Some(active_episode) = active_episode {
+                        stores
+                            .world_mut()
+                            .claim_output_episode_effects_since(&output_start, active_episode);
+                    }
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         runtime: &mut self.runtime,
@@ -3635,9 +4206,81 @@ impl CanonicalMainControl {
                         initex: self.initex,
                         emit_dvi_override: self.emit_dvi_override,
                     };
-                    if let Some(receipt) = shipout_replay_box(page, stores, &mut command)? {
+                    let publication_candidate =
+                        replacement.as_ref().map(|(_, _, _, candidate)| *candidate);
+                    let publication = shipout_replay_box(
+                        page,
+                        stores,
+                        &mut command,
+                        publication_candidate,
+                        self.active_page_output_receipt,
+                    )?;
+                    if episode.is_none()
+                        && let (Some(active_episode), Some(publication)) =
+                            (active_episode, publication.as_ref())
+                        && let Some(record) =
+                            Arc::make_mut(&mut self.paragraph_recorder.output_episodes)
+                                .iter_mut()
+                                .find(|record| record.identity == active_episode.identity())
+                    {
+                        record.publication = Some(publication.artifact.effect());
+                        record.publication_sequence = stores
+                            .world()
+                            .effect_sequences()
+                            .get(publication.effects.start)
+                            .copied();
+                    }
+                    if let Some(receipt) = publication
+                        .as_ref()
+                        .and_then(|publication| publication.dvi.clone())
+                    {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
+                    if let (
+                        Some((
+                            replacement,
+                            inherited_effect_count,
+                            retained_effect_root_mounted,
+                            _,
+                        )),
+                        Some(episode),
+                        Some(publication),
+                    ) = (replacement, episode, publication)
+                    {
+                        let _ = (
+                            replacement,
+                            inherited_effect_count,
+                            retained_effect_root_mounted,
+                        );
+                        if let Some(cursor) = episode.ending_cursor {
+                            stores.world_mut().restore_output_episode_cursor(cursor);
+                        }
+                        self.paragraph_recorder.shipout_observation_floor =
+                            stores.world().artifact_pos();
+                        if let Some(receipt) = self
+                            .paragraph_recorder
+                            .superseded_output_episodes
+                            .iter_mut()
+                            .find(|receipt| receipt.identity.identity() == episode.identity)
+                        {
+                            receipt.regenerated_effects = Some(publication.effects.clone());
+                            receipt.live_artifacts = Some(LiveArtifactPublicationRange(
+                                producer_artifact..stores.world().artifact_pos(),
+                            ));
+                            receipt.regenerated_sequence = stores
+                                .world()
+                                .effect_sequences()
+                                .get(publication.effects.start)
+                                .copied();
+                            receipt.publication_candidate = publication.revision_candidate;
+                            if let Some(committed) = receipt.committed_publication.as_mut() {
+                                committed.extend(&publication.artifact);
+                            } else {
+                                receipt.committed_publication = Some(publication.artifact);
+                            }
+                        }
+                    }
+                    stores.world_mut().set_active_output_episode(None);
                     // TeX82 §§1014--1025 complete this invocation of
                     // `build_page` after the default `ship_out`. Umber defers
                     // that synchronous fire-up to the command-step tail, so
@@ -3649,7 +4292,31 @@ impl CanonicalMainControl {
                     // starts the next invocation.
                     break;
                 }
-                crate::canonical_page_output::SelectedPageOutput::UserRoutine => {
+                crate::canonical_page_output::SelectedPageOutput::UserRoutine(
+                    ownership,
+                    owners,
+                ) => {
+                    if ownership != tex_state::PagePrefixOwnership::Unowned {
+                        let active = self.paragraph_recorder.start_output_episode(
+                            &owners,
+                            producer_cursor,
+                            producer_artifact,
+                            producer_effect,
+                            stores,
+                        );
+                        let active = active.map(tex_state::PageOutputEpisodeId::new);
+                        if let Some(active) = active {
+                            self.active_page_output_receipt = Some(
+                                tex_state::PageOutputPublicationReceiptId::new(active.identity()),
+                            );
+                        }
+                        stores.world_mut().set_active_output_episode(active);
+                        if let Some(active) = active {
+                            stores
+                                .world_mut()
+                                .claim_output_episode_effects_since(&output_start, active);
+                        }
+                    }
                     // This episode belongs to the step that contributed the
                     // page, but an observed step publishes it only after its
                     // own mutation and effect records.  Redirect the commit
@@ -5349,7 +6016,10 @@ impl CanonicalMainControl {
                 }
                 records.extend(effects.into_iter().map(CommandObservation::Effect));
             }
-            for shipout in committed_shipout_observations(artifact_count, stores) {
+            for shipout in committed_shipout_observations(
+                artifact_count.max(self.paragraph_recorder.shipout_observation_floor),
+                stores,
+            ) {
                 records.push(CommandObservation::Effect(shipout));
             }
             records.append(&mut self.page_output_observations);
@@ -12633,7 +13303,7 @@ fn print_ship_out_marker_open(
     tracing_output: i32,
     counts: &[i32; 10],
     traced_node: Option<&Node>,
-) {
+) -> usize {
     let last = (1..=9usize).rev().find(|&j| counts[j] != 0).unwrap_or(0);
     if tracing_output > 0 {
         let mut printer = stores.printer();
@@ -12641,15 +13311,26 @@ fn print_ship_out_marker_open(
         printer.print_ln();
         printer.print("Completed box being shipped out");
     }
+    let marker_start;
     {
-        let mut printer = stores.printer();
-        let term = printer.terminal_offset();
-        let log = printer.log_offset();
-        if term > printer.max_print_line().saturating_sub(9) {
-            printer.print_ln();
-        } else if term > 0 || log > 0 {
-            printer.print_char(' ');
+        let (term, log, max_print_line) = {
+            let printer = stores.printer();
+            (
+                printer.terminal_offset(),
+                printer.log_offset(),
+                printer.max_print_line(),
+            )
+        };
+        {
+            let mut printer = stores.printer();
+            if term > max_print_line.saturating_sub(9) {
+                printer.print_ln();
+            } else if term > 0 || log > 0 {
+                printer.print_char(' ');
+            }
         }
+        marker_start = stores.world().effect_records().len();
+        let mut printer = stores.printer();
         printer.print_char('[');
         for (index, &value) in counts.iter().enumerate().take(last + 1) {
             printer.print_int(value);
@@ -12674,6 +13355,7 @@ fn print_ship_out_marker_open(
         diagnostic.print_ln().print_rendered(&text);
         diagnostic.end(true);
     }
+    marker_start
 }
 
 /// §638's `if eqtb[int_base+tracing_output_code].int<=0 then print_char("]")`,
@@ -12730,7 +13412,9 @@ fn shipout_replay_box(
     node: Node,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
-) -> Result<Option<crate::dispatch::PreparedDviPage>, ExecError> {
+    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
+) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
     // is replayed, because replaying it is what changes them.
@@ -12747,7 +13431,8 @@ fn shipout_replay_box(
     // included -- belongs to this shipout and must not be swept into the
     // page's serialized content.
     let pending_end = stores.world().effect_records().len();
-    print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
+    let marker_start =
+        print_ship_out_marker_open(stores, tracing_output, &counts, traced_node.as_ref());
     let effect_start = stores.world().effect_records().len();
     let effect_cursor = std::cell::Cell::new(effect_start);
     let write_publications = std::cell::RefCell::new(Vec::new());
@@ -12886,9 +13571,14 @@ fn shipout_replay_box(
         },
         stores,
         emit_dvi,
+        publication_candidate,
+        receipt,
     )?;
     let command = command_cell.into_inner();
-    if let Some(receipt) = receipt.as_mut() {
+    if let Some(receipt) = receipt
+        .as_mut()
+        .and_then(|publication| publication.dvi.as_mut())
+    {
         receipt.committed_effects = receipt.committed_effects[effect_cursor.get() - effect_start..]
             .to_vec()
             .into_boxed_slice();
@@ -12903,6 +13593,17 @@ fn shipout_replay_box(
     // trace, scanner recovery, and resulting stream write in detection order.
     report_shipout_publications(stores, write_publications.into_inner())?;
     print_ship_out_marker_close(stores, tracing_output);
+    if let Some(publication) = receipt.as_mut() {
+        stores.world_mut().claim_effect_publication_boundary(
+            pending_end..marker_start,
+            marker_start,
+            publication.artifact.effect(),
+        );
+        publication.effects = marker_start..stores.world().effect_records().len();
+        stores
+            .world_mut()
+            .claim_effect_publication(publication.effects.clone(), publication.artifact.effect());
+    }
     if let Some(before) = memory_before {
         let after = stores.shipout_memory_usage();
         print_shipout_memory_usage(stores, command.state.profile(), before, after);
@@ -12954,7 +13655,7 @@ pub(crate) fn test_shipout_replay_box(
         initex: true,
         emit_dvi_override: None,
     };
-    match shipout_replay_box(node, stores, &mut command) {
+    match shipout_replay_box(node, stores, &mut command, None, None) {
         Ok(receipt) => {
             snapshot.commit(&mut control);
             Ok(receipt)
@@ -16761,7 +17462,9 @@ fn apply_scanned_step(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                if let Some(receipt) = shipout_replay_box(node, stores, command)? {
+                if let Some(receipt) = shipout_replay_box(node, stores, command, None, None)?
+                    .and_then(|publication| publication.dvi)
+                {
                     push_prepared_dvi_page(prepared_dvi_pages, receipt);
                 }
             } else if let Some(target) = box_state.target {
@@ -18093,7 +18796,8 @@ fn box_end(
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut => {
             if let Some(node) = node
-                && let Some(receipt) = shipout_replay_box(node, stores, command)?
+                && let Some(receipt) = shipout_replay_box(node, stores, command, None, None)?
+                    .and_then(|publication| publication.dvi)
             {
                 push_prepared_dvi_page(prepared_dvi_pages, receipt);
             }

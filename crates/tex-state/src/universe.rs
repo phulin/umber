@@ -36,7 +36,8 @@ use crate::node::Node;
 use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
-    PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
+    PageInsertion, PageInteger, PageMark, PageMemoState, PagePrefixOwnership, PageStateHashCursor,
+    ParagraphRegionOwner,
 };
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
@@ -583,6 +584,7 @@ pub struct ShipoutTransaction<'a> {
 #[derive(Clone)]
 pub struct PreparedPageSuffix {
     artifacts: Vec<CommittedArtifact>,
+    artifact_publications: Vec<crate::ArtifactPublicationRecord>,
     pdf_pages: Vec<crate::PdfPageRecord>,
     effects: Vec<(EffectPos, EffectRecord)>,
 }
@@ -728,7 +730,8 @@ impl ShipoutTransaction<'_> {
         mut self,
         artifact: crate::world::VerifiedArtifact,
         effect_pos: EffectPos,
-    ) -> Result<ContentHash, WorldError> {
+        reservation: crate::ArtifactPublicationReservation,
+    ) -> Result<(ContentHash, crate::ArtifactPublicationRecord), WorldError> {
         let output_parameters = self.current_pdf_output_parameters();
         let page_parameters = self.current_pdf_page_parameters();
         let pk_mode = self.current_pdf_token_parameter(TokParam::PDF_PK_MODE);
@@ -745,11 +748,17 @@ impl ShipoutTransaction<'_> {
             self.pdf
                 .commit_page(hash, output_parameters, page_parameters, pk_mode);
             let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
-            self.world
-                .record_artifact_commit(hash, bytes, render_provenance, open_out_occurrences);
+            let record = reservation.record();
+            self.world.record_artifact_commit(
+                hash,
+                bytes,
+                render_provenance,
+                open_out_occurrences,
+                reservation,
+            );
             self.rollback = None;
             self.finished = true;
-            return Ok(hash);
+            return Ok((hash, record));
         }
         if let Err(err) = self.world.commit_effects(effect_pos) {
             self.state_hash_base = self.retarget_hash_base_after_committed_boundary(hash_base);
@@ -766,11 +775,17 @@ impl ShipoutTransaction<'_> {
         self.pdf
             .commit_page(hash, output_parameters, page_parameters, pk_mode);
         let (bytes, render_provenance, open_out_occurrences) = artifact.into_parts();
-        self.world
-            .record_artifact_commit(hash, bytes, render_provenance, open_out_occurrences);
+        let record = reservation.record();
+        self.world.record_artifact_commit(
+            hash,
+            bytes,
+            render_provenance,
+            open_out_occurrences,
+            reservation,
+        );
         self.rollback = None;
         self.finished = true;
-        Ok(hash)
+        Ok((hash, record))
     }
 }
 
@@ -1106,8 +1121,10 @@ impl GenerationSubstrate {
         self,
         effects: Vec<EffectRecord>,
         artifacts: Vec<CommittedArtifact>,
+        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
     ) -> Result<World, WorldError> {
-        let mut universe = self.into_detached_universe(effects, artifacts)?;
+        let mut universe =
+            self.into_detached_universe(effects, artifacts, artifact_publications)?;
         universe.export_retained_effects()?;
         Ok(universe.world)
     }
@@ -1119,11 +1136,12 @@ impl GenerationSubstrate {
         self,
         effects: Vec<EffectRecord>,
         artifacts: Vec<CommittedArtifact>,
+        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
     ) -> Result<Universe, WorldError> {
         let mut universe = self.universe;
         universe
             .world
-            .replace_retained_outputs(effects, artifacts)?;
+            .replace_retained_outputs(effects, artifacts, artifact_publications)?;
         Ok(universe)
     }
 
@@ -1133,9 +1151,10 @@ impl GenerationSubstrate {
         &self,
         effects: Vec<EffectRecord>,
         artifacts: Vec<CommittedArtifact>,
+        artifact_publications: Vec<crate::ArtifactPublicationRecord>,
     ) -> Result<World, WorldError> {
         let mut world = self.universe.world.clone();
-        world.replace_retained_outputs(effects, artifacts)?;
+        world.replace_retained_outputs(effects, artifacts, artifact_publications)?;
         world.export_retained_effects()?;
         Ok(world)
     }
@@ -1618,6 +1637,49 @@ impl Default for Universe {
 }
 
 impl Universe {
+    /// Removes effects published by one retained page-output episode.
+    ///
+    /// A retained paragraph may mount output belonging to a later page before
+    /// replay reaches that page's producer.  The episode receipt, rather than
+    /// its position in the mounted effect root, identifies that superseded
+    /// publication.  Retarget the incremental hash cursor together with the
+    /// removal so the replacement starts a new coherent semantic suffix.
+    #[doc(hidden)]
+    pub fn remove_replayed_output_episode_effects(
+        &mut self,
+        episode: crate::PageOutputEpisodeId,
+    ) -> bool {
+        let removed = self.world.remove_output_episode_effects(episode);
+        if removed {
+            self.state_hash_base.world = self.world.state_hash_cursor();
+        }
+        removed
+    }
+
+    #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_replayed_output_episode(
+        &mut self,
+        start: crate::OutputEpisodeStart,
+        artifact_count: usize,
+        inherited_effect_start: usize,
+        inherited_effect_count: usize,
+        effects: &[crate::EffectRecord],
+        retained_effect_root_mounted: bool,
+        outcome: crate::OutputEpisodePublicationOutcome,
+    ) -> crate::OutputEpisodePublicationOutcome {
+        let outcome = self.world.finish_replayed_output_episode(
+            start,
+            artifact_count,
+            inherited_effect_start,
+            inherited_effect_count,
+            effects,
+            retained_effect_root_mounted,
+            outcome,
+        );
+        self.state_hash_base.world = self.world.state_hash_cursor();
+        outcome
+    }
     /// TeX82-shaped live allocator use projected from the typed stores.
     #[must_use]
     pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {
@@ -1654,6 +1716,7 @@ impl Universe {
         let effect_base = self.world.effect_pos().raw()
             - u64::try_from(self.world.effect_records().len()).unwrap_or(u64::MAX);
         PreparedPageSuffix {
+            artifact_publications: self.world.take_artifact_publication_suffix(start),
             artifacts: self.world.take_artifact_suffix(start),
             pdf_pages: self.pdf.take_page_suffix(start),
             effects: self
@@ -1690,8 +1753,12 @@ impl Universe {
         for artifact in &suffix.artifacts {
             hashes.push(self.world.store_prepared_artifact(artifact)?);
         }
-        for artifact in suffix.artifacts {
-            self.world.record_prepared_artifact(artifact);
+        for (artifact, publication) in suffix
+            .artifacts
+            .into_iter()
+            .zip(suffix.artifact_publications)
+        {
+            self.world.record_prepared_artifact(artifact, publication);
         }
         for (page, hash) in suffix.pdf_pages.iter_mut().zip(hashes) {
             page.retarget_artifact(hash);
@@ -6899,16 +6966,25 @@ impl Universe {
         self.page.fire_up()
     }
 
+    #[doc(hidden)]
+    pub fn defer_page_fire_up(&mut self) {
+        self.page.defer_fire_up();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::FireUp));
+    }
+
     pub fn append_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
-        self.page.push_contribution(node);
+        self.page
+            .push_contribution(node, self.page.active_paragraph_owner());
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     pub fn prepend_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
-        self.page.prepend_contribution(node);
+        self.page
+            .prepend_contribution(node, self.page.active_paragraph_owner());
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
@@ -6984,7 +7060,8 @@ impl Universe {
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
         self.stores.assert_live_handles_in_nodes(&nodes);
-        self.page.prepend_contributions(nodes);
+        self.page
+            .prepend_contributions(nodes, self.page.active_paragraph_owner());
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
@@ -7048,14 +7125,36 @@ impl Universe {
         bytes: Vec<u8>,
         render_origin_ends: Vec<u32>,
         render_provenance: crate::ParagraphProvenanceRecipe,
-    ) -> Result<ContentHash, WorldError> {
+        receipt: Option<crate::PageOutputPublicationReceiptId>,
+    ) -> Result<
+        (
+            ContentHash,
+            crate::PageOutputPublicationReceipt,
+            crate::ArtifactPublicationRecord,
+        ),
+        WorldError,
+    > {
         let effect_pos = self.world.effect_pos();
+        let effect_index = self.world.effect_records().len();
+        let reservation = self
+            .world
+            .reserve_active_artifact_publication_at(effect_index, receipt);
         let transaction = self.begin_shipout();
-        transaction.commit(
+        let (hash, publication) = transaction.commit(
             crate::VerifiedArtifact::new(bytes)
                 .with_deferred_render_origins(render_origin_ends, render_provenance),
             effect_pos,
-        )
+            reservation,
+        )?;
+        let effect_publication = self.world.reserve_effect_publication();
+        self.world
+            .link_artifact_effect_publication(publication.publication(), effect_publication);
+        let publication = publication.with_effect_publication(effect_publication);
+        Ok((
+            hash,
+            crate::PageOutputPublicationReceipt::committed(effect_publication, publication),
+            publication,
+        ))
     }
 
     /// Imports and atomically publishes a detached page-builder result root.
@@ -7138,6 +7237,33 @@ impl Universe {
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
+    #[doc(hidden)]
+    pub fn set_active_paragraph_owner(&mut self, owner: Option<ParagraphRegionOwner>) {
+        self.page.set_active_paragraph_owner(owner);
+    }
+
+    #[doc(hidden)]
+    pub fn pop_page_contribution_front_owned(
+        &mut self,
+    ) -> Option<(Node, Option<ParagraphRegionOwner>)> {
+        let result = self.page.pop_contribution_front_owned();
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
+        result
+    }
+
+    #[doc(hidden)]
+    pub fn push_current_page_node_owned(
+        &mut self,
+        node: Node,
+        owner: Option<ParagraphRegionOwner>,
+    ) {
+        self.stores.assert_live_handles_in_node(&node);
+        self.page.push_current_page_owned(node, owner);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
+    }
+
     #[must_use]
     pub fn page_insertions(&self) -> &[PageInsertion] {
         self.page.page_insertions()
@@ -7166,6 +7292,36 @@ impl Universe {
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
         split
+    }
+
+    #[doc(hidden)]
+    #[allow(clippy::type_complexity)]
+    pub fn take_current_page_prefix_owned(
+        &mut self,
+        split_index: usize,
+    ) -> (
+        Vec<Node>,
+        Vec<Node>,
+        Vec<Option<ParagraphRegionOwner>>,
+        PagePrefixOwnership,
+        Vec<ParagraphRegionOwner>,
+    ) {
+        let split = self.page.take_current_page_prefix_owned(split_index);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
+        split
+    }
+
+    #[doc(hidden)]
+    pub fn prepend_owned_page_contributions(
+        &mut self,
+        nodes: Vec<Node>,
+        owners: Vec<Option<ParagraphRegionOwner>>,
+    ) {
+        self.stores.assert_live_handles_in_nodes(&nodes);
+        self.page.prepend_owned_contributions(nodes, owners);
+        self.dependencies
+            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     pub fn update_page_last_from_node(&mut self, node: &Node) {

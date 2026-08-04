@@ -16,7 +16,7 @@ fn kern(value: i32) -> Node {
 #[test]
 fn page_snapshot_clone_shares_roots_until_their_first_write() {
     let mut page = PageBuilderState::default();
-    page.push_contribution(kern(1));
+    page.push_contribution(kern(1), None);
     page.push_current_page(kern(2));
     let snapshot = page.clone();
 
@@ -28,7 +28,7 @@ fn page_snapshot_clone_shares_roots_until_their_first_write() {
     assert!(Arc::ptr_eq(&page.insertions, &snapshot.insertions));
     assert!(Arc::ptr_eq(&page.mark_classes, &snapshot.mark_classes));
 
-    page.push_contribution(kern(3));
+    page.push_contribution(kern(3), None);
     assert!(!Arc::ptr_eq(&page.contribution, &snapshot.contribution));
     assert_eq!(snapshot.contribution.len(), 1);
     assert!(Arc::ptr_eq(

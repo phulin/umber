@@ -76,6 +76,7 @@ pub(crate) fn break_current_paragraph(
     let mut level = commit_current_list(nest, stores, fuel)?;
     let mut hlist =
         crate::math::finish_math_lists_owned(stores, level.list_mutation().take_nodes(), true);
+    observe_paragraph_material_dependencies(stores, &hlist);
     let tracing = stores.int_param(IntParam::TRACING_PARAGRAPHS) > 0;
     normalize_paragraph_infinite_shrink(stores, &mut params, &mut hlist, tracing, error_context)?;
     let mut line_params = line_break_params(stores, &params);
@@ -463,7 +464,19 @@ impl PdfLineDimensions {
     }
 }
 
-fn pdf_line_dimensions(stores: &Universe) -> PdfLineDimensions {
+fn pdf_line_dimensions(stores: &mut Universe) -> PdfLineDimensions {
+    for param in [
+        DimenParam::PDF_IGNORED_DIMEN,
+        DimenParam::PDF_FIRST_LINE_HEIGHT,
+        DimenParam::PDF_LAST_LINE_DEPTH,
+        DimenParam::PDF_EACH_LINE_HEIGHT,
+        DimenParam::PDF_EACH_LINE_DEPTH,
+    ] {
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
+            bank: tex_state::DependencyBank::DimenParam,
+            index: u32::from(param.raw()),
+        });
+    }
     PdfLineDimensions {
         ignored: stores.dimen_param(DimenParam::PDF_IGNORED_DIMEN),
         first_height: stores.dimen_param(DimenParam::PDF_FIRST_LINE_HEIGHT),
@@ -475,7 +488,7 @@ fn pdf_line_dimensions(stores: &Universe) -> PdfLineDimensions {
 
 #[cfg(any())]
 pub(crate) fn test_apply_pdf_line_dimensions(
-    stores: &Universe,
+    stores: &mut Universe,
     lines: &mut [tex_state::node::BoxNode],
 ) {
     let dimensions = pdf_line_dimensions(stores);
@@ -906,6 +919,40 @@ fn extract_migrating_material(
             }
             _ => unreachable!("extract predicate restricts migrating node kinds"),
         }
+    }
+}
+
+fn observe_paragraph_material_dependencies(stores: &mut Universe, nodes: &[Node]) {
+    let mut fonts = std::collections::BTreeSet::new();
+    let mut characters = std::collections::BTreeSet::new();
+    for node in nodes {
+        match node {
+            Node::Char { font, ch, .. } => {
+                fonts.insert(*font);
+                characters.insert(*ch);
+            }
+            Node::Lig { font, ch, orig, .. } => {
+                fonts.insert(*font);
+                characters.insert(*ch);
+                characters.extend(orig.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    for font in fonts {
+        for index in [2, 3, 4, 7] {
+            stores.observe_semantic_dependency(tex_state::DependencyKey::Font {
+                field: tex_state::DependencyFontField::Parameter,
+                font: font.raw(),
+                index,
+            });
+        }
+    }
+    for ch in characters {
+        stores.observe_semantic_dependency(tex_state::DependencyKey::Code {
+            table: tex_state::DependencyCodeTable::Sfcode,
+            scalar: ch as u32,
+        });
     }
 }
 

@@ -2602,12 +2602,14 @@ fn generation_fork_detaches_the_accepted_effect_prefix() {
 fn generation_fork_detaches_the_accepted_artifact_prefix() {
     let mut universe = Universe::new();
     universe.begin_retained_session().expect("retained session");
-    let first = universe.begin_shipout();
+    let mut first = universe.begin_shipout();
     let effect_pos = first.world().effect_pos();
+    let reservation = first.world_mut().reserve_artifact_publication_at(0);
     first
         .commit(
             crate::VerifiedArtifact::new(b"accepted page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("accepted shipout");
     let selected = universe.snapshot();
@@ -2619,12 +2621,14 @@ fn generation_fork_detaches_the_accepted_artifact_prefix() {
         .expect("retained fork succeeds");
     assert_eq!(fork.world().artifact_pos(), selected_pos);
     assert!(fork.world().committed_artifacts().is_empty());
-    let scratch = fork.begin_shipout();
+    let mut scratch = fork.begin_shipout();
     let effect_pos = scratch.world().effect_pos();
+    let reservation = scratch.world_mut().reserve_artifact_publication_at(0);
     scratch
         .commit(
             crate::VerifiedArtifact::new(b"scratch page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("scratch shipout");
     assert_eq!(fork.world().artifact_pos(), selected_pos + 1);
@@ -3700,10 +3704,12 @@ fn shipout_commit_flushes_releases_then_checkpoints() {
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "shipout\n");
     let effect_pos = transaction.world().effect_pos();
-    let hash = transaction
+    let reservation = transaction.world_mut().reserve_artifact_publication_at(0);
+    let (hash, _) = transaction
         .commit(
             crate::VerifiedArtifact::new(b"detached page artifact".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("shipout commit succeeds");
 
@@ -3746,10 +3752,12 @@ fn repeated_shipout_commits_do_not_retain_epoch_page_nodes() {
             children,
         }));
         let effect_pos = transaction.world().effect_pos();
+        let reservation = transaction.world_mut().reserve_artifact_publication_at(0);
         transaction
             .commit(
                 crate::VerifiedArtifact::new(format!("page {page}").into_bytes()),
                 effect_pos,
+                reservation,
             )
             .expect("shipout commit succeeds");
         assert_eq!(universe.testing_epoch_node_count(), 0);
@@ -3768,10 +3776,12 @@ fn retained_shipout_rolls_back_logical_output_without_published_host_bytes() {
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "logical shipout\n");
     let effect_pos = transaction.world().effect_pos();
+    let reservation = transaction.world_mut().reserve_artifact_publication_at(0);
     transaction
         .commit(
             crate::VerifiedArtifact::new(b"logical page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("logical shipout succeeds");
 
@@ -3797,11 +3807,14 @@ fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
     let before = universe.snapshot();
 
     let effect_pos = universe.world().effect_pos();
-    let first_hash = universe
+
+    let reservation = universe.world_mut().reserve_artifact_publication_at(0);
+    let (first_hash, _) = universe
         .begin_shipout()
         .commit(
             crate::VerifiedArtifact::new(b"checkpointed PDF page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("first shipout succeeds");
     let first_page = universe.pdf_pages()[0];
@@ -3817,11 +3830,14 @@ fn pdf_page_allocation_replays_identical_object_ids_and_hashes() {
     assert_eq!(universe.pdf_next_object_id(), 1);
 
     let effect_pos = universe.world().effect_pos();
-    let replay_hash = universe
+
+    let reservation = universe.world_mut().reserve_artifact_publication_at(0);
+    let (replay_hash, _) = universe
         .begin_shipout()
         .commit(
             crate::VerifiedArtifact::new(b"checkpointed PDF page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("replayed shipout succeeds");
     assert_eq!(replay_hash, first_hash);
@@ -3842,11 +3858,14 @@ fn first_shipout_freezes_pdf_controls_and_dvi_mode_allocates_no_pdf_page() {
     let before = universe.snapshot();
 
     let effect_pos = universe.world().effect_pos();
+
+    let reservation = universe.world_mut().reserve_artifact_publication_at(0);
     universe
         .begin_shipout()
         .commit(
             crate::VerifiedArtifact::new(b"DVI-mode page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect("DVI-mode shipout succeeds");
 
@@ -3883,6 +3902,7 @@ fn failed_shipout_does_not_allocate_pdf_objects() {
         .world_mut()
         .write_text(PrintSink::TerminalAndLog, "uncommitted effect");
     let effect_pos = transaction.world().effect_pos();
+    let reservation = transaction.world_mut().reserve_artifact_publication_at(0);
     transaction
         .world_mut()
         .fail_effect_commit_before(effect_pos);
@@ -3890,6 +3910,7 @@ fn failed_shipout_does_not_allocate_pdf_objects() {
         .commit(
             crate::VerifiedArtifact::new(b"failed PDF page".to_vec()),
             effect_pos,
+            reservation,
         )
         .expect_err("effect failure rejects shipout");
 
@@ -4578,11 +4599,13 @@ fn two_forks_group_compaction_and_shipout_retargeting_are_cache_differential() {
             .world_mut()
             .write_text(PrintSink::TerminalAndLog, "shipout\n");
         let effect_pos = universe.world().effect_pos();
+        let reservation = universe.world_mut().reserve_artifact_publication_at(0);
         universe
             .begin_shipout()
             .commit(
                 crate::VerifiedArtifact::new(b"component projection page".to_vec()),
                 effect_pos,
+                reservation,
             )
             .expect("memory shipout succeeds");
         universe.set_count(8, 88);
@@ -4688,6 +4711,7 @@ fn randomized_incremental_hash_matches_cold_projection_rebuilds() {
                             .world_mut()
                             .write_text(PrintSink::TerminalAndLog, "random shipout\n");
                         let effect_pos = universe.world().effect_pos();
+                        let reservation = universe.world_mut().reserve_artifact_publication_at(0);
                         universe
                             .begin_shipout()
                             .commit(
@@ -4695,6 +4719,7 @@ fn randomized_incremental_hash_matches_cold_projection_rebuilds() {
                                     b"randomized differential page".to_vec(),
                                 ),
                                 effect_pos,
+                                reservation,
                             )
                             .expect("memory shipout succeeds");
                     }
@@ -5524,6 +5549,7 @@ fn deferred_write_rejects_stale_foreign_and_reused_token_lists_before_mutation()
     assert_ne!(stale, replacement);
 
     let effect_pos = universe.world().effect_pos();
+
     assert!(
         catch_unwind(AssertUnwindSafe(|| {
             universe.record_deferred_write(StreamSlot::new(1), stale);

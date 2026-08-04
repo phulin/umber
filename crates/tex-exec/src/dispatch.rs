@@ -23,6 +23,7 @@ pub struct ExecutionStats {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum DispatchAction {
     Continue,
     End,
@@ -35,9 +36,30 @@ pub struct PreparedDviPage {
     pub(crate) hash: ContentHash,
     pub(crate) plan: DviPagePlan,
     pub(crate) committed_effects: Box<[tex_state::EffectRecord]>,
+    pub(crate) publication: tex_state::ArtifactPublicationRecord,
+    pub(crate) receipt: tex_state::PageOutputPublicationReceiptId,
+}
+
+/// One page publication whose artifact transaction has committed.
+pub(crate) struct CommittedPagePublication {
+    pub(crate) artifact: tex_state::PageOutputPublicationReceipt,
+    pub(crate) dvi: Option<PreparedDviPage>,
+    pub(crate) revision_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
+    pub(crate) effects: std::ops::Range<usize>,
 }
 
 impl PreparedDviPage {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn publication(&self) -> tex_state::ArtifactPublicationRecord {
+        self.publication
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn receipt(&self) -> tex_state::PageOutputPublicationReceiptId {
+        self.receipt
+    }
     /// Identity of the artifact published by the same committed shipout.
     #[must_use]
     pub const fn hash(&self) -> ContentHash {

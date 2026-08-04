@@ -208,6 +208,49 @@ pub struct PageFireUp {
     trigger: PageBreak,
 }
 
+/// Opaque execution identity for the paragraph that produced page material.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParagraphRegionOwner(u64);
+
+/// Stable identity of one page-output effect/artifact episode.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct PageOutputEpisodeId(u64);
+
+impl PageOutputEpisodeId {
+    #[must_use]
+    pub const fn new(identity: u64) -> Self {
+        Self(identity)
+    }
+
+    #[must_use]
+    pub const fn identity(self) -> u64 {
+        self.0
+    }
+}
+
+impl ParagraphRegionOwner {
+    #[must_use]
+    pub const fn new(identity: u64) -> Self {
+        Self(identity)
+    }
+
+    #[must_use]
+    pub const fn identity(self) -> u64 {
+        self.0
+    }
+}
+
+/// Ownership of the material selected by one page fire-up.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PagePrefixOwnership {
+    Unowned,
+    Single(ParagraphRegionOwner),
+    Mixed,
+}
+
 impl PageFireUp {
     #[must_use]
     pub const fn new(best_break: PageBreak, best_size: Scaled, trigger: PageBreak) -> Self {
@@ -307,8 +350,11 @@ impl PageInsertion {
 /// Snapshot-owned state for TeX.web's page builder.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageBuilderState {
+    active_paragraph_owner: Option<ParagraphRegionOwner>,
     contribution: Arc<VecDeque<Node>>,
+    contribution_owners: Arc<VecDeque<Option<ParagraphRegionOwner>>>,
     current_page: PageNodeSequence,
+    current_page_owners: Arc<Vec<Option<ParagraphRegionOwner>>>,
     page_discards: Arc<Vec<Node>>,
     split_discards: Arc<Vec<Node>>,
     page_goal: Scaled,
@@ -368,8 +414,11 @@ pub(crate) struct PageMemoState {
 impl Default for PageBuilderState {
     fn default() -> Self {
         Self {
+            active_paragraph_owner: None,
             contribution: Arc::new(VecDeque::new()),
+            contribution_owners: Arc::new(VecDeque::new()),
             current_page: PageNodeSequence::default(),
+            current_page_owners: Arc::new(Vec::new()),
             page_discards: Arc::new(Vec::new()),
             split_discards: Arc::new(Vec::new()),
             page_goal: Scaled::from_raw(0),
@@ -518,7 +567,9 @@ impl PageBuilderState {
             current_page.push(node);
         }
         self.contribution = Arc::new(contribution);
+        self.contribution_owners = Arc::new(VecDeque::from(vec![None; state.contribution_len]));
         self.current_page = current_page;
+        self.current_page_owners = Arc::new(vec![None; state.current_page_len]);
         self.page_discards = Arc::new(page_discards);
         self.split_discards = Arc::new(split_discards);
         self.page_goal = state.dimensions[0];
@@ -828,19 +879,34 @@ impl PageBuilderState {
         self.fire_up
     }
 
-    pub(crate) fn push_contribution(&mut self, node: Node) {
+    pub(crate) fn defer_fire_up(&mut self) {
+        self.fire_up = None;
+    }
+
+    pub(crate) fn push_contribution(&mut self, node: Node, owner: Option<ParagraphRegionOwner>) {
         Arc::make_mut(&mut self.contribution).push_back(node);
+        Arc::make_mut(&mut self.contribution_owners).push_back(owner);
+    }
+
+    pub(crate) fn set_active_paragraph_owner(&mut self, owner: Option<ParagraphRegionOwner>) {
+        self.active_paragraph_owner = owner;
+    }
+
+    pub(crate) const fn active_paragraph_owner(&self) -> Option<ParagraphRegionOwner> {
+        self.active_paragraph_owner
     }
 
     pub(crate) fn remove_contribution_range(
         &mut self,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Node> {
+        Arc::make_mut(&mut self.contribution_owners).drain(range.clone());
         Arc::make_mut(&mut self.contribution).drain(range).collect()
     }
 
-    pub(crate) fn prepend_contribution(&mut self, node: Node) {
+    pub(crate) fn prepend_contribution(&mut self, node: Node, owner: Option<ParagraphRegionOwner>) {
         Arc::make_mut(&mut self.contribution).push_front(node);
+        Arc::make_mut(&mut self.contribution_owners).push_front(owner);
     }
 
     pub(crate) fn contribution(&self) -> &VecDeque<Node> {
@@ -863,15 +929,51 @@ impl PageBuilderState {
         if self.contribution.is_empty() {
             None
         } else {
+            Arc::make_mut(&mut self.contribution_owners).pop_front();
             Arc::make_mut(&mut self.contribution).pop_front()
         }
     }
 
+    pub(crate) fn pop_contribution_front_owned(
+        &mut self,
+    ) -> Option<(Node, Option<ParagraphRegionOwner>)> {
+        let node = Arc::make_mut(&mut self.contribution).pop_front()?;
+        let owner = Arc::make_mut(&mut self.contribution_owners)
+            .pop_front()
+            .expect("page contribution owner sidecar remains aligned");
+        Some((node, owner))
+    }
+
     pub(crate) fn pop_contribution_tail(&mut self) -> Option<Node> {
+        Arc::make_mut(&mut self.contribution_owners).pop_back();
         Arc::make_mut(&mut self.contribution).pop_back()
     }
 
-    pub(crate) fn prepend_contributions(&mut self, nodes: Vec<Node>) {
+    pub(crate) fn prepend_contributions(
+        &mut self,
+        nodes: Vec<Node>,
+        owner: Option<ParagraphRegionOwner>,
+    ) {
+        if nodes.is_empty() {
+            return;
+        }
+        let node_count = nodes.len();
+        let mut queue = VecDeque::with_capacity(nodes.len() + self.contribution.len());
+        queue.extend(nodes);
+        queue.extend(self.contribution.iter().cloned());
+        self.contribution = Arc::new(queue);
+        let mut owners = VecDeque::with_capacity(node_count + self.contribution_owners.len());
+        owners.extend(std::iter::repeat_n(owner, node_count));
+        owners.extend(self.contribution_owners.iter().copied());
+        self.contribution_owners = Arc::new(owners);
+    }
+
+    pub(crate) fn prepend_owned_contributions(
+        &mut self,
+        nodes: Vec<Node>,
+        owners: Vec<Option<ParagraphRegionOwner>>,
+    ) {
+        assert_eq!(nodes.len(), owners.len());
         if nodes.is_empty() {
             return;
         }
@@ -879,6 +981,11 @@ impl PageBuilderState {
         queue.extend(nodes);
         queue.extend(self.contribution.iter().cloned());
         self.contribution = Arc::new(queue);
+        let mut owner_queue =
+            VecDeque::with_capacity(owners.len() + self.contribution_owners.len());
+        owner_queue.extend(owners);
+        owner_queue.extend(self.contribution_owners.iter().copied());
+        self.contribution_owners = Arc::new(owner_queue);
     }
 
     pub(crate) fn current_page(&self) -> impl DoubleEndedIterator<Item = &Node> {
@@ -927,6 +1034,16 @@ impl PageBuilderState {
 
     pub(crate) fn push_current_page(&mut self, node: Node) {
         self.current_page.push(node);
+        Arc::make_mut(&mut self.current_page_owners).push(self.active_paragraph_owner);
+    }
+
+    pub(crate) fn push_current_page_owned(
+        &mut self,
+        node: Node,
+        owner: Option<ParagraphRegionOwner>,
+    ) {
+        self.current_page.push(node);
+        Arc::make_mut(&mut self.current_page_owners).push(owner);
     }
 
     pub(crate) fn page_insertions(&self) -> &[PageInsertion] {
@@ -950,11 +1067,42 @@ impl PageBuilderState {
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn take_current_page_prefix_owned(
+        &mut self,
+        split_index: usize,
+    ) -> (
+        Vec<Node>,
+        Vec<Node>,
+        Vec<Option<ParagraphRegionOwner>>,
+        PagePrefixOwnership,
+        Vec<ParagraphRegionOwner>,
+    ) {
+        let split_index = split_index.min(self.current_page_owners.len());
+        let owners = Arc::make_mut(&mut self.current_page_owners);
+        let suffix_owners = owners.split_off(split_index);
+        let ownership = classify_prefix_owners(owners);
+        let mut paragraph_owners = owners.iter().flatten().copied().collect::<Vec<_>>();
+        paragraph_owners.sort_unstable_by_key(|owner| owner.identity());
+        paragraph_owners.dedup();
+        let suffix_owner_values = suffix_owners.clone();
+        *owners = suffix_owners;
+        let (prefix, suffix) = self.current_page.take_prefix(split_index);
+        (
+            prefix,
+            suffix,
+            suffix_owner_values,
+            ownership,
+            paragraph_owners,
+        )
+    }
+
     pub(crate) fn take_current_page_prefix(
         &mut self,
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
-        self.current_page.take_prefix(split_index)
+        let (prefix, suffix, _, _, _) = self.take_current_page_prefix_owned(split_index);
+        (prefix, suffix)
     }
 
     pub(crate) fn update_last_from_node(&mut self, node: &Node) {
@@ -996,6 +1144,16 @@ impl PageBuilderState {
     pub(crate) const fn has_last_glue(&self) -> bool {
         self.last_glue.is_some()
     }
+}
+
+fn classify_prefix_owners(owners: &[Option<ParagraphRegionOwner>]) -> PagePrefixOwnership {
+    let Some(first) = owners.first().copied() else {
+        return PagePrefixOwnership::Unowned;
+    };
+    if owners.iter().copied().all(|owner| owner == first) {
+        return first.map_or(PagePrefixOwnership::Unowned, PagePrefixOwnership::Single);
+    }
+    PagePrefixOwnership::Mixed
 }
 
 #[cfg(test)]

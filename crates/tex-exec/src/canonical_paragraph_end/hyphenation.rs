@@ -506,6 +506,13 @@ fn hyphenate_after_glue(
     }
 
     let lowercase: String = word.iter().map(|ch| ch.lower).collect();
+    for dependency in [
+        tex_state::DependencyKey::HyphenationPatterns(language),
+        tex_state::DependencyKey::HyphenationExceptions(language),
+        tex_state::DependencyKey::HyphenationCodes(language),
+    ] {
+        stores.observe_semantic_dependency(dependency);
+    }
     let positions = stores.hyphen_positions_for_language(language, &lowercase, left, right);
     if positions.is_empty() {
         if let Some(out) = out {
