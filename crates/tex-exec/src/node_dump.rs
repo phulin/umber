@@ -448,7 +448,7 @@ fn dump_math_noad(
         }
         NoadKind::Accent { accent } => {
             append_escaped_name(stores, "accent", out);
-            dump_math_char_inline(*accent, out);
+            dump_math_char_inline(stores, *accent, out);
         }
         NoadKind::LeftDelimiter { delimiter } => {
             append_escaped_name(stores, "left", out);
@@ -566,7 +566,7 @@ fn dump_math_field(
         MathField::MathChar(ch) | MathField::MathTextChar(ch) => {
             write_prefix(depth - 1, out);
             out.push(marker);
-            dump_math_char(*ch, out);
+            dump_math_char(stores, *ch, out);
         }
         MathField::SubBox(list) => {
             let old_len = out.len();
@@ -609,12 +609,16 @@ fn mark_subsidiary_lines(out: &mut String, start: usize, depth: i32, marker: cha
     }
 }
 
-fn dump_math_char(ch: MathChar, out: &mut String) {
-    let _ = writeln!(out, "\\fam{} {}", ch.family, dump_char(ch.character));
+fn dump_math_char(stores: &Universe, ch: MathChar, out: &mut String) {
+    dump_math_char_inline(stores, ch, out);
+    out.push('\n');
 }
 
-fn dump_math_char_inline(ch: MathChar, out: &mut String) {
-    let _ = write!(out, "\\fam{} {}", ch.family, dump_char(ch.character));
+/// TeX82 §691's `print_fam_and_char` names `fam` through §63 `print_esc`,
+/// so math-character diagnostics observe the current `\escapechar`.
+fn dump_math_char_inline(stores: &Universe, ch: MathChar, out: &mut String) {
+    append_escaped_name(stores, "fam", out);
+    let _ = write!(out, "{} {}", ch.family, dump_char(ch.character));
 }
 
 fn dump_fraction(
@@ -727,7 +731,9 @@ fn dump_math_choice(
     depth: i32,
     out: &mut String,
 ) {
-    out.push_str("\\mathchoice\n");
+    // TeX82 §689's choice-node display calls §63 `print_esc`.
+    append_escaped_name(stores, "mathchoice", out);
+    out.push('\n');
     dump_choice_arm(stores, choice.display, config, depth + 1, 'D', out);
     dump_choice_arm(stores, choice.text, config, depth + 1, 'T', out);
     dump_choice_arm(stores, choice.script, config, depth + 1, 'S', out);
@@ -745,7 +751,10 @@ fn dump_choice_arm(
     let old_len = out.len();
     dump_list(stores, list, config, depth, ListContext::Neutral, out);
     if old_len < out.len() {
-        out.replace_range(old_len..old_len + 1, &marker.to_string());
+        // Section 689 appends the arm marker to `cur_string` for the entire
+        // recursive `show_node_list` call, so it replaces this prefix level
+        // on every line in the arm, not only the first node's header.
+        mark_subsidiary_lines(out, old_len, depth, marker);
     }
 }
 
@@ -1324,6 +1333,47 @@ mod unset_diagnostic_tests {
                 },
             ),
             "|mathop|limits\n"
+        );
+    }
+
+    /// TeX82 §§63/689/691 route the choice and math-character family names
+    /// independently through the live `print_esc` projection.
+    #[test]
+    fn math_choice_and_family_names_use_live_escape_character() {
+        let mut stores = Universe::new();
+        stores.set_int_param(IntParam::ESCAPE_CHAR, i32::from(b'|'));
+        let arm = stores.freeze_node_list(&[Node::MathNoad(MathNoad::new(
+            NoadKind::Normal(NoadClass::Ord),
+            MathField::MathChar(MathChar {
+                family: 1,
+                character: 'a',
+                origin: Default::default(),
+            }),
+        ))]);
+        let list = stores.freeze_node_list(&[Node::MathChoice(MathChoice {
+            display: arm,
+            text: arm,
+            script: arm,
+            script_script: arm,
+        })]);
+
+        assert_eq!(
+            dump_node_list(
+                &stores,
+                list,
+                DumpConfig {
+                    breadth: 100,
+                    depth: 100,
+                    profile: CommandProfile::TEX82,
+                },
+            ),
+            concat!(
+                "|mathchoice\n",
+                "D|mathord\nD.|fam1 a\n",
+                "T|mathord\nT.|fam1 a\n",
+                "S|mathord\nS.|fam1 a\n",
+                "s|mathord\ns.|fam1 a\n",
+            ),
         );
     }
 }
