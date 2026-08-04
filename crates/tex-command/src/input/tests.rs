@@ -274,3 +274,28 @@ fn token_context_pseudoprints_nul_in_control_sequence_names() {
     );
     assert!(!context.contains('\0'));
 }
+
+#[test]
+fn noexpand_backup_context_projects_frozen_marker() {
+    // TeX82 §358 physically prefixes the operand with
+    // `frozen_dont_expand`; §§258/315 therefore pseudoprint that marker even
+    // though Umber represents its one-delivery effect structurally.
+    let mut command = CommandState::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let expandafter = universe.intern("expandafter").symbol();
+    command.push_token_level(
+        TokenPayload::Transient(SharedTokenBuffer::new(std::sync::Arc::from([
+            tex_state::token::TracedTokenWord::pack(
+                tex_state::token::Token::Cs(expandafter),
+                tex_state::token::OriginId::UNKNOWN,
+            ),
+        ]))),
+        TokenBehavior::BackedUp(crate::input::BackupTreatment::SuppressExpandableControlSequence),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    assert_eq!(
+        command.output_open_context(&universe.command_context()),
+        "\n<to be read again> \n                   \\notexpanded: \\expandafter "
+    );
+}

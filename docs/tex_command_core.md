@@ -1672,6 +1672,13 @@ the original control sequence. This identity belongs to the ephemeral current
 command, alongside its delivery proof, rather than to snapshot state or
 observer reconstruction. The treatment ends with that delivery.
 
+TeX82 §§358–359 physically represents this treatment by prefixing the
+backup with `frozen_dont_expand`. The canonical input stack keeps the marker
+structural, but §315 error-context pseudoprinting projects its §258 spelling
+`\notexpanded:` before the operand on the appropriate side of the live cursor.
+The structural representation therefore preserves both one-delivery behavior
+and TeX's exact diagnostic view.
+
 There is no general `NoExpand` token-list replay kind and no sticky suppression
 property on returned tokens.
 

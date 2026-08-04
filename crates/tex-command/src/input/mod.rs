@@ -400,6 +400,27 @@ impl InputState {
                 )
             }
         };
+        // TeX82 §358 implements `\noexpand` by putting the inaccessible
+        // `frozen_dont_expand` token immediately before the backed-up operand.
+        // Umber keeps that marker structural as the level's one-delivery
+        // treatment, so §315's token-list pseudoprint must project its §258
+        // spelling before the operand even though no physical token stores it.
+        if matches!(
+            tokens.behavior,
+            TokenBehavior::BackedUp(BackupTreatment::SuppressExpandableControlSequence)
+        ) {
+            let marker = format!(
+                "{} ",
+                crate::processor::expand::print_esc_text(stores, "notexpanded:")
+            );
+            let mut rendered = String::new();
+            stores.append_selector_string_text(&marker, &mut rendered);
+            if tokens.index == 0 {
+                after.insert_str(0, &rendered);
+            } else {
+                before.insert_str(0, &rendered);
+            }
+        }
         // tex.web §§354/390 leave `loc=null` on the exhausted v-template
         // while returning its stored `frozen_end_template`. Umber represents
         // that sentinel structurally instead of appending it to every stored
