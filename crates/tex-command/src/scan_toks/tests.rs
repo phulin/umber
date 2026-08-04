@@ -2642,6 +2642,39 @@ fn read_toks_collects_balanced_multiline_input_and_appends_one_eof_line() {
 }
 
 #[test]
+fn read_toks_outer_recovery_pseudoprints_end_match_and_partial_body() {
+    // TeX82 §§482/306: `read_toks` seeds `def_ref` with `end_match_token`,
+    // and `runaway` pseudoprints that live list when an outer command ends
+    // the read. The sentinel therefore renders as `->` before the body.
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    read_stream(&mut universe, b"x\\stop");
+    let empty = tex_state::ids::TokenListId::EMPTY;
+    let stop = universe.intern("stop").symbol();
+    universe.set_macro_meaning(stop, MacroMeaning::new(MeaningFlags::OUTER, empty, empty));
+    let mut capabilities = CommandHostCapabilities::default();
+    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let target = processor.state.intern_control_sequence("line");
+
+    processor
+        .read_toks(1, target, false)
+        .expect("outer recovery completes the read");
+
+    let diagnostics = processor.take_semantic_diagnostics();
+    assert!(
+        matches!(
+            diagnostics.first(),
+            Some(crate::CommandSemanticDiagnostic::Recoverable {
+                runaway: Some(crate::state::RunawayPrelude { partial, .. }),
+                ..
+            }) if partial == "->x"
+        ),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn read_toks_covers_stream_boundaries_and_empty_first_line() {
     // TeX82 §§480, 482-485: 0 and 15 are the inclusive open-stream
     // boundaries, while 16 and every negative number clamp to the permanently

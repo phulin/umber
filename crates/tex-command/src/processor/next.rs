@@ -2289,10 +2289,22 @@ impl CommandProcessor<'_> {
         }
         let mut rendered = String::new();
         self.state.append_selector_string_text(&raw, &mut rendered);
-        let Some(crate::CommandSemanticDiagnostic::Recoverable {
-            runaway: Some(runaway),
-            ..
-        }) = self.command.semantic_diagnostics.last_mut()
+        // TeX82 §306 reads the live list synchronously. A command trace
+        // discovered by the same raw-delivery episode can already be queued
+        // behind the deferred report, so update the newest runaway owner
+        // rather than assuming it is still the queue tail.
+        let Some(runaway) =
+            self.command
+                .semantic_diagnostics
+                .iter_mut()
+                .rev()
+                .find_map(|diagnostic| match diagnostic {
+                    crate::CommandSemanticDiagnostic::Recoverable {
+                        runaway: Some(runaway),
+                        ..
+                    } => Some(runaway),
+                    _ => None,
+                })
         else {
             return;
         };

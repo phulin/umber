@@ -1177,6 +1177,46 @@ impl CommandProcessor<'_> {
         // repeat get_token until cur_tok=0; align_state:=1000000; goto done;
         // end; store_new_token(cur_tok); end`.
         while let Some(command) = self.get_token()? {
+            if self
+                .command
+                .semantic_diagnostics
+                .iter()
+                .rev()
+                .any(|diagnostic| {
+                    matches!(
+                        diagnostic,
+                        crate::CommandSemanticDiagnostic::Recoverable {
+                            runaway: Some(crate::state::RunawayPrelude { partial, .. }),
+                            ..
+                        } if partial.is_empty()
+                    )
+                })
+            {
+                // TeX82 §§482/306 call `runaway` from inside `get_token`,
+                // before §23's temporary recovery space returns to §483 and
+                // is stored. Snapshot the live `def_ref` at that instant:
+                // its leading `end_match_token` prints as `->`, followed by
+                // only the body tokens collected before the forbidden outer
+                // command.
+                let mut runaway = vec![
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '-',
+                            cat: Catcode::Other,
+                        },
+                        OriginId::UNKNOWN,
+                    ),
+                    TracedTokenWord::pack(
+                        Token::Char {
+                            ch: '>',
+                            cat: Catcode::Other,
+                        },
+                        OriginId::UNKNOWN,
+                    ),
+                ];
+                runaway.extend(tokens.iter().copied());
+                self.set_runaway_partial(&runaway);
+            }
             if self.command.alignment.align_state < TEMPLATE_ALIGN_STATE {
                 while self.get_token()?.is_some() {}
                 self.command.alignment.align_state = TEMPLATE_ALIGN_STATE;
