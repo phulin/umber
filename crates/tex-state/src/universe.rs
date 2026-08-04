@@ -7303,6 +7303,7 @@ impl Universe {
         Vec<Node>,
         Vec<Node>,
         Vec<Option<ParagraphRegionOwner>>,
+        Vec<Option<ParagraphRegionOwner>>,
         PagePrefixOwnership,
         Vec<ParagraphRegionOwner>,
     ) {

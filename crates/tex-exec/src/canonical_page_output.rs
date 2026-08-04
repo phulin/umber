@@ -97,7 +97,7 @@ pub(crate) fn prepare_box255(
 
     let split_index = fire_up.best_break().index();
     let page_max_depth = stores.page_max_depth();
-    let (page_nodes, mut after_break, after_break_owners, ownership, owners) =
+    let (page_nodes, mut after_break, _, after_break_owners, ownership, owners) =
         stores.take_current_page_prefix_owned(split_index);
     let mut after_break_owners = after_break_owners;
     let output_penalty = output_penalty_and_rewrite_break(
@@ -393,7 +393,7 @@ pub(crate) fn prepend_output_heldover(
     output_nodes: Vec<Node>,
     discard_rewritten_break: bool,
 ) {
-    let (mut heldover, _, mut heldover_owners, _, _) =
+    let (mut heldover, _, mut heldover_owners, _, _, _) =
         stores.take_current_page_prefix_owned(stores.current_page_len());
     // TeX82 §§994/1012 resume the page builder after `fire_up`; without an
     // output routine that continuation discards the chosen penalty after

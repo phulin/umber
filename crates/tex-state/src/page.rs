@@ -812,6 +812,7 @@ impl PageBuilderState {
     /// freezes the next page's specifications.
     pub(crate) fn start_page_after_output(&mut self) {
         self.current_page.clear();
+        Arc::make_mut(&mut self.current_page_owners).clear();
         self.contents = PageContents::Empty;
         self.last_glue = None;
         self.last_penalty = 0;
@@ -1075,6 +1076,7 @@ impl PageBuilderState {
         Vec<Node>,
         Vec<Node>,
         Vec<Option<ParagraphRegionOwner>>,
+        Vec<Option<ParagraphRegionOwner>>,
         PagePrefixOwnership,
         Vec<ParagraphRegionOwner>,
     ) {
@@ -1085,12 +1087,14 @@ impl PageBuilderState {
         let mut paragraph_owners = owners.iter().flatten().copied().collect::<Vec<_>>();
         paragraph_owners.sort_unstable_by_key(|owner| owner.identity());
         paragraph_owners.dedup();
+        let prefix_owner_values = owners.clone();
         let suffix_owner_values = suffix_owners.clone();
         *owners = suffix_owners;
         let (prefix, suffix) = self.current_page.take_prefix(split_index);
         (
             prefix,
             suffix,
+            prefix_owner_values,
             suffix_owner_values,
             ownership,
             paragraph_owners,
@@ -1101,7 +1105,7 @@ impl PageBuilderState {
         &mut self,
         split_index: usize,
     ) -> (Vec<Node>, Vec<Node>) {
-        let (prefix, suffix, _, _, _) = self.take_current_page_prefix_owned(split_index);
+        let (prefix, suffix, _, _, _, _) = self.take_current_page_prefix_owned(split_index);
         (prefix, suffix)
     }
 
