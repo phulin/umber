@@ -747,6 +747,7 @@ pub struct CanonicalParagraphRegion {
     output_effect_publications: Arc<Vec<Option<tex_state::EffectPublicationId>>>,
     effect_domains: Arc<Vec<tex_state::EffectDomain>>,
     effect_semantic_record_ordinals: Arc<Vec<tex_state::EffectSemanticRecordOrdinal>>,
+    effect_placement_intra_orders: Arc<Vec<tex_state::EffectPlacementIntraOrder>>,
     starting_provenance: ProvenanceStats,
     ending_provenance: ProvenanceStats,
     dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
@@ -781,6 +782,11 @@ impl CanonicalParagraphRegion {
     #[must_use]
     pub fn effect_semantic_record_ordinals(&self) -> &[tex_state::EffectSemanticRecordOrdinal] {
         &self.effect_semantic_record_ordinals
+    }
+    #[doc(hidden)]
+    #[must_use]
+    pub fn effect_placement_intra_orders(&self) -> &[tex_state::EffectPlacementIntraOrder] {
+        &self.effect_placement_intra_orders
     }
     pub(crate) fn materialize_owned_input_into(&mut self, destination: &mut Universe) {
         let (summary, mut inputs) = self.owned_input.materialize_with_paragraphs(destination);
@@ -1282,6 +1288,8 @@ impl CanonicalParagraphRecorder {
                 region.effect_domains = stores.world().effect_domains();
                 region.effect_semantic_record_ordinals =
                     stores.world().effect_semantic_record_ordinals();
+                region.effect_placement_intra_orders =
+                    stores.world().effect_placement_intra_orders();
             }
         }
     }
@@ -1388,6 +1396,7 @@ impl CanonicalParagraphRecorder {
             output_effect_publications: Arc::new(Vec::new()),
             effect_domains: stores.world().effect_domains(),
             effect_semantic_record_ordinals: stores.world().effect_semantic_record_ordinals(),
+            effect_placement_intra_orders: stores.world().effect_placement_intra_orders(),
             starting_provenance: self
                 .starting_provenance
                 .take()

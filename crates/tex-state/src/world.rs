@@ -1626,6 +1626,7 @@ pub struct WorldSnapshot {
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
     effect_domains: Arc<Vec<EffectDomain>>,
     effect_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
+    effect_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
     effect_publication_dispositions: Arc<Vec<EffectPublicationDisposition>>,
     next_effect_sequence: u64,
     next_publication_sequence: u64,
@@ -1636,6 +1637,7 @@ pub struct WorldSnapshot {
         BTreeMap<EffectOutputAttemptId, (Arc<[crate::ParagraphRegionOwner]>, u64)>,
     next_effect_output_owner_ordinals: BTreeMap<Arc<[crate::ParagraphRegionOwner]>, u64>,
     next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
+    next_effect_placement_intra_order: u64,
     next_output_episode_identity: u64,
     next_terminal_publication_identity: u64,
     effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
@@ -1735,6 +1737,7 @@ pub struct World {
     page_effect_prefix_publications: Arc<Vec<Option<EffectPublicationId>>>,
     page_effect_prefix_domains: Arc<Vec<EffectDomain>>,
     page_effect_prefix_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
+    page_effect_prefix_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
     effect_base: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
     effect_episode_owners: Arc<Vec<Option<crate::PageOutputEpisodeId>>>,
@@ -1742,6 +1745,7 @@ pub struct World {
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
     effect_domains: Arc<Vec<EffectDomain>>,
     effect_semantic_record_ordinals: Arc<Vec<EffectSemanticRecordOrdinal>>,
+    effect_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
     effect_publication_dispositions: Arc<Vec<EffectPublicationDisposition>>,
     next_effect_sequence: u64,
     next_publication_sequence: u64,
@@ -1752,6 +1756,7 @@ pub struct World {
         BTreeMap<EffectOutputAttemptId, (Arc<[crate::ParagraphRegionOwner]>, u64)>,
     next_effect_output_owner_ordinals: BTreeMap<Arc<[crate::ParagraphRegionOwner]>, u64>,
     next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
+    next_effect_placement_intra_order: u64,
     active_effect_episode: Option<crate::PageOutputEpisodeId>,
     active_effect_publication: Option<EffectPublicationId>,
     active_effect_output_attempt: Option<EffectOutputAttemptId>,
@@ -2055,6 +2060,11 @@ pub struct EffectSequence(u64);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct EffectSemanticRecordOrdinal(u64);
 
+/// Stable tie-break position within a mapped semantic correspondence.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct EffectPlacementIntraOrder(u64);
+
 /// Stable semantic producer domain for revision reconciliation.
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -2092,6 +2102,13 @@ impl EffectSequence {
 }
 
 impl EffectSemanticRecordOrdinal {
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+impl EffectPlacementIntraOrder {
     #[must_use]
     pub const fn new(value: u64) -> Self {
         Self(value)
@@ -2232,6 +2249,9 @@ impl Clone for World {
             page_effect_prefix_semantic_record_ordinals: self
                 .page_effect_prefix_semantic_record_ordinals
                 .clone(),
+            page_effect_prefix_placement_intra_orders: self
+                .page_effect_prefix_placement_intra_orders
+                .clone(),
             effect_base: self.effect_base,
             effects: self.effects.clone(),
             effect_episode_owners: self.effect_episode_owners.clone(),
@@ -2239,6 +2259,7 @@ impl Clone for World {
             effect_publications: self.effect_publications.clone(),
             effect_domains: self.effect_domains.clone(),
             effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
+            effect_placement_intra_orders: self.effect_placement_intra_orders.clone(),
             effect_publication_dispositions: self.effect_publication_dispositions.clone(),
             next_effect_sequence: self.next_effect_sequence,
             next_publication_sequence: self.next_publication_sequence,
@@ -2248,6 +2269,7 @@ impl Clone for World {
             effect_output_attempt_owners: self.effect_output_attempt_owners.clone(),
             next_effect_output_owner_ordinals: self.next_effect_output_owner_ordinals.clone(),
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
+            next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             active_effect_episode: self.active_effect_episode,
             active_effect_publication: self.active_effect_publication,
             active_effect_output_attempt: self.active_effect_output_attempt,
@@ -2486,6 +2508,7 @@ impl World {
             page_effect_prefix_publications: Arc::new(Vec::new()),
             page_effect_prefix_domains: Arc::new(Vec::new()),
             page_effect_prefix_semantic_record_ordinals: Arc::new(Vec::new()),
+            page_effect_prefix_placement_intra_orders: Arc::new(Vec::new()),
             effect_base: EffectPos::default(),
             effects: Arc::new(Vec::new()),
             effect_episode_owners: Arc::new(Vec::new()),
@@ -2493,6 +2516,7 @@ impl World {
             effect_publications: Arc::new(Vec::new()),
             effect_domains: Arc::new(Vec::new()),
             effect_semantic_record_ordinals: Arc::new(Vec::new()),
+            effect_placement_intra_orders: Arc::new(Vec::new()),
             effect_publication_dispositions: Arc::new(Vec::new()),
             next_effect_sequence: 0,
             next_publication_sequence: 0,
@@ -2502,6 +2526,7 @@ impl World {
             effect_output_attempt_owners: BTreeMap::new(),
             next_effect_output_owner_ordinals: BTreeMap::new(),
             next_effect_semantic_record_ordinals: BTreeMap::new(),
+            next_effect_placement_intra_order: 0,
             active_effect_episode: None,
             active_effect_publication: None,
             active_effect_output_attempt: None,
@@ -3925,6 +3950,7 @@ impl World {
             Arc::make_mut(&mut self.page_effect_prefix_publications),
             Arc::make_mut(&mut self.page_effect_prefix_domains),
             Arc::make_mut(&mut self.page_effect_prefix_semantic_record_ordinals),
+            Arc::make_mut(&mut self.page_effect_prefix_placement_intra_orders),
             episode,
         ) | remove_owned_effects(
             Arc::make_mut(&mut self.effects),
@@ -3933,6 +3959,7 @@ impl World {
             Arc::make_mut(&mut self.effect_publications),
             Arc::make_mut(&mut self.effect_domains),
             Arc::make_mut(&mut self.effect_semantic_record_ordinals),
+            Arc::make_mut(&mut self.effect_placement_intra_orders),
             episode,
         )
     }
@@ -4070,6 +4097,7 @@ impl World {
                             Arc::make_mut(&mut self.effect_publications).remove(index);
                             Arc::make_mut(&mut self.effect_domains).remove(index);
                             Arc::make_mut(&mut self.effect_semantic_record_ordinals).remove(index);
+                            Arc::make_mut(&mut self.effect_placement_intra_orders).remove(index);
                         } else {
                             index += 1;
                         }
@@ -4086,6 +4114,7 @@ impl World {
                         Arc::make_mut(&mut self.page_effect_prefix_publications),
                         Arc::make_mut(&mut self.page_effect_prefix_domains),
                         Arc::make_mut(&mut self.page_effect_prefix_semantic_record_ordinals),
+                        Arc::make_mut(&mut self.page_effect_prefix_placement_intra_orders),
                         episode,
                     );
                 }
@@ -4158,6 +4187,7 @@ impl World {
                     Arc::make_mut(&mut self.effect_publications).drain(0..applied);
                     Arc::make_mut(&mut self.effect_domains).drain(0..applied);
                     Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
+                    Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
                     self.effect_root_ancestry = Arc::new(Vec::new());
                     self.effect_base.0 += applied as u64;
                 }
@@ -4182,6 +4212,7 @@ impl World {
         Arc::make_mut(&mut self.effect_publications).drain(0..applied);
         Arc::make_mut(&mut self.effect_domains).drain(0..applied);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).drain(0..applied);
+        Arc::make_mut(&mut self.effect_placement_intra_orders).drain(0..applied);
         self.effect_root_ancestry = Arc::new(Vec::new());
         self.effect_base = effect_pos;
         Ok(())
@@ -4527,6 +4558,23 @@ impl World {
     }
 
     #[doc(hidden)]
+    #[must_use]
+    pub fn effect_placement_intra_orders(&self) -> Arc<Vec<EffectPlacementIntraOrder>> {
+        Arc::clone(&self.effect_placement_intra_orders)
+    }
+
+    #[doc(hidden)]
+    pub fn install_effect_placement_intra_orders(&mut self, orders: &[EffectPlacementIntraOrder]) {
+        let mut installed = orders[..orders.len().min(self.effects.len())].to_vec();
+        while installed.len() < self.effects.len() {
+            installed.push(self.allocate_effect_placement_intra_order());
+        }
+        self.next_effect_placement_intra_order =
+            installed.iter().map(|order| order.0).max().unwrap_or(0);
+        self.effect_placement_intra_orders = Arc::new(installed);
+    }
+
+    #[doc(hidden)]
     pub fn install_effect_semantic_record_ordinals(
         &mut self,
         ordinals: &[EffectSemanticRecordOrdinal],
@@ -4794,6 +4842,11 @@ impl World {
                 .map(|domain| self.allocate_effect_semantic_record_ordinal(domain))
                 .collect(),
         );
+        self.effect_placement_intra_orders = Arc::new(
+            (0..self.effects.len())
+                .map(|_| self.allocate_effect_placement_intra_order())
+                .collect(),
+        );
         self.effect_commit_poison = None;
         for artifact in &artifacts {
             let stored = self.store_artifact(artifact.bytes())?;
@@ -5036,6 +5089,7 @@ impl World {
             effect_publications: Arc::clone(&self.effect_publications),
             effect_domains: Arc::clone(&self.effect_domains),
             effect_semantic_record_ordinals: Arc::clone(&self.effect_semantic_record_ordinals),
+            effect_placement_intra_orders: Arc::clone(&self.effect_placement_intra_orders),
             effect_publication_dispositions: Arc::clone(&self.effect_publication_dispositions),
             next_effect_sequence: self.next_effect_sequence,
             next_publication_sequence: self.next_publication_sequence,
@@ -5045,6 +5099,7 @@ impl World {
             effect_output_attempt_owners: self.effect_output_attempt_owners.clone(),
             next_effect_output_owner_ordinals: self.next_effect_output_owner_ordinals.clone(),
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
+            next_effect_placement_intra_order: self.next_effect_placement_intra_order,
             next_output_episode_identity: self.next_output_episode_identity,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_root_ancestry: Arc::clone(&self.effect_root_ancestry),
@@ -5118,6 +5173,7 @@ impl World {
         self.effect_domains = Arc::clone(&snapshot.effect_domains);
         self.effect_semantic_record_ordinals =
             Arc::clone(&snapshot.effect_semantic_record_ordinals);
+        self.effect_placement_intra_orders = Arc::clone(&snapshot.effect_placement_intra_orders);
         self.effect_publication_dispositions =
             Arc::clone(&snapshot.effect_publication_dispositions);
         self.next_effect_sequence = snapshot.next_effect_sequence;
@@ -5129,6 +5185,7 @@ impl World {
         self.next_effect_output_owner_ordinals = snapshot.next_effect_output_owner_ordinals.clone();
         self.next_effect_semantic_record_ordinals =
             snapshot.next_effect_semantic_record_ordinals.clone();
+        self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         self.next_output_episode_identity = snapshot.next_output_episode_identity;
         self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
@@ -5182,6 +5239,10 @@ impl World {
             .page_effect_prefix_semantic_record_ordinals
             .as_ref()
             .clone();
+        let mut page_effect_prefix_placement_intra_orders = self
+            .page_effect_prefix_placement_intra_orders
+            .as_ref()
+            .clone();
         let snapshot_base = usize::try_from(snapshot.effect_base.raw())
             .expect("effect position must fit in memory address space");
         assert!(
@@ -5194,6 +5255,7 @@ impl World {
         page_effect_prefix_publications.truncate(snapshot_base);
         page_effect_prefix_domains.truncate(snapshot_base);
         page_effect_prefix_semantic_record_ordinals.truncate(snapshot_base);
+        page_effect_prefix_placement_intra_orders.truncate(snapshot_base);
         page_effect_prefix.extend(snapshot.effects.iter().cloned());
         page_effect_prefix_owners.extend(snapshot.effect_episode_owners.iter().copied());
         page_effect_prefix_sequences.extend(snapshot.effect_sequences.iter().copied());
@@ -5201,6 +5263,8 @@ impl World {
         page_effect_prefix_domains.extend(snapshot.effect_domains.iter().copied());
         page_effect_prefix_semantic_record_ordinals
             .extend(snapshot.effect_semantic_record_ordinals.iter().copied());
+        page_effect_prefix_placement_intra_orders
+            .extend(snapshot.effect_placement_intra_orders.iter().copied());
         assert_eq!(
             u64::try_from(page_effect_prefix.len()).unwrap_or(u64::MAX),
             snapshot.effect_pos.raw(),
@@ -5213,6 +5277,8 @@ impl World {
         self.page_effect_prefix_domains = Arc::new(page_effect_prefix_domains);
         self.page_effect_prefix_semantic_record_ordinals =
             Arc::new(page_effect_prefix_semantic_record_ordinals);
+        self.page_effect_prefix_placement_intra_orders =
+            Arc::new(page_effect_prefix_placement_intra_orders);
         self.effect_base = snapshot.effect_pos;
         self.effects = Arc::new(Vec::new());
         self.effect_episode_owners = Arc::new(Vec::new());
@@ -5220,6 +5286,7 @@ impl World {
         self.effect_publications = Arc::new(Vec::new());
         self.effect_domains = Arc::new(Vec::new());
         self.effect_semantic_record_ordinals = Arc::new(Vec::new());
+        self.effect_placement_intra_orders = Arc::new(Vec::new());
         self.active_effect_episode = None;
         self.active_effect_publication = None;
         self.active_effect_output_attempt = None;
@@ -5251,6 +5318,7 @@ impl World {
         self.next_effect_domain = snapshot.next_effect_domain;
         self.next_effect_semantic_record_ordinals =
             snapshot.next_effect_semantic_record_ordinals.clone();
+        self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
         let mut ancestry = snapshot.effect_root_ancestry.as_ref().clone();
         let snapshot_root = EffectRootIdentity(Arc::clone(&snapshot.effects));
         if !ancestry.iter().any(|root| root == &snapshot_root) {
@@ -5322,6 +5390,8 @@ impl World {
         Arc::make_mut(&mut self.effect_domains).push(domain);
         let ordinal = self.allocate_effect_semantic_record_ordinal(domain);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).push(ordinal);
+        let placement = self.allocate_effect_placement_intra_order();
+        Arc::make_mut(&mut self.effect_placement_intra_orders).push(placement);
     }
 
     fn effect_episode_owners_mut(&mut self) -> &mut Vec<Option<crate::PageOutputEpisodeId>> {
@@ -5404,6 +5474,7 @@ impl World {
         Arc::make_mut(&mut self.effect_publications).truncate(len);
         Arc::make_mut(&mut self.effect_domains).truncate(len);
         Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(len);
+        Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(len);
     }
 
     fn allocate_effect_sequence(&mut self) -> EffectSequence {
@@ -5446,6 +5517,14 @@ impl World {
             .checked_add(1)
             .expect("effect semantic record ordinal exhausted");
         EffectSemanticRecordOrdinal(*next)
+    }
+
+    fn allocate_effect_placement_intra_order(&mut self) -> EffectPlacementIntraOrder {
+        self.next_effect_placement_intra_order = self
+            .next_effect_placement_intra_order
+            .checked_add(1)
+            .expect("effect placement intra-order exhausted");
+        EffectPlacementIntraOrder(self.next_effect_placement_intra_order)
     }
 
     fn effects_mut(&mut self) -> &mut Vec<EffectRecord> {
@@ -5635,6 +5714,7 @@ impl World {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn remove_owned_effects(
     effects: &mut Vec<EffectRecord>,
     owners: &mut Vec<Option<crate::PageOutputEpisodeId>>,
@@ -5642,6 +5722,7 @@ fn remove_owned_effects(
     publications: &mut Vec<Option<EffectPublicationId>>,
     domains: &mut Vec<EffectDomain>,
     semantic_record_ordinals: &mut Vec<EffectSemanticRecordOrdinal>,
+    placement_intra_orders: &mut Vec<EffectPlacementIntraOrder>,
     episode: crate::PageOutputEpisodeId,
 ) -> bool {
     debug_assert_eq!(effects.len(), owners.len());
@@ -5649,6 +5730,7 @@ fn remove_owned_effects(
     debug_assert_eq!(effects.len(), publications.len());
     debug_assert_eq!(effects.len(), domains.len());
     debug_assert_eq!(effects.len(), semantic_record_ordinals.len());
+    debug_assert_eq!(effects.len(), placement_intra_orders.len());
     let mut removed = false;
     let mut index = 0;
     while index < effects.len() {
@@ -5659,6 +5741,7 @@ fn remove_owned_effects(
             publications.remove(index);
             domains.remove(index);
             semantic_record_ordinals.remove(index);
+            placement_intra_orders.remove(index);
             removed = true;
         } else {
             index += 1;

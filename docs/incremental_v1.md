@@ -302,7 +302,12 @@ ownership for final transaction-winner arbitration; it is deliberately not
 part of the mapped boundary record key. Thus a replacement attempt can displace
 the exact retained boundary with the same mapped endpoints and local ordinal,
 while distinct ordinals and unrelated endpoint gaps remain separate records.
-Neither effect values nor ledger positions participate in this identity.
+Neither effect values nor ledger positions participate in this identity. A
+separate snapshot-owned placement intra-order survives rollback and generation
+forks. Reconciliation maps the semantic correspondence first, inherits its
+retained sequence and intra-order, and only then merges boundary, owned, and
+unowned winners. Failed allocations remain gaps; vector position, effect kind,
+text, counts, and accepted/live offsets never reconstruct placement.
 
 Batch mode keeps the existing eager rule from `core_state.md` §8: shipout
 materializes the committed effect prefix, records the content-addressed

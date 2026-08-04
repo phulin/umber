@@ -1722,6 +1722,47 @@ fn effect_semantic_record_ordinals_survive_clone_rollback_and_install() {
 }
 
 #[test]
+fn effect_placement_intra_orders_survive_clone_rollback_install_and_failed_gaps() {
+    let mut world = World::memory();
+    world.record_special("test", b"one".to_vec());
+    let snapshot = world.snapshot();
+    let mut fork = world.clone();
+
+    world.record_special("test", b"discarded".to_vec());
+    world.rollback(&snapshot);
+    world.record_special("test", b"replacement".to_vec());
+    fork.record_special("test", b"fork".to_vec());
+
+    let expected = [
+        EffectPlacementIntraOrder::new(1),
+        EffectPlacementIntraOrder::new(2),
+    ];
+    assert_eq!(world.effect_placement_intra_orders().as_slice(), expected);
+    assert_eq!(fork.effect_placement_intra_orders().as_slice(), expected);
+
+    let episode = world.allocate_output_episode_id();
+    world.set_active_output_episode(Some(episode));
+    world.record_special("test", b"failed".to_vec());
+    world.set_active_output_episode(None);
+    assert!(world.remove_output_episode_effects(episode));
+    world.record_special("test", b"after gap".to_vec());
+    assert_eq!(
+        world.effect_placement_intra_orders().last(),
+        Some(&EffectPlacementIntraOrder::new(4)),
+        "removing a failed record must not reuse its placement order"
+    );
+
+    let mut installed = World::memory();
+    installed.record_special("test", b"one".to_vec());
+    installed.record_special("test", b"two".to_vec());
+    installed.install_effect_placement_intra_orders(&expected);
+    assert_eq!(
+        installed.effect_placement_intra_orders().as_slice(),
+        expected
+    );
+}
+
+#[test]
 fn installed_publication_boundary_claim_restarts_its_local_ordinals() {
     let mut world = World::memory();
     let left = EffectPublicationId::new(7);

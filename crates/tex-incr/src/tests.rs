@@ -142,6 +142,9 @@ fn receipt_lineage_boundaries_compete_in_the_unified_semantic_record_arbitration
     let accepted_sequences = (1..=13)
         .map(tex_state::EffectSequence::new)
         .collect::<Vec<_>>();
+    let accepted_orders = (1..=13)
+        .map(tex_state::EffectPlacementIntraOrder::new)
+        .collect::<Vec<_>>();
 
     let mut live_effects = vec![effect("live-owner".to_owned())];
     live_effects.extend((19..=24).map(|attempt| effect(format!("live-{attempt}"))));
@@ -151,6 +154,9 @@ fn receipt_lineage_boundaries_compete_in_the_unified_semantic_record_arbitration
     let live_sequences = (20..=26)
         .map(tex_state::EffectSequence::new)
         .collect::<Vec<_>>();
+    let live_orders = (20..=26)
+        .map(tex_state::EffectPlacementIntraOrder::new)
+        .collect::<Vec<_>>();
 
     let mut dispositions = (7..=18)
         .map(|attempt| disposition(attempt, 2, attempt - 6, false))
@@ -158,17 +164,19 @@ fn receipt_lineage_boundaries_compete_in_the_unified_semantic_record_arbitration
     dispositions
         .extend((19..=24).map(|attempt| disposition(attempt, 4, attempt - 18, attempt == 19)));
 
-    let (effects, _, _, domains, _) = assemble_effect_ledger(
+    let (effects, _, _, domains, _, _) = assemble_effect_ledger(
         &accepted_effects,
         &accepted_sequences,
         &vec![None; accepted_effects.len()],
         &accepted_domains,
         &accepted_ordinals,
+        &accepted_orders,
         &live_effects,
         &live_sequences,
         &vec![None; live_effects.len()],
         &live_domains,
         &live_ordinals,
+        &live_orders,
         0,
         &[],
         &dispositions,

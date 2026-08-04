@@ -339,6 +339,7 @@ pub struct PendingRevision {
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
     effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
+    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -420,6 +421,7 @@ struct AdvanceSetup {
     old_effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     old_effect_domains: Vec<tex_state::EffectDomain>,
     old_effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
+    old_effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
     old_artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     old_artifacts: Vec<CommittedArtifact>,
     old_pages: Vec<DviPagePlan>,
@@ -1037,6 +1039,7 @@ pub struct Session {
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
     effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
+    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -1194,6 +1197,7 @@ impl Session {
             effect_publications: Vec::new(),
             effect_domains: Vec::new(),
             effect_semantic_record_ordinals: Vec::new(),
+            effect_placement_intra_orders: Vec::new(),
             artifact_publications: Vec::new(),
             artifacts: Vec::new(),
             dvi_pages: Vec::new(),
@@ -1501,6 +1505,7 @@ impl Session {
             old_effect_publications: self.effect_publications.clone(),
             old_effect_domains: self.effect_domains.clone(),
             old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
+            old_effect_placement_intra_orders: self.effect_placement_intra_orders.clone(),
             old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
@@ -1593,6 +1598,7 @@ impl Session {
             old_effect_publications: self.effect_publications.clone(),
             old_effect_domains: self.effect_domains.clone(),
             old_effect_semantic_record_ordinals: self.effect_semantic_record_ordinals.clone(),
+            old_effect_placement_intra_orders: self.effect_placement_intra_orders.clone(),
             old_artifact_publications: self.artifact_publications.clone(),
             old_artifacts: self.artifacts.clone(),
             old_pages: self.dvi_pages.clone(),
@@ -1708,6 +1714,24 @@ impl Session {
             .max_by_key(|domains| domains.len())
         {
             universe.world_mut().install_effect_domains(domains);
+        }
+        if let Some(ordinals) = materialized_replay_suffix
+            .iter()
+            .map(tex_exec::CanonicalParagraphRegion::effect_semantic_record_ordinals)
+            .max_by_key(|ordinals| ordinals.len())
+        {
+            universe
+                .world_mut()
+                .install_effect_semantic_record_ordinals(ordinals);
+        }
+        if let Some(orders) = materialized_replay_suffix
+            .iter()
+            .map(tex_exec::CanonicalParagraphRegion::effect_placement_intra_orders)
+            .max_by_key(|orders| orders.len())
+        {
+            universe
+                .world_mut()
+                .install_effect_placement_intra_orders(orders);
         }
         control.install_paragraph_replay_regions(materialized_replay_suffix.iter().cloned());
         for (path, bytes) in &self.registered_inputs {
@@ -1880,6 +1904,12 @@ impl Session {
             .effect_semantic_record_ordinals()
             .as_ref()
             .clone();
+        let effect_placement_intra_orders = candidate
+            .universe
+            .world()
+            .effect_placement_intra_orders()
+            .as_ref()
+            .clone();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
         let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
         let expansion_stats = ExpansionStats::default();
@@ -1930,6 +1960,7 @@ impl Session {
             effect_publications,
             effect_domains,
             effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -2024,6 +2055,8 @@ impl Session {
         let live_effect_domains = candidate.universe.world().effect_domains();
         let live_effect_semantic_record_ordinals =
             candidate.universe.world().effect_semantic_record_ordinals();
+        let live_effect_placement_intra_orders =
+            candidate.universe.world().effect_placement_intra_orders();
         let live_effect_publication_dispositions =
             candidate.universe.world().effect_publication_dispositions();
         let artifacts = candidate.universe.world().committed_artifacts().to_vec();
@@ -2186,17 +2219,20 @@ impl Session {
                     candidate_publications,
                     _candidate_domains,
                     _candidate_semantic_record_ordinals,
+                    _candidate_placement_intra_orders,
                 ) = assemble_effect_ledger(
                     &setup.old_effects,
                     &setup.old_effect_sequences,
                     &setup.old_effect_publications,
                     &setup.old_effect_domains,
                     &setup.old_effect_semantic_record_ordinals,
+                    &setup.old_effect_placement_intra_orders,
                     &effects,
                     &live_effect_sequences,
                     &live_effect_publications,
                     &live_effect_domains,
                     &live_effect_semantic_record_ordinals,
+                    &live_effect_placement_intra_orders,
                     anchor.effect_prefix,
                     &superseded_output_episodes,
                     &live_effect_publication_dispositions,
@@ -2259,17 +2295,20 @@ impl Session {
                     candidate_publications,
                     candidate_domains,
                     candidate_semantic_record_ordinals,
+                    candidate_placement_intra_orders,
                 ) = assemble_effect_ledger(
                     &setup.old_effects,
                     &setup.old_effect_sequences,
                     &setup.old_effect_publications,
                     &setup.old_effect_domains,
                     &setup.old_effect_semantic_record_ordinals,
+                    &setup.old_effect_placement_intra_orders,
                     &effects,
                     &live_effect_sequences,
                     &live_effect_publications,
                     &live_effect_domains,
                     &live_effect_semantic_record_ordinals,
+                    &live_effect_placement_intra_orders,
                     anchor.effect_prefix,
                     &superseded_output_episodes,
                     &live_effect_publication_dispositions,
@@ -2279,6 +2318,7 @@ impl Session {
                     candidate_publications.clone(),
                     candidate_domains,
                     candidate_semantic_record_ordinals,
+                    candidate_placement_intra_orders,
                 ));
                 let _ = candidate_effects;
                 live_artifact_publications = joined_artifact_publications;
@@ -2333,6 +2373,7 @@ impl Session {
             effect_publications,
             effect_domains,
             effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
         ) = assembled_effect_sidecars.unwrap_or_else(|| {
             (
                 (1..=effects.len())
@@ -2343,6 +2384,9 @@ impl Session {
                     .map(|domain| tex_state::EffectDomain::World(domain as u64))
                     .collect(),
                 vec![tex_state::EffectSemanticRecordOrdinal::new(1); effects.len()],
+                (1..=effects.len())
+                    .map(|order| tex_state::EffectPlacementIntraOrder::new(order as u64))
+                    .collect(),
             )
         });
         Ok(PendingRevision {
@@ -2359,6 +2403,7 @@ impl Session {
             effect_publications,
             effect_domains,
             effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
             artifact_publications: live_artifact_publications,
             artifacts,
             dvi_pages: pages,
@@ -3062,6 +3107,7 @@ impl Session {
         world.install_effect_publications(&pending.effect_publications);
         world.install_effect_domains(&pending.effect_domains);
         world.install_effect_semantic_record_ordinals(&pending.effect_semantic_record_ordinals);
+        world.install_effect_placement_intra_orders(&pending.effect_placement_intra_orders);
         Ok(world)
     }
 
@@ -3083,6 +3129,7 @@ impl Session {
             effect_publications,
             effect_domains,
             effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -3181,6 +3228,7 @@ impl Session {
         self.effect_publications = effect_publications;
         self.effect_domains = effect_domains;
         self.effect_semantic_record_ordinals = effect_semantic_record_ordinals;
+        self.effect_placement_intra_orders = effect_placement_intra_orders;
         self.artifact_publications = artifact_publications;
         self.artifacts = artifacts;
         self.dvi_pages = dvi_pages;
@@ -3264,6 +3312,7 @@ impl Session {
         self.effect_publications = run.effect_publications;
         self.effect_domains = run.effect_domains;
         self.effect_semantic_record_ordinals = run.effect_semantic_record_ordinals;
+        self.effect_placement_intra_orders = run.effect_placement_intra_orders;
         self.artifact_publications = run.artifact_publications;
         self.artifacts = run.artifacts;
         self.dvi_pages = run.dvi_pages;
@@ -3369,6 +3418,7 @@ struct RevisionRun {
     effect_publications: Vec<Option<tex_state::EffectPublicationId>>,
     effect_domains: Vec<tex_state::EffectDomain>,
     effect_semantic_record_ordinals: Vec<tex_state::EffectSemanticRecordOrdinal>,
+    effect_placement_intra_orders: Vec<tex_state::EffectPlacementIntraOrder>,
     artifact_publications: Vec<tex_state::ArtifactPublicationRecord>,
     artifacts: Vec<CommittedArtifact>,
     dvi_pages: Vec<DviPagePlan>,
@@ -3428,6 +3478,12 @@ fn finish_cold_candidate(
         .effect_semantic_record_ordinals()
         .as_ref()
         .clone();
+    let effect_placement_intra_orders = candidate
+        .universe
+        .world()
+        .effect_placement_intra_orders()
+        .as_ref()
+        .clone();
     let artifacts = candidate.universe.world().committed_artifacts().to_vec();
     let artifact_publications = candidate.universe.world().artifact_publications().to_vec();
     let output_bytes = candidate.universe.retained_output_bytes();
@@ -3457,6 +3513,7 @@ fn finish_cold_candidate(
             effect_publications,
             effect_domains,
             effect_semantic_record_ordinals,
+            effect_placement_intra_orders,
             artifact_publications,
             artifacts,
             dvi_pages,
@@ -4334,6 +4391,7 @@ struct EffectAssemblyRecord {
     publication: Option<tex_state::EffectPublicationId>,
     domain: tex_state::EffectDomain,
     semantic_record_ordinal: tex_state::EffectSemanticRecordOrdinal,
+    placement_intra_order: tex_state::EffectPlacementIntraOrder,
     output_attempt: Option<tex_state::EffectOutputAttemptId>,
     effects: Vec<EffectRecord>,
     origin: EffectRecordOrigin,
@@ -4372,6 +4430,7 @@ type AssembledEffectLedger = (
     Vec<Option<tex_state::EffectPublicationId>>,
     Vec<tex_state::EffectDomain>,
     Vec<tex_state::EffectSemanticRecordOrdinal>,
+    Vec<tex_state::EffectPlacementIntraOrder>,
 );
 
 fn map_publication_boundary_domain(
@@ -4439,6 +4498,36 @@ fn effect_semantic_record_key(
     (domain, ordinal)
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct EffectAttemptLineageSlot(Option<tex_state::EffectOutputAttemptId>);
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct EffectSemanticRecordCollisionIdentity {
+    domain: tex_state::EffectDomain,
+    ordinal: tex_state::EffectSemanticRecordOrdinal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct EffectSemanticRecordArbitrationKey {
+    lineage_slot: EffectAttemptLineageSlot,
+    collision: EffectSemanticRecordCollisionIdentity,
+}
+
+fn effect_semantic_record_arbitration_key(
+    domain: tex_state::EffectDomain,
+    ordinal: tex_state::EffectSemanticRecordOrdinal,
+) -> EffectSemanticRecordArbitrationKey {
+    let lineage_slot = match domain {
+        tex_state::EffectDomain::PublicationBoundary { output_attempt, .. } => Some(output_attempt),
+        _ => None,
+    };
+    let (domain, ordinal) = effect_semantic_record_key(domain, ordinal);
+    EffectSemanticRecordArbitrationKey {
+        lineage_slot: EffectAttemptLineageSlot(lineage_slot),
+        collision: EffectSemanticRecordCollisionIdentity { domain, ordinal },
+    }
+}
+
 fn output_attempt_ancestry_mapping(
     accepted_attempts: &std::collections::BTreeSet<tex_state::EffectOutputAttemptId>,
     dispositions: &[tex_state::EffectPublicationDisposition],
@@ -4449,14 +4538,6 @@ fn output_attempt_ancestry_mapping(
     map_owner_transactions: bool,
 ) -> std::collections::BTreeMap<tex_state::EffectOutputAttemptId, tex_state::EffectOutputAttemptId>
 {
-    let has_recursive_replacement = dispositions
-        .iter()
-        .any(|disposition| disposition.rejected().is_some());
-    let recursive_replacement_roots = dispositions
-        .iter()
-        .filter(|disposition| disposition.rejected().is_some())
-        .filter_map(|disposition| disposition.recursive_receipt())
-        .collect::<std::collections::BTreeSet<_>>();
     let mut accepted_episodes = std::collections::BTreeMap::new();
     let mut accepted_recursive_roots = std::collections::BTreeMap::new();
     let mut accepted_owner_attempts = std::collections::BTreeMap::new();
@@ -4474,7 +4555,7 @@ fn output_attempt_ancestry_mapping(
                 accepted_recursive_roots.insert(disposition.recursive_receipt(), attempt);
             }
         }
-        if has_recursive_replacement && map_owner_transactions {
+        if map_owner_transactions {
             accepted_owner_attempts.insert(
                 (
                     disposition
@@ -4507,14 +4588,9 @@ fn output_attempt_ancestry_mapping(
             let accepted = map_owner_transactions
                 .then_some(())
                 .and_then(|_| {
-                    disposition
-                        .recursive_receipt()
-                        .filter(|receipt| recursive_replacement_roots.contains(receipt))
-                        .and_then(|_| {
-                            accepted_owner_attempts
-                                .get(&(mapped_owner, disposition.output_owner_ordinal()))
-                                .copied()
-                        })
+                    accepted_owner_attempts
+                        .get(&(mapped_owner, disposition.output_owner_ordinal()))
+                        .copied()
                 })
                 .or_else(|| {
                     disposition
@@ -4538,11 +4614,13 @@ fn assemble_effect_ledger(
     accepted_publications: &[Option<tex_state::EffectPublicationId>],
     accepted_domains: &[tex_state::EffectDomain],
     accepted_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
+    accepted_placement_intra_orders: &[tex_state::EffectPlacementIntraOrder],
     live: &[EffectRecord],
     live_sequences: &[tex_state::EffectSequence],
     live_publications: &[Option<tex_state::EffectPublicationId>],
     live_domains: &[tex_state::EffectDomain],
     live_semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
+    live_placement_intra_orders: &[tex_state::EffectPlacementIntraOrder],
     accepted_prefix: usize,
     superseded: &[tex_exec::SupersededPageOutputEpisode],
     effect_dispositions: &[tex_state::EffectPublicationDisposition],
@@ -4657,10 +4735,7 @@ fn assemble_effect_ledger(
             .into_iter()
             .zip(ordered_world_domains(accepted_domains)),
     );
-    let owner_domain_replacements = ordered_paragraph_domains(live_domains)
-        .into_iter()
-        .zip(ordered_paragraph_domains(accepted_domains))
-        .collect::<std::collections::BTreeMap<_, _>>();
+    let owner_domain_replacements = domain_replacements.clone();
     let accepted_publications_by_semantic_record = accepted_domains
         .iter()
         .copied()
@@ -4742,12 +4817,12 @@ fn assemble_effect_ledger(
         .copied()
         .zip(accepted_semantic_record_ordinals.iter().copied())
         .zip(accepted_sequences.iter().copied())
-        .map(|((domain, ordinal), sequence)| {
-            let domain = match domain {
-                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
-                domain => domain,
-            };
-            ((domain, ordinal), sequence)
+        .zip(accepted_placement_intra_orders.iter().copied())
+        .map(|(((domain, ordinal), sequence), placement)| {
+            (
+                effect_semantic_record_arbitration_key(domain, ordinal),
+                (sequence, placement),
+            )
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     let live_domains_set = live_domains
@@ -4765,6 +4840,7 @@ fn assemble_effect_ledger(
         accepted_publications,
         accepted_domains,
         accepted_semantic_record_ordinals,
+        accepted_placement_intra_orders,
         |index, _sequence, publication, domain, _ordinal| {
             index < accepted_prefix
                 || publication.is_some_and(|id| retained_winners.contains(&id))
@@ -4791,17 +4867,16 @@ fn assemble_effect_ledger(
         live_publications,
         live_domains,
         live_semantic_record_ordinals,
+        live_placement_intra_orders,
         |_, sequence, publication, domain, ordinal| {
-            let semantic_domain = match domain {
-                tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
-                domain => domain,
-            };
             publication.is_none_or(|id| {
                 !rejected_live.contains(&id)
                     && !rejected_publications.contains(&id)
                     && ((!effect_dispositions.is_empty()
                         && selected_publications.contains(&id)
-                        && accepted_semantic_sequences.contains_key(&(semantic_domain, ordinal)))
+                        && accepted_semantic_sequences.contains_key(
+                            &effect_semantic_record_arbitration_key(domain, ordinal),
+                        ))
                         || !retained_prefix_publication_sequences.contains(&sequence)
                             && (superseded.is_empty() || selected_live_publications.contains(&id)))
             })
@@ -4824,7 +4899,8 @@ fn assemble_effect_ledger(
             terminal_candidates.push(record);
             continue;
         }
-        let key = effect_semantic_record_key(record.domain, record.semantic_record_ordinal);
+        let key =
+            effect_semantic_record_arbitration_key(record.domain, record.semantic_record_ordinal);
         candidates_by_semantic_record
             .entry(key)
             .and_modify(|current: &mut EffectAssemblyRecord| {
@@ -4892,20 +4968,13 @@ fn assemble_effect_ledger(
     let mut records = Vec::new();
     records.extend(terminal.into_values());
     records.extend(selected_records);
-    records.sort_by_key(|record| {
-        (
-            record.sequence,
-            record.publication.is_some(),
-            record.publication,
-            record.domain,
-            record.semantic_record_ordinal,
-        )
-    });
+    records.sort_by_key(|record| (record.sequence, record.placement_intra_order));
     let mut effects = Vec::new();
     let mut sequences = Vec::new();
     let mut publications = Vec::new();
     let mut domains = Vec::new();
     let mut semantic_record_ordinals = Vec::new();
+    let mut placement_intra_orders = Vec::new();
     for record in records {
         for effect in record.effects {
             effects.push(effect);
@@ -4913,6 +4982,7 @@ fn assemble_effect_ledger(
             publications.push(record.publication);
             domains.push(record.domain);
             semantic_record_ordinals.push(record.semantic_record_ordinal);
+            placement_intra_orders.push(record.placement_intra_order);
         }
     }
     (
@@ -4921,6 +4991,7 @@ fn assemble_effect_ledger(
         publications,
         domains,
         semantic_record_ordinals,
+        placement_intra_orders,
     )
 }
 
@@ -5224,6 +5295,7 @@ fn collect_effect_assembly_records(
     publications: &[Option<tex_state::EffectPublicationId>],
     domains: &[tex_state::EffectDomain],
     semantic_record_ordinals: &[tex_state::EffectSemanticRecordOrdinal],
+    placement_intra_orders: &[tex_state::EffectPlacementIntraOrder],
     keep: impl Fn(
         usize,
         tex_state::EffectSequence,
@@ -5240,11 +5312,11 @@ fn collect_effect_assembly_records(
         tex_state::EffectDomain,
     >,
     inherited_semantic_sequences: &std::collections::BTreeMap<
+        EffectSemanticRecordArbitrationKey,
         (
-            tex_state::EffectDomain,
-            tex_state::EffectSemanticRecordOrdinal,
+            tex_state::EffectSequence,
+            tex_state::EffectPlacementIntraOrder,
         ),
-        tex_state::EffectSequence,
     >,
     origin: EffectRecordOrigin,
 ) {
@@ -5271,25 +5343,25 @@ fn collect_effect_assembly_records(
             .get(index)
             .copied()
             .unwrap_or_else(|| tex_state::EffectSemanticRecordOrdinal::new(u64::MAX));
-        let semantic_domain = match domain {
-            tex_state::EffectDomain::World(_) => tex_state::EffectDomain::World(0),
-            domain => domain,
-        };
-        let sequence = inherited_semantic_sequences
-            .get(&(semantic_domain, semantic_record_ordinal))
+        let raw_placement_intra_order = placement_intra_orders
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| tex_state::EffectPlacementIntraOrder::new(u64::MAX));
+        let semantic_key = effect_semantic_record_arbitration_key(domain, semantic_record_ordinal);
+        let first_semantic_key = effect_semantic_record_arbitration_key(
+            domain,
+            tex_state::EffectSemanticRecordOrdinal::new(0),
+        );
+        let (sequence, placement_intra_order) = inherited_semantic_sequences
+            .get(&semantic_key)
             .copied()
             .or_else(|| {
                 inherited_semantic_sequences
-                    .range(
-                        (
-                            semantic_domain,
-                            tex_state::EffectSemanticRecordOrdinal::new(0),
-                        )..=(semantic_domain, semantic_record_ordinal),
-                    )
+                    .range(first_semantic_key..=semantic_key)
                     .next_back()
-                    .map(|(_, sequence)| *sequence)
+                    .map(|(_, placement)| *placement)
             })
-            .unwrap_or(raw_sequence);
+            .unwrap_or((raw_sequence, raw_placement_intra_order));
         if keep(
             index,
             sequence,
@@ -5302,6 +5374,7 @@ fn collect_effect_assembly_records(
                 publication,
                 domain,
                 semantic_record_ordinal,
+                placement_intra_order,
                 output_attempt,
                 effects: effects[index..end].to_vec(),
                 origin,
