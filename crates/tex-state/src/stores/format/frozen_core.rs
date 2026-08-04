@@ -604,6 +604,7 @@ fn strong_semantic_atom(kind: ControlSequenceKind, name: &str) -> (u64, ContentH
         | ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
+        ControlSequenceKind::Internal => 2,
     });
     bytes.extend_from_slice(name.as_bytes());
     (

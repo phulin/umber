@@ -430,7 +430,9 @@ impl Stores {
                 .saturating_add(self.nodes.word_count())
                 .saturating_add(TEX82_MEMORY_ARENA_FIXED_EXTENT),
             memory_word_capacity: TEX82_MEMORY_WORD_CAPACITY,
-            control_sequences: self.interner.len(),
+            // TeX82 §1334 reports occupied §259 hash entries, not the whole
+            // control-sequence `eqtb` namespace described by §222.
+            control_sequences: self.interner.multiletter_len(),
             font_info_words,
             fonts: fonts.saturating_sub(1),
             hyphenation_exceptions: self.hyphenation.exception_count(),
@@ -1065,6 +1067,19 @@ impl Stores {
         symbol
     }
 
+    /// Interns an inaccessible engine-owned fixed `eqtb` control sequence.
+    pub fn intern_internal_control_sequence(&mut self, name: &str) -> SymbolId {
+        let before = self.interner.len();
+        let symbol = self
+            .interner
+            .intern_internal(name)
+            .expect("control-sequence symbol capacity exceeded");
+        if self.interner.len() != before {
+            self.string_pool.allocate(1, name.len());
+        }
+        symbol
+    }
+
     pub(crate) fn record_pool_strings(&mut self, strings: usize, characters: usize) {
         self.string_pool.allocate(strings, characters);
     }
@@ -1241,6 +1256,7 @@ impl Stores {
                         | ControlSequenceKind::SingleCharacter
                         | ControlSequenceKind::Named => 0,
                         ControlSequenceKind::ActiveCharacter => 1,
+                        ControlSequenceKind::Internal => 2,
                     });
                     bytes.extend_from_slice(self.interner.resolve_id(symbol).as_bytes());
                     Some((

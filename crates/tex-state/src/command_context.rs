@@ -301,6 +301,14 @@ impl CommandContext<'_> {
         self.universe.intern(name).symbol()
     }
 
+    /// Interns an inaccessible engine-owned fixed `eqtb` control sequence.
+    #[must_use]
+    pub fn intern_internal_control_sequence(&mut self, name: &str) -> Symbol {
+        self.universe
+            .intern_internal_control_sequence(name)
+            .symbol()
+    }
+
     /// Looks up an already-known control-sequence spelling without creating
     /// one.
     ///

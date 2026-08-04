@@ -1064,7 +1064,8 @@ impl CommandProcessor<'_> {
             ) {
                 self.back_input(command)?;
             }
-            let inaccessible = Token::Cs(self.state.intern_control_sequence("inaccessible"));
+            let inaccessible =
+                Token::Cs(self.state.intern_internal_control_sequence("inaccessible"));
             // §1215's `ins_error` is §327: the synthesized token is a live
             // `inserted` level during §82's report, and `goto restart` then
             // consumes that same level as the definition target.

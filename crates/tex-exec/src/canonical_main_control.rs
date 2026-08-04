@@ -18828,9 +18828,9 @@ fn font_identifier_for_definition(stores: &mut Universe, target: Symbol) -> Symb
     let text = match stores.control_sequence_kind(target) {
         ControlSequenceKind::ActiveCharacter => format!("FONT{}", stores.resolve(target)),
         ControlSequenceKind::Null => "FONT".to_owned(),
-        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
-            stores.resolve(target).to_owned()
-        }
+        ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named
+        | ControlSequenceKind::Internal => stores.resolve(target).to_owned(),
     };
     stores.intern(&text)
 }

@@ -289,7 +289,9 @@ pub fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
                 ControlSequenceKind::Null => {
                     "csname".len() + "endcsname".len() + 2 * usize::from(escape.is_some())
                 }
-                ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
+                ControlSequenceKind::SingleCharacter
+                | ControlSequenceKind::Named
+                | ControlSequenceKind::Internal => {
                     name.chars().count() + usize::from(escape.is_some())
                 }
             };
@@ -302,7 +304,9 @@ pub fn string_tokens(stores: &impl ExpansionState, token: Token) -> Vec<Token> {
                     append_escaped_text(escape, "csname", &mut out);
                     append_escaped_text(escape, "endcsname", &mut out);
                 }
-                ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
+                ControlSequenceKind::SingleCharacter
+                | ControlSequenceKind::Named
+                | ControlSequenceKind::Internal => {
                     append_escaped_text(escape, name, &mut out);
                 }
             }

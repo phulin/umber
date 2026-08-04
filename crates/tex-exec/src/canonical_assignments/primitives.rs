@@ -210,13 +210,12 @@ fn configure_unexpandable_primitives(stores: &mut Universe, install: bool) {
         );
     }
     configure_primitive(stores, install, "relax", Meaning::Relax);
-    let nullfont = stores.intern("nullfont");
-    configure_primitive(
-        stores,
-        install,
-        "nullfont",
-        Meaning::Font(tex_state::font::NULL_FONT),
-    );
+    let nullfont = stores.intern_internal_control_sequence("nullfont");
+    let nullfont_meaning = Meaning::Font(tex_state::font::NULL_FONT);
+    stores.register_primitive_meaning("nullfont", nullfont_meaning);
+    if install {
+        stores.set_meaning(nullfont, nullfont_meaning);
+    }
     if install {
         stores.set_font_identifier_symbol(tex_state::font::NULL_FONT, nullfont);
         stores.set_current_font_selector_global(nullfont, tex_state::font::NULL_FONT);

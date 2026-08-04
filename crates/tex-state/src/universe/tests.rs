@@ -74,6 +74,7 @@ fn string_pool_accounting_keeps_control_sequences_and_typed_allocations_distinct
 fn string_pool_format_baselines_and_capacities_round_trip() {
     let mut source = Universe::new();
     source.intern("format-control");
+    source.intern_internal_control_sequence("nullfont");
     source.record_string_pool_allocations(2, 9);
     let image = source.dump_format().expect("format dumps");
     let baseline = source.string_pool_accounting();
@@ -94,6 +95,25 @@ fn string_pool_format_baselines_and_capacities_round_trip() {
     assert_eq!(used.strings, 5);
     assert_eq!(used.string_characters, "job-control".len() + 23);
     assert_eq!(source.string_pool_accounting(), baseline);
+}
+
+#[test]
+fn format_round_trip_preserves_multiletter_hash_accounting() {
+    let mut source = Universe::new();
+    source.intern("");
+    source.intern("x");
+    source.intern_active_character('x');
+    source.intern("format-control");
+    let image = source.dump_format().expect("format dumps");
+
+    let mut loaded = Universe::from_format(World::default(), &image).expect("format loads");
+    loaded.intern_internal_control_sequence("nullfont");
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 1);
+
+    loaded.intern("y");
+    loaded.intern_active_character('y');
+    loaded.intern("job-control");
+    assert_eq!(loaded.engine_usage_statistics().control_sequences, 2);
 }
 
 #[test]

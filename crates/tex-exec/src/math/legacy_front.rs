@@ -459,7 +459,7 @@ fn finish_math(
         let interrupt = level.list_mutation().take_display_interrupt().ok_or(
             ExecError::UnimplementedTypesetting {
                 mode: Mode::DisplayMath,
-                token: Token::Cs(stores.intern("display").symbol()),
+                token: Token::Cs(stores.intern_internal_control_sequence("display").symbol()),
                 origin: OriginId::UNKNOWN,
                 operation: "display interrupt state",
             },
@@ -573,7 +573,7 @@ fn finish_equation_number(
         .take_display_interrupt()
         .ok_or(ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
-            token: Token::Cs(stores.intern("display").symbol()),
+            token: Token::Cs(stores.intern_internal_control_sequence("display").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "display interrupt state",
         })?;
@@ -1038,7 +1038,7 @@ fn finish_display_halign(
     let interrupt = level.list_mutation().take_display_interrupt().ok_or(
         ExecError::UnimplementedTypesetting {
             mode: Mode::DisplayMath,
-            token: Token::Cs(stores.intern("display").symbol()),
+            token: Token::Cs(stores.intern_internal_control_sequence("display").symbol()),
             origin: OriginId::UNKNOWN,
             operation: "display interrupt state",
         },

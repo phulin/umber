@@ -1805,7 +1805,9 @@ pub(crate) fn print_cs_text(
                 print_esc_text(state, "endcsname")
             );
         }
-        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {}
+        ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named
+        | ControlSequenceKind::Internal => {}
     }
 
     let mut text = string_text(state, Token::Cs(symbol));

@@ -388,9 +388,12 @@ impl<'a> Printer<'a> {
         match (kind, name) {
             (ControlSequenceKind::ActiveCharacter, _) => self.print(name),
             (ControlSequenceKind::Null, _) => self.print_esc("csname").print_esc("endcsname"),
-            (ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named, _) => {
-                self.print_esc(name)
-            }
+            (
+                ControlSequenceKind::SingleCharacter
+                | ControlSequenceKind::Named
+                | ControlSequenceKind::Internal,
+                _,
+            ) => self.print_esc(name),
         }
     }
 

@@ -4927,6 +4927,10 @@ impl Universe {
         self.stores.intern_active_character(ch)
     }
 
+    pub fn intern_internal_control_sequence(&mut self, name: &str) -> SymbolId {
+        self.stores.intern_internal_control_sequence(name)
+    }
+
     #[must_use]
     pub fn symbol(&self, name: &str) -> Option<SymbolId> {
         self.stores.symbol(name)
@@ -7701,9 +7705,9 @@ fn sprint_restore_name(
             escaped_restore_name(escape_char, "csname"),
             escaped_restore_name(escape_char, "endcsname")
         ),
-        ControlSequenceKind::SingleCharacter | ControlSequenceKind::Named => {
-            escaped_restore_name(escape_char, name)
-        }
+        ControlSequenceKind::SingleCharacter
+        | ControlSequenceKind::Named
+        | ControlSequenceKind::Internal => escaped_restore_name(escape_char, name),
     }
 }
 
@@ -9280,6 +9284,7 @@ fn hash_token(stores: &Stores, token: Token, hasher: &mut StateHasher) {
                 | ControlSequenceKind::SingleCharacter
                 | ControlSequenceKind::Named => 0,
                 ControlSequenceKind::ActiveCharacter => 1,
+                ControlSequenceKind::Internal => 2,
             });
             hasher.str(stores.resolve(symbol));
         }

@@ -748,6 +748,7 @@ pub(crate) fn complete_font_hash_fragment(
                     | ControlSequenceKind::SingleCharacter
                     | ControlSequenceKind::Named => 0,
                     ControlSequenceKind::ActiveCharacter => 1,
+                    ControlSequenceKind::Internal => 2,
                 });
                 fragment.str(name);
             }

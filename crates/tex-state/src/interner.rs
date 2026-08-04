@@ -26,6 +26,8 @@ pub enum ControlSequenceKind {
     Named,
     /// A character whose current category code is active.
     ActiveCharacter,
+    /// An inaccessible engine-owned fixed `eqtb` slot, outside §259's hash.
+    Internal,
 }
 
 /// A permanent process-wide key for a semantic control-sequence name.
@@ -250,6 +252,9 @@ impl Interner {
 
     /// Interns `name`, returning its live capability and compact stored key.
     pub(crate) fn intern(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        if let Some(symbol) = self.get_key(ControlSequenceKind::Internal, name) {
+            return Ok(symbol);
+        }
         self.intern_key(named_kind(name), name)
     }
 
@@ -260,6 +265,17 @@ impl Interner {
             ControlSequenceKind::ActiveCharacter,
             ch.encode_utf8(&mut encoded),
         )
+    }
+
+    pub(crate) fn intern_internal(&mut self, name: &str) -> Result<SymbolId, InternerError> {
+        if let Some(symbol) = self.get_key(named_kind(name), name) {
+            let slot = symbol.raw() as usize;
+            self.kinds[slot] = ControlSequenceKind::Internal;
+            self.semantic_atoms[slot] = semantic_atom(ControlSequenceKind::Internal, name);
+            self.index_dirty = true;
+            return Ok(symbol);
+        }
+        self.intern_key(ControlSequenceKind::Internal, name)
     }
 
     fn intern_key(
@@ -315,6 +331,7 @@ impl Interner {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<SymbolId> {
         self.get_key(named_kind(name), name)
+            .or_else(|| self.get_key(ControlSequenceKind::Internal, name))
     }
 
     /// Returns the live symbol for an active character without mutating.
@@ -413,6 +430,20 @@ impl Interner {
         self.spans.len()
     }
 
+    /// Returns TeX82's occupied `hash` entries for the §1334 usage summary.
+    ///
+    /// TeX's active, single-character, and null control sequences have fixed
+    /// `eqtb` slots (§222); only §259's multiletter names occupy `hash`.
+    /// Engine-owned frozen sentinels are represented by [`crate::token::Token::Frozen`]
+    /// and consequently cannot enter this count.
+    #[must_use]
+    pub(crate) fn multiletter_len(&self) -> usize {
+        self.kinds
+            .iter()
+            .filter(|&&kind| kind == ControlSequenceKind::Named)
+            .count()
+    }
+
     /// Returns whether there are no live interned names.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -490,6 +521,7 @@ fn lookup_key(kind: ControlSequenceKind, name: &str) -> Vec<u8> {
         | ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
+        ControlSequenceKind::Internal => 2,
     });
     key.extend_from_slice(name.as_bytes());
     key
@@ -502,6 +534,7 @@ pub(crate) fn semantic_atom(kind: ControlSequenceKind, name: &str) -> u64 {
         | ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
+        ControlSequenceKind::Internal => 2,
     });
     hasher.str(name);
     hasher.finish()

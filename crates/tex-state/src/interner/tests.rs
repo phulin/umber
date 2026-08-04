@@ -58,6 +58,23 @@ fn active_character_and_same_spelling_named_sequence_are_distinct() {
 }
 
 #[test]
+fn multiletter_count_is_the_tex82_hash_namespace() {
+    let mut interner = Interner::new();
+
+    intern(&mut interner, "");
+    intern(&mut interner, "x");
+    interner.intern_active('x').expect("active symbol");
+    intern(&mut interner, "xx");
+    intern(&mut interner, "multiletter");
+    interner
+        .intern_internal("inaccessible")
+        .expect("internal symbol");
+
+    assert_eq!(interner.len(), 6);
+    assert_eq!(interner.multiletter_len(), 2);
+}
+
+#[test]
 fn rollback_rebuild_preserves_control_sequence_namespace() {
     let mut interner = Interner::new();
     let named = intern(&mut interner, "~");

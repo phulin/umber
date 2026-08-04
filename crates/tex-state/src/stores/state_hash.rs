@@ -865,6 +865,7 @@ impl Stores {
                         ControlSequenceKind::Null
                         | ControlSequenceKind::SingleCharacter
                         | ControlSequenceKind::Named => 0,
+                        ControlSequenceKind::Internal => 2,
                     });
                     hasher.str(self.resolve(symbol));
                 }
@@ -1790,6 +1791,7 @@ fn hash_control_sequence_kind(kind: ControlSequenceKind, hasher: &mut StateHashe
         | ControlSequenceKind::SingleCharacter
         | ControlSequenceKind::Named => 0,
         ControlSequenceKind::ActiveCharacter => 1,
+        ControlSequenceKind::Internal => 2,
     });
 }
 

@@ -333,6 +333,10 @@ impl<'a> Materializer<'a> {
                 ControlSequenceKind::Null
                 | ControlSequenceKind::SingleCharacter
                 | ControlSequenceKind::Named => self.universe.intern(&symbol.spelling).symbol(),
+                ControlSequenceKind::Internal => self
+                    .universe
+                    .intern_internal_control_sequence(&symbol.spelling)
+                    .symbol(),
             }),
         }
     }

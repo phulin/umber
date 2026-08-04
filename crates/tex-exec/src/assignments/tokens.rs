@@ -79,7 +79,11 @@ fn insert_inaccessible_control_sequence(
     stores: &mut Universe,
     traced: TracedTokenWord,
 ) -> Result<(), ExecError> {
-    let inaccessible = Token::Cs(stores.intern("inaccessible").symbol());
+    let inaccessible = Token::Cs(
+        stores
+            .intern_internal_control_sequence("inaccessible")
+            .symbol(),
+    );
     let origin = stores.inserted_origin(
         InsertedOriginKind::ErrorRecovery,
         inaccessible,
