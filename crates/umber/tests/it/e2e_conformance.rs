@@ -2644,6 +2644,31 @@ fn run_focused_loaded_trip_through(last_source_line: usize) -> String {
     run_loaded_trip_source(source)
 }
 
+#[test]
+fn loaded_immediate_write_traces_expansion_in_no_mode() {
+    // TeX82 §§299/367/1370: immediate `write_out` sets `mode:=0` around its
+    // expanded scan. A trace inside the scan says `no mode`, and the next
+    // main-control trace names the restored vertical mode because §367 left
+    // `shown_mode=0`. The malformed delimited macro is TRIP's generic scanner
+    // boundary, reduced independently of the rest of the document.
+    let source: Arc<[u8]> = Arc::from(
+        &b"\\tracingcommands=2\\tracingmacros=2\\tracingonline=1\\long\\def\\l#1\\l{#1}\\immediate\\write10{\\string\\caution \\l}\\escapechar=92\\end\n"[..],
+    );
+    let log = run_loaded_trip_source(source);
+    let string_trace = log
+        .find("{no mode: \\string}")
+        .unwrap_or_else(|| panic!("§1370 immediate-write trace:\n{log}"));
+    let macro_trace = log
+        .find("\\l #1\\l ->#1")
+        .unwrap_or_else(|| panic!("write macro trace:\n{log}"));
+    let runaway = log
+        .find("Runaway argument?")
+        .unwrap_or_else(|| panic!("write scanner recovery:\n{log}"));
+
+    assert!(string_trace < macro_trace && macro_trace < runaway, "{log}");
+    assert!(log.contains("{vertical mode: \\escapechar}"), "{log}");
+}
+
 /// TeX82 §1110 distinguishes a void register from a nonempty incompatible
 /// register. TRIP line 396's void `\unhbox234` is silent, while nonvoid
 /// `\unhcopy3` in math mode reports before §1166 dispatches the following

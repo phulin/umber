@@ -7413,6 +7413,7 @@ fn dispatch_main_control_command_inner(
             job_is_all_over,
             display_eq_no,
             set_box_allowed,
+            shown_mode,
         )?;
         if suppress_left_boundary {
             match &mut scanned {
@@ -7717,6 +7718,7 @@ fn scan_command(
     job_is_all_over: bool,
     display_eq_no: bool,
     set_box_allowed: bool,
+    shown_mode: &mut Option<Mode>,
 ) -> Result<ScannedStep, ExecError> {
     if let Meaning::UnexpandablePrimitive(
         primitive @ (UnexpandablePrimitive::TextFont
@@ -9173,9 +9175,20 @@ fn scan_command(
             Ok(ScannedStep::ShowBox { index })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Immediate) => {
+            // TeX82 §§299/367/1370: `write_out` temporarily sets `mode:=0`.
+            // The `\immediate` command itself has already consumed this
+            // processor episode's main-control prefix, so install `no mode`
+            // for an expandable command inside the write text. If one is
+            // traced, §367 also leaves `shown_mode=0` after `write_out`
+            // restores the real mode.
+            let trace_count = processor.command_trace_count();
+            processor.set_command_trace_mode_prefix(Some("no mode".into()));
             let extension = processor
                 .scan_immediate_extension(processor.int_param(IntParam::PDF_OUTPUT) > 0)
                 .map_err(command_error)?;
+            if processor.command_trace_count() != trace_count {
+                *shown_mode = None;
+            }
             if let ImmediateExtension::PdfImage(request) = extension {
                 Ok(ScannedStep::PdfXImage {
                     request,

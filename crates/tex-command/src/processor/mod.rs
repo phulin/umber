@@ -101,6 +101,7 @@ pub struct CommandProcessor<'a> {
     pub(crate) scanned_glue_skip_index: Option<u16>,
     command_trace_mode_prefix: Option<String>,
     command_trace_printed: bool,
+    command_trace_count: usize,
 }
 
 impl CommandProcessor<'_> {
@@ -204,6 +205,7 @@ impl<'a> CommandProcessor<'a> {
         text.push_str(&conditional_suffix);
         text.push('}');
         self.command_trace_printed = true;
+        self.command_trace_count = self.command_trace_count.saturating_add(1);
         // A recoverable error raised inside §366's expansion is synchronous:
         // §82 finishes before §380 fetches and traces the next command. When
         // its World-facing report is queued, queue this later trace behind it
@@ -234,6 +236,7 @@ impl<'a> CommandProcessor<'a> {
     /// trace and records that `shown_mode` must advance in the executor.
     pub(crate) fn claim_command_trace_mode_prefix(&mut self) -> Option<String> {
         self.command_trace_printed = true;
+        self.command_trace_count = self.command_trace_count.saturating_add(1);
         self.command_trace_mode_prefix.take()
     }
 
@@ -241,6 +244,15 @@ impl<'a> CommandProcessor<'a> {
     #[must_use]
     pub const fn command_trace_printed(&self) -> bool {
         self.command_trace_printed
+    }
+
+    /// Number of §299 command traces printed during this processor episode.
+    ///
+    /// Nested operations use this to distinguish a trace they emitted from
+    /// an earlier main-control trace in the same borrow.
+    #[must_use]
+    pub const fn command_trace_count(&self) -> usize {
+        self.command_trace_count
     }
 
     /// Borrows every ownership domain needed by one command operation.
@@ -273,6 +285,7 @@ impl<'a> CommandProcessor<'a> {
             scanned_glue_skip_index: None,
             command_trace_mode_prefix: None,
             command_trace_printed: false,
+            command_trace_count: 0,
         }
     }
 
