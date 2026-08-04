@@ -463,10 +463,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "eqtb_regions_keep_parameter_register_kinds_and_shared_zero_glue_distinct"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -490,10 +486,6 @@
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "nested_typed_groups_push_one_boundary_and_restore_outer_metadata"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -523,10 +515,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "save_stack_local_global_redefinition_restores_once_per_level"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -550,10 +538,6 @@
       "semantic_owner": "tex-exec::save-stack",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "save_stack_aftergroup_tokens_replay_fifo_after_unsave"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -581,10 +565,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "unsave_restores_local_entries_retains_globals_then_replays_tokens"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -610,10 +590,6 @@
       "semantic_owner": "tex-exec::assignment-state",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "prepare_mag_bounds_and_freezes_first_effective_value"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -699,10 +675,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "brace_dispatch_opens_normal_groups_and_recovers_each_mismatched_closer"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -732,14 +704,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "prefix_collection_expands_repeats_validates_and_resolves_globaldefs"
-        },
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "prefix_collection_skips_spaces_relax_and_macro_calls_without_losing_bits"
-        },
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_prefixed_command_skips_relax_and_preserves_group_scope"
@@ -782,10 +746,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "get_r_token_skips_spaces_and_recovers_non_control_sequence_targets"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -809,10 +769,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "set_font_assignment_obeys_local_global_and_globaldefs_scope"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -840,10 +796,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "def_family_selects_expansion_flags_meaning_kind_and_effective_scope"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -870,10 +822,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "let_and_futurelet_copy_meaning_and_preserve_lookahead_order"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -897,10 +845,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "shorthand_definitions_install_each_command_operand_and_bound_recovery"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -947,10 +891,6 @@
       "gap_bead": "umber2-vq14",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "read_to_definition_scans_stream_keyword_target_and_installs_tokens"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -982,10 +922,6 @@
       "gap_bead": "umber2-sb8t",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "typed_parameter_register_and_arithmetic_assignments_cover_scope_copy_and_bounds"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1015,10 +951,6 @@
       "gap_bead": "umber2-t7fl",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "setbox_request_encodes_scope_and_rejects_disallowed_contexts"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1047,10 +979,6 @@
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "auxiliary_assignments_validate_mode_bounds_and_update_only_owned_state"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
         }
@@ -1074,10 +1002,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "parshape_assignment_scans_pair_count_and_restores_local_shape"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"
@@ -1147,10 +1071,6 @@
       "gap_bead": "umber2-90qe",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "font_parameter_assignments_update_global_dimen_hyphenchar_and_skewchar"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1184,10 +1104,6 @@
       "gap_bead": "umber2-jrvz",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "font_definition_scans_sizes_reuses_identity_and_recovers_illegal_values"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1217,10 +1133,6 @@
       "gap_bead": "umber2-mp0d",
       "planned_coverage": [
         {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "interaction_assignment_updates_mode_and_selector_for_log_state"
-        },
-        {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match",
           "cases": [
@@ -1248,10 +1160,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "afterassignment_slot_overwrites_and_fires_once_after_successful_assignment"
-        },
         {
           "path": "crates/tex-exec/src/canonical_main_control/tests.rs",
           "test": "every_non_eqtb_assignment_family_fires_afterassignment_once"
@@ -1282,10 +1190,6 @@
       "semantic_owner": "tex-exec::assignments",
       "test_level": "rust-unit+semantic-minifixture",
       "coverage": [
-        {
-          "path": "crates/tex-exec/src/assignments/tests.rs",
-          "test": "assignment_terminator_skips_space_and_relax_but_retains_first_command"
-        },
         {
           "path": "tools/tex-command-stream/tests/it/command_semantic.rs",
           "test": "declared_command_semantic_cases_match"

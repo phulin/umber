@@ -855,10 +855,6 @@
         {
           "path": "crates/tex-out/src/dvi/tests.rs",
           "test": "ship_out_frames_counts_offsets_page_accounting_and_box_retirement"
-        },
-        {
-          "path": "crates/tex-exec/src/assignments/shipout/tests.rs",
-          "test": "ship_out_rejects_each_huge_page_dimension_boundary"
         }
       ],
       "status": "covered",

@@ -644,8 +644,8 @@ fn canonical_vsplit_physically_owns_its_source_free_closure() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let owner = fs::read_to_string(source_root.join("canonical_box_runtime/vsplit.rs"))
         .expect("read canonical vsplit owner");
-    let legacy = fs::read_to_string(source_root.join("assignments/boxes/vsplit.rs"))
-        .expect("read legacy vsplit scanner");
+    let legacy = source_root.join("assignments/boxes/vsplit.rs");
+    assert!(!legacy.exists(), "retired vsplit scanner must stay deleted");
 
     for forbidden in [
         "assignments",
@@ -674,12 +674,7 @@ fn canonical_vsplit_physically_owns_its_source_free_closure() {
             owner.contains(implementation),
             "canonical owner lacks `{implementation}`"
         );
-        assert!(
-            !legacy.contains(implementation),
-            "legacy scanner still owns `{implementation}`"
-        );
     }
-    assert!(legacy.contains("crate::canonical_box_runtime::split_vbox_register"));
 }
 
 #[test]
@@ -688,8 +683,11 @@ fn canonical_packaging_physically_owns_its_source_free_closure() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let owner = fs::read_to_string(source_root.join("canonical_box_runtime/packaging.rs"))
         .expect("read canonical packaging owner");
-    let legacy = fs::read_to_string(source_root.join("assignments/boxes/packaging.rs"))
-        .expect("read legacy packaging scanner");
+    let legacy = source_root.join("assignments/boxes/packaging.rs");
+    assert!(
+        !legacy.exists(),
+        "retired packaging scanner must stay deleted"
+    );
 
     for forbidden in [
         "assignments",
@@ -718,10 +716,6 @@ fn canonical_packaging_physically_owns_its_source_free_closure() {
             owner.contains(implementation),
             "canonical owner lacks `{implementation}`"
         );
-        assert!(
-            !legacy.contains(implementation),
-            "legacy scanner still owns `{implementation}`"
-        );
     }
 }
 
@@ -731,8 +725,8 @@ fn canonical_hmode_physically_owns_pending_character_runtime() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let owner = fs::read_to_string(source_root.join("canonical_box_runtime/hmode.rs"))
         .expect("read canonical hmode owner");
-    let legacy = fs::read_to_string(source_root.join("assignments/hmode.rs"))
-        .expect("read legacy hmode scanner");
+    let legacy = source_root.join("assignments/hmode.rs");
+    assert!(!legacy.exists(), "retired hmode scanner must stay deleted");
 
     for forbidden in [
         "assignments",
@@ -765,10 +759,6 @@ fn canonical_hmode_physically_owns_pending_character_runtime() {
             owner.contains(implementation),
             "canonical owner lacks `{implementation}`"
         );
-        assert!(
-            !legacy.contains(implementation),
-            "legacy scanner still owns `{implementation}`"
-        );
     }
 }
 
@@ -778,8 +768,8 @@ fn canonical_box_material_physically_owns_post_scan_mutations() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let owner = fs::read_to_string(source_root.join("canonical_box_runtime/material.rs"))
         .expect("read canonical box material owner");
-    let legacy = fs::read_to_string(source_root.join("assignments/boxes/mod.rs"))
-        .expect("read legacy box scanner");
+    let legacy = source_root.join("assignments/boxes/mod.rs");
+    assert!(!legacy.exists(), "retired box scanner must stay deleted");
 
     for forbidden in [
         "assignments",
@@ -815,10 +805,6 @@ fn canonical_box_material_physically_owns_post_scan_mutations() {
             owner.contains(implementation),
             "canonical owner lacks `{implementation}`"
         );
-        assert!(
-            !legacy.contains(implementation),
-            "legacy scanner still owns `{implementation}`"
-        );
     }
 }
 
@@ -828,8 +814,8 @@ fn canonical_leaders_physically_own_payload_and_contribution_runtime() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let owner = fs::read_to_string(source_root.join("canonical_box_runtime/leaders.rs"))
         .expect("read canonical leader owner");
-    let legacy = fs::read_to_string(source_root.join("assignments/boxes/leaders.rs"))
-        .expect("read legacy leader scanner");
+    let legacy = source_root.join("assignments/boxes/leaders.rs");
+    assert!(!legacy.exists(), "retired leader scanner must stay deleted");
 
     for forbidden in [
         "assignments",
@@ -857,19 +843,6 @@ fn canonical_leaders_physically_own_payload_and_contribution_runtime() {
             "canonical owner lacks `{implementation}`"
         );
     }
-    for retired in [
-        "fn leader_glue_kind(",
-        "fn infinite_glue_for_skip_primitive(",
-    ] {
-        assert!(
-            !legacy.contains(retired),
-            "legacy scanner still owns `{retired}`"
-        );
-    }
-    assert!(
-        legacy.contains("payload_from_node(node)"),
-        "legacy scanner must adapt payload errors"
-    );
 }
 
 #[test]
@@ -1014,19 +987,11 @@ fn canonical_paragraph_end_closure_has_no_legacy_dependencies() {
     assert!(owner.contains("hpack_owned_with_overfull_rule"));
     assert!(owner.contains("append_vertical_contribution"));
 
-    let legacy_front = fs::read_to_string(source_root.join("assignments/paragraph.rs"))
-        .expect("read legacy paragraph adapter");
-    for moved in [
-        "LineMaterializer::new",
-        "fn break_hlist_with_trace",
-        "fn materialize_pdf_line",
-        "fn extract_migrating_material",
-    ] {
-        assert!(
-            !legacy_front.contains(moved),
-            "legacy paragraph front regained physical kernel `{moved}`"
-        );
-    }
+    let legacy_front = source_root.join("assignments/paragraph.rs");
+    assert!(
+        !legacy_front.exists(),
+        "retired paragraph adapter must stay deleted"
+    );
 
     let canonical = fs::read_to_string(source_root.join("canonical_main_control.rs"))
         .expect("read canonical command control");
@@ -1274,22 +1239,15 @@ fn production_raw_token_delivery_bypasses_the_expand_compatibility_boundary() {
                 path.display()
             );
         }
-        if path
-            .file_name()
-            .is_none_or(|name| name != "raw_delivery.rs")
-        {
-            assert!(
-                !source.contains("tex_lex::next_semantic_raw_token"),
-                "{} must cross raw delivery only through raw_delivery.rs",
-                path.display()
-            );
-        }
+        assert!(
+            !source.contains("tex_lex::next_semantic_raw_token"),
+            "{} must not regain the retired raw-delivery bridge",
+            path.display()
+        );
     }
-    let bridge = fs::read_to_string(source_root.join("raw_delivery.rs"))
-        .expect("read retired raw-delivery bridge");
-    assert_eq!(
-        bridge.matches("tex_lex::next_semantic_raw_token").count(),
-        1
+    assert!(
+        !source_root.join("raw_delivery.rs").exists(),
+        "retired raw-delivery bridge must stay deleted"
     );
 }
 
@@ -1427,20 +1385,21 @@ fn production_backed_up_input_stays_on_the_input_stack_owner() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn executor_resource_results_stay_on_the_execution_owner() {
+fn resource_results_stay_on_the_execution_owner() {
     let source_root = test_support::repository_root().join("crates/tex-exec/src");
     let host_api =
         fs::read_to_string(source_root.join("host_api.rs")).expect("read execution host API");
-    let executor = fs::read_to_string(source_root.join("executor.rs")).expect("read executor");
     let public_surface =
         fs::read_to_string(source_root.join("lib.rs")).expect("read public surface");
 
     assert!(host_api.contains("pub enum ResourceLookup<T>"));
     assert!(host_api.contains("pub struct ResourceNeed"));
-    assert!(executor.contains("ResourceLookup"));
+    assert!(
+        !source_root.join("executor.rs").exists(),
+        "retired executor must stay deleted"
+    );
     for (source_name, source) in [
         ("execution host API", host_api),
-        ("executor", executor),
         ("public surface", public_surface),
     ] {
         for forbidden in [

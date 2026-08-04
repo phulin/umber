@@ -885,10 +885,6 @@
         {
           "path": "crates/tex-exec/src/command_replay/tests.rs",
           "test": "canonical_vsplit_scans_operands_before_replaying_destructive_repack"
-        },
-        {
-          "path": "crates/tex-exec/src/assignments/boxes/vsplit/tests.rs",
-          "test": "tex82_vsplit_marks_remainder_and_trivial_case_matrix"
         }
       ],
       "status": "covered",

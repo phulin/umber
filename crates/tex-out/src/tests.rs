@@ -712,12 +712,12 @@ const PAGE_OUTPUT_FLOAT_GUARD_SOURCES: &[(&str, &str)] = &[
         include_str!("../../tex-typeset/src/packing.rs"),
     ),
     (
-        "crates/tex-exec/src/assignments/shipout.rs",
-        include_str!("../../tex-exec/src/assignments/shipout.rs"),
+        "crates/tex-exec/src/canonical_shipout/direct.rs",
+        include_str!("../../tex-exec/src/canonical_shipout/direct.rs"),
     ),
     (
-        "crates/tex-exec/src/assignments/hmode.rs",
-        include_str!("../../tex-exec/src/assignments/hmode.rs"),
+        "crates/tex-exec/src/canonical_box_runtime/hmode.rs",
+        include_str!("../../tex-exec/src/canonical_box_runtime/hmode.rs"),
     ),
     ("crates/tex-out/src/model.rs", include_str!("model.rs")),
     ("crates/tex-out/src/binary.rs", include_str!("binary.rs")),
