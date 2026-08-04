@@ -45,7 +45,6 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
   normalized semantic and geometry evidence.
 - `crates/tex-state`: engine state layer substrate.
 - `crates/tex-fonts`: immutable font metric parsing and TFM data.
-- `crates/tex-lex`: line normalization, tokenization, input stack, and token-list replay.
 - `crates/tex-expand`: gullet expansion, expandable primitives, conditionals, and value scanners.
 - `crates/tex-exec`: stomach execution, mode nest, main-control dispatch, assignments, and h/v-mode material construction.
 - `crates/tex-incr`: named-boundary editor sessions, revision mapping, convergence, pruning, and suffix reuse.

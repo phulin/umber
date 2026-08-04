@@ -56,7 +56,7 @@ impl ParagraphInputCoverage {
 ///
 /// Both endpoints are command-owned input state.  The executor can retain or
 /// replay this value without learning the representation of source and token
-/// levels and without consulting the retired `tex_lex::InputStack`.
+/// levels and without consulting a retired input stack.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ParagraphInputTransaction {
     pub(crate) starting_input: InputState,

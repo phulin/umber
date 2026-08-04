@@ -85,7 +85,6 @@ UNCOVERED_ENABLED_FEATURES = {
     "tex-expand/shadow": "verification-only mirror; linted by scripts/check-tools.sh only through `umber`",
     "tex-expand/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-exec/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
-    "tex-lex/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/shadow": "verification-only mirror; enabled by scripts/check-tools.sh through `umber`",
     "tex-state/profiling": "profiling-only counters; enabled by scripts/check-tools.sh through `umber`",
     "tex-out/dvi-tools": "opt-in tool binary; linted by scripts/check-tools.sh",

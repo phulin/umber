@@ -110,8 +110,8 @@ expect_failure(
 expect_failure(
     "a new feature nobody decided coverage for",
     lambda: module.check_coverage(
-        {**MEMBERS, "tex-lex": {"features": {"brand-new": []}}},
-        {**COVERED, "tex-lex": set()},
+        {**MEMBERS, "new-crate": {"features": {"brand-new": []}}},
+        {**COVERED, "new-crate": set()},
         OUT_OF_SCOPE,
     ),
 )

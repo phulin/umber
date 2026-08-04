@@ -127,13 +127,11 @@ rendered. Production traced-input paths may not rely on a transient
 An input adapter exposes a source descriptor containing its physical byte
 length and either a World record or shared generated backing. Generated
 descriptors may also carry the backing's logical path; the editor root uses
-this form, while anonymous pseudo-files remain explicitly unnamed. `InputStack`
-continues to mint `SourceId`, but before the first delivery from a source frame
-it idempotently registers `(SourceId, descriptor)` through the aggregate
-expansion-state facade. This preserves the current input-opening boundary
-without giving `tex-lex` raw source-map access. The frame summary stores the
-source id, while `InputSummary` separately stores the next-source-id
-high-water mark so resumed input cannot reuse a still-live id.
+this form, while anonymous pseudo-files remain explicitly unnamed.
+`tex-command`'s input state mints `SourceId` and idempotently registers
+`(SourceId, descriptor)` through the aggregate state facade before the first
+delivery from a source level. The command snapshot retains the source identity
+allocator high-water mark so resumed input cannot reuse a still-live id.
 
 Regions are append-only within a timeline. A source-map watermark joins the
 aggregate store snapshot, and rollback truncates regions plus their allocation

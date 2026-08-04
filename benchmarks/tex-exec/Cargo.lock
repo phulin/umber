@@ -913,9 +913,7 @@ dependencies = [
  "ahash",
  "smallvec",
  "tex-command",
- "tex-expand",
  "tex-fonts",
- "tex-lex",
  "tex-out",
  "tex-shape",
  "tex-state",
@@ -935,17 +933,6 @@ dependencies = [
  "tex-out",
  "tex-state",
  "tex-typeset",
-]
-
-[[package]]
-name = "tex-expand"
-version = "0.1.0"
-dependencies = [
- "md-5",
- "posix-regex",
- "tex-command",
- "tex-lex",
- "tex-state",
 ]
 
 [[package]]
@@ -971,14 +958,6 @@ dependencies = [
  "tex-command",
  "tex-exec",
  "tex-out",
- "tex-state",
-]
-
-[[package]]
-name = "tex-lex"
-version = "0.1.0"
-dependencies = [
- "ahash",
  "tex-state",
 ]
 

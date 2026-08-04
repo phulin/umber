@@ -14,7 +14,7 @@ unexpandable commands.
 Host capabilities are borrow-scoped through `CommandHostContext` and must
 never enter snapshots, formats, durable summaries, or owned command state.
 Private state-machine modules must not be widened for compatibility with
-`tex-lex` or `tex-expand`.
+retired input or expansion APIs.
 
 Line acquisition is **not** a host capability. tex.web §31's `input_ln` is
 `tex_state::CommandContext::input_ln`, alongside `\ifeof`'s §501
