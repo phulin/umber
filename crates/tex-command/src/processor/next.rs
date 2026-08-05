@@ -1381,11 +1381,11 @@ impl CommandProcessor<'_> {
         allow_control_sequence_creation: bool,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         loop {
-            if let Some(episode) = self.replay_completion.take() {
+            if let Some(episode) = self.take_ready_replay_completion() {
                 return Ok(Some(CommandReplayDelivery::Completed(episode)));
             }
             let Some(delivery) = self.take_input_token(allow_control_sequence_creation)? else {
-                if let Some(episode) = self.replay_completion.take() {
+                if let Some(episode) = self.take_ready_replay_completion() {
                     return Ok(Some(CommandReplayDelivery::Completed(episode)));
                 }
                 // §360: a `\read` pseudo-file's line has ended, which is
@@ -1509,6 +1509,12 @@ impl CommandProcessor<'_> {
         allow_control_sequence_creation: bool,
     ) -> Result<Option<DeliveredToken>, CommandError> {
         loop {
+            if self
+                .replay_completion
+                .is_some_and(|episode| self.command.replay_completion_is_ready(episode))
+            {
+                return Ok(None);
+            }
             let Some(level) = self.command.input.levels.last().cloned() else {
                 observe!(
                     self,
@@ -1671,6 +1677,15 @@ impl CommandProcessor<'_> {
                 }
             }
         }
+    }
+
+    fn take_ready_replay_completion(&mut self) -> Option<crate::CommandReplayEpisode> {
+        let episode = self.replay_completion?;
+        self.command.replay_completion_is_ready(episode).then(|| {
+            self.replay_completion
+                .take()
+                .expect("ready completion remains pending")
+        })
     }
 
     fn retire_and_restart(

@@ -359,6 +359,21 @@ impl CommandState {
         Some(CommandReplayEpisode(identity))
     }
 
+    /// Whether an episode completion may surface without cutting off input
+    /// levels created while expanding its final token.
+    ///
+    /// TeX82 §390 retires a depleted token list before pushing a macro's
+    /// replacement text. Input identities are allocated monotonically, so a
+    /// level newer than the retired episode is one of those descendants. The
+    /// completion boundary must remain pending until every such level retires;
+    /// an older enclosing level must never be fetched first.
+    pub(crate) fn replay_completion_is_ready(&self, episode: CommandReplayEpisode) -> bool {
+        self.input
+            .levels
+            .last()
+            .is_none_or(|level| crate::input::input_level_identity(level) < episode.0)
+    }
+
     /// Schedules a frozen `\everypar` list after canonical main control has
     /// completed TeX82's `new_graf` state transition.  Source ownership stays
     /// entirely inside command state; executor control never fabricates an

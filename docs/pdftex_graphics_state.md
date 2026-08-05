@@ -125,9 +125,14 @@ string. The modes have distinct text and coordinate behavior:
   inside `BT`/`ET`; it neither closes text nor translates.
 
 Umber stores typed literal effects in the executable node/page-artifact
-timeline. Literal payload bytes may be opaque because pdfTeX intentionally
-does not parse them, but page-stream framing, coordinates, and every generated
-operator remain typed. Final content serialization must use the vendored
+timeline. Traversal-time replay does not declare its stored episode complete
+until macro replacement and other descendant input created by the final token
+have also retired, so a trailing macro contributes its complete shipout-time
+expansion without consuming enclosing source. The resulting bytes, rather than
+the deferred token-list handle, cross the detached artifact boundary.
+Literal payload bytes may be opaque because pdfTeX intentionally does not parse
+them, but page-stream framing, coordinates, and every generated operator remain
+typed. Final content serialization must use the vendored
 `pdf_writer` content API. If that API cannot represent the required opaque
 operation or text-state transition, extend the vendored crate with a typed
 upstream-compatible API; do not concatenate raw PDF syntax in `tex-out`.

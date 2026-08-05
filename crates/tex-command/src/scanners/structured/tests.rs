@@ -834,6 +834,62 @@ fn replay_completion_precedes_parent_delivery() {
 }
 
 #[test]
+fn output_replay_completion_follows_final_macro_replacement() {
+    let mut command = CommandState::default();
+    let mut runtime = CommandRuntime::default();
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let mut capabilities = CommandHostCapabilities::default();
+    let value = universe.intern("value").symbol();
+    let parameters = universe.intern_token_list(&[]);
+    let replacement = universe.intern_token_list(&text_tokens("TWO"));
+    let definition = universe.intern_macro(MacroMeaning::new(
+        MeaningFlags::EMPTY,
+        parameters,
+        replacement,
+    ));
+    universe.set_meaning(
+        value,
+        Meaning::Macro {
+            flags: MeaningFlags::EMPTY,
+            definition,
+        },
+    );
+    push(&mut command, text_tokens("PARENT"));
+    let replay = universe.finish_traced_token_list(
+        &text_tokens("DEFERRED-")
+            .into_iter()
+            .chain([Token::Cs(value)])
+            .map(traced)
+            .collect::<Vec<_>>(),
+    );
+
+    let expanded = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .expand_output_replay(replay)
+            .expect("output replay expands")
+    };
+    assert_eq!(
+        universe.tokens(expanded.token_list()),
+        text_tokens("DEFERRED-TWO")
+    );
+    let parent = {
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        processor
+            .get_x_token()
+            .expect("parent delivery succeeds")
+            .expect("parent remains input")
+    };
+    assert_eq!(
+        parent.spelling().semantic_token(),
+        Token::Char {
+            ch: 'P',
+            cat: Catcode::Letter,
+        }
+    );
+}
+
+#[test]
 fn math_choice_group_consumes_only_its_opening_brace() {
     let mut command = CommandState::default();
     let mut runtime = CommandRuntime::default();

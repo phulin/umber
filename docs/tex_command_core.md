@@ -93,8 +93,10 @@ converting those frozen records, and inserting the finished alignment list.
 An executor-requested stored replay list has a second, typed delivery result:
 after command processing retires the exact stored level (including its normal
 observer and provenance transition), it delivers `Completed(CommandReplayEpisode)` before
-fetching from the enclosing input level. The executor uses that result to
-finalize an isolated mode/group—for example, to freeze an mlist field or a
+fetching from the enclosing input level. If expanding the stored level's final
+token pushes a macro replacement or another descendant input level, completion
+remains pending until every such newer level retires. The executor uses that
+result to finalize an isolated mode/group—for example, to freeze an mlist field or a
 braced math group—then requests the next expanded delivery. Ordinary
 `get_x_token` retains TeX82's uninterrupted behavior by consuming this
 boundary internally. Thus no stomach operation can peek at or back up a
@@ -2006,7 +2008,10 @@ after the new level's push, which is observable. `v_template` is the sole
 exception in both sections: an exhausted v-part stays live until `do_endv`
 retires it (§13's alignment cell completion). A retirement that completes an
 executor-owned stored replay episode records that completion for the next
-`get_next` and keeps draining.
+`get_next` and keeps draining. TeX82 §390 can then push the replacement text
+of the episode's final macro token above that retired level; the completion
+fence waits for input levels newer than the episode before it permits delivery
+to resume from an older enclosing level.
 
 ## 16. Scanner status and outer validity
 
