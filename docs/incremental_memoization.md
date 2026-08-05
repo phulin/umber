@@ -50,10 +50,12 @@ Records are owned by accepted history, not by an independent cache generation.
 Carried records keep their original immutable dependency and provenance tables.
 Newly executed records belong to the scratch revision until acceptance.
 
-At rest a session owns one accepted substrate. During `advance` it owns that
-substrate and one scratch fork. Convergence discards scratch semantic state and
-adopts the accepted suffix. A nonconvergent edit promotes scratch and its new
-paragraph history. There is no separate begin/accept/discard cache protocol.
+At rest a session owns one accepted substrate and its memo runtime. During
+`advance`, `MainControl` owns that runtime for the scratch candidate and gives
+`Universe` only a weak capability plus the narrow paragraph mutation recorder
+coupled to state write barriers. Acceptance returns the runtime to the session;
+there is no parallel candidate copy or aggregate-state retention owner.
+Convergence discards scratch semantic state and adopts the accepted suffix.
 
 An unchanged-root external-input rerun is another scratch fork of the accepted
 substrate. It restores only the executor-owned `JobStart` checkpoint, preserves

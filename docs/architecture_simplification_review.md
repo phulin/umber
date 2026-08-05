@@ -343,25 +343,21 @@ Affected crates: `tex-out`, `tex-exec`, `umber`, `tex-incr`, and `tex-command-st
 
 Affected crates: `tex-state`, `tex-exec`, `tex-incr`, `umber`, and `tex-out`.
 
-**Current design — observed.** `tex-state::Universe` embeds operational pure-memo state at [`crates/tex-state/src/universe.rs:1210`](/home/phulin/umber/crates/tex-state/src/universe.rs:1210) and exposes a large forwarding surface around [`crates/tex-state/src/universe.rs:2150`](/home/phulin/umber/crates/tex-state/src/universe.rs:2150). `tex-incr::Session` owns another memo runtime at [`crates/tex-incr/src/lib.rs:892`](/home/phulin/umber/crates/tex-incr/src/lib.rs:892) and transfers it through candidate setup at [`crates/tex-incr/src/lib.rs:2959`](/home/phulin/umber/crates/tex-incr/src/lib.rs:2959). Memo, format, PDF, and page transport also use nested detached envelopes.
+**Current design — implemented.** `tex-incr::Session` owns retained memo history between revisions and `MainControl` owns it while a candidate executes. `Universe` keeps only a weak execution capability and the small mutation recorder required by state write barriers; it neither retains cache values nor decides acceptance. The former aggregate forwarding surface and the older parallel `RecordedParagraphRegion` history/index/runtime are deleted.
 
-**End state.** Separate operational memo service ownership from immutable aggregate engine state. Introduce one validated detached content graph/envelope used by format, memo, PDF, and page transport, while keeping distinct state hashes, content hashes, and memo-integrity identities. `Universe` receives a narrow memo capability; incremental sessions own retention and acceptance policy.
+**Detached-graph stop decision.** The proposed common format/memo/PDF/page graph was not introduced. Measurement found that preserving schema-11 format bytes, memo-integrity framing, PDF graph-role validation, page-artifact streaming, and each domain's independent budgets requires compatibility adapters and dual readers larger than the envelopes they could remove. The explicit stop condition therefore applies; these detached boundaries remain distinct and are not counted as deletion.
 
 This is not a recommendation to turn all state into a generic object graph.
 
-**Estimated net reduction.** 550–950 production LOC and 250–600 test LOC. Confidence: low-medium.
+**Measured reduction.** The memo ownership/runtime convergence deletes more than it adds; issue close writeback records the final production/test line count after formatting.
 
 **Preservation argument.** Format schema bytes, memo hit/miss ordering, malformed-payload rejection, provenance, rollback, forks, page/paragraph memo behavior, PDF envelopes, and state identity must remain unchanged.
 
-**Migration and rollback.**
-
-1. Add a detached graph validator behind existing format and memo APIs.
-2. Keep current envelopes as adapters and dual-read both representations.
-3. Move operational memo calls behind an execution-service capability.
-4. Migrate incremental acceptance and retention.
-5. Delete aggregate forwarding and nested envelopes only after all readers agree.
-
-Rollback retains old envelope readers and the `Universe`-backed memo implementation.
+**Migration result.** Operational memo calls use one weak execution capability;
+incremental retention and acceptance own the runtime directly, and the
+aggregate forwarding and duplicate recorded-paragraph runtime are deleted.
+Detached transport readers remain unchanged because the graph experiment was
+stopped before adding compatibility code.
 
 **Gates and risks.** Test memo-disabled execution, paragraph and page memo hits, failed-candidate rollback, state hashes, format loading, PDF output, malformed payloads, budgets, and cold-versus-incremental parity. Risks include borrow complexity, accidentally moving provenance out of `tex-state`, and retaining mutable state in a supposedly immutable graph.
 
