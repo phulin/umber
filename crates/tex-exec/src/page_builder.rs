@@ -360,7 +360,7 @@ fn insertion_box_size(
     class: u16,
     error_context: Option<&str>,
 ) -> Result<Scaled, ExecError> {
-    let Some(list) = stores.box_reg(class) else {
+    let Some(list) = ensure_insertion_vbox(stores, class, error_context)? else {
         return Ok(Scaled::from_raw(0));
     };
     let Some(node) = stores.nodes(list).first() else {
@@ -368,44 +368,56 @@ fn insertion_box_size(
     };
     match node {
         tex_state::node_arena::NodeRef::VList(box_node) => add(box_node.height, box_node.depth),
-        tex_state::node_arena::NodeRef::HList(_) => {
-            // TeX.web §993's `ensure_vbox`. The page builder runs between
-            // commands rather than inside a scanner, so §82's display comes
-            // from the last input summary the job published.
-            let context = error_context.map_or_else(
-                || crate::diagnostics::show_context(stores, stores.input_summary()),
-                str::to_owned,
-            );
-            crate::error_report::report_error(
-                stores,
-                "Insertions can only be added to a vbox",
-                &[
-                    "Tut tut: You're trying to \\insert into a",
-                    "\\box register that now contains an \\hbox.",
-                    "Proceed, and I'll discard its present contents.",
-                ],
-                context,
-            )?;
-            // TeX82 §993's `box_error` continues after `error`: it enters a
-            // diagnostic scope, identifies the rejected box, and applies
-            // `show_box` before flushing the register. `show_box` itself
-            // starts with the structural newline emitted by §182.
-            let text = crate::node_dump::dump_node_list(
-                stores,
-                list,
-                crate::node_dump::DumpConfig::read(stores),
-            );
-            let mut diagnostic = stores.begin_diagnostic();
-            diagnostic
-                .print_nl("The following box has been deleted:")
-                .print_ln()
-                .print_rendered(&text);
-            diagnostic.end(true);
-            stores.clear_box_reg(class);
-            Ok(Scaled::from_raw(0))
-        }
         _ => Ok(Scaled::from_raw(0)),
     }
+}
+
+/// TeX82 §993's `ensure_vbox`, used both when a class first reaches the page
+/// and when §1018 prepares insertion queues during `fire_up`.
+pub(crate) fn ensure_insertion_vbox(
+    stores: &mut Universe,
+    class: u16,
+    error_context: Option<&str>,
+) -> Result<Option<tex_state::ids::NodeListId>, ExecError> {
+    let Some(list) = stores.box_reg(class) else {
+        return Ok(None);
+    };
+    if !matches!(
+        stores.nodes(list).first(),
+        Some(tex_state::node_arena::NodeRef::HList(_))
+    ) {
+        return Ok(Some(list));
+    }
+
+    // The page builder runs between commands rather than inside a scanner, so
+    // §82's display comes from the last input summary the job published.
+    let context = error_context.map_or_else(
+        || crate::diagnostics::show_context(stores, stores.input_summary()),
+        str::to_owned,
+    );
+    crate::error_report::report_error(
+        stores,
+        "Insertions can only be added to a vbox",
+        &[
+            "Tut tut: You're trying to \\insert into a",
+            "\\box register that now contains an \\hbox.",
+            "Proceed, and I'll discard its present contents.",
+        ],
+        context,
+    )?;
+    // TeX82 §993's `box_error` continues after `error`: it enters a diagnostic
+    // scope, identifies the rejected box, and applies `show_box` before
+    // flushing the register. `show_box` starts with §182's structural newline.
+    let text =
+        crate::node_dump::dump_node_list(stores, list, crate::node_dump::DumpConfig::read(stores));
+    let mut diagnostic = stores.begin_diagnostic();
+    diagnostic
+        .print_nl("The following box has been deleted:")
+        .print_ln()
+        .print_rendered(&text);
+    diagnostic.end(true);
+    stores.clear_box_reg(class);
+    Ok(None)
 }
 
 fn insertion_delta(stores: &Universe) -> Result<Scaled, ExecError> {

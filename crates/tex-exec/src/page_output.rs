@@ -88,7 +88,7 @@ pub(crate) fn prepare_box255(
     let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break, fire_up);
     stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
     stores.prepend_page_contributions(after_break);
-    let distributed = distribute_insertions(stores, page_nodes)?;
+    let distributed = distribute_insertions(stores, page_nodes, error_context)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
     let page_list = stores.freeze_node_list(&distributed.page_nodes);
@@ -206,6 +206,7 @@ struct SplitInsertionContext {
 fn distribute_insertions(
     stores: &mut Universe,
     page_nodes: Vec<Node>,
+    error_context: Option<&str>,
 ) -> Result<DistributedInsertions, ExecError> {
     if stores.int_param(IntParam::HOLDING_INSERTS) > 0 {
         return Ok(DistributedInsertions {
@@ -222,7 +223,7 @@ fn distribute_insertions(
             queues.insert(
                 insertion.class(),
                 InsertionQueue {
-                    nodes: insertion_box_nodes(stores, insertion.class())?,
+                    nodes: insertion_box_nodes(stores, insertion.class(), error_context)?,
                     best_ins_index,
                     status: insertion.status(),
                     accepting: true,
@@ -300,8 +301,15 @@ fn distribute_insertions(
     })
 }
 
-fn insertion_box_nodes(stores: &mut Universe, class: u16) -> Result<Vec<Node>, ExecError> {
-    let Some(list) = stores.box_reg(class) else {
+fn insertion_box_nodes(
+    stores: &mut Universe,
+    class: u16,
+    error_context: Option<&str>,
+) -> Result<Vec<Node>, ExecError> {
+    // TeX82 §1018 calls §993's `ensure_vbox` again here because an output
+    // routine or assignment can replace the class register after page setup.
+    let Some(list) = crate::page_builder::ensure_insertion_vbox(stores, class, error_context)?
+    else {
         return Ok(Vec::new());
     };
     let Some(node) = stores.nodes(list).first().map(|node| node.to_owned()) else {
@@ -312,9 +320,7 @@ fn insertion_box_nodes(stores: &mut Universe, class: u16) -> Result<Vec<Node>, E
             stores.pin_survivor(list);
             Ok(stores.nodes(box_node.children).to_vec())
         }
-        Node::HList(_) => Err(ExecError::UnsupportedShipoutNode {
-            node: "hbox insertion box",
-        }),
+        Node::HList(_) => unreachable!("ensure_insertion_vbox rejected the hbox"),
         _ => Ok(Vec::new()),
     }
 }
@@ -561,99 +567,5 @@ pub(crate) fn job_is_all_over(stores: &Universe) -> bool {
         && stores.page_integer(PageInteger::DeadCycles) == 0
 }
 
-#[cfg(any())]
-mod tests {
-    use super::*;
-    use tex_state::page::{EJECT_PENALTY, PageBreak};
-
-    fn fire_up(best_break: usize, trigger: usize) -> PageFireUp {
-        PageFireUp::new(
-            PageBreak::new(best_break),
-            Scaled::from_raw(0),
-            PageBreak::new(trigger),
-        )
-    }
-
-    #[test]
-    fn earlier_break_preserves_unrelated_pending_penalty() {
-        let mut stores = Universe::new();
-        stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
-        let glue = stores.intern_glue(GlueSpec {
-            width: Scaled::from_raw(0),
-            stretch: Scaled::from_raw(0),
-            stretch_order: Order::Normal,
-            shrink: Scaled::from_raw(0),
-            shrink_order: Order::Normal,
-        });
-        let chosen_break = Node::Glue {
-            spec: glue,
-            kind: GlueKind::Normal,
-            leader: None,
-        };
-        let mut after_break = vec![chosen_break.clone()];
-
-        let penalty =
-            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 2));
-
-        assert_eq!(penalty, INF_PENALTY);
-        assert_eq!(after_break, [chosen_break]);
-        assert_eq!(stores.page_contributions().len(), 1);
-        assert_eq!(
-            stores.page_contributions().front(),
-            Some(&Node::Penalty(EJECT_PENALTY))
-        );
-    }
-
-    #[test]
-    fn chosen_pending_penalty_is_rewritten() {
-        let mut stores = Universe::new();
-        stores.append_page_contribution(Node::Penalty(EJECT_PENALTY));
-        let mut after_break = Vec::new();
-
-        let penalty =
-            output_penalty_and_rewrite_break(&mut stores, &mut after_break, fire_up(1, 1));
-
-        assert_eq!(penalty, EJECT_PENALTY);
-        assert_eq!(after_break, [Node::Penalty(INF_PENALTY)]);
-        assert!(stores.page_contributions().is_empty());
-    }
-
-    #[test]
-    fn end_cleanup_uses_tex_its_all_over_penalty() {
-        let mut stores = Universe::new();
-
-        append_end_job_contributions(&mut stores);
-
-        assert_eq!(
-            stores.page_contributions().back(),
-            Some(&Node::Penalty(-1_073_741_824))
-        );
-    }
-
-    #[test]
-    fn job_is_all_over_only_when_page_and_contributions_are_empty() {
-        // TeX82 §1054: `(page_head=page_tail) and (head=tail) and
-        // (dead_cycles=0)`. A residual contribution alone keeps `\end` from
-        // ending the job, which is what makes the end-job trio reachable.
-        let mut stores = Universe::new();
-        assert!(job_is_all_over(&stores));
-
-        let residual = Node::HList(BoxNode::new(BoxNodeFields {
-            width: Scaled::from_raw(17),
-            height: Scaled::from_raw(11),
-            depth: Scaled::from_raw(3),
-            shift: Scaled::from_raw(0),
-            box_lr: tex_state::node::BoxLr::Normal,
-            glue_set: GlueSetRatio::ZERO,
-            glue_sign: Sign::Normal,
-            glue_order: Order::Normal,
-            children: stores.freeze_node_list(&[]),
-        }));
-        stores.append_page_contribution(residual);
-        assert!(!job_is_all_over(&stores));
-
-        let mut stores = Universe::new();
-        stores.set_page_integer(PageInteger::DeadCycles, 1);
-        assert!(!job_is_all_over(&stores));
-    }
-}
+#[cfg(test)]
+mod tests;

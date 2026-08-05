@@ -489,7 +489,10 @@ TeX.web §§1018--1023 distributes insertions in one page-order pass with an
 independent queue for each insertion class. Once a class reaches its recorded
 best insertion, its packed prefix is committed to that class's box; a split
 remainder and every later insertion of that class stay held over in their
-original order with respect to the other held-over material.
+original order with respect to the other held-over material. Queue preparation
+repeats §993's `ensure_vbox`: an hbox installed after page setup is diagnosed,
+displayed and deleted before distribution continues from an empty class queue;
+void and valid vbox registers remain unchanged.
 
 The canonical lifetime is fixed by TeX.web §§274 and 281: `new_save_level`
 opens each box or output group and `unsave` restores its local definitions only

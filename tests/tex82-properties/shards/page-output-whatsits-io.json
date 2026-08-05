@@ -1170,7 +1170,7 @@
       "test_level": "rust-unit",
       "coverage": [
         {
-          "path": "crates/tex-exec/src/page_output.rs",
+          "path": "crates/tex-exec/src/page_output/tests.rs",
           "test": "earlier_break_preserves_unrelated_pending_penalty"
         }
       ],
@@ -1209,9 +1209,18 @@
       ],
       "semantic_owner": "tex-exec::output",
       "test_level": "rust-unit",
-      "coverage": [],
-      "status": "gap",
-      "gap_bead": "umber2-gxpk"
+      "coverage": [
+        {
+          "path": "crates/tex-exec/src/page_output/tests.rs",
+          "test": "fire_up_recovers_hbox_insertion_register_before_distribution"
+        },
+        {
+          "path": "crates/tex-exec/src/page_output/tests.rs",
+          "test": "fire_up_preserves_void_and_vbox_insertion_queues"
+        }
+      ],
+      "status": "covered",
+      "gap_bead": null
     },
     {
       "id": "tex82.output.selection-and-default",
