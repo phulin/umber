@@ -6,7 +6,8 @@ use tex_command::canonical_names;
 use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, ConditionRecord,
     EffectRecord, GeometryRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, ObservedToken, RecoveryKind as CommandRecoveryKind,
+    MacroRecord, MutationRecord, ObservationValue, ObservedToken,
+    RecoveryKind as CommandRecoveryKind,
     RecoveryRecord, ScannerStatusRecord, TokenListRecord,
 };
 use tex_oracle::{

@@ -90,8 +90,9 @@ pub use observation::{
     AlignmentRecord, CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation,
     CommandObserver, CommandProvenance, ConditionRecord, DiagnosticArgument, DiagnosticRecord,
     EffectRecord, GeneratedSourceRecord, GeometryRecord, InputReason, InputRecord, InputTransition,
-    MacroRecord, MutationRecord, ObservedToken, OpenedSourceSnapshot, ParameterClass, RecoveryKind,
-    RecoveryRecord, ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
+    MacroRecord, MutationRecord, ObservationValue, ObservedToken, OpenedSourceSnapshot,
+    ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord,
+    TokenListRecord, parameter_mutation_key,
     parameter_mutation_key_for_dialect,
 };
 pub use paragraph::{

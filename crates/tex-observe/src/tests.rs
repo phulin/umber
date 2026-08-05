@@ -85,8 +85,7 @@ fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
         }),
         CommandObservation::Scanner(ScannerRecord {
             kind: "integer",
-            value: "1".into(),
-            tokens: None,
+            value: ObservationValue::Integer(1),
         }),
     ]);
 
@@ -573,7 +572,16 @@ fn glue_scanners_and_mutations_keep_structured_orders() {
         shrink: 262_144,
         shrink_order: "normal".into(),
     };
-    assert_eq!(parse_glue_scanner_value(value), Some(expected.clone()));
+    assert_eq!(
+        observation_value(ObservationValue::Glue {
+            width: 131_072,
+            stretch: 196_608,
+            stretch_order: "fil",
+            shrink: 262_144,
+            shrink_order: "normal",
+        }),
+        expected.clone()
+    );
     assert_eq!(
         translate_mutation(MutationRecord {
             target: "register",
@@ -617,13 +625,11 @@ fn glue_component_enquiry_results_keep_their_typed_values() {
     translator.translate_captured([
         CommandObservation::Scanner(ScannerRecord {
             kind: "glue_stretch_order",
-            value: "2".into(),
-            tokens: None,
+            value: ObservationValue::Integer(2),
         }),
         CommandObservation::Scanner(ScannerRecord {
             kind: "glue_shrink",
-            value: "196608".into(),
-            tokens: None,
+            value: ObservationValue::Scaled(196_608),
         }),
     ]);
     assert_eq!(

@@ -11,7 +11,7 @@ use crate::conditionals::{ConditionalKind, IfLimit};
 use crate::input::{ReplayTrace, RetirementBehavior};
 use crate::observation::{
     CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument,
-    InputTransition, ObservedToken,
+    InputTransition, ObservationValue, ObservedToken,
 };
 use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
 use crate::{
@@ -2298,7 +2298,7 @@ fn conversion_rendering_publishes_recovery_input_before_its_first_token() {
     let scanner = recorder
         .0
         .iter()
-        .position(|record| matches!(record, CommandObservation::Scanner(scanner) if scanner.kind == "integer" && scanner.value == "-42"))
+        .position(|record| matches!(record, CommandObservation::Scanner(scanner) if scanner.kind == "integer" && scanner.value == ObservationValue::Integer(-42)))
         .expect("number scanner is observed before conversion output");
     let recovery = recorder
         .0

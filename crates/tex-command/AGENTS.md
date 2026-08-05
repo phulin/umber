@@ -222,6 +222,9 @@ code, a character command, a scanner status, a glue order, a token's catcode
 or spelling, a meaning's command name -- is spelled once, in
 `src/observation/canonical_names.rs`, and nowhere else. Producers in
 `tex-command` and `tex-exec` and the differential tracer all call it.
+Scanner results use `ObservationValue`; producers must retain integer, scaled,
+glue, name, and token-list domains instead of rendering values for a detached
+consumer to parse.
 
 Rules, all of them load-bearing (umber2-johp.141):
 

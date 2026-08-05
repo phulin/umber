@@ -83,60 +83,10 @@ pub(crate) fn translate_observation(
             ObservedEvent::new(translate_condition(record), context)
         }
         CommandObservation::Scanner(record) => {
-            let result = if let Some(tokens) = record.tokens {
-                CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
-            } else if record.kind == "internal" {
-                if let Some(value) = record.value.strip_prefix("scaled:") {
-                    value.parse::<i64>().map_or_else(
-                        |_| CanonicalValue::Name(record.value),
-                        CanonicalValue::Scaled,
-                    )
-                } else if let Some(value) = record.value.strip_prefix("glue:") {
-                    parse_glue_scanner_value(value).unwrap_or(CanonicalValue::Name(record.value))
-                } else {
-                    record.value.parse::<i64>().map_or_else(
-                        |_| CanonicalValue::Name(record.value),
-                        CanonicalValue::Integer,
-                    )
-                }
-            } else if matches!(
-                record.kind,
-                "integer"
-                    | "interaction_mode"
-                    | "expression_integer"
-                    | "current_group_level"
-                    | "current_group_type"
-                    | "current_condition_level"
-                    | "current_condition_type"
-                    | "current_condition_branch"
-                    | "glue_stretch_order"
-                    | "glue_shrink_order"
-            ) {
-                record.value.parse::<i64>().map_or_else(
-                    |_| CanonicalValue::Name(record.value),
-                    CanonicalValue::Integer,
-                )
-            } else if matches!(
-                record.kind,
-                "dimension" | "expression_dimension" | "glue_stretch" | "glue_shrink"
-            ) {
-                record.value.parse::<i64>().map_or_else(
-                    |_| CanonicalValue::Name(record.value),
-                    CanonicalValue::Scaled,
-                )
-            } else if matches!(
-                record.kind,
-                "glue" | "expression_glue" | "expression_muglue" | "mu_to_glue" | "glue_to_mu"
-            ) {
-                parse_glue_scanner_value(&record.value)
-                    .unwrap_or(CanonicalValue::Name(record.value))
-            } else {
-                CanonicalValue::Name(record.value)
-            };
             ObservedEvent::new(
                 Event::Scanner(ScannerEvent {
                     scanner: record.kind.into(),
-                    result,
+                    result: observation_value(record.value),
                 }),
                 format!("source={source}"),
             )
@@ -231,25 +181,30 @@ pub(crate) fn translate_observation(
     }
 }
 
-pub(crate) fn parse_glue_scanner_value(value: &str) -> Option<CanonicalValue> {
-    let mut fields = value.split(';').map(|field| field.split_once('='));
-    let width = fields.next()??.1.parse().ok()?;
-    let stretch = fields.next()??.1.parse().ok()?;
-    // The producer already spelled §135's order through `canonical_names`;
-    // this must not re-case or otherwise reinterpret a canonical name.
-    let stretch_order = fields.next()??.1.to_owned();
-    let shrink = fields.next()??.1.parse().ok()?;
-    let shrink_order = fields.next()??.1.to_owned();
-    if fields.next().is_some() {
-        return None;
+pub(crate) fn observation_value(value: ObservationValue) -> CanonicalValue {
+    match value {
+        ObservationValue::None => CanonicalValue::None,
+        ObservationValue::Integer(value) => CanonicalValue::Integer(value),
+        ObservationValue::Character(value) => CanonicalValue::Character(value),
+        ObservationValue::Scaled(value) => CanonicalValue::Scaled(value),
+        ObservationValue::Glue {
+            width,
+            stretch,
+            stretch_order,
+            shrink,
+            shrink_order,
+        } => CanonicalValue::Glue {
+            width,
+            stretch,
+            stretch_order: stretch_order.into(),
+            shrink,
+            shrink_order: shrink_order.into(),
+        },
+        ObservationValue::Name(value) => CanonicalValue::Name(value),
+        ObservationValue::Tokens(tokens) => {
+            CanonicalValue::Tokens(tokens.into_iter().map(oracle_token).collect())
+        }
     }
-    Some(CanonicalValue::Glue {
-        width,
-        stretch,
-        stretch_order,
-        shrink,
-        shrink_order,
-    })
 }
 
 pub(crate) fn command_location(
@@ -513,14 +468,6 @@ pub(crate) fn translate_alignment(record: AlignmentRecord) -> Event {
     })
 }
 pub(crate) fn translate_mutation(record: MutationRecord) -> Event {
-    // `meaning`, `register`, and `parameter` records all pair an explicit key
-    // with a typed value, and it is the value's own encoding -- not the
-    // target -- that says how to parse it. Selecting the target once and
-    // sharing the value decoding keeps every combination available to every
-    // keyed target, which is what lets `\dimen` *parameter* mutations reuse
-    // the `scaled:` encoding `\dimen` registers already used
-    // (umber2-johp.124); enumerating target/encoding pairs by hand had left
-    // that one combination silently falling through to the untyped tail.
     let keyed_target = match record.target {
         "meaning" => Some(StateTarget::Meaning),
         "register" => Some(StateTarget::Register),
@@ -537,7 +484,7 @@ pub(crate) fn translate_mutation(record: MutationRecord) -> Event {
         } else if let Some(value) = record.value.strip_prefix("scaled:") {
             value.parse::<i64>().ok().map(CanonicalValue::Scaled)
         } else if let Some(value) = record.value.strip_prefix("glue:") {
-            parse_glue_scanner_value(value)
+            parse_glue_mutation_value(value)
         } else {
             record
                 .value
@@ -617,11 +564,26 @@ pub(crate) fn translate_mutation(record: MutationRecord) -> Event {
     })
 }
 
-/// Converts TeX's numeric `cat_code` table value into tex.web §207's category
-/// code name, through the one shared table every observation vocabulary uses.
+fn parse_glue_mutation_value(value: &str) -> Option<CanonicalValue> {
+    let mut fields = value.split(';').map(|field| field.split_once('='));
+    let width = fields.next()??.1.parse().ok()?;
+    let stretch = fields.next()??.1.parse().ok()?;
+    let stretch_order = fields.next()??.1.to_owned();
+    let shrink = fields.next()??.1.parse().ok()?;
+    let shrink_order = fields.next()??.1.to_owned();
+    (fields.next().is_none()).then_some(CanonicalValue::Glue {
+        width,
+        stretch,
+        stretch_order,
+        shrink,
+        shrink_order,
+    })
+}
+
 pub(crate) fn canonical_catcode_assignment(value: &str) -> Option<&'static str> {
     canonical_names::catcode_assignment_name(value.parse::<i64>().ok()?)
 }
+
 pub(crate) fn translate_effect(record: EffectRecord) -> Event {
     if record.kind == "message" {
         return Event::Effect(EffectEvent {

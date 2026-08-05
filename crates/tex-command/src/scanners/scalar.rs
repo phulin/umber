@@ -17,7 +17,7 @@ use crate::{
     CommandError, CurrentCommand,
     processor::{CommandProcessor, meaning_text},
 };
-use crate::{CommandObservation, ScannerRecord};
+use crate::{CommandObservation, ObservationValue, ScannerRecord};
 
 const IMPROPER_AUXILIARY_DIAGNOSTIC: u64 = 0x6175_785f_0000_0418;
 const IMPROPER_AUXILIARY_HELP: &[&str] = &[
@@ -26,6 +26,16 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
     "neither of these is meaningful inside \\write. So",
     "I'm forgetting what you said and using zero instead.",
 ];
+
+fn observed_glue_value(value: &GlueSpec) -> ObservationValue {
+    ObservationValue::Glue {
+        width: i64::from(value.width.raw()),
+        stretch: i64::from(value.stretch.raw()),
+        stretch_order: glue_order_name(value.stretch_order),
+        shrink: i64::from(value.shrink.raw()),
+        shrink_order: glue_order_name(value.shrink_order),
+    }
+}
 
 fn pdf_font_code_table(primitive: UnexpandablePrimitive) -> tex_state::PdfFontCode {
     match primitive {
@@ -584,8 +594,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "integer",
-                value: scanned.value.to_string(),
-                tokens: None,
+                value: ObservationValue::Integer(i64::from(scanned.value)),
             }),
         );
         Ok((scanned, radix))
@@ -606,8 +615,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "integer",
-                value: scanned.value.to_string(),
-                tokens: None,
+                value: ObservationValue::Integer(i64::from(scanned.value)),
             }),
         );
         scanned
@@ -747,8 +755,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "dimension",
-                value: scanned.value.raw().to_string(),
-                tokens: None,
+                value: ObservationValue::Scaled(i64::from(scanned.value.raw())),
             }),
         );
         Ok((scanned, order))
@@ -939,8 +946,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "dimension",
-                value: value.raw().to_string(),
-                tokens: None,
+                value: ObservationValue::Scaled(i64::from(value.raw())),
             }),
         );
         Ok(value)
@@ -1109,15 +1115,7 @@ impl CommandProcessor<'_> {
             self,
             CommandObservation::Scanner(ScannerRecord {
                 kind: "glue",
-                value: format!(
-                    "width={};stretch={};stretch_order={};shrink={};shrink_order={}",
-                    scanned.value.width.raw(),
-                    scanned.value.stretch.raw(),
-                    glue_order_name(scanned.value.stretch_order),
-                    scanned.value.shrink.raw(),
-                    glue_order_name(scanned.value.shrink_order),
-                ),
-                tokens: None,
+                value: observed_glue_value(&scanned.value),
             }),
         );
         Ok(scanned)
@@ -2293,14 +2291,15 @@ impl CommandProcessor<'_> {
                 // after extracting the component/order and before §413's
                 // common internal-value boundary.
                 let rendered = match value {
-                    InternalValue::Integer(value) => value.to_string(),
-                    InternalValue::Dimension(value) => value.raw().to_string(),
+                    InternalValue::Integer(value) => ObservationValue::Integer(i64::from(value)),
+                    InternalValue::Dimension(value) => {
+                        ObservationValue::Scaled(i64::from(value.raw()))
+                    }
                     _ => unreachable!("glue enquiries return only integer or dimension values"),
                 };
                 self.observe(CommandObservation::Scanner(ScannerRecord {
                     kind,
                     value: rendered,
-                    tokens: None,
                 }));
                 value
             }
@@ -2332,8 +2331,7 @@ impl CommandProcessor<'_> {
                 // not a second scan or a second owner of interaction state.
                 self.observe(CommandObservation::Scanner(ScannerRecord {
                     kind: "interaction_mode",
-                    value: value.to_string(),
-                    tokens: None,
+                    value: ObservationValue::Integer(i64::from(value)),
                 }));
                 InternalValue::Integer(value)
             }
@@ -2395,8 +2393,7 @@ impl CommandProcessor<'_> {
                 if let Some(kind) = enquiry_kind {
                     self.observe(CommandObservation::Scanner(ScannerRecord {
                         kind,
-                        value: value.to_string(),
-                        tokens: None,
+                        value: ObservationValue::Integer(i64::from(value)),
                     }));
                 }
                 InternalValue::Integer(value)
@@ -2547,44 +2544,32 @@ impl CommandProcessor<'_> {
     /// lowering cascade and §430's negation -- so this must stay reachable
     /// only from [`Self::scan_something_internal`]'s exits.
     fn observe_internal_value(&mut self, value: InternalValue) {
-        let (rendered, tokens) = match value {
-            InternalValue::Integer(value) => (value.to_string(), None),
-            InternalValue::Dimension(value) => (format!("scaled:{}", value.raw()), None),
-            InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => (
-                format!(
-                    "glue:width={};stretch={};stretch_order={};shrink={};shrink_order={}",
-                    glue.width.raw(),
-                    glue.stretch.raw(),
-                    glue_order_name(glue.stretch_order),
-                    glue.shrink.raw(),
-                    glue_order_name(glue.shrink_order),
-                ),
-                None,
-            ),
+        let value = match value {
+            InternalValue::Integer(value) => ObservationValue::Integer(i64::from(value)),
+            InternalValue::Dimension(value) => ObservationValue::Scaled(i64::from(value.raw())),
+            InternalValue::Glue(glue) | InternalValue::MuGlue(glue) => observed_glue_value(&glue),
             // TeX82 §413's `ident_val`: the font's own control-sequence
             // spelling, never a font number or file name.
-            InternalValue::Font(symbol) => (self.state.resolve(symbol).to_owned(), None),
-            InternalValue::Tokens { tokens, .. } => (
-                "tokens".into(),
-                Some(
-                    self.state
-                        .tokens(tokens)
-                        .iter()
-                        .copied()
-                        .map(|token| {
-                            self.observed_token(tex_state::token::TracedTokenWord::pack(
-                                token,
-                                OriginId::UNKNOWN,
-                            ))
-                        })
-                        .collect(),
-                ),
+            InternalValue::Font(symbol) => {
+                ObservationValue::Name(self.state.resolve(symbol).to_owned())
+            }
+            InternalValue::Tokens { tokens, .. } => ObservationValue::Tokens(
+                self.state
+                    .tokens(tokens)
+                    .iter()
+                    .copied()
+                    .map(|token| {
+                        self.observed_token(tex_state::token::TracedTokenWord::pack(
+                            token,
+                            OriginId::UNKNOWN,
+                        ))
+                    })
+                    .collect(),
             ),
         };
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: "internal",
-            value: rendered,
-            tokens,
+            value,
         }));
     }
 

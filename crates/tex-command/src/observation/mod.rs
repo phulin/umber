@@ -572,14 +572,31 @@ pub struct ConditionRecord {
     pub branch: Option<String>,
 }
 
-/// A completed typed scanner result. Values are rendered only from the
-/// scanner's owned semantic result, never from aggregate allocation state.
+/// A scanner or mutation value captured in its semantic domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ObservationValue {
+    None,
+    Integer(i64),
+    Character(u32),
+    Scaled(i64),
+    Glue {
+        width: i64,
+        stretch: i64,
+        stretch_order: &'static str,
+        shrink: i64,
+        shrink_order: &'static str,
+    },
+    Name(String),
+    Tokens(Vec<ObservedToken>),
+}
+
+/// A completed typed scanner result. Values come directly from the scanner's
+/// owned semantic result, never from aggregate allocation state or a string
+/// encoding that a detached observer must parse.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScannerRecord {
     pub kind: &'static str,
-    pub value: String,
-    /// A frozen token-list scanner result, when the result domain is tokens.
-    pub tokens: Option<Vec<ObservedToken>>,
+    pub value: ObservationValue,
 }
 
 /// One `scan_toks` direct splice or completed immutable collection.

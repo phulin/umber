@@ -626,8 +626,8 @@ fn internal_scanner_commits_the_requested_level_not_the_quantitys_own() {
     assert_eq!(
         scanner_values(&recorder),
         vec![
-            (3 * Scaled::UNITY).to_string(),
-            (3 * Scaled::UNITY).to_string(),
+            ObservationValue::Integer(i64::from(3 * Scaled::UNITY)),
+            ObservationValue::Integer(i64::from(3 * Scaled::UNITY)),
         ]
     );
 }
@@ -653,7 +653,7 @@ fn scanner_kinds(recorder: &Recorder) -> Vec<&'static str> {
 /// The rendering carries the committed level -- a bare integer for `int_val`,
 /// a `scaled:` prefix for `dimen_val` -- so it is what distinguishes §429's
 /// cascade having run from its not having run.
-fn scanner_values(recorder: &Recorder) -> Vec<String> {
+fn scanner_values(recorder: &Recorder) -> Vec<ObservationValue> {
     recorder
         .0
         .iter()
@@ -1243,8 +1243,8 @@ fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
     assert_eq!(
         scanned_dimensions,
         vec![
-            (10 * Scaled::UNITY).to_string(),
-            (4 * Scaled::UNITY).to_string(),
+            ObservationValue::Scaled(i64::from(10 * Scaled::UNITY)),
+            ObservationValue::Scaled(i64::from(4 * Scaled::UNITY)),
         ]
     );
 }
@@ -2974,7 +2974,7 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
         .iter()
         .position(|record| {
             matches!(record, CommandObservation::Scanner(scanner)
-                if scanner.kind == "integer" && scanner.value == "7")
+                if scanner.kind == "integer" && scanner.value == ObservationValue::Integer(7))
         })
         .expect("register selector is observed");
     let result = recorder
@@ -2983,8 +2983,7 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
         .position(|record| {
             matches!(record, CommandObservation::Scanner(scanner)
             if scanner.kind == "internal"
-                && scanner.value == "tokens"
-                && scanner.tokens.as_deref() == Some(&[
+                && scanner.value == ObservationValue::Tokens(vec![
                     ObservedToken::Character {
                         character: 'x',
                         catcode: Catcode::Letter,
@@ -3313,14 +3312,14 @@ fn current_group_and_condition_enquiries_have_canonical_scanner_identities() {
         matches!(
             record,
             CommandObservation::Scanner(scanner)
-                if scanner.kind == "current_group_type" && scanner.value == "2"
+                if scanner.kind == "current_group_type" && scanner.value == ObservationValue::Integer(2)
         )
     }));
     assert!(recorder.0.iter().any(|record| {
         matches!(
             record,
             CommandObservation::Scanner(scanner)
-                if scanner.kind == "current_group_level" && scanner.value == "1"
+                if scanner.kind == "current_group_level" && scanner.value == ObservationValue::Integer(1)
         )
     }));
     for kind in [
@@ -3332,7 +3331,7 @@ fn current_group_and_condition_enquiries_have_canonical_scanner_identities() {
             matches!(
                 record,
                 CommandObservation::Scanner(scanner)
-                    if scanner.kind == kind && scanner.value == "0"
+                    if scanner.kind == kind && scanner.value == ObservationValue::Integer(0)
             )
         }));
     }
@@ -4989,7 +4988,7 @@ fn tex82_scanner_conditionals_observes_fractional_physical_and_true_units() {
             .collect::<Vec<_>>(),
         values
             .iter()
-            .map(|value| value.raw().to_string())
+            .map(|value| ObservationValue::Scaled(i64::from(value.raw())))
             .collect::<Vec<_>>()
     );
     let uppercase_i = recorder
@@ -6287,7 +6286,7 @@ fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
         .iter()
         .filter_map(|record| match record {
             CommandObservation::Scanner(scanner) if scanner.kind == "glue" => {
-                Some(scanner.value.as_str())
+                Some(scanner.value.clone())
             }
             _ => None,
         })
@@ -6295,9 +6294,9 @@ fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
     assert_eq!(
         observed_glue,
         [
-            "width=65536;stretch=131072;stretch_order=normal;shrink=196608;shrink_order=normal",
-            "width=262144;stretch=327680;stretch_order=filll;shrink=0;shrink_order=normal",
-            "width=131072;stretch=65536;stretch_order=fil;shrink=196608;shrink_order=normal",
+            ObservationValue::Glue { width: 65_536, stretch: 131_072, stretch_order: "normal", shrink: 196_608, shrink_order: "normal" },
+            ObservationValue::Glue { width: 262_144, stretch: 327_680, stretch_order: "filll", shrink: 0, shrink_order: "normal" },
+            ObservationValue::Glue { width: 131_072, stretch: 65_536, stretch_order: "fil", shrink: 196_608, shrink_order: "normal" },
         ]
     );
     assert!(recorder.0.iter().any(|record| matches!(

@@ -10,7 +10,7 @@ use super::*;
 use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
-use crate::observation::RecoveryKind;
+use crate::observation::{ObservationValue, RecoveryKind};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
     CommandReplayDelivery, CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
@@ -3536,7 +3536,7 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     assert_eq!((family.family, family.recovered), (0, true));
     assert!(recorder.0.iter().any(|event| matches!(
         event,
-        CommandObservation::Scanner(record) if record.kind == "integer" && record.value == "16"
+        CommandObservation::Scanner(record) if record.kind == "integer" && record.value == ObservationValue::Integer(16)
     )));
 
     let mut command = CommandState::default();
@@ -3667,14 +3667,17 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
                 .iter()
                 .filter_map(|event| match event {
                     CommandObservation::Scanner(record) if record.kind == "integer" => {
-                        Some(record.value.as_str())
+                        match record.value {
+                            ObservationValue::Integer(value) => Some(value),
+                            _ => None,
+                        }
                     }
                     _ => None,
                 })
                 .collect();
             assert_eq!(
                 integer_events.first().copied(),
-                Some(source),
+                Some(i64::from(source.parse::<i32>().expect("decimal case"))),
                 "{primitive:?} observes the raw integer before request commit",
             );
         }

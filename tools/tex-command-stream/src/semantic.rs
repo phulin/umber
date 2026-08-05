@@ -1588,7 +1588,7 @@ pub fn predicate_outcomes(run: &SemanticRun) -> Vec<String> {
                 if let Some(identity) = stack.last()
                     && let Some((_, scalars)) = active.get_mut(identity)
                 {
-                    scalars.push((record.kind, record.value.clone()));
+                    scalars.push((record.kind, scanner_value_text(record)));
                 }
             }
             CommandObservation::Condition(record) if record.transition == "branch" => {
@@ -1790,11 +1790,13 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
                 Some(format!(
                     "scanner:{}:{}:{}",
                     record.kind,
-                    record.value,
-                    record
-                        .tokens
-                        .as_deref()
-                        .map_or_else(|| "-".into(), observed_tokens_text)
+                    scanner_value_text(record),
+                    match &record.value {
+                        tex_command::ObservationValue::Tokens(tokens) => {
+                            observed_tokens_text(tokens)
+                        }
+                        _ => "-".into(),
+                    }
                 ))
             }
             CommandObservation::TokenList(record)
@@ -1847,6 +1849,30 @@ pub fn observation_projection(run: &SemanticRun, projection: &Projection) -> Vec
         }
     }
     output
+}
+
+fn scanner_value_text(record: &tex_command::ScannerRecord) -> String {
+    use tex_command::ObservationValue;
+
+    match &record.value {
+        ObservationValue::None => "none".into(),
+        ObservationValue::Integer(value) => value.to_string(),
+        ObservationValue::Character(value) => value.to_string(),
+        ObservationValue::Scaled(value) if record.kind == "internal" => format!("scaled:{value}"),
+        ObservationValue::Scaled(value) => value.to_string(),
+        ObservationValue::Glue {
+            width,
+            stretch,
+            stretch_order,
+            shrink,
+            shrink_order,
+        } => format!(
+            "{}width={width};stretch={stretch};stretch_order={stretch_order};shrink={shrink};shrink_order={shrink_order}",
+            if record.kind == "internal" { "glue:" } else { "" }
+        ),
+        ObservationValue::Name(value) => value.clone(),
+        ObservationValue::Tokens(_) => "tokens".into(),
+    }
 }
 
 pub fn captured_terminal_text(run: &SemanticRun) -> String {

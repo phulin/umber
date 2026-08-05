@@ -9,7 +9,9 @@ use tex_state::token::Catcode;
 use super::scalar::InternalValue;
 use crate::observation::canonical_names::glue_order_name;
 use crate::processor::CommandProcessor;
-use crate::{CommandError, CommandObservation, CurrentCommand, FatalError, ScannerRecord};
+use crate::{
+    CommandError, CommandObservation, CurrentCommand, FatalError, ObservationValue, ScannerRecord,
+};
 
 const EXPRESSION_DEPTH_LIMIT: u32 = 10_000;
 const INTEGER_LIMIT: i64 = i32::MAX as i64;
@@ -236,7 +238,6 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: scanner,
             value: glue_value(value),
-            tokens: None,
         }));
         Ok(if to_mu {
             InternalValue::MuGlue(value)
@@ -390,13 +391,16 @@ impl CommandProcessor<'_> {
 
     fn observe_expression(&mut self, kind: ExpressionKind, value: ExpressionValue) {
         let value = match value {
-            ExpressionValue::Number(value) => value.to_string(),
+            ExpressionValue::Number(value) => match kind {
+                ExpressionKind::Integer => ObservationValue::Integer(i64::from(value)),
+                ExpressionKind::Dimension => ObservationValue::Scaled(i64::from(value)),
+                _ => unreachable!("numeric expressions are integer or dimension values"),
+            },
             ExpressionValue::Glue(value) => glue_value(value.into_spec()),
         };
         self.observe(CommandObservation::Scanner(ScannerRecord {
             kind: kind.scanner_name(),
             value,
-            tokens: None,
         }));
     }
 }
@@ -677,15 +681,14 @@ fn expression_internal_value(kind: ExpressionKind, value: ExpressionValue) -> In
     }
 }
 
-fn glue_value(value: GlueSpec) -> String {
-    format!(
-        "width={};stretch={};stretch_order={};shrink={};shrink_order={}",
-        value.width.raw(),
-        value.stretch.raw(),
-        glue_order_name(value.stretch_order),
-        value.shrink.raw(),
-        glue_order_name(value.shrink_order),
-    )
+fn glue_value(value: GlueSpec) -> ObservationValue {
+    ObservationValue::Glue {
+        width: i64::from(value.width.raw()),
+        stretch: i64::from(value.stretch.raw()),
+        stretch_order: glue_order_name(value.stretch_order),
+        shrink: i64::from(value.shrink.raw()),
+        shrink_order: glue_order_name(value.shrink_order),
+    }
 }
 
 #[cfg(test)]
