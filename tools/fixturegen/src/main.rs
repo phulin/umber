@@ -772,7 +772,7 @@ fn push_token(actual: &mut String, token: SourceToken) {
         ),
         SourceToken::ControlSequence { name, .. } => format!(
             "cs:{}",
-            name.into_iter()
+            name.iter().copied()
                 .map(|code| char::from(code.to_byte().expect("exact-byte control sequence")))
                 .collect::<String>()
         ),

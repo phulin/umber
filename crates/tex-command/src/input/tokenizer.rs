@@ -5,6 +5,7 @@
 //! superscript behavior. `UnicodeExtended` is a separately identified Umber
 //! contract over validated Unicode scalars, never a pdfTeX compatibility mode.
 
+use std::ops::Deref;
 use std::sync::Arc;
 
 use tex_state::token::Catcode;
@@ -15,6 +16,121 @@ use super::lines::{
     SourceCharacter, SourceLocation, SourceProvenance, SourceRange, SourceScalarRange,
 };
 use super::source::{LineBackingRegistry, SourceCursor, SourceRegistration};
+
+/// Character capacity held inside an owned control-sequence spelling.
+///
+/// The repository's 9,770 fixture control-word occurrences measure p95=15,
+/// p99=20, and max=31 characters; the registered primitive vocabulary has a
+/// maximum of 17. Twenty-four therefore keeps more than 99% of measured names
+/// inline without making pathological-name correctness a fixed-size limit.
+pub const CONTROL_SEQUENCE_NAME_INLINE_CAPACITY: usize = 24;
+
+/// An owned semantic control-sequence name with a measured inline fast path.
+///
+/// Source tokens cross the tokenizer/consumer boundary, so their spellings
+/// cannot borrow the live line buffer. Names through
+/// [`CONTROL_SEQUENCE_NAME_INLINE_CAPACITY`] occupy the token itself; longer
+/// names spill once into an unbounded `Vec`.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct ControlSequenceName(ControlSequenceNameStorage);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum ControlSequenceNameStorage {
+    Inline {
+        len: u8,
+        codes: [CharacterCode; CONTROL_SEQUENCE_NAME_INLINE_CAPACITY],
+    },
+    Spill(Vec<CharacterCode>),
+}
+
+impl ControlSequenceName {
+    /// Constructs an empty, allocation-free name.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(ControlSequenceNameStorage::Inline {
+            len: 0,
+            codes: [CharacterCode::from_byte(0); CONTROL_SEQUENCE_NAME_INLINE_CAPACITY],
+        })
+    }
+
+    fn push(&mut self, code: CharacterCode) {
+        match &mut self.0 {
+            ControlSequenceNameStorage::Inline { len, codes }
+                if usize::from(*len) < CONTROL_SEQUENCE_NAME_INLINE_CAPACITY =>
+            {
+                codes[usize::from(*len)] = code;
+                *len += 1;
+            }
+            ControlSequenceNameStorage::Inline { len, codes } => {
+                let mut spill = Vec::with_capacity(CONTROL_SEQUENCE_NAME_INLINE_CAPACITY * 2);
+                spill.extend_from_slice(&codes[..usize::from(*len)]);
+                spill.push(code);
+                self.0 = ControlSequenceNameStorage::Spill(spill);
+            }
+            ControlSequenceNameStorage::Spill(codes) => codes.push(code),
+        }
+    }
+
+    /// Calls `consume` with the scalar text used for lookup and interning.
+    ///
+    /// Inline names encode into a fixed stack buffer. Only names that already
+    /// took the pathological spill path allocate a temporary `String` here.
+    pub(crate) fn with_text<R>(&self, consume: impl FnOnce(&str) -> R) -> R {
+        match &self.0 {
+            ControlSequenceNameStorage::Inline { len, codes } => {
+                let mut bytes = [0_u8; CONTROL_SEQUENCE_NAME_INLINE_CAPACITY * 4];
+                let mut byte_len = 0;
+                for code in &codes[..usize::from(*len)] {
+                    let mut encoded = [0_u8; 4];
+                    let text = crate::profile::token_character(*code).encode_utf8(&mut encoded);
+                    bytes[byte_len..byte_len + text.len()].copy_from_slice(text.as_bytes());
+                    byte_len += text.len();
+                }
+                consume(std::str::from_utf8(&bytes[..byte_len]).expect("encoded scalar text"))
+            }
+            ControlSequenceNameStorage::Spill(codes) => {
+                let text: String = codes
+                    .iter()
+                    .copied()
+                    .map(crate::profile::token_character)
+                    .collect();
+                consume(&text)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn is_spilled(&self) -> bool {
+        matches!(self.0, ControlSequenceNameStorage::Spill(_))
+    }
+}
+
+impl Default for ControlSequenceName {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Deref for ControlSequenceName {
+    type Target = [CharacterCode];
+
+    fn deref(&self) -> &Self::Target {
+        match &self.0 {
+            ControlSequenceNameStorage::Inline { len, codes } => &codes[..usize::from(*len)],
+            ControlSequenceNameStorage::Spill(codes) => codes,
+        }
+    }
+}
+
+impl FromIterator<CharacterCode> for ControlSequenceName {
+    fn from_iter<T: IntoIterator<Item = CharacterCode>>(iter: T) -> Self {
+        let mut name = Self::new();
+        for code in iter {
+            name.push(code);
+        }
+        name
+    }
+}
 
 /// TeX's source-line lexical state (`mid_line`, `skip_blanks`, `new_line`).
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -55,7 +171,7 @@ pub enum SourceToken {
     },
     /// A control sequence whose name remains a semantic character sequence.
     ControlSequence {
-        name: Vec<CharacterCode>,
+        name: ControlSequenceName,
         kind: SourceControlSequenceKind,
         range: SourceRange,
         scalar_range: SourceScalarRange,
@@ -303,7 +419,7 @@ impl SourceCursor {
                 Catcode::Active => {
                     self.lexer_state = LexerState::MidLine;
                     return SourceTokenizationStep::Token(SourceToken::ControlSequence {
-                        name: vec![character.code()],
+                        name: std::iter::once(character.code()).collect(),
                         kind: SourceControlSequenceKind::Active,
                         range: character.range(),
                         scalar_range,
@@ -393,7 +509,7 @@ impl SourceCursor {
         let Some(first) = self.next_reduced_character(bytes, mode, superscript, true, catcode)
         else {
             return SourceToken::ControlSequence {
-                name: Vec::new(),
+                name: ControlSequenceName::new(),
                 kind: SourceControlSequenceKind::Null,
                 range: escape.range(),
                 scalar_range: self.spelling_scalar_range(escape),
@@ -407,7 +523,7 @@ impl SourceCursor {
             LexerState::MidLine
         };
 
-        let mut name = vec![first.code()];
+        let mut name: ControlSequenceName = std::iter::once(first.code()).collect();
         let mut end = first.range().end();
         let mut location = first.range().terminal_location();
         let kind = if first_catcode == Catcode::Letter {

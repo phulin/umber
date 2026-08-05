@@ -76,11 +76,12 @@ pub use host::{
     PdfImageResource,
 };
 pub use input::{
-    CatcodeQueries, FileFramingEvent, InvalidSourceCharacter, LexerState, LineTerminator,
-    MalformedUnicodeRange, PhysicalLine, RegisteredSourceKind, SourceCharacter,
-    SourceControlSequenceKind, SourceFramingPolicy, SourceLocation, SourceNameClass,
-    SourceProvenance, SourceRange, SourceRegistration, SourceRegistrationError, SourceScalarRange,
-    SourceStepQueries, SourceToken, SourceTokenizationStep,
+    CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName, FileFramingEvent,
+    InvalidSourceCharacter, LexerState, LineTerminator, MalformedUnicodeRange, PhysicalLine,
+    RegisteredSourceKind, SourceCharacter, SourceControlSequenceKind, SourceFramingPolicy,
+    SourceLocation, SourceNameClass, SourceProvenance, SourceRange, SourceRegistration,
+    SourceRegistrationError, SourceScalarRange, SourceStepQueries, SourceToken,
+    SourceTokenizationStep,
 };
 /// The single canonical naming vocabulary shared by every observation
 /// producer and transport (`docs/tex_command_core.md` §33.3).

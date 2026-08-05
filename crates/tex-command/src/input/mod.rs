@@ -32,8 +32,9 @@ pub use source::{
     SourceNameClass, SourceRegistration, SourceRegistrationError,
 };
 pub use tokenizer::{
-    CatcodeQueries, InvalidSourceCharacter, LexerState, SourceControlSequenceKind,
-    SourceStepQueries, SourceToken, SourceTokenizationStep,
+    CONTROL_SEQUENCE_NAME_INLINE_CAPACITY, CatcodeQueries, ControlSequenceName,
+    InvalidSourceCharacter, LexerState, SourceControlSequenceKind, SourceStepQueries, SourceToken,
+    SourceTokenizationStep,
 };
 
 /// Persistent input-stack ownership.

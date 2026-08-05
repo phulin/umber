@@ -1890,14 +1890,15 @@ impl CommandProcessor<'_> {
                 | SourceControlSequenceKind::Paragraph
                 | SourceControlSequenceKind::Null => {
                     let hashed = *kind == SourceControlSequenceKind::Word && name.len() > 1;
-                    let name: String = name.iter().copied().map(character_from_code).collect();
-                    if hashed && !allow_control_sequence_creation {
-                        self.state
-                            .known_control_sequence(&name)
-                            .map_or_else(Token::undefined_control_sequence, Token::Cs)
-                    } else {
-                        Token::Cs(self.state.intern_control_sequence(&name))
-                    }
+                    name.with_text(|name| {
+                        if hashed && !allow_control_sequence_creation {
+                            self.state
+                                .known_control_sequence(name)
+                                .map_or_else(Token::undefined_control_sequence, Token::Cs)
+                        } else {
+                            Token::Cs(self.state.intern_control_sequence(name))
+                        }
+                    })
                 }
             },
         };

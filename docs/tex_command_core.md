@@ -1736,6 +1736,18 @@ Catcode lookup happens per delivered character. A catcode assignment between
 tokens is immediately observable. Source lines are never pre-tokenized beyond
 the next command.
 
+`SourceToken` remains owned because it crosses the tokenizer and command/CLI
+consumer boundaries. Its `ControlSequenceName` keeps up to 24 semantic
+character codes inline and spills longer names to an unbounded vector. A
+repository fixture census measured 9,770 control-word occurrences at median
+5, p95 15, p99 20, and maximum 31 characters; all registered primitive-name
+literals were at most 17, so the bound covers more than 99% of measured source
+names and every primitive without imposing a semantic length limit. Raw
+delivery encodes inline character codes into a fixed stack UTF-8 buffer for
+lookup or interning, rather than moving the former tokenizer allocation into
+a temporary `String`; an already-spilled pathological name may allocate that
+temporary conversion.
+
 `get_token` temporarily enables the canonical control-sequence creation policy;
 ordinary `get_next` preserves TeX82's `no_new_control_sequence`. TeX82 §257
 sets that flag, §365 clears it only around `get_token`, and §374 clears it only

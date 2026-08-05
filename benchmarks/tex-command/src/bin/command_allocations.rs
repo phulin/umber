@@ -18,6 +18,8 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 const OPERATIONS: usize = 64;
 const PERTURBATION_BYTES: usize = 64;
+const INLINE_CONTROL_SEQUENCE: &str = "allocationbaseline";
+const SPILLED_CONTROL_SEQUENCE: &str = "pathologicalcontrolsequencenameoverinlinebound";
 
 #[derive(Clone, Copy)]
 enum Configuration {
@@ -52,11 +54,12 @@ enum Workload {
     AlignmentPreambleScanning,
     CommandTextRendering,
     TokenListIteration,
-    ControlSequenceTokenization,
+    InlineControlSequenceTokenization,
+    SpilledControlSequenceTokenization,
 }
 
 impl Workload {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::SingleTokenBackup,
         Self::MacroArgumentMatching,
         Self::ScanToksAbsorption,
@@ -65,7 +68,8 @@ impl Workload {
         Self::AlignmentPreambleScanning,
         Self::CommandTextRendering,
         Self::TokenListIteration,
-        Self::ControlSequenceTokenization,
+        Self::InlineControlSequenceTokenization,
+        Self::SpilledControlSequenceTokenization,
     ];
 
     const fn name(self) -> &'static str {
@@ -78,7 +82,8 @@ impl Workload {
             Self::AlignmentPreambleScanning => "alignment_preamble_scanning",
             Self::CommandTextRendering => "command_text_rendering",
             Self::TokenListIteration => "token_list_iteration",
-            Self::ControlSequenceTokenization => "control_sequence_tokenization",
+            Self::InlineControlSequenceTokenization => "inline_control_sequence_tokenization",
+            Self::SpilledControlSequenceTokenization => "spilled_control_sequence_tokenization",
         }
     }
 
@@ -241,7 +246,8 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                         black_box(command);
                     }
                 }
-                Workload::ControlSequenceTokenization => {
+                Workload::InlineControlSequenceTokenization
+                | Workload::SpilledControlSequenceTokenization => {
                     black_box(
                         processor
                             .get_token()
@@ -270,7 +276,10 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
         Workload::DimensionScanning => "123.5pt ",
         Workload::AlignmentPreambleScanning => r"{#&#\cr",
         Workload::TokenListIteration => "",
-        Workload::ControlSequenceTokenization => r"\allocationbaseline ",
+        Workload::InlineControlSequenceTokenization => r"\allocationbaseline ",
+        Workload::SpilledControlSequenceTokenization => {
+            r"\pathologicalcontrolsequencenameoverinlinebound "
+        }
         Workload::CommandTextRendering => unreachable!(),
     };
 
@@ -289,8 +298,15 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
         );
         command.begin_alignment(AlignmentIdentity::new(1));
     }
-    if matches!(workload, Workload::ControlSequenceTokenization) {
-        universe.intern("allocationbaseline");
+    if matches!(
+        workload,
+        Workload::InlineControlSequenceTokenization | Workload::SpilledControlSequenceTokenization
+    ) {
+        universe.intern(match workload {
+            Workload::InlineControlSequenceTokenization => INLINE_CONTROL_SEQUENCE,
+            Workload::SpilledControlSequenceTokenization => SPILLED_CONTROL_SEQUENCE,
+            _ => unreachable!(),
+        });
     }
 
     if matches!(workload, Workload::TokenListIteration) {

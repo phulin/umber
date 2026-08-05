@@ -77,7 +77,8 @@ fn control(step: SourceTokenizationStep) -> (Vec<u8>, SourceControlSequenceKind,
         SourceToken::ControlSequence {
             name, kind, range, ..
         } => (
-            name.into_iter()
+            name.iter()
+                .copied()
                 .map(|code| code.to_byte().expect("exact byte"))
                 .collect(),
             kind,
@@ -132,7 +133,8 @@ fn unicode_control(
             scalar_range,
             ..
         } => (
-            name.into_iter()
+            name.iter()
+                .copied()
                 .map(|code| code.to_char().expect("Unicode scalar"))
                 .collect(),
             kind,
@@ -788,4 +790,66 @@ fn zero_pausing_leaves_every_line_exactly_as_the_file_supplied_it() {
         character(state.next_exact_source_step(-1, &mut queries)),
         (b'B', Catcode::Letter, 1, 2)
     );
+}
+
+#[test]
+fn control_sequence_names_use_inline_storage_through_the_measured_bound() {
+    let source = format!(
+        "\\{} ",
+        "a".repeat(super::CONTROL_SEQUENCE_NAME_INLINE_CAPACITY)
+    );
+    let mut state = state(source.as_bytes());
+    let SourceToken::ControlSequence { name, .. } =
+        token(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode)))
+    else {
+        panic!("expected control-sequence token");
+    };
+
+    assert_eq!(name.len(), super::CONTROL_SEQUENCE_NAME_INLINE_CAPACITY);
+    assert!(!name.is_spilled());
+}
+
+#[test]
+fn control_sequence_names_spill_without_a_length_limit() {
+    let length = super::CONTROL_SEQUENCE_NAME_INLINE_CAPACITY * 8;
+    let source = format!("\\{} ", "a".repeat(length));
+    let mut state = state(source.as_bytes());
+    let SourceToken::ControlSequence { name, .. } =
+        token(state.next_exact_source_step(-1, &mut CatcodeQueries(classic_catcode)))
+    else {
+        panic!("expected control-sequence token");
+    };
+
+    assert_eq!(name.len(), length);
+    assert!(name.is_spilled());
+    assert!(name.iter().all(|code| code.to_byte() == Ok(b'a')));
+}
+
+#[test]
+fn special_control_sequence_names_remain_inline() {
+    let cases = [
+        ("~", 13, SourceControlSequenceKind::Active, 1),
+        ("\n", 13, SourceControlSequenceKind::Paragraph, 3),
+        ("\\", -1, SourceControlSequenceKind::Null, 0),
+    ];
+
+    for (source, endlinechar, expected_kind, expected_len) in cases {
+        let mut state = state(source.as_bytes());
+        let mut queries = CatcodeQueries(|code: CharacterCode| {
+            if code.to_byte() == Ok(b'~') {
+                Catcode::Active
+            } else {
+                classic_catcode(code)
+            }
+        });
+        let SourceToken::ControlSequence { name, kind, .. } =
+            token(state.next_exact_source_step(endlinechar, &mut queries))
+        else {
+            panic!("expected control-sequence token");
+        };
+
+        assert_eq!(kind, expected_kind);
+        assert_eq!(name.len(), expected_len);
+        assert!(!name.is_spilled());
+    }
 }
