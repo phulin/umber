@@ -4,6 +4,7 @@ use tex_state::Universe;
 use tex_state::glue::GlueSpec;
 use tex_state::ids::{GlueId, NodeListId};
 use tex_state::node::{BoxNode, GlueKind, Node, Whatsit};
+use tex_state::node_arena::NodeRef;
 use tex_state::scaled::Scaled;
 use tex_typeset::{INF_BAD, PackSpec, VpackParams};
 
@@ -95,11 +96,9 @@ pub(crate) fn vpack_natural(stores: &mut Universe, content: NodeListId) -> BoxNo
 }
 
 fn vertical_height(node: &Node) -> Scaled {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => box_node.height,
-        Node::Rule { height, .. } => height.unwrap_or_else(|| Scaled::from_raw(0)),
-        _ => Scaled::from_raw(0),
-    }
+    NodeRef::from(node)
+        .vertical_dimensions()
+        .map_or(Scaled::from_raw(0), |(height, _)| height)
 }
 
 #[cfg(any())]

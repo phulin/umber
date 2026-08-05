@@ -19,7 +19,7 @@ pub use measurement::{NodeMemoryColumn, NodeStorageObservation, peak_node_storag
 pub(crate) use semantic::{NodeSemanticId, NodeSemanticIdBuilder};
 pub(crate) use storage::{NodeArenaMark, NodeStorage, SidecarNeeds};
 pub(crate) use view::NodeOriginOverlay;
-pub use view::{CharCodes, CharRun, NodeIter, NodeList, NodeRef};
+pub use view::{CharCodes, CharRun, NodeCursor, NodeIter, NodeList, NodeRef, PackedNode};
 
 pub(super) fn checked_len(value: usize, message: &str) -> u32 {
     u32::try_from(value).unwrap_or_else(|_| panic!("{message}"))

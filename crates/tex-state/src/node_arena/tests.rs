@@ -1,4 +1,4 @@
-use super::{NodeArena, NodeListBuilder, NodeRef, NodeSemanticId, preflight_capacity};
+use super::{NodeArena, NodeCursor, NodeListBuilder, NodeRef, NodeSemanticId, preflight_capacity};
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
 use crate::math::{
@@ -251,6 +251,15 @@ fn every_inline_kind_uses_only_one_word_and_no_sidecar() {
     ];
     let id = arena.append(&nodes);
     assert_eq!(arena.get_epoch(id), nodes);
+    let owned = NodeCursor::owned(&nodes);
+    let compact = NodeCursor::compact(arena.get_epoch(id));
+    for index in 0..nodes.len() {
+        let owned = owned.get(index).expect("owned cursor index");
+        let compact = compact.get(index).expect("compact cursor index");
+        assert_eq!(owned.kind(), compact.kind());
+        assert_eq!(owned.packed(), compact.packed());
+        assert_eq!(owned, compact);
+    }
     assert_eq!(arena.storage.testing_sidecar_lengths(), [0; 13]);
     assert_eq!(arena.storage.testing_tags(), (0_u8..=8).collect::<Vec<_>>());
 }
@@ -474,7 +483,7 @@ fn shipout_normalization_predicate_rejects_inert_compact_tags() {
 fn every_rare_kind_round_trips_through_its_sidecar() {
     let mut arena = NodeArena::new();
     let empty = arena.append(&[]);
-    let box_node = BoxNode::new(BoxNodeFields {
+    let mut box_node = BoxNode::new(BoxNodeFields {
         width: scaled(1),
         height: scaled(2),
         depth: scaled(3),
@@ -485,6 +494,7 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
         glue_order: Order::Fill,
         children: empty,
     });
+    box_node.diagnostic_children = Some(empty);
     let unset = UnsetNode::new(UnsetNodeFields {
         kind: UnsetKind::VBox,
         width: scaled(6),
@@ -564,6 +574,15 @@ fn every_rare_kind_round_trips_through_its_sidecar() {
     ];
     let id = arena.append(&nodes);
     assert_eq!(arena.get_epoch(id), nodes);
+    let first = arena
+        .get_epoch(id)
+        .first()
+        .expect("nonempty rare-kind list");
+    assert_eq!(first.children().collect::<Vec<_>>(), [empty]);
+    assert_eq!(
+        first.physical_children().collect::<Vec<_>>(),
+        [empty, empty]
+    );
     assert!(matches!(
         arena.get_epoch(id).get(5),
         Some(super::NodeRef::Disc {

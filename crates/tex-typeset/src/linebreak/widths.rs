@@ -1,7 +1,7 @@
 use tex_arith::WideScaled;
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::Node;
-use tex_state::node_arena::{NodeList, NodeRef};
+use tex_state::node_arena::{NodeCursor, NodeList, NodeRef, PackedNode};
 use tex_state::scaled::Scaled;
 
 use crate::TypesetState;
@@ -110,6 +110,22 @@ pub(super) fn line_widths_view<S: TypesetState>(
     end: usize,
     include_font_expansion: bool,
 ) -> Widths {
+    line_widths_cursor(
+        state,
+        NodeCursor::compact(nodes),
+        start,
+        end,
+        include_font_expansion,
+    )
+}
+
+fn line_widths_cursor<S: TypesetState>(
+    state: &S,
+    nodes: NodeCursor<'_>,
+    start: usize,
+    end: usize,
+    include_font_expansion: bool,
+) -> Widths {
     let mut widths = Widths::zero();
     let limit = end.min(nodes.len());
     let mut index = start.min(limit);
@@ -134,7 +150,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
             }
             index += run_len;
         } else {
-            add_node_width_ref(&mut widths, state, nodes, index, include_font_expansion);
+            add_node_width_cursor(&mut widths, state, &nodes, index, include_font_expansion);
             index += 1;
         }
     }
@@ -142,11 +158,7 @@ pub(super) fn line_widths_view<S: TypesetState>(
 }
 
 pub(super) fn line_widths_nodes<S: TypesetState>(state: &S, nodes: &[Node]) -> Widths {
-    let mut widths = Widths::zero();
-    for index in 0..nodes.len() {
-        add_node_width(&mut widths, state, nodes, index, true);
-    }
-    widths
+    line_widths_cursor(state, NodeCursor::owned(nodes), 0, nodes.len(), true)
 }
 
 pub(super) fn add_node_width<S: TypesetState>(
@@ -156,84 +168,27 @@ pub(super) fn add_node_width<S: TypesetState>(
     index: usize,
     include_font_expansion: bool,
 ) {
-    let node = &nodes[index];
-    match node {
-        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-            if let Some(metrics) = state.font_character_metrics(*font, *ch) {
-                widths.natural = add_scaled(widths.natural, metrics.width);
-                if include_font_expansion && let Ok(code) = u8::try_from(*ch as u32) {
-                    add_char_expansion(state, widths, *font, code, metrics.width);
-                }
-            }
-        }
-        Node::Kern { amount, kind } => {
-            // OpenType pass-1 cluster advances are carried as Font kern
-            // adjustments beside their source character nodes. Counting the
-            // adjustment here makes the accumulated width equal the shaped
-            // cluster advance rather than the sum of cmap glyph advances.
-            widths.natural = add_scaled(widths.natural, *amount);
-            if include_font_expansion && *kind == tex_state::node::KernKind::Font {
-                add_font_kern_expansion(state, widths, nodes, index, *amount);
-            }
-        }
-        Node::MarginKern { amount, .. } => {
-            widths.natural = add_scaled(widths.natural, *amount);
-        }
-        Node::MathOn(width) | Node::MathOff(width) => {
-            widths.natural = add_scaled(widths.natural, *width)
-        }
-        Node::Glue { spec, .. } => add_glue(widths, state.glue(*spec)),
-        Node::Rule { width, .. } => {
-            if let Some(width) = width {
-                widths.natural = add_scaled(widths.natural, *width);
-            }
-        }
-        Node::HList(box_node) | Node::VList(box_node) => {
-            widths.natural = add_scaled(widths.natural, box_node.width);
-        }
-        Node::Unset(unset) => {
-            widths.natural = add_scaled(widths.natural, unset.width);
-        }
-        Node::Disc { replace, .. } => {
-            widths.add_assign(line_widths_view(
-                state,
-                state.nodes(*replace),
-                0,
-                state.nodes(*replace).len(),
-                include_font_expansion,
-            ));
-        }
-        Node::Whatsit(
-            tex_state::node::Whatsit::PdfRefXForm { width, .. }
-            | tex_state::node::Whatsit::PdfRefXImage { width, .. },
-        ) => {
-            widths.natural = add_scaled(widths.natural, *width);
-        }
-        Node::Penalty(_)
-        | Node::Mark { .. }
-        | Node::Ins { .. }
-        | Node::Whatsit(_)
-        | Node::MathNoad(_)
-        | Node::FractionNoad(_)
-        | Node::MathStyle(_)
-        | Node::MathChoice(_)
-        | Node::MathList(_)
-        | Node::Nonscript
-        | Node::Direction(_)
-        | Node::Adjust(_) => {}
-    }
+    add_node_width_cursor(
+        widths,
+        state,
+        &NodeCursor::owned(nodes),
+        index,
+        include_font_expansion,
+    );
 }
 
-fn add_node_width_ref<S: TypesetState>(
+fn add_node_width_cursor<S: TypesetState>(
     widths: &mut Widths,
     state: &S,
-    nodes: NodeList<'_>,
+    nodes: &NodeCursor<'_>,
     index: usize,
     include_font_expansion: bool,
 ) {
-    let node = nodes.get(index).expect("index is within node list");
-    match node {
-        NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
+    let node = nodes
+        .get(index)
+        .expect("width index belongs to node source");
+    match node.packed() {
+        PackedNode::Glyph { font, ch } => {
             if let Some(metrics) = state.font_character_metrics(font, ch) {
                 widths.natural = add_scaled(widths.natural, metrics.width);
                 if include_font_expansion && let Ok(code) = u8::try_from(ch as u32) {
@@ -241,24 +196,30 @@ fn add_node_width_ref<S: TypesetState>(
                 }
             }
         }
-        NodeRef::Kern { amount, kind } => {
+        PackedNode::Kern { amount, kind } => {
+            // OpenType pass-1 cluster advances are carried as Font kern
+            // adjustments beside their source character nodes. Counting the
+            // adjustment here makes the accumulated width equal the shaped
+            // cluster advance rather than the sum of cmap glyph advances.
             widths.natural = add_scaled(widths.natural, amount);
-            if include_font_expansion && kind == tex_state::node::KernKind::Font {
-                add_font_kern_expansion_ref(state, widths, nodes, index, amount);
+            if include_font_expansion && kind == Some(tex_state::node::KernKind::Font) {
+                add_font_kern_expansion(state, widths, nodes, index, amount);
             }
         }
-        NodeRef::MathOn(amount) | NodeRef::MathOff(amount) => {
-            widths.natural = add_scaled(widths.natural, amount)
+        PackedNode::Math(width) => widths.natural = add_scaled(widths.natural, width),
+        PackedNode::Glue { spec, .. } => add_glue(widths, state.glue(spec)),
+        PackedNode::Rule { width, .. } => {
+            if let Some(width) = width {
+                widths.natural = add_scaled(widths.natural, width);
+            }
         }
-        NodeRef::Glue { spec, .. } => add_glue(widths, state.glue(spec)),
-        NodeRef::Rule {
-            width: Some(width), ..
-        } => widths.natural = add_scaled(widths.natural, width),
-        NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
-            widths.natural = add_scaled(widths.natural, box_node.width)
+        PackedNode::Box(box_node) => {
+            widths.natural = add_scaled(widths.natural, box_node.width);
         }
-        NodeRef::Unset(unset) => widths.natural = add_scaled(widths.natural, unset.width),
-        NodeRef::Disc { replace, .. } => {
+        PackedNode::Unset(unset) => {
+            widths.natural = add_scaled(widths.natural, unset.width);
+        }
+        PackedNode::Disc(replace) => {
             let list = state.nodes(replace);
             widths.add_assign(line_widths_view(
                 state,
@@ -268,32 +229,11 @@ fn add_node_width_ref<S: TypesetState>(
                 include_font_expansion,
             ));
         }
-        NodeRef::Whatsit(
-            tex_state::node::Whatsit::PdfRefXForm { width, .. }
-            | tex_state::node::Whatsit::PdfRefXImage { width, .. },
-        ) => widths.natural = add_scaled(widths.natural, *width),
-        _ => {}
+        PackedNode::Image { width, .. } => {
+            widths.natural = add_scaled(widths.natural, width);
+        }
+        PackedNode::Ignored => {}
     }
-}
-
-fn add_font_kern_expansion_ref<S: TypesetState>(
-    state: &S,
-    widths: &mut Widths,
-    nodes: NodeList<'_>,
-    index: usize,
-    natural: Scaled,
-) {
-    let Some((left_font, left)) = index
-        .checked_sub(1)
-        .and_then(|i| nodes.get(i))
-        .and_then(glyph_ref)
-    else {
-        return;
-    };
-    let Some((right_font, right)) = nodes.get(index + 1).and_then(glyph_ref) else {
-        return;
-    };
-    add_font_kern_capacity(state, widths, left_font, left, right_font, right, natural);
 }
 
 fn add_glue(widths: &mut Widths, spec: GlueSpec) {
@@ -326,11 +266,15 @@ fn add_char_expansion<S: TypesetState>(
 fn add_font_kern_expansion<S: TypesetState>(
     state: &S,
     widths: &mut Widths,
-    nodes: &[Node],
+    nodes: &NodeCursor<'_>,
     index: usize,
     natural: Scaled,
 ) {
-    let Some((left_font, left)) = index.checked_sub(1).and_then(|i| glyph(&nodes[i])) else {
+    let Some((left_font, left)) = index
+        .checked_sub(1)
+        .and_then(|i| nodes.get(i))
+        .and_then(glyph)
+    else {
         return;
     };
     let Some((right_font, right)) = nodes.get(index + 1).and_then(glyph) else {
@@ -370,16 +314,7 @@ fn add_font_kern_capacity<S: TypesetState>(
     );
 }
 
-fn glyph(node: &Node) -> Option<(tex_state::ids::FontId, u8)> {
-    match node {
-        Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-            u8::try_from(*ch as u32).ok().map(|code| (*font, code))
-        }
-        _ => None,
-    }
-}
-
-fn glyph_ref(node: NodeRef<'_>) -> Option<(tex_state::ids::FontId, u8)> {
+fn glyph(node: NodeRef<'_>) -> Option<(tex_state::ids::FontId, u8)> {
     match node {
         NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
             u8::try_from(ch as u32).ok().map(|code| (font, code))

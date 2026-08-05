@@ -5,6 +5,7 @@ use tex_state::diagnostic::Diagnostic;
 use tex_state::env::banks::{DimenParam, GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
 use tex_state::node::{GlueKind, Node};
+use tex_state::node_arena::NodeRef;
 use tex_state::page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageContents, PageDimension, PageInsertion,
     PageInsertionStatus,
@@ -867,25 +868,15 @@ fn precedes_break(node: &Node) -> bool {
 }
 
 fn vertical_height(node: &Node) -> Scaled {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => box_node.height,
-        Node::Rule { height, .. } => height.unwrap_or_else(|| Scaled::from_raw(0)),
-        Node::MathNoad(_)
-        | Node::FractionNoad(_)
-        | Node::MathStyle(_)
-        | Node::MathChoice(_)
-        | Node::MathList(_)
-        | Node::Nonscript => Scaled::from_raw(0),
-        _ => Scaled::from_raw(0),
-    }
+    NodeRef::from(node)
+        .vertical_dimensions()
+        .map_or(Scaled::from_raw(0), |(height, _)| height)
 }
 
 fn vertical_depth(node: &Node) -> Scaled {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => box_node.depth,
-        Node::Rule { depth, .. } => depth.unwrap_or_else(|| Scaled::from_raw(0)),
-        _ => Scaled::from_raw(0),
-    }
+    NodeRef::from(node)
+        .vertical_dimensions()
+        .map_or(Scaled::from_raw(0), |(_, depth)| depth)
 }
 
 fn add(lhs: Scaled, rhs: Scaled) -> Result<Scaled, ExecError> {

@@ -2,7 +2,9 @@ use tex_state::glue::{GlueSpec, Order};
 use tex_state::ids::NodeListId;
 use tex_state::node::Node;
 use tex_state::node::{BoxNode, BoxNodeFields, LeaderPayload, Sign, UnsetKind};
-use tex_state::node_arena::{NodeList, NodeRef};
+#[cfg(test)]
+use tex_state::node_arena::NodeList;
+use tex_state::node_arena::{NodeCursor, NodeRef, PackedNode};
 use tex_state::scaled::{GlueSetRatio, Scaled};
 
 #[cfg(test)]
@@ -112,8 +114,8 @@ pub struct UnsetMetrics {
 #[must_use]
 pub fn measure_unset(state: &impl TypesetState, list: NodeListId, kind: UnsetKind) -> UnsetMetrics {
     let meas = match kind {
-        UnsetKind::HBox => measure_hlist(state, state.nodes(list)),
-        UnsetKind::VBox => measure_vlist(state, state.nodes(list)),
+        UnsetKind::HBox => measure_hlist(state, NodeCursor::compact(state.nodes(list))),
+        UnsetKind::VBox => measure_vlist(state, NodeCursor::compact(state.nodes(list))),
     };
     let stretch_order = highest_order(meas.stretch);
     let shrink_order = highest_order(meas.shrink);
@@ -137,7 +139,7 @@ pub fn hpack(
 ) -> PackedBox {
     let nodes = state.nodes(list);
     let has_content = !nodes.is_empty();
-    let meas = measure_hlist(state, nodes);
+    let meas = measure_hlist(state, NodeCursor::compact(nodes));
     let width = target_size(meas.width, spec);
     let glue = set_glue(width, meas.width, &meas, has_content);
     let diagnostics = hpack_diagnostics(glue, params);
@@ -187,7 +189,7 @@ pub fn vpack(
 ) -> PackedBox {
     let nodes = state.nodes(list);
     let has_content = !nodes.is_empty();
-    let mut meas = measure_vlist(state, nodes);
+    let mut meas = measure_vlist(state, NodeCursor::compact(nodes));
     clamp_depth(&mut meas, params.box_max_depth);
     let height = target_size(meas.height, spec);
     let glue = set_glue(height, meas.height, &meas, has_content);
@@ -365,7 +367,7 @@ fn common_diagnostics(
     }
 }
 
-fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
+fn measure_hlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
     let mut index = 0;
     while index < nodes.len() {
@@ -391,24 +393,24 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
             continue;
         }
         let node = nodes.get(index).expect("index is within node list");
-        match node {
-            NodeRef::Char { font, ch, .. } | NodeRef::Lig { font, ch, .. } => {
+        match node.packed() {
+            PackedNode::Glyph { font, ch } => {
                 if let Some(metrics) = state.font_character_metrics(font, ch) {
                     meas.width = add(meas.width, metrics.width);
                     meas.height = meas.height.max(metrics.height);
                     meas.depth = meas.depth.max(metrics.depth);
                 }
             }
-            NodeRef::Kern { amount, .. } | NodeRef::MarginKern { amount, .. } => {
+            PackedNode::Kern { amount, .. } => {
                 meas.width = add(meas.width, amount);
             }
-            NodeRef::Glue { spec, leader, .. } => {
+            PackedNode::Glue { spec, leader } => {
                 add_glue(&mut meas, state.glue(spec), Axis::Horizontal);
                 if let Some(leader) = leader {
                     add_hleader_perpendicular_dimensions(&mut meas, leader);
                 }
             }
-            NodeRef::Rule {
+            PackedNode::Rule {
                 width,
                 height,
                 depth,
@@ -423,56 +425,36 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                     meas.depth = meas.depth.max(depth);
                 }
             }
-            NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
+            PackedNode::Box(box_node) => {
                 meas.width = add(meas.width, box_node.width);
                 meas.height = meas.height.max(sub(box_node.height, box_node.shift));
                 meas.depth = meas.depth.max(add(box_node.depth, box_node.shift));
             }
-            NodeRef::Unset(unset) => {
+            PackedNode::Unset(unset) => {
                 meas.width = add(meas.width, unset.width);
                 meas.height = meas.height.max(unset.height);
                 meas.depth = meas.depth.max(unset.depth);
             }
-            NodeRef::Penalty(_) => {}
-            NodeRef::Whatsit(
-                tex_state::node::Whatsit::PdfRefXForm {
-                    width,
-                    height,
-                    depth,
-                    ..
-                }
-                | tex_state::node::Whatsit::PdfRefXImage {
-                    width,
-                    height,
-                    depth,
-                    ..
-                },
-            ) => {
-                meas.width = add(meas.width, *width);
-                meas.height = meas.height.max(*height);
-                meas.depth = meas.depth.max(*depth);
+            PackedNode::Image {
+                width,
+                height,
+                depth,
+            } => {
+                meas.width = add(meas.width, width);
+                meas.height = meas.height.max(height);
+                meas.depth = meas.depth.max(depth);
             }
-            NodeRef::Disc { replace, .. } => {
-                let replacement = measure_hlist(state, state.nodes(replace));
+            PackedNode::Disc(replace) => {
+                let replacement = measure_hlist(state, NodeCursor::compact(state.nodes(replace)));
                 meas.width = add(meas.width, replacement.width);
                 meas.height = meas.height.max(replacement.height);
                 meas.depth = meas.depth.max(replacement.depth);
                 meas.has_glue |= replacement.has_glue;
             }
-            NodeRef::Mark { .. }
-            | NodeRef::Ins { .. }
-            | NodeRef::Whatsit(_)
-            | NodeRef::MathNoad(_)
-            | NodeRef::FractionNoad(_)
-            | NodeRef::MathStyle(_)
-            | NodeRef::MathChoice(_)
-            | NodeRef::MathList(_)
-            | NodeRef::Nonscript
-            | NodeRef::Direction(_)
-            | NodeRef::Adjust(_) => {}
-            NodeRef::MathOn(width) | NodeRef::MathOff(width) => {
+            PackedNode::Math(width) => {
                 meas.width = add(meas.width, width);
             }
+            PackedNode::Ignored => {}
         }
         index += 1;
     }
@@ -480,110 +462,25 @@ fn measure_hlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
 }
 
 fn measure_hlist_nodes(state: &impl TypesetState, nodes: &[Node]) -> Measurement {
-    let mut meas = Measurement::ZERO;
-    for node in nodes {
-        match node {
-            Node::Char { font, ch, .. } | Node::Lig { font, ch, .. } => {
-                if let Some(metrics) = state.font_character_metrics(*font, *ch) {
-                    meas.width = add(meas.width, metrics.width);
-                    meas.height = meas.height.max(metrics.height);
-                    meas.depth = meas.depth.max(metrics.depth);
-                }
-            }
-            Node::Kern { amount, .. } | Node::MarginKern { amount, .. } => {
-                meas.width = add(meas.width, *amount);
-            }
-            Node::Glue { spec, leader, .. } => {
-                add_glue(&mut meas, state.glue(*spec), Axis::Horizontal);
-                if let Some(leader) = leader {
-                    add_hleader_perpendicular_dimensions(&mut meas, leader);
-                }
-            }
-            Node::Rule {
-                width,
-                height,
-                depth,
-            } => {
-                if let Some(width) = width {
-                    meas.width = add(meas.width, *width);
-                }
-                if let Some(height) = height {
-                    meas.height = meas.height.max(*height);
-                }
-                if let Some(depth) = depth {
-                    meas.depth = meas.depth.max(*depth);
-                }
-            }
-            Node::HList(box_node) | Node::VList(box_node) => {
-                meas.width = add(meas.width, box_node.width);
-                meas.height = meas.height.max(sub(box_node.height, box_node.shift));
-                meas.depth = meas.depth.max(add(box_node.depth, box_node.shift));
-            }
-            Node::Unset(unset) => {
-                meas.width = add(meas.width, unset.width);
-                meas.height = meas.height.max(unset.height);
-                meas.depth = meas.depth.max(unset.depth);
-            }
-            Node::Disc { replace, .. } => {
-                let replacement = measure_hlist(state, state.nodes(*replace));
-                meas.width = add(meas.width, replacement.width);
-                meas.height = meas.height.max(replacement.height);
-                meas.depth = meas.depth.max(replacement.depth);
-                meas.has_glue |= replacement.has_glue;
-            }
-            Node::MathOn(width) | Node::MathOff(width) => {
-                meas.width = add(meas.width, *width);
-            }
-            Node::Whatsit(
-                tex_state::node::Whatsit::PdfRefXForm {
-                    width,
-                    height,
-                    depth,
-                    ..
-                }
-                | tex_state::node::Whatsit::PdfRefXImage {
-                    width,
-                    height,
-                    depth,
-                    ..
-                },
-            ) => {
-                meas.width = add(meas.width, *width);
-                meas.height = meas.height.max(*height);
-                meas.depth = meas.depth.max(*depth);
-            }
-            Node::Penalty(_)
-            | Node::Mark { .. }
-            | Node::Ins { .. }
-            | Node::Whatsit(_)
-            | Node::MathNoad(_)
-            | Node::FractionNoad(_)
-            | Node::MathStyle(_)
-            | Node::MathChoice(_)
-            | Node::MathList(_)
-            | Node::Nonscript
-            | Node::Direction(_)
-            | Node::Adjust(_) => {}
-        }
-    }
-    meas
+    measure_hlist(state, NodeCursor::owned(nodes))
 }
 
-fn measure_vlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement {
+fn measure_vlist(state: &impl TypesetState, nodes: NodeCursor<'_>) -> Measurement {
     let mut meas = Measurement::ZERO;
-    for node in nodes {
-        match node {
-            NodeRef::HList(box_node) | NodeRef::VList(box_node) => {
+    for index in 0..nodes.len() {
+        let node = nodes.get(index).expect("index belongs to node source");
+        match node.packed() {
+            PackedNode::Box(box_node) => {
                 meas.height = add(add(meas.height, meas.depth), box_node.height);
                 meas.depth = box_node.depth;
                 meas.width = meas.width.max(add(box_node.width, box_node.shift));
             }
-            NodeRef::Unset(unset) => {
+            PackedNode::Unset(unset) => {
                 meas.height = add(add(meas.height, meas.depth), unset.height);
                 meas.depth = unset.depth;
                 meas.width = meas.width.max(unset.width);
             }
-            NodeRef::Rule {
+            PackedNode::Rule {
                 width,
                 height,
                 depth,
@@ -597,50 +494,28 @@ fn measure_vlist(state: &impl TypesetState, nodes: NodeList<'_>) -> Measurement 
                     meas.width = meas.width.max(width);
                 }
             }
-            NodeRef::Kern { amount, .. } | NodeRef::MarginKern { amount, .. } => {
+            PackedNode::Kern { amount, .. } => {
                 add_vertical_spacing(&mut meas, amount);
             }
-            NodeRef::Glue { spec, leader, .. } => {
+            PackedNode::Glue { spec, leader } => {
                 add_glue(&mut meas, state.glue(spec), Axis::Vertical);
                 if let Some(leader) = leader {
                     add_vleader_perpendicular_dimensions(&mut meas, leader);
                 }
             }
-            NodeRef::Penalty(_) => {}
-            NodeRef::Whatsit(
-                tex_state::node::Whatsit::PdfRefXForm {
-                    width,
-                    height,
-                    depth,
-                    ..
-                }
-                | tex_state::node::Whatsit::PdfRefXImage {
-                    width,
-                    height,
-                    depth,
-                    ..
-                },
-            ) => {
-                meas.height = add(add(meas.height, meas.depth), *height);
-                meas.depth = *depth;
-                meas.width = meas.width.max(*width);
+            PackedNode::Image {
+                width,
+                height,
+                depth,
+            } => {
+                meas.height = add(add(meas.height, meas.depth), height);
+                meas.depth = depth;
+                meas.width = meas.width.max(width);
             }
-            NodeRef::Char { .. }
-            | NodeRef::Lig { .. }
-            | NodeRef::Disc { .. }
-            | NodeRef::Mark { .. }
-            | NodeRef::Ins { .. }
-            | NodeRef::Whatsit(_)
-            | NodeRef::MathOn(_)
-            | NodeRef::MathOff(_)
-            | NodeRef::Direction(_)
-            | NodeRef::MathNoad(_)
-            | NodeRef::FractionNoad(_)
-            | NodeRef::MathStyle(_)
-            | NodeRef::MathChoice(_)
-            | NodeRef::MathList(_)
-            | NodeRef::Nonscript
-            | NodeRef::Adjust(_) => {}
+            PackedNode::Glyph { .. }
+            | PackedNode::Disc(_)
+            | PackedNode::Math(_)
+            | PackedNode::Ignored => {}
         }
     }
     meas

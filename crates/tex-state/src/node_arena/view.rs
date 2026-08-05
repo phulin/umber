@@ -2,8 +2,8 @@ use super::storage::{NodeStorage, NodeWord, decode_glue, decode_kern, decode_sty
 use crate::ids::{ArenaRef, GlueId, NodeListId};
 use crate::math::MathStyle;
 use crate::node::{
-    BoxNode, Direction, DiscKind, GlueKind, KernKind, MarginKernSide, Node, UnsetNode,
-    UnsetNodeFields,
+    BoxNode, Direction, DiscKind, GlueKind, KernKind, LeaderPayload, MarginKernSide, Node,
+    NodeKind, UnsetNode, UnsetNodeFields, Whatsit,
 };
 use crate::scaled::Scaled;
 use crate::token::OriginId;
@@ -89,6 +89,141 @@ pub enum NodeRef<'a> {
     Adjust(crate::node::AdjustNode),
 }
 
+/// Dimension-bearing projection shared by owned and compact nodes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PackedNode<'a> {
+    Glyph {
+        font: crate::ids::FontId,
+        ch: char,
+    },
+    Kern {
+        amount: Scaled,
+        kind: Option<KernKind>,
+    },
+    Glue {
+        spec: GlueId,
+        leader: Option<&'a LeaderPayload>,
+    },
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Scaled>,
+        depth: Option<Scaled>,
+    },
+    Box(BoxNode),
+    Unset(UnsetNode),
+    Disc(NodeListId),
+    Image {
+        width: Scaled,
+        height: Scaled,
+        depth: Scaled,
+    },
+    Math(Scaled),
+    Ignored,
+}
+
+impl<'a> From<&'a Node> for NodeRef<'a> {
+    fn from(node: &'a Node) -> Self {
+        match node {
+            Node::Char { font, ch, origin } => Self::Char {
+                font: *font,
+                ch: *ch,
+                origin: *origin,
+            },
+            Node::Lig {
+                font,
+                ch,
+                orig,
+                origins,
+                left_hit,
+                right_hit,
+            } => Self::Lig {
+                font: *font,
+                ch: *ch,
+                orig,
+                origins,
+                left_hit: *left_hit,
+                right_hit: *right_hit,
+            },
+            Node::Kern { amount, kind } => Self::Kern {
+                amount: *amount,
+                kind: *kind,
+            },
+            Node::MarginKern {
+                amount,
+                side,
+                font,
+                ch,
+            } => Self::MarginKern {
+                amount: *amount,
+                side: *side,
+                font: *font,
+                ch: *ch,
+            },
+            Node::Glue { spec, kind, leader } => Self::Glue {
+                spec: *spec,
+                kind: *kind,
+                leader: leader.as_ref(),
+            },
+            Node::Penalty(value) => Self::Penalty(*value),
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => Self::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Node::HList(value) => Self::HList(*value),
+            Node::VList(value) => Self::VList(*value),
+            Node::Unset(value) => Self::Unset(*value),
+            Node::Disc {
+                kind,
+                pre,
+                post,
+                replace,
+                physical_replace_count,
+            } => Self::Disc {
+                kind: *kind,
+                pre: *pre,
+                post: *post,
+                replace: *replace,
+                physical_replace_count: *physical_replace_count,
+            },
+            Node::Mark { class, tokens } => Self::Mark {
+                class: *class,
+                tokens: *tokens,
+            },
+            Node::Ins {
+                class,
+                size,
+                split_top_skip,
+                split_max_depth,
+                floating_penalty,
+                content,
+            } => Self::Ins {
+                class: *class,
+                size: *size,
+                split_top_skip: *split_top_skip,
+                split_max_depth: *split_max_depth,
+                floating_penalty: *floating_penalty,
+                content: *content,
+            },
+            Node::Whatsit(value) => Self::Whatsit(value),
+            Node::MathOn(value) => Self::MathOn(*value),
+            Node::MathOff(value) => Self::MathOff(*value),
+            Node::Direction(value) => Self::Direction(*value),
+            Node::MathNoad(value) => Self::MathNoad(value.clone()),
+            Node::FractionNoad(value) => Self::FractionNoad(value),
+            Node::MathStyle(value) => Self::MathStyle(*value),
+            Node::MathChoice(value) => Self::MathChoice(value),
+            Node::MathList(value) => Self::MathList(*value),
+            Node::Nonscript => Self::Nonscript,
+            Node::Adjust(value) => Self::Adjust(*value),
+        }
+    }
+}
+
 impl PartialEq for NodeRef<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -134,6 +269,42 @@ impl PartialEq for NodeRef<'_> {
 }
 
 impl NodeRef<'_> {
+    #[must_use]
+    pub const fn kind(&self) -> NodeKind {
+        match self {
+            Self::Char { .. } => NodeKind::Char,
+            Self::Lig { .. } => NodeKind::Lig,
+            Self::Kern { .. } => NodeKind::Kern,
+            Self::MarginKern { .. } => NodeKind::MarginKern,
+            Self::Glue { .. } => NodeKind::Glue,
+            Self::Penalty(_) => NodeKind::Penalty,
+            Self::Rule { .. } => NodeKind::Rule,
+            Self::HList(_) => NodeKind::HList,
+            Self::VList(_) => NodeKind::VList,
+            Self::Unset(_) => NodeKind::Unset,
+            Self::Disc { .. } => NodeKind::Disc,
+            Self::Mark { .. } => NodeKind::Mark,
+            Self::Ins { .. } => NodeKind::Ins,
+            Self::Whatsit(_) => NodeKind::Whatsit,
+            Self::MathOn(_) => NodeKind::MathOn,
+            Self::MathOff(_) => NodeKind::MathOff,
+            Self::Direction(_) => NodeKind::Direction,
+            Self::MathNoad(_) => NodeKind::MathNoad,
+            Self::FractionNoad(_) => NodeKind::FractionNoad,
+            Self::MathStyle(_) => NodeKind::MathStyle,
+            Self::MathChoice(_) => NodeKind::MathChoice,
+            Self::MathList(_) => NodeKind::MathList,
+            Self::Nonscript => NodeKind::Nonscript,
+            Self::Adjust(_) => NodeKind::Adjust,
+        }
+    }
+
+    /// e-TeX `\lastnodetype` code independent of the node's storage source.
+    #[must_use]
+    pub const fn etex_type(&self) -> i32 {
+        self.kind().etex_type()
+    }
+
     /// Materializes an owned node for builder/list-surgery output, never for storage.
     #[must_use]
     pub fn to_owned(&self) -> Node {
@@ -235,6 +406,160 @@ impl NodeRef<'_> {
             Self::Nonscript => Node::Nonscript,
             Self::Adjust(v) => Node::Adjust(*v),
         }
+    }
+
+    /// Projects the fields used by packing and line-width algorithms.
+    #[must_use]
+    pub fn packed(&self) -> PackedNode<'_> {
+        match self {
+            Self::Char { font, ch, .. } | Self::Lig { font, ch, .. } => PackedNode::Glyph {
+                font: *font,
+                ch: *ch,
+            },
+            Self::Kern { amount, kind } => PackedNode::Kern {
+                amount: *amount,
+                kind: Some(*kind),
+            },
+            Self::MarginKern { amount, .. } => PackedNode::Kern {
+                amount: *amount,
+                kind: None,
+            },
+            Self::Glue { spec, leader, .. } => PackedNode::Glue {
+                spec: *spec,
+                leader: *leader,
+            },
+            Self::Rule {
+                width,
+                height,
+                depth,
+            } => PackedNode::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Self::HList(value) | Self::VList(value) => PackedNode::Box(*value),
+            Self::Unset(value) => PackedNode::Unset(*value),
+            Self::Disc { replace, .. } => PackedNode::Disc(*replace),
+            Self::Whatsit(
+                Whatsit::PdfRefXForm {
+                    width,
+                    height,
+                    depth,
+                    ..
+                }
+                | Whatsit::PdfRefXImage {
+                    width,
+                    height,
+                    depth,
+                    ..
+                },
+            ) => PackedNode::Image {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Self::MathOn(value) | Self::MathOff(value) => PackedNode::Math(*value),
+            Self::Penalty(_)
+            | Self::Mark { .. }
+            | Self::Ins { .. }
+            | Self::Whatsit(_)
+            | Self::Direction(_)
+            | Self::MathNoad(_)
+            | Self::FractionNoad(_)
+            | Self::MathStyle(_)
+            | Self::MathChoice(_)
+            | Self::MathList(_)
+            | Self::Nonscript
+            | Self::Adjust(_) => PackedNode::Ignored,
+        }
+    }
+
+    #[must_use]
+    pub fn box_node(&self) -> Option<BoxNode> {
+        match self.packed() {
+            PackedNode::Box(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn vertical_dimensions(&self) -> Option<(Scaled, Scaled)> {
+        match self.packed() {
+            PackedNode::Box(node) => Some((node.height, node.depth)),
+            PackedNode::Unset(node) => Some((node.height, node.depth)),
+            PackedNode::Rule { height, depth, .. } => Some((
+                height.unwrap_or(Scaled::from_raw(0)),
+                depth.unwrap_or(Scaled::from_raw(0)),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Child lists in canonical semantic traversal order.
+    #[must_use]
+    pub fn children(&self) -> impl DoubleEndedIterator<Item = NodeListId> {
+        self.child_array(false).into_iter().flatten()
+    }
+
+    /// Child lists in physical diagnostic traversal order.
+    #[must_use]
+    pub fn physical_children(&self) -> impl DoubleEndedIterator<Item = NodeListId> {
+        self.child_array(true).into_iter().flatten()
+    }
+
+    fn child_array(&self, physical: bool) -> [Option<NodeListId>; 6] {
+        let mut children = [None; 6];
+        match self {
+            Self::HList(node) | Self::VList(node) => {
+                children[0] = Some(node.children);
+                if physical {
+                    children[1] = node.diagnostic_children;
+                }
+            }
+            Self::Glue {
+                leader: Some(LeaderPayload::HList(node) | LeaderPayload::VList(node)),
+                ..
+            } => children[0] = Some(node.children),
+            Self::Unset(node) => children[0] = Some(node.children),
+            Self::Disc {
+                pre, post, replace, ..
+            } => {
+                children[0] = Some(*pre);
+                children[1] = Some(*post);
+                children[2] = Some(*replace);
+            }
+            Self::Ins { content, .. } => children[0] = Some(*content),
+            Self::MathNoad(node) => {
+                children[0] = math_field_child(&node.nucleus);
+                children[1] = math_field_child(&node.subscript);
+                children[2] = math_field_child(&node.superscript);
+            }
+            Self::FractionNoad(node) => {
+                children[0] = Some(node.numerator);
+                children[1] = Some(node.denominator);
+            }
+            Self::MathChoice(node) => {
+                children[0] = Some(node.display);
+                children[1] = Some(node.text);
+                children[2] = Some(node.script);
+                children[3] = Some(node.script_script);
+            }
+            Self::MathList(node) => children[0] = Some(node.content),
+            Self::Adjust(node) => children[0] = Some(node.content),
+            _ => {}
+        }
+        children
+    }
+}
+
+fn math_field_child(field: &crate::math::MathField) -> Option<NodeListId> {
+    match field {
+        crate::math::MathField::SubBox(child) | crate::math::MathField::SubMlist(child) => {
+            Some(*child)
+        }
+        crate::math::MathField::Empty
+        | crate::math::MathField::MathChar(_)
+        | crate::math::MathField::MathTextChar(_) => None,
     }
 }
 
@@ -504,6 +829,73 @@ impl<'a> DoubleEndedIterator for NodeIter<'a> {
 }
 impl ExactSizeIterator for NodeIter<'_> {}
 
+/// A source-independent cursor over owned, epoch, or survivor-backed nodes.
+///
+/// Arena ownership remains in `NodeArena`/`SurvivorArena`; the cursor only
+/// normalizes immutable logical access.
+#[derive(Clone, Copy)]
+pub struct NodeCursor<'a> {
+    source: NodeCursorSource<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum NodeCursorSource<'a> {
+    Owned(&'a [Node]),
+    Compact(NodeList<'a>),
+}
+
+impl<'a> NodeCursor<'a> {
+    #[must_use]
+    pub fn owned(nodes: &'a [Node]) -> Self {
+        Self {
+            source: NodeCursorSource::Owned(nodes),
+        }
+    }
+
+    #[must_use]
+    pub fn compact(nodes: NodeList<'a>) -> Self {
+        Self {
+            source: NodeCursorSource::Compact(nodes),
+        }
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.source_len()
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<NodeRef<'a>> {
+        (index < self.source_len()).then(|| match self.source {
+            NodeCursorSource::Owned(nodes) => NodeRef::from(&nodes[index]),
+            NodeCursorSource::Compact(nodes) => nodes
+                .get(index)
+                .expect("cursor index belongs to compact list"),
+        })
+    }
+
+    const fn source_len(&self) -> usize {
+        match self.source {
+            NodeCursorSource::Owned(nodes) => nodes.len(),
+            NodeCursorSource::Compact(nodes) => nodes.len(),
+        }
+    }
+
+    /// Fast same-font byte-character scan when the source has compact words.
+    #[must_use]
+    pub fn char_codes(&self, index: usize) -> Option<CharCodes<'a>> {
+        match self.source {
+            NodeCursorSource::Owned(_) => None,
+            NodeCursorSource::Compact(nodes) => nodes.char_codes(index),
+        }
+    }
+}
+
 impl NodeStorage {
     fn decode<'a>(&'a self, index: usize, origins: Option<&'a NodeOriginOverlay>) -> NodeRef<'a> {
         let word = self.words[index];
@@ -668,8 +1060,7 @@ impl NodeStorage {
             let index = *next;
             *next += 1;
             let node = self.decode(index, None);
-            let mut children = Vec::new();
-            match node {
+            match &node {
                 NodeRef::Char { .. } => {
                     overlay.word_origins[index] =
                         origin_at(origin_slots.next().unwrap_or(u32::MAX));
@@ -682,27 +1073,25 @@ impl NodeStorage {
                             .collect(),
                     );
                 }
-                NodeRef::HList(node) | NodeRef::VList(node) => {
-                    children.push(node.children);
-                    children.extend(node.diagnostic_children);
-                }
-                NodeRef::Glue {
-                    leader: Some(crate::node::LeaderPayload::HList(node)),
-                    ..
-                }
-                | NodeRef::Glue {
-                    leader: Some(crate::node::LeaderPayload::VList(node)),
-                    ..
-                } => children.push(node.children),
-                NodeRef::Unset(node) => children.push(node.children),
-                NodeRef::Disc {
-                    pre, post, replace, ..
-                } => children.extend([pre, post, replace]),
-                NodeRef::Ins { content, .. } => children.push(content),
-                NodeRef::Adjust(adjust) => children.push(adjust.content),
                 _ => {}
             }
-            for child in children.into_iter().rev() {
+            let follows_paragraph_children = matches!(
+                node.kind(),
+                NodeKind::HList
+                    | NodeKind::VList
+                    | NodeKind::Glue
+                    | NodeKind::Unset
+                    | NodeKind::Disc
+                    | NodeKind::Ins
+                    | NodeKind::Adjust
+            );
+            for child in node
+                .physical_children()
+                .filter(|_| follows_paragraph_children)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
                 if child.arena() != ArenaRef::Survivor(root_id) {
                     return None;
                 }

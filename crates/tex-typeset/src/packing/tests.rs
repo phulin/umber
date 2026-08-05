@@ -159,7 +159,7 @@ fn compact_char_runs_differentially_match_scalar_mixed_lists() {
         }
         let id = universe.freeze_node_list(&nodes);
         let view = universe.nodes(id);
-        let fast = measure_hlist(&universe, view);
+        let fast = measure_hlist(&universe, NodeCursor::compact(view));
         let scalar = scalar_hlist(&universe, view);
         let params = HpackParams {
             hbadness: case % 10_001,

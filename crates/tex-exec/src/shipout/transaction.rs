@@ -1,6 +1,7 @@
 use tex_out::dvi::DviPagePlan;
 use tex_state::env::banks::{DimenParam, IntParam};
-use tex_state::node::Node;
+use tex_state::node::{Node, NodeKind};
+use tex_state::node_arena::NodeRef;
 use tex_state::{
     ContentHash, DetachedArtifact, GeometryObservation, MemoTimingPhase, MemoValueLimits,
     PrintSink, PureMemoKey, PureMemoLayer, PureShipoutEntry, Universe,
@@ -480,37 +481,24 @@ fn shipout_key(stores: &mut Universe, node: &Node) -> PureMemoKey {
 fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
     let mut nodes = vec![root.clone()];
     while let Some(node) = nodes.pop() {
-        let children = match node {
-            Node::HList(box_node) | Node::VList(box_node) => Some(box_node.children),
-            Node::Glue {
-                leader:
-                    Some(
-                        tex_state::node::LeaderPayload::HList(box_node)
-                        | tex_state::node::LeaderPayload::VList(box_node),
-                    ),
-                ..
-            } => Some(box_node.children),
-            Node::Disc {
-                pre, post, replace, ..
-            } => {
-                nodes.extend(stores.nodes(pre).into_iter().map(|node| node.to_owned()));
-                nodes.extend(stores.nodes(post).into_iter().map(|node| node.to_owned()));
-                Some(replace)
-            }
-            Node::Whatsit(_)
-            | Node::Unset(_)
-            | Node::Ins { .. }
-            | Node::Direction(_)
-            | Node::MathNoad(_)
-            | Node::FractionNoad(_)
-            | Node::MathStyle(_)
-            | Node::MathChoice(_)
-            | Node::MathList(_)
-            | Node::Nonscript
-            | Node::Adjust(_) => return false,
-            _ => None,
-        };
-        if let Some(children) = children {
+        let view = NodeRef::from(&node);
+        if matches!(
+            view.kind(),
+            NodeKind::Whatsit
+                | NodeKind::Unset
+                | NodeKind::Ins
+                | NodeKind::Direction
+                | NodeKind::MathNoad
+                | NodeKind::FractionNoad
+                | NodeKind::MathStyle
+                | NodeKind::MathChoice
+                | NodeKind::MathList
+                | NodeKind::Nonscript
+                | NodeKind::Adjust
+        ) {
+            return false;
+        }
+        for children in view.children() {
             nodes.extend(
                 stores
                     .nodes(children)
@@ -523,12 +511,10 @@ fn effect_free_shipout_graph(stores: &Universe, root: &Node) -> bool {
 }
 
 fn huge_shipout_box(node: &Node, stores: &Universe) -> bool {
-    let (width, height, depth) = match node {
-        Node::HList(box_node) | Node::VList(box_node) => {
-            (box_node.width, box_node.height, box_node.depth)
-        }
-        _ => return false,
+    let Some(box_node) = NodeRef::from(node).box_node() else {
+        return false;
     };
+    let (width, height, depth) = (box_node.width, box_node.height, box_node.depth);
     height > tex_state::scaled::Scaled::MAX_DIMEN
         || depth > tex_state::scaled::Scaled::MAX_DIMEN
         || height

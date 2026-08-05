@@ -2,6 +2,7 @@ use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, GlueParam};
 use tex_state::glue::GlueSpec;
 use tex_state::node::{GlueKind, Node};
+use tex_state::node_arena::NodeRef;
 use tex_state::scaled::Scaled;
 
 use crate::mode::ignored_depth;
@@ -107,13 +108,5 @@ pub(crate) fn is_outer_vertical(nest: &ModeNest) -> bool {
 }
 
 fn vertical_baseline_dimensions(node: &Node) -> Option<(Scaled, Scaled)> {
-    match node {
-        Node::HList(box_node) | Node::VList(box_node) => Some((box_node.height, box_node.depth)),
-        Node::Unset(unset) => Some((unset.height, unset.depth)),
-        Node::Rule { height, depth, .. } => Some((
-            height.unwrap_or(Scaled::from_raw(0)),
-            depth.unwrap_or(Scaled::from_raw(0)),
-        )),
-        _ => None,
-    }
+    NodeRef::from(node).vertical_dimensions()
 }

@@ -2,12 +2,103 @@
 
 use crate::glue::Order;
 use crate::ids::{FontId, GlueId, NodeListId, TokenListId};
-#[cfg(debug_assertions)]
-use crate::math::MathField;
 use crate::math::{MathChoice, MathFraction, MathListNode, MathNoad, MathStyle};
 use crate::scaled::{GlueSetRatio, Scaled};
 use crate::token::OriginId;
 use crate::world::{PrintSink, StreamSlot};
+
+/// Stable logical node kinds shared by owned and compact node views.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum NodeKind {
+    Char,
+    Lig,
+    Kern,
+    MarginKern,
+    Glue,
+    Penalty,
+    Rule,
+    HList,
+    VList,
+    Unset,
+    Disc,
+    Mark,
+    Ins,
+    Whatsit,
+    MathOn,
+    MathOff,
+    Direction,
+    MathNoad,
+    FractionNoad,
+    MathStyle,
+    MathChoice,
+    MathList,
+    Nonscript,
+    Adjust,
+}
+
+#[derive(Clone, Copy)]
+struct NodeSchema {
+    name: &'static str,
+    layout: &'static str,
+    etex_type: i32,
+}
+
+// The logical schema is deliberately data, not generated source. It is the
+// single inventory of categories, fields, dimension behavior, and child
+// traversal for both owned nodes and compact arena views. Layout strings are
+// `fields;dimension;traversal`.
+const fn s(name: &'static str, layout: &'static str, etex_type: i32) -> NodeSchema {
+    NodeSchema {
+        name,
+        layout,
+        etex_type,
+    }
+}
+
+const NODE_SCHEMA: [NodeSchema; 24] = [
+    s("char", "font,ch,origin;glyph;leaf", 0),
+    s("lig", "font,ch,orig,hits,origins;glyph;leaf", 7),
+    s("kern", "amount,kind;horizontal;leaf", 12),
+    s("margin_kern", "amount,side,font,ch;horizontal;leaf", 12),
+    s("glue", "spec,kind,leader;glue;leader", 11),
+    s("penalty", "penalty;none;leaf", 13),
+    s("rule", "width,height,depth;rule;leaf", 3),
+    s("hlist", "box;box;box", 1),
+    s("vlist", "box;box;box", 2),
+    s("unset", "unset;box;one", 14),
+    s("disc", "kind,pre,post,replace,count;replacement;disc", 8),
+    s("mark", "class,tokens;none;leaf", 5),
+    s("ins", "class,size,split,penalty,content;none;one", 4),
+    s("whatsit", "payload;image;leaf", 9),
+    s("math_on", "width;horizontal;leaf", 10),
+    s("math_off", "width;horizontal;leaf", 10),
+    s("direction", "boundary;none;leaf", 10),
+    s("math_noad", "kind,nucleus,sub,sup;none;noad", 15),
+    s("fraction_noad", "fraction;none;fraction", 15),
+    s("math_style", "style;none;leaf", 15),
+    s(
+        "math_choice",
+        "display,text,script,scriptscript;none;choice",
+        15,
+    ),
+    s("math_list", "kind,content;none;one", 15),
+    s("nonscript", ";none;leaf", 11),
+    s("adjust", "content,pre;none;one", 6),
+];
+
+impl NodeKind {
+    const fn schema(self) -> &'static NodeSchema {
+        &NODE_SCHEMA[self as usize]
+    }
+
+    #[must_use]
+    pub const fn etex_type(self) -> i32 {
+        let schema = self.schema();
+        let _declarative_metadata = (schema.name, schema.layout);
+        schema.etex_type
+    }
+}
 
 /// A frozen TeX node.
 #[derive(Clone, Debug)]
@@ -262,73 +353,23 @@ impl PartialEq for Node {
 mod stats {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::Node;
+    use super::{NODE_SCHEMA, Node};
 
-    pub const NAMES: [&str; 24] = [
-        "char",
-        "lig",
-        "kern",
-        "margin_kern",
-        "glue",
-        "penalty",
-        "rule",
-        "hlist",
-        "vlist",
-        "unset",
-        "disc",
-        "mark",
-        "ins",
-        "whatsit",
-        "math_on",
-        "math_off",
-        "direction",
-        "math_noad",
-        "fraction_noad",
-        "math_style",
-        "math_choice",
-        "math_list",
-        "nonscript",
-        "adjust",
-    ];
-    static COUNTS: [AtomicU64; NAMES.len()] = [const { AtomicU64::new(0) }; NAMES.len()];
+    static COUNTS: [AtomicU64; NODE_SCHEMA.len()] =
+        [const { AtomicU64::new(0) }; NODE_SCHEMA.len()];
 
     pub fn record(node: &Node) {
-        let index = match node {
-            Node::Char { .. } => 0,
-            Node::Lig { .. } => 1,
-            Node::Kern { .. } => 2,
-            Node::MarginKern { .. } => 3,
-            Node::Glue { .. } => 4,
-            Node::Penalty(_) => 5,
-            Node::Rule { .. } => 6,
-            Node::HList(_) => 7,
-            Node::VList(_) => 8,
-            Node::Unset(_) => 9,
-            Node::Disc { .. } => 10,
-            Node::Mark { .. } => 11,
-            Node::Ins { .. } => 12,
-            Node::Whatsit(_) => 13,
-            Node::MathOn(_) => 14,
-            Node::MathOff(_) => 15,
-            Node::Direction(_) => 16,
-            Node::MathNoad(_) => 17,
-            Node::FractionNoad(_) => 18,
-            Node::MathStyle(_) => 19,
-            Node::MathChoice(_) => 20,
-            Node::MathList(_) => 21,
-            Node::Nonscript => 22,
-            Node::Adjust(_) => 23,
-        };
+        let index = node.kind() as usize;
         COUNTS[index].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn snapshot() -> Vec<(&'static str, u64)> {
-        NAMES
+        NODE_SCHEMA
             .iter()
             .zip(&COUNTS)
-            .filter_map(|(&name, count)| {
+            .filter_map(|(schema, count)| {
                 let count = count.load(Ordering::Relaxed);
-                (count != 0).then_some((name, count))
+                (count != 0).then_some((schema.name, count))
             })
             .collect()
     }
@@ -782,88 +823,19 @@ pub enum PdfLiteralMode {
 }
 
 impl Node {
+    /// Returns this node's source-independent logical kind.
+    #[must_use]
+    pub fn kind(&self) -> NodeKind {
+        crate::node_arena::NodeRef::from(self).kind()
+    }
+
     /// e-TeX `\lastnodetype` code for this node.
     #[must_use]
-    pub const fn etex_type(&self) -> i32 {
-        match self {
-            Self::Char { .. } => 0,
-            Self::HList(_) => 1,
-            Self::VList(_) => 2,
-            Self::Rule { .. } => 3,
-            Self::Ins { .. } => 4,
-            Self::Mark { .. } => 5,
-            Self::Adjust(_) => 6,
-            Self::Lig { .. } => 7,
-            Self::Disc { .. } => 8,
-            Self::Whatsit(_) => 9,
-            Self::MathOn(_) | Self::MathOff(_) | Self::Direction(_) => 10,
-            Self::Glue { .. } | Self::Nonscript => 11,
-            Self::Kern { .. } | Self::MarginKern { .. } => 12,
-            Self::Penalty(_) => 13,
-            Self::Unset(_) => 14,
-            Self::MathNoad(_)
-            | Self::FractionNoad(_)
-            | Self::MathStyle(_)
-            | Self::MathChoice(_)
-            | Self::MathList(_) => 15,
-        }
+    pub fn etex_type(&self) -> i32 {
+        self.kind().schema().etex_type
     }
     #[cfg(debug_assertions)]
     pub(crate) fn child_lists(&self, out: &mut Vec<NodeListId>) {
-        match self {
-            Self::HList(box_node) | Self::VList(box_node) => out.push(box_node.children),
-            Self::Glue {
-                leader: Some(LeaderPayload::HList(box_node) | LeaderPayload::VList(box_node)),
-                ..
-            } => out.push(box_node.children),
-            Self::Unset(unset) => out.push(unset.children),
-            Self::Disc {
-                pre, post, replace, ..
-            } => {
-                out.push(*pre);
-                out.push(*post);
-                out.push(*replace);
-            }
-            Self::Ins { content, .. } => out.push(*content),
-            Self::Adjust(adjust) => out.push(adjust.content),
-            Self::MathNoad(noad) => {
-                push_math_field_child(&noad.nucleus, out);
-                push_math_field_child(&noad.subscript, out);
-                push_math_field_child(&noad.superscript, out);
-            }
-            Self::FractionNoad(fraction) => {
-                out.push(fraction.numerator);
-                out.push(fraction.denominator);
-            }
-            Self::MathChoice(choice) => {
-                out.push(choice.display);
-                out.push(choice.text);
-                out.push(choice.script);
-                out.push(choice.script_script);
-            }
-            Self::MathList(list) => out.push(list.content),
-            Self::Char { .. }
-            | Self::Lig { .. }
-            | Self::Kern { .. }
-            | Self::MarginKern { .. }
-            | Self::Glue { .. }
-            | Self::Penalty(_)
-            | Self::Rule { .. }
-            | Self::Mark { .. }
-            | Self::Whatsit(_)
-            | Self::MathOn(_)
-            | Self::MathOff(_)
-            | Self::Direction(_)
-            | Self::MathStyle(_)
-            | Self::Nonscript => {}
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-fn push_math_field_child(field: &MathField, out: &mut Vec<NodeListId>) {
-    match field {
-        MathField::SubBox(list) | MathField::SubMlist(list) => out.push(*list),
-        MathField::Empty | MathField::MathChar(_) | MathField::MathTextChar(_) => {}
+        out.extend(crate::node_arena::NodeRef::from(self).children());
     }
 }
