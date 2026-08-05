@@ -27,21 +27,15 @@ const SPILLED_CONTROL_SEQUENCE: &str = "pathologicalcontrolsequencenameoverinlin
 enum Configuration {
     Unobserved,
     ExternalObserver,
-    ParagraphRecording,
 }
 
 impl Configuration {
-    const ALL: [Self; 3] = [
-        Self::Unobserved,
-        Self::ExternalObserver,
-        Self::ParagraphRecording,
-    ];
+    const ALL: [Self; 2] = [Self::Unobserved, Self::ExternalObserver];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Unobserved => "unobserved",
             Self::ExternalObserver => "external_observer",
-            Self::ParagraphRecording => "paragraph_recording",
         }
     }
 }
@@ -149,12 +143,12 @@ fn main() {
 }
 
 fn measure(workload: Workload, configuration: Configuration, perturb: bool) -> Stats {
-    let mut warm = build_case(workload, configuration);
+    let mut warm = build_case(workload);
     run_case(workload, configuration, &mut warm, false);
     drop(warm);
 
     let mut cases = (0..OPERATIONS)
-        .map(|_| build_case(workload, configuration))
+        .map(|_| build_case(workload))
         .collect::<Vec<_>>();
     let region = Region::new(GLOBAL);
     for case in &mut cases {
@@ -207,7 +201,7 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
             );
             let mut processor = match configuration {
                 Configuration::ExternalObserver => processor.with_observer(&mut observer),
-                Configuration::Unobserved | Configuration::ParagraphRecording => processor,
+                Configuration::Unobserved => processor,
             };
             match workload {
                 Workload::SingleTokenBackup => {
@@ -305,7 +299,7 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
     }
 }
 
-fn build_case(workload: Workload, configuration: Configuration) -> Case {
+fn build_case(workload: Workload) -> Case {
     if matches!(workload, Workload::CommandTextRendering) {
         return rendering_case();
     }
@@ -384,10 +378,6 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
         command
             .open_registered_source(registered)
             .expect("benchmark source opens");
-    }
-
-    if matches!(configuration, Configuration::ParagraphRecording) {
-        command.begin_paragraph_input_transaction();
     }
 
     Case::Processor(Box::new(ProcessorCase {

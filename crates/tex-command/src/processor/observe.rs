@@ -1,11 +1,9 @@
 //! Observation entry points for canonical multi-record transitions.
 //!
 //! Observation vocabulary and construction compile unconditionally. At
-//! runtime, [`CommandProcessor::is_observed`] enables construction when either
-//! an external observer is attached or paragraph input recording is active.
-//! When active, [`CommandProcessor::observe`] first offers every record to the
-//! paragraph transaction, then optionally delivers it to the external
-//! observer.
+//! runtime, [`CommandProcessor::is_observed`] enables construction when an
+//! external observer is attached. [`CommandProcessor::observe`] delivers each
+//! constructed record to that observer.
 //!
 //! These helpers keep transitions that publish multiple related records in
 //! canonical order. They have one definition in every build; there is no

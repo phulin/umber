@@ -125,8 +125,6 @@ pub use dependency::{
     ChangedAt, DependencyBank, DependencyCodeTable, DependencyEngineField, DependencyFontField,
     DependencyKey, DependencyPageField, DependencyRegion, DependencyRuntime, DependencyTracker,
     DependencyValidation, DependencyValue, DependencyWorldField, ObservedDependency,
-    PARAGRAPH_END_INPUT_BARRIER_DOMAIN, PARAGRAPH_INPUT_OPEN_BARRIER_DOMAIN,
-    PARAGRAPH_SCANTOKENS_BARRIER_DOMAIN,
 };
 pub use engine_state::{EngineMode, EngineStateSnapshot};
 pub use font::PdfFontCode;

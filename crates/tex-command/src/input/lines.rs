@@ -315,7 +315,7 @@ impl SourceLineState {
     /// scalar position even though every future byte from `byte_cursor` is
     /// unchanged. Recomputing both from the revised backing keeps checkpoint
     /// replay equal to a freshly delivered front without accepting an edit
-    /// that overlaps the recorded paragraph transaction.
+    /// that overlaps the retained input front.
     pub(crate) fn rehome_edited_backing(
         &mut self,
         source: SourceId,

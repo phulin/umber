@@ -2285,20 +2285,6 @@ impl Universe {
         }
     }
 
-    /// Detaches one meaning dependency's control-sequence namespace and spelling.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn detach_paragraph_meaning_dependency(
-        &self,
-        raw: u32,
-    ) -> Option<(crate::interner::ControlSequenceKind, String)> {
-        let symbol = self.stores.try_resolve_stored_symbol(Symbol::new(raw))?;
-        Some((
-            self.control_sequence_kind(symbol),
-            self.resolve(symbol).to_owned(),
-        ))
-    }
-
     /// Projects a selected font through the same semantic dependency domain
     /// used by [`Self::semantic_dependency_value`].
     #[doc(hidden)]

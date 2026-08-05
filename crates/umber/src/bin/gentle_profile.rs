@@ -914,6 +914,7 @@ fn step_snapshot_delta(
     }
 }
 
+#[cfg(feature = "profiling")]
 fn print_step_snapshot_measurement(name: &str, measurement: StepSnapshotMeasurement) {
     eprintln!(
         "gentle-profile step snapshots: workload={name:?} calls={} nanos={} logical_bytes={}",
@@ -2171,7 +2172,6 @@ mod tests {
             panic!("none must still enable the memo runtime");
         };
         assert!(!recording.pretolerance);
-        assert!(!recording.paragraphs);
         assert!(!recording.pages);
         assert!(!recording.shipouts);
     }

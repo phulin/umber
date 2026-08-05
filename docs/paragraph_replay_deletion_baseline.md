@@ -182,9 +182,30 @@ zero errors. Against the pre-deletion disabled-layer control, that is
 12,520,890 fewer bytes and 129,071 fewer allocations. Maximum RSS fell for six
 small pairs and from 1,249,932 KiB to 1,177,072 KiB for the long case.
 
-Across tracked and newly added Rust sources, the repository moved from 442,100
-to 427,878 lines, a reduction of 14,222 lines. The complete working-tree diff,
-including tests, profiler modes, workloads, and documentation, removes 15,308
-lines and adds 510. Invalidated paragraphs now restart from
+Across tracked Rust sources, the repository moved from 442,100 to 427,936
+lines, a reduction of 14,164 lines. The complete committed diff, including
+tests, profiler modes, workloads, and documentation, removes 15,238 lines and
+adds 782. Invalidated paragraphs now restart from
 the nearest eligible accepted `CommandSummary` (or `JobStart`) and execute
 normally; generic checkpoint, output, provenance, and convergence paths remain.
+
+## Post-rebase verification
+
+The combined deletion was rebased onto `3a514b5f2` and verified from candidate
+`d61597246`. The verified working tree contains 427,903 tracked Rust lines,
+down 14,280 from that base's 442,183; its complete diff removes 15,225 lines
+and adds 665. The additional deletion removes stale standalone benchmark and
+state API remnants found during verification.
+
+The attributed binary is 301,072,800 bytes with SHA-256
+`e34379eda710ed76c17f8728fe9c5dde834c09859c36707b5beb82e79ed205ae`;
+its `Cargo.lock` SHA-256 is
+`1360c0af98615d57bd6fea94ba23ee484d857f32415aa37f40b3862627a359ee`.
+One measured prefix advance took 182.371 ms and peaked at 29,444 KiB RSS; one
+measured long advance took 2,216.779 ms and peaked at 1,170,620 KiB RSS. Both,
+and all seven two-direction committed workload checks, were byte-identical to
+fresh cold DVI. The prefix and long runs respectively captured 8,488 and
+412,612 snapshots at exactly 7,576 logical bytes each. Paragraph endpoint
+detach/materialize accounting remains absent. The command allocation benchmark
+compiled without a paragraph-recording configuration, and all 25 surviving
+rows responded to its perturbation with exactly one allocation and 64 bytes.
