@@ -12,10 +12,12 @@ cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
 
 `command_allocations` directly exercises single-token backup, macro argument
 matching, `scan_toks` absorption, keyword and dimension scanning, alignment
-preamble scanning, command-text rendering, token-list iteration, and
-control-sequence tokenization for both inline and pathological spill names.
-Each row reports allocation count and requested bytes per operation. The
-program builds fixed cases before measurement, runs a
+preamble scanning, two-token `off_save` recovery, rendered-token installation,
+command-text rendering, token-list iteration, and control-sequence tokenization
+for both inline and pathological spill names. The recovery and rendered-token
+rows detect fixed-array-to-`Arc` staging regressions separately from the common
+single-token backup row. Each row reports allocation count and requested bytes
+per operation. The program builds fixed cases before measurement, runs a
 discarded warmup, and then measures 64 operations with the same
 `stats_alloc::Region` convention as the `tex-state` and `tex-exec` allocation
 gates.

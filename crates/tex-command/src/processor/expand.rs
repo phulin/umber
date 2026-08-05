@@ -1283,7 +1283,7 @@ impl CommandProcessor<'_> {
                     );
                 }
                 crate::InternalValue::Font(symbol) => {
-                    self.push_rendered_tokens(vec![Token::Cs(symbol)], opener);
+                    self.push_rendered_tokens([Token::Cs(symbol)], opener);
                 }
                 _ => unreachable!("non-token internal values are rendered above"),
             }
@@ -1665,30 +1665,29 @@ impl CommandProcessor<'_> {
     /// asking a trace adapter to recognize rendered text later.
     fn push_rendered_text(&mut self, text: &str, parent: OriginId) {
         self.push_rendered_tokens(
-            text.chars()
-                .map(|ch| Token::Char {
-                    ch,
-                    cat: if ch == ' ' {
-                        tex_state::token::Catcode::Space
-                    } else {
-                        tex_state::token::Catcode::Other
-                    },
-                })
-                .collect(),
+            text.chars().map(|ch| Token::Char {
+                ch,
+                cat: if ch == ' ' {
+                    tex_state::token::Catcode::Space
+                } else {
+                    tex_state::token::Catcode::Other
+                },
+            }),
             parent,
         );
     }
 
-    fn push_rendered_tokens(&mut self, tokens: Vec<Token>, parent: OriginId) {
+    fn push_rendered_tokens(&mut self, tokens: impl IntoIterator<Item = Token>, parent: OriginId) {
         let origin = self
             .state
             .synthesized_origin(SynthesizedOriginKind::ValueRendering, parent);
-        let first = tokens.first().copied();
-        let tokens = tokens
+        let mut tokens = tokens.into_iter();
+        let first = tokens.next();
+        let traced = first
             .into_iter()
-            .map(|token| TracedTokenWord::pack(token, origin))
-            .collect::<Vec<_>>();
-        self.insert_expansion_list(TokenPayload::transient(tokens), first);
+            .chain(tokens)
+            .map(|token| TracedTokenWord::pack(token, origin));
+        self.insert_expansion_list(TokenPayload::transient(traced), first);
     }
 
     /// Performs TeX82 §323's `ins_list` for one expansion result.

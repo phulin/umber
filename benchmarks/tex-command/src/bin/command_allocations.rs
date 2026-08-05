@@ -10,7 +10,9 @@ use tex_command::{
 };
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
+use tex_state::meaning::{
+    ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive,
+};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 #[global_allocator]
@@ -52,6 +54,8 @@ enum Workload {
     KeywordScanning,
     DimensionScanning,
     AlignmentPreambleScanning,
+    TwoTokenOffSaveRecovery,
+    RenderedTokenInstallation,
     CommandTextRendering,
     TokenListIteration,
     InlineControlSequenceTokenization,
@@ -59,13 +63,15 @@ enum Workload {
 }
 
 impl Workload {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::SingleTokenBackup,
         Self::MacroArgumentMatching,
         Self::ScanToksAbsorption,
         Self::KeywordScanning,
         Self::DimensionScanning,
         Self::AlignmentPreambleScanning,
+        Self::TwoTokenOffSaveRecovery,
+        Self::RenderedTokenInstallation,
         Self::CommandTextRendering,
         Self::TokenListIteration,
         Self::InlineControlSequenceTokenization,
@@ -80,6 +86,8 @@ impl Workload {
             Self::KeywordScanning => "keyword_scanning",
             Self::DimensionScanning => "dimension_scanning",
             Self::AlignmentPreambleScanning => "alignment_preamble_scanning",
+            Self::TwoTokenOffSaveRecovery => "two_token_off_save_recovery",
+            Self::RenderedTokenInstallation => "rendered_token_installation",
             Self::CommandTextRendering => "command_text_rendering",
             Self::TokenListIteration => "token_list_iteration",
             Self::InlineControlSequenceTokenization => "inline_control_sequence_tokenization",
@@ -241,6 +249,35 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                         .begin_alignment_preamble_scan(None)
                         .expect("alignment preamble scans");
                 }
+                Workload::TwoTokenOffSaveRecovery => {
+                    let command = processor
+                        .get_next()
+                        .expect("off-save command delivers")
+                        .expect("off-save command is present");
+                    processor
+                        .recover_off_save(
+                            command,
+                            &[
+                                Token::Char {
+                                    ch: 'R',
+                                    cat: Catcode::Other,
+                                },
+                                Token::Char {
+                                    ch: '.',
+                                    cat: Catcode::Other,
+                                },
+                            ],
+                        )
+                        .expect("two-token off-save recovery installs");
+                }
+                Workload::RenderedTokenInstallation => {
+                    black_box(
+                        processor
+                            .get_x_token()
+                            .expect("rendered expansion succeeds")
+                            .expect("rendered expansion produces a token"),
+                    );
+                }
                 Workload::TokenListIteration => {
                     while let Some(command) = processor.get_token().expect("token list iterates") {
                         black_box(command);
@@ -275,6 +312,8 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
         Workload::KeywordScanning => "dimension ",
         Workload::DimensionScanning => "123.5pt ",
         Workload::AlignmentPreambleScanning => r"{#&#\cr",
+        Workload::TwoTokenOffSaveRecovery => "x",
+        Workload::RenderedTokenInstallation => r"\number12345 ",
         Workload::TokenListIteration => "",
         Workload::InlineControlSequenceTokenization => r"\allocationbaseline ",
         Workload::SpilledControlSequenceTokenization => {
@@ -297,6 +336,13 @@ fn build_case(workload: Workload, configuration: Configuration) -> Case {
             Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Cr),
         );
         command.begin_alignment(AlignmentIdentity::new(1));
+    }
+    if matches!(workload, Workload::RenderedTokenInstallation) {
+        let number = universe.intern("number").symbol();
+        universe.set_meaning(
+            number,
+            Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
+        );
     }
     if matches!(
         workload,

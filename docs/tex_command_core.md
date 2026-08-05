@@ -1634,11 +1634,16 @@ levels. Exact-byte and Unicode source cursors use this identical enum.
 The centralized transient and backed-up constructors store a one-token payload
 directly in the cursor, so TeX's common insertion and `back_input` paths do not
 allocate a temporary vector or reference-counted slice. Empty and multi-token
-payloads remain shared and unbounded. e-TeX's optimized `\aftergroup` prepend
-promotes an inline backed-up payload to shared storage while preserving save
-order; snapshot normalization, durable continuation remapping, paragraph
-replay, origin adoption, and edited-source rehoming treat the two storage forms
-as the same semantic payload.
+payloads remain shared and unbounded. Exactly two transient tokens move from an
+iterator into an array-backed `Arc` allocation directly; longer transient
+iterators materialize only the owned buffer that becomes shared storage. The
+recovery and rendered-value helpers therefore accept iterators, so fixed
+insertions use array literals and dynamic renderings do not build a caller-side
+staging vector. e-TeX's optimized `\aftergroup` prepend promotes an inline
+backed-up payload to shared storage while preserving save order; snapshot
+normalization, durable continuation remapping, paragraph replay, origin
+adoption, and edited-source rehoming treat the two storage forms as the same
+semantic payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they

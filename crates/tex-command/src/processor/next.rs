@@ -2089,12 +2089,12 @@ impl CommandProcessor<'_> {
                 (None, RecoveryKind::InsertedToken)
             }
         };
-        let tokens = match status {
+        let (first_token, second_token) = match status {
             ScannerStatus::Normal => return Ok(()),
-            ScannerStatus::Skipping(_) => vec![self.frozen_primitive("fi")?],
-            ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => vec![right_brace()],
-            ScannerStatus::Matching(_) => vec![self.frozen_primitive("par")?],
-            ScannerStatus::Aligning(_) => vec![self.frozen_primitive("cr")?, right_brace()],
+            ScannerStatus::Skipping(_) => (self.frozen_primitive("fi")?, None),
+            ScannerStatus::Defining(_) | ScannerStatus::Absorbing(_) => (right_brace(), None),
+            ScannerStatus::Matching(_) => (self.frozen_primitive("par")?, None),
+            ScannerStatus::Aligning(_) => (self.frozen_primitive("cr")?, Some(right_brace())),
         };
         // TeX82 §23 leaves `scanner_status := aligning` live while its
         // inserted frozen `\cr` finishes `init_align`'s preamble scan.
@@ -2111,9 +2111,8 @@ impl CommandProcessor<'_> {
         if let Some(warning) = warning {
             self.command.expansion.pending_diagnostics.push(warning.0);
         }
-        let observed_tokens = tokens
-            .iter()
-            .copied()
+        let observed_tokens = std::iter::once(first_token)
+            .chain(second_token)
             .enumerate()
             .filter_map(|(index, token)| {
                 if index != 0 && matches!(&status, ScannerStatus::Aligning(_)) {
@@ -2127,7 +2126,7 @@ impl CommandProcessor<'_> {
             })
             .collect();
         let level = self.command.push_token_level(
-            TokenPayload::transient(tokens),
+            TokenPayload::transient(std::iter::once(first_token).chain(second_token)),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,

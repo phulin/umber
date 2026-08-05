@@ -119,7 +119,9 @@ pub(crate) enum TokenPayload {
 
 impl TokenPayload {
     /// Selects inline storage for one transient token and shared storage for
-    /// empty or multi-token payloads.
+    /// empty or multi-token payloads. The fixed two-token case constructs its
+    /// shared slice directly from an array; longer iterators materialize the
+    /// unbounded owned buffer once.
     pub(crate) fn transient(tokens: impl IntoIterator<Item = TracedTokenWord>) -> Self {
         let mut tokens = tokens.into_iter();
         let Some(first) = tokens.next() else {
@@ -128,9 +130,12 @@ impl TokenPayload {
         let Some(second) = tokens.next() else {
             return Self::InlineTransient(first);
         };
+        let Some(third) = tokens.next() else {
+            return Self::Transient(SharedTokenBuffer::new([first, second]));
+        };
         let (lower, _) = tokens.size_hint();
-        let mut shared = Vec::with_capacity(lower.saturating_add(2));
-        shared.extend([first, second]);
+        let mut shared = Vec::with_capacity(lower.saturating_add(3));
+        shared.extend([first, second, third]);
         shared.extend(tokens);
         Self::Transient(SharedTokenBuffer::new(shared))
     }

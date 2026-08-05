@@ -2523,7 +2523,7 @@ impl CommandProcessor<'_> {
         // The bottom stopper delivers the synthetic closing brace followed
         // by frozen outer `\\endwrite`; the write list and opening brace sit
         // above it exactly as TeX82's three `ins_list` calls do.
-        let stopper_level = self.push_write_recovery(vec![right_brace, endwrite], right_brace);
+        let stopper_level = self.push_write_recovery([right_brace, endwrite], right_brace);
         let write_level = self.command.push_token_level(
             TokenPayload::Stored {
                 tokens: tokens.token_list(),
@@ -2561,7 +2561,7 @@ impl CommandProcessor<'_> {
                 });
         }
         self.observe_write_list_push(write_level);
-        self.push_write_recovery(vec![left_brace], left_brace);
+        self.push_write_recovery([left_brace], left_brace);
 
         self.outer_recovered_while_absorbing = false;
         let expanded = self.scan_balanced_text(true)?.tokens;
@@ -2604,7 +2604,11 @@ impl CommandProcessor<'_> {
         Ok(scanned.replacement_text)
     }
 
-    fn push_write_recovery(&mut self, tokens: Vec<Token>, observed: Token) -> InputLevelId {
+    fn push_write_recovery(
+        &mut self,
+        tokens: impl IntoIterator<Item = Token>,
+        observed: Token,
+    ) -> InputLevelId {
         let level = self.command.push_token_level(
             TokenPayload::transient(
                 tokens
