@@ -195,6 +195,48 @@ pub struct CommandCapabilities {
     unicode: bool,
 }
 
+/// Canonical engine implementation whose compiled semantics execute a job.
+///
+/// This is distinct from [`CommandProfile`]: pdfTeX can load a format whose
+/// command family and frozen state are TeX82 while retaining pdfTeX's changes
+/// to shared compiled routines such as pdftex.web §459's dimension scanner.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CommandEngineSemantics {
+    #[default]
+    Tex82,
+    Etex26,
+    Pdftex14029,
+}
+
+impl CommandEngineSemantics {
+    /// Selects the native canonical implementation for a command profile.
+    #[must_use]
+    pub const fn for_profile(profile: CommandProfile) -> Self {
+        match profile.dialect() {
+            CommandDialect::Tex82 => Self::Tex82,
+            CommandDialect::Etex26 => Self::Etex26,
+            CommandDialect::Pdftex14029 => Self::Pdftex14029,
+        }
+    }
+
+    /// Whether this implementation contains the requested command family.
+    #[must_use]
+    pub const fn supports(self, profile: CommandProfile) -> bool {
+        matches!(
+            (self, profile.dialect()),
+            (Self::Tex82, CommandDialect::Tex82)
+                | (Self::Etex26, CommandDialect::Tex82 | CommandDialect::Etex26)
+                | (Self::Pdftex14029, _)
+        )
+    }
+
+    /// Whether shared compiled routines use pdfTeX 1.40.29 semantics.
+    #[must_use]
+    pub const fn supports_pdftex(self) -> bool {
+        matches!(self, Self::Pdftex14029)
+    }
+}
+
 /// TeX's configured multiletter control-sequence capacity.
 ///
 /// TeX82 §1334 reports the fixed hash table and the Web2C extension area as

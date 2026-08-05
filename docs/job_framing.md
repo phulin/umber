@@ -141,8 +141,11 @@ e-TeX 2.6 uses etex.ch §2's replacement, and production pdfTeX uses
 pdftex.web §2's replacement. The loaded format name and dump clock remain
 separate framing facts. The binary identity is distinct from the semantic
 command profile, because a newer reference binary can exercise an older
-profile; incompatible combinations fail at the provider boundary. The pdfTeX
-string is also the value
+profile; incompatible combinations fail at the provider boundary. That
+identity also selects the canonical compiled semantics which survive loading
+an older format: pdfTeX 1.40.29 executing a TeX82 profile still uses
+pdftex.web §459's extended invalid-unit help. It does not change the loaded
+profile or its format fingerprint. The pdfTeX string is also the value
 `umber::pdf_output` writes as PDF producer metadata. A banner that said
 "Umber" would make every committed channel differ on line 1 forever, and the
 difference would carry no information.

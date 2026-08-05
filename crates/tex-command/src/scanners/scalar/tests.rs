@@ -6008,8 +6008,9 @@ fn integer_overflow_reports_before_scanning_the_optional_space() {
 
 #[test]
 fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
-    fn scan(
+    fn scan_with_engine(
         profile: CommandProfile,
+        engine: crate::CommandEngineSemantics,
         source: &str,
         mag: Option<i32>,
     ) -> (i32, Token, String, String) {
@@ -6018,6 +6019,7 @@ fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
             universe.set_mag_global(mag);
         }
         let mut command = CommandState::new(profile);
+        command.set_engine_semantics(engine);
         push(&mut command, scanner_tokens(source));
         let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
@@ -6043,6 +6045,19 @@ fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
         };
         let (terminal, log) = diagnostic_channels(&universe);
         (value, next, terminal, log)
+    }
+
+    fn scan(
+        profile: CommandProfile,
+        source: &str,
+        mag: Option<i32>,
+    ) -> (i32, Token, String, String) {
+        scan_with_engine(
+            profile,
+            crate::CommandEngineSemantics::for_profile(profile),
+            source,
+            mag,
+        )
     }
 
     let tex82 = CommandProfile::exact(CommandDialect::Tex82);
@@ -6084,6 +6099,21 @@ Continue and I'll use the largest value I can.\n\n";
                 'w',
                 tex_unknown_terminal,
                 tex_unknown_log.as_str(),
+            ),
+        ),
+        (
+            "TeX82 format loaded by pdfTeX 1.40.29",
+            scan_with_engine(
+                tex82,
+                crate::CommandEngineSemantics::Pdftex14029,
+                "1wat=",
+                None,
+            ),
+            (
+                Scaled::UNITY,
+                'w',
+                tex_unknown_terminal,
+                pdf_unknown_log.as_str(),
             ),
         ),
         (

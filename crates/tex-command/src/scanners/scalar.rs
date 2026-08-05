@@ -1875,14 +1875,14 @@ impl CommandProcessor<'_> {
         Ok(())
     }
 
-    /// TeX82 §459's unit recovery for ordinary dimensions, extended only in
-    /// the pdfTeX profile with pdfTeX 1.40.29's `nd`/`nc` help text.
+    /// TeX82 §459's unit recovery for ordinary dimensions, extended by
+    /// pdfTeX 1.40.29 §459 with `nd`/`nc` even for a loaded TeX82 format.
     fn illegal_unit_pt_error(&mut self) -> Result<(), CommandError> {
         let context = self.command.output_open_context(&self.state);
         let mut report = self
             .state
             .print_err("Illegal unit of measure (pt inserted)");
-        let unit_help = if self.command.profile().capabilities().supports_pdftex() {
+        let unit_help = if self.command.engine_semantics().supports_pdftex() {
             "cm, mm, dd, cc, nd, nc, bp, or sp; but yours is a new one!"
         } else {
             "cm, mm, dd, cc, bp, or sp; but yours is a new one!"

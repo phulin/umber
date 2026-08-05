@@ -73,13 +73,17 @@ impl EngineBinaryIdentity {
     /// Whether this binary contains the requested semantic command family.
     #[must_use]
     pub const fn supports(self, profile: CommandProfile) -> bool {
-        use tex_command::CommandDialect;
-        matches!(
-            (self, profile.dialect()),
-            (Self::Tex82, CommandDialect::Tex82)
-                | (Self::Etex26, CommandDialect::Tex82 | CommandDialect::Etex26)
-                | (Self::Pdftex14029, _)
-        )
+        self.command_semantics().supports(profile)
+    }
+
+    /// Canonical compiled command semantics supplied by this binary.
+    #[must_use]
+    pub const fn command_semantics(self) -> tex_command::CommandEngineSemantics {
+        match self {
+            Self::Tex82 => tex_command::CommandEngineSemantics::Tex82,
+            Self::Etex26 => tex_command::CommandEngineSemantics::Etex26,
+            Self::Pdftex14029 => tex_command::CommandEngineSemantics::Pdftex14029,
+        }
     }
 }
 

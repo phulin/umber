@@ -161,7 +161,8 @@ pub struct MainControl {
     /// does. `None` leaves the banner to `initex` above. Framing-only: no
     /// execution decision reads it.
     preloaded_format: Option<crate::job::PreloadedFormat>,
-    /// Engine identity used only for §61/§536 startup framing.
+    /// Engine identity used for §61/§536 startup framing and canonical
+    /// compiled semantics that remain active across a loaded older format.
     ///
     /// Most jobs use the command profile's dialect. Reference-backed jobs may
     /// deliberately exercise an older semantic profile in a newer engine
@@ -1092,8 +1093,11 @@ impl MainControl {
         self.preloaded_format = Some(format);
     }
 
-    /// Selects the engine binary identity used by startup framing.
+    /// Selects the engine binary identity used by startup framing and shared
+    /// compiled command semantics.
     pub fn set_engine_binary(&mut self, binary: crate::job::EngineBinaryIdentity) {
+        self.command
+            .set_engine_semantics(binary.command_semantics());
         self.engine_binary = Some(binary);
     }
 

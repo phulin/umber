@@ -255,6 +255,28 @@ fn count_write_fixture_keeps_direct_the_internal_to_scan_toks() {
     );
 }
 
+#[test]
+fn raw_tex82_loaded_uses_pdftex_invalid_unit_help() {
+    let formats = HermeticFormats::new();
+    let cases = load_suite().expect("valid command-semantic corpus");
+    let declared = cases
+        .iter()
+        .find(|declared| declared.case.id == "vacuous-dimension-units")
+        .expect("vacuous-dimension-units fixture");
+    assert_eq!(declared.case.profile, SessionProfile::RawTex82Loaded);
+    let source = fs::read(declared.fixture_dir.join(&declared.case.source))
+        .expect("vacuous-dimension-units source");
+    let run = formats
+        .execute(&source, &declared.case)
+        .expect("raw TeX82 loaded by pdfTeX executes");
+
+    assert_eq!(
+        compare_declared_channels(declared, &run),
+        [],
+        "pdfTeX 1.40.29 §459 channel bytes match strictly"
+    );
+}
+
 #[ignore = "manual exact-parity tier: tracked by umber2-alfh.11"]
 #[test]
 fn loaded_projection_distinguishes_explicit_end_from_nested_source_exhaustion() {

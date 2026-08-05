@@ -34,8 +34,9 @@ print channel of its own outside the borrowed
 - `src/lib.rs`: intentionally small public facade and private module tree.
 - `src/host.rs`: borrow-scoped, nonserializable host-capability boundary.
 - `src/profile.rs` and `src/profile/tests.rs`: public semantic character values,
-  immutable engine/character profiles, capabilities, stable fingerprints, and
-  focused value/identity tests.
+  immutable command/character profiles, the distinct canonical compiled-engine
+  semantics that survive loading an older format, capabilities, stable
+  fingerprints, and focused value/identity tests.
 - `src/state.rs`: persistent command state and discardable runtime ownership.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6

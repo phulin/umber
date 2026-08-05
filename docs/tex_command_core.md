@@ -1099,6 +1099,16 @@ e-TeX 2.6     + EightBitExact
 pdfTeX 1.40.29 + EightBitExact
 ```
 
+The command profile identifies the loaded format's command family and frozen
+state, but it does not erase the canonical engine implementation executing
+that state. `CommandEngineSemantics` records that second immutable job fact.
+Thus a pdfTeX 1.40.29 binary loading a TeX82 format keeps the TeX82 profile and
+format fingerprint while shared compiled routines retain pdfTeX behavior, such
+as pdftex.web §459's `nd`/`nc` invalid-unit help. A genuine TeX82 engine keeps
+tex.web §459's original wording. `tex-exec::MainControl::set_engine_binary`
+installs both the framing identity and this command-semantic implementation;
+the newer implementation must support the loaded profile.
+
 `UnicodeExtended` is an Umber extension. It may combine e-TeX or pdfTeX
 command families with Unicode input and sparse code tables, but it must have a
 distinct engine identity and format fingerprint. Its behavior is not described

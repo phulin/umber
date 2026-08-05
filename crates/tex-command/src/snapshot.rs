@@ -401,7 +401,9 @@ impl CommandState {
             CommandProfileBoundary::Summary,
             summary.profile_fingerprint(),
         )?;
+        let engine_semantics = self.engine_semantics();
         *self = Self {
+            engine_semantics,
             input: summary.input,
             parameters: summary.parameters,
             scanner: ScannerState::default(),

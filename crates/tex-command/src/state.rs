@@ -25,7 +25,8 @@ use crate::processor::{
     ExpansionState, ScannerState,
 };
 use crate::profile::{
-    CommandProfile, CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch,
+    CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileFingerprint,
+    CommandProfileMismatch,
 };
 
 fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
@@ -55,6 +56,10 @@ fn stored_replay_name(reason: StoredReplayReason) -> &'static str {
 /// deliberately absent.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct CommandState {
+    /// Canonical compiled implementation executing the format's command
+    /// profile. Unlike the profile, this is job configuration and is not part
+    /// of portable format identity.
+    pub(crate) engine_semantics: CommandEngineSemantics,
     pub(crate) input: InputState,
     pub(crate) parameters: ParameterState,
     pub(crate) scanner: ScannerState,
@@ -1087,12 +1092,31 @@ impl CommandState {
     #[must_use]
     pub fn new(profile: CommandProfile) -> Self {
         Self {
+            engine_semantics: CommandEngineSemantics::for_profile(profile),
             expansion: ExpansionState {
                 profile,
                 ..ExpansionState::default()
             },
             ..Self::default()
         }
+    }
+
+    /// Selects the canonical compiled implementation executing this job.
+    ///
+    /// A newer implementation may execute an older format/profile, but the
+    /// reverse combination is not canonical and is rejected.
+    pub fn set_engine_semantics(&mut self, engine: CommandEngineSemantics) {
+        assert!(
+            engine.supports(self.profile()),
+            "command engine semantics must support the loaded command profile"
+        );
+        self.engine_semantics = engine;
+    }
+
+    /// Returns the canonical compiled implementation executing this job.
+    #[must_use]
+    pub(crate) const fn engine_semantics(&self) -> CommandEngineSemantics {
+        self.engine_semantics
     }
 
     /// Registers complete immutable backing without consulting host policy.

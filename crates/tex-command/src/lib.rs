@@ -105,8 +105,8 @@ pub use processor::{
 };
 pub use profile::{
     CharacterCode, CharacterCodeError, CharacterMode, CommandCapabilities, CommandDialect,
-    CommandProfile, CommandProfileBoundary, CommandProfileEncodingError, CommandProfileFingerprint,
-    CommandProfileMismatch,
+    CommandEngineSemantics, CommandProfile, CommandProfileBoundary, CommandProfileEncodingError,
+    CommandProfileFingerprint, CommandProfileMismatch,
 };
 pub use scanners::{
     AlignmentCellOpening, EquationNumberSide, ExpandedWriteText, FileNameComponents,
