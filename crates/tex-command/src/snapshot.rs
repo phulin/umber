@@ -298,7 +298,7 @@ impl CommandState {
     ///
     /// Capture clones retained source and token backing through their owned
     /// command-state representations. It neither consults host policy nor
-    /// includes discardable [`crate::CommandRuntime`] data.
+    /// includes process-local scratch allocations.
     #[must_use]
     pub fn snapshot(&self) -> CommandStateSnapshot {
         CommandStateSnapshot {

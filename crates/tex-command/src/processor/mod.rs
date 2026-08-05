@@ -10,8 +10,8 @@ pub(crate) mod status;
 use tex_state::CommandContext;
 
 use crate::{
-    CommandFuel, CommandFuelLedger, CommandHostContext, CommandReplayEpisode, CommandRuntime,
-    CommandState, DeliveryStamp,
+    CommandFuel, CommandFuelLedger, CommandHostContext, CommandReplayEpisode, CommandState,
+    DeliveryStamp,
 };
 
 use crate::input::InputLevelId;
@@ -141,7 +141,6 @@ pub(crate) use status::{ScannerState, ScannerStatus};
 #[allow(dead_code)] // later canonical command operations consume every capability
 pub struct CommandProcessor<'a> {
     pub(crate) command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     pub(crate) state: CommandContext<'a>,
     pub(crate) host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
@@ -350,13 +349,11 @@ impl<'a> CommandProcessor<'a> {
     #[must_use]
     pub fn new(
         command: &'a mut CommandState,
-        runtime: &'a mut CommandRuntime,
         state: CommandContext<'a>,
         host: CommandHostContext<'a>,
     ) -> Self {
         Self {
             command,
-            runtime,
             state,
             host,
             observer: None,
@@ -392,7 +389,7 @@ impl<'a> CommandProcessor<'a> {
     }
 
     pub(crate) fn traced_token_scratch(&self) -> crate::state::TracedTokenScratch {
-        self.runtime.traced_token_scratch()
+        crate::state::traced_token_scratch()
     }
 
     /// Claims command-owned semantic diagnostics in detection order.

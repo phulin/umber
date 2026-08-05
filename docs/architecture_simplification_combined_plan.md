@@ -106,11 +106,11 @@ Rank reflects architectural leverage, dependency centrality, expected deletion, 
 
 ## 1. One main-control operation, assignment, and evidence pipeline
 
-**Outcome.** One `execute_operation` owns snapshot, delivery strategy, scanning/application, resource suspension, commit/rollback/fatal behavior, and an optional evidence sink. An `AssignmentCommitter` performs every TeX write once and returns typed mutation and tracing receipts. The zero-sized `CommandRuntime` disappears.
+**Outcome.** One `execute_operation` owns snapshot, delivery strategy, scanning/application, resource suspension, commit/rollback/fatal behavior, and an optional evidence sink. An `AssignmentCommitter` performs every TeX write once and returns typed mutation and tracing receipts. The zero-behavior runtime capability disappears.
 
 **Combines.** Luna ranks 1 and 12; Codex ranks 7, 13, and 15.
 
-**Counted reduction.** Approximately 1,200-1,800 scheduled authored LOC, plus 450-600 LOC from `CommandRuntime` and construction plumbing where not already included. Scanner-test compaction is excluded until program 15's ledger closes.
+**Counted reduction.** Approximately 1,200-1,800 scheduled authored LOC, plus 450-600 LOC from runtime construction plumbing where not already included. Scanner-test compaction is excluded until program 15's ledger closes.
 
 **Proof.** Compare ordinary and observed state, resource requests, receipts, event bytes, effects, artifacts, fatal partial commits, alignment/nested execution, assignment tracing, local/global policy, glue identity, `afterassignment`, and performance.
 
@@ -306,7 +306,7 @@ Land the primitive catalogue, oracle event views, command-semantic V2 reader, im
 
 ### Wave 2: state, execution, and incrementality
 
-Retire paragraph replay under its approved contract. Establish the executable node schema and production-only format restoration. Introduce the effect journal. Remove `CommandRuntime`, migrate assignment families to typed receipts, then merge ordinary and observed operation flow. Close the executor revision patch after the durable post-replay revision shape is known.
+Retire paragraph replay under its approved contract. Establish the executable node schema and production-only format restoration. Introduce the effect journal. Remove the command runtime capability, migrate assignment families to typed receipts, then merge ordinary and observed operation flow. Close the executor revision patch after the durable post-replay revision shape is known.
 
 ### Wave 3: typesetting and detached outputs
 

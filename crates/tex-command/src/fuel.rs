@@ -33,9 +33,9 @@ impl std::error::Error for CommandFuelLimitError {}
 
 /// A checked, monotonic command-work ledger.
 ///
-/// This is deliberately separate from semantic [`crate::CommandState`] and
-/// discardable [`crate::CommandRuntime`]. Snapshots and runtime resets cannot
-/// therefore refund work or make resource policy part of format identity.
+/// This is deliberately separate from semantic [`crate::CommandState`].
+/// Snapshots cannot therefore refund work or make resource policy part of
+/// format identity.
 #[derive(Debug, Eq, PartialEq)]
 pub struct CommandFuel {
     limit: u64,

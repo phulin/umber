@@ -17,13 +17,12 @@ command-text rendering, token-list iteration, case shifting, macro-definition
 collection, `\read` token collection, output replay expansion, and
 control-sequence tokenization for both inline and pathological spill names. The
 recovery and rendered-token rows detect fixed-array-to-`Arc` staging regressions
-separately from the common single-token backup row. Each row reports cold and
-warm-runtime allocation count and requested bytes per operation. The program
-builds fixed cases before measurement and executes 64 independently measured
-operations. Warm rows first run three discarded operations through one reused
-`CommandRuntime`; cold rows use each case's fresh default runtime. The reported
-value is the final representative operation, after allocator and runtime state
-have settled, using the same `stats_alloc::Region` convention as the
+separately from the common single-token backup row. Each row reports allocation
+count and requested bytes per operation after three discarded operations warm
+the command core's bounded process-local scratch pool. The program builds fixed
+cases before measurement and executes 64 independently measured operations. The
+reported value is the final representative operation, after allocator and
+scratch state have settled, using the same `stats_alloc::Region` convention as the
 `tex-state` and `tex-exec` allocation gates.
 
 The `unobserved` configuration has no external observer.

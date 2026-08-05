@@ -9,7 +9,7 @@ use crate::input::{
 };
 use crate::{
     CommandDialect, CommandHostCapabilities, CommandHostContext, CommandObservation,
-    CommandObserver, CommandProfile, CommandRuntime, CommandState, InputTransition, ObservedToken,
+    CommandObserver, CommandProfile, CommandState, InputTransition, ObservedToken,
 };
 
 #[derive(Default)]
@@ -117,13 +117,11 @@ fn scalar_forms_recovery_and_snapshot_use_only_command_input() {
             .map(char_token)
             .collect(),
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -175,7 +173,6 @@ fn internal_integer_glue_width_observes_dimension_on_retry() {
         ],
     );
     let snapshot = command.snapshot();
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut attempts = Vec::new();
 
@@ -184,7 +181,6 @@ fn internal_integer_glue_width_observes_dimension_on_retry() {
         let glue = {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )
@@ -213,12 +209,10 @@ fn integer_radix_prefixes_deliver_digits_before_scanner_completion() {
         &mut command,
         "\"2A '17 42 ".chars().map(char_token).collect(),
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -359,12 +353,10 @@ fn integer_numeric_tokens_follow_tex82_category_matrix() {
     for (tokens, expected, recovery) in cases {
         let mut command = CommandState::default();
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -393,12 +385,10 @@ fn integer_and_fraction_tails_reject_recategorized_decimal_digits() {
             char_token('t'),
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -426,12 +416,10 @@ fn integer_and_fraction_tails_reject_recategorized_decimal_digits() {
             char_token('t'),
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -464,13 +452,11 @@ fn vacuous_dimension_scans_units_and_reports_diagnostics_in_tex82_order() {
     for (source, illegal) in [("pt 7", false), ("x pt 7", true)] {
         let mut command = CommandState::default();
         push(&mut command, scanner_tokens(source));
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let mut capabilities = CommandHostCapabilities::default();
         {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             );
@@ -508,13 +494,11 @@ fn missing_number_report_displays_the_backed_up_offender() {
     // before §82 completes the report with `show_context`.
     let mut command = CommandState::default();
     push(&mut command, scanner_tokens("x"));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
 
     let scanned = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -532,7 +516,6 @@ fn missing_number_report_displays_the_backed_up_offender() {
 #[test]
 fn integer_scanner_accepts_chardef_values() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let active = universe.intern("active").symbol();
     universe.set_meaning(active, Meaning::CharGiven('\r'));
@@ -542,7 +525,6 @@ fn integer_scanner_accepts_chardef_values() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -561,7 +543,6 @@ fn integer_scanner_accepts_mathchardef_values() {
     // `\mathchardef\@M=10000` must scan as the integer 10000 wherever an
     // internal integer is accepted, e.g. `\penalty-\@M` inside `\break`.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let at_m = universe.intern("@M").symbol();
     universe.set_meaning(at_m, Meaning::MathCharGiven(10_000));
@@ -571,7 +552,6 @@ fn integer_scanner_accepts_mathchardef_values() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -596,7 +576,6 @@ fn internal_scanner_commits_the_requested_level_not_the_quantitys_own() {
     // own `dimen_val` instead reports a scaled dimension where TeX reports an
     // integer (umber2-johp.163).
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let zero = universe.intern("z@").symbol();
     universe.set_meaning(zero, Meaning::DimenRegister(0));
@@ -607,7 +586,6 @@ fn internal_scanner_commits_the_requested_level_not_the_quantitys_own() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -680,14 +658,12 @@ fn character_code_scanning_accepts_an_active_character_before_optional_equals() 
             char_token('3'),
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -741,7 +717,6 @@ fn character_code_scanning_accepts_an_active_character_before_optional_equals() 
 #[test]
 fn integer_internal_register_scans_its_index_through_command_input() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let count = universe.intern("count").symbol();
     universe.set_meaning(
@@ -753,7 +728,6 @@ fn integer_internal_register_scans_its_index_through_command_input() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -770,7 +744,6 @@ fn integer_internal_register_scans_its_index_through_command_input() {
 #[test]
 fn glue_scan_accepts_internal_box_height_without_backing_up_the_primitive() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let height = universe.intern("ht").symbol();
     universe.set_meaning(
@@ -782,7 +755,6 @@ fn glue_scan_accepts_internal_box_height_without_backing_up_the_primitive() {
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -811,7 +783,6 @@ fn glue_scan_accepts_internal_box_height_without_backing_up_the_primitive() {
 #[test]
 fn internal_dimension_register_scans_and_bounds_its_index_through_command_input() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let dimen = universe.intern("dimen").symbol();
     universe.set_meaning(
@@ -829,7 +800,6 @@ fn internal_dimension_register_scans_and_bounds_its_index_through_command_input(
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -854,7 +824,6 @@ fn internal_dimension_register_scans_and_bounds_its_index_through_command_input(
     );
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -878,7 +847,6 @@ fn a_whole_internal_dimension_operand_is_never_backed_up_and_redelivered() {
     // recovery record, before `scan_something_internal` publishes its value
     // (`umber2-johp.135`).
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let maxdimen = universe.intern("maxdimen").symbol();
     universe.set_meaning(maxdimen, Meaning::DimenRegister(0));
@@ -890,7 +858,6 @@ fn a_whole_internal_dimension_operand_is_never_backed_up_and_redelivered() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -970,7 +937,6 @@ fn out_of_range_internal_dimensions_rejoin_attach_sign_recovery() {
 #[test]
 fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let unit = universe.intern("unit").symbol();
     universe.set_meaning(unit, Meaning::DimenRegister(0));
@@ -988,7 +954,6 @@ fn dimension_scanner_accepts_an_internal_dimension_as_its_unit() {
     );
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1010,7 +975,6 @@ fn an_internal_dimension_unit_leaves_the_following_space_in_the_input() {
     // `<Scan an optional space>` (which only the `em`/`ex` path runs) and
     // §448's trailing one. So `3\unit x` consumes no space at all.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let unit = universe.intern("unit").symbol();
     universe.set_meaning(unit, Meaning::DimenRegister(0));
@@ -1031,7 +995,6 @@ fn an_internal_dimension_unit_leaves_the_following_space_in_the_input() {
     );
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1074,7 +1037,6 @@ fn an_em_unit_consumes_exactly_one_following_space() {
     use tex_state::font::NULL_FONT;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe
         .set_font_dimen(NULL_FONT, 6, Scaled::from_raw(10 * Scaled::UNITY))
@@ -1097,7 +1059,6 @@ fn an_em_unit_consumes_exactly_one_following_space() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1150,7 +1111,6 @@ fn an_internal_dimension_unit_may_be_preceded_by_a_space() {
     const PRETOLERANCE: u16 = 0;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(IntParam::new(PRETOLERANCE), 3);
     universe.set_dimen(2, Scaled::from_raw(5 * Scaled::UNITY));
@@ -1172,7 +1132,6 @@ fn an_internal_dimension_unit_may_be_preceded_by_a_space() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1189,7 +1148,6 @@ fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
 
     let mut command = CommandState::default();
     push(&mut command, "1em 1ex 42".chars().map(char_token).collect());
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe
         .set_font_dimen(NULL_FONT, 6, Scaled::from_raw(10 * Scaled::UNITY))
@@ -1201,7 +1159,6 @@ fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -1252,7 +1209,6 @@ fn dimension_scanner_recognizes_current_font_em_and_ex_units() {
 #[test]
 fn internal_values_and_failed_keywords_replay_canonically() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_count(17, 41);
     let keyword = "pto".chars().map(char_token).collect::<Vec<_>>();
@@ -1261,7 +1217,6 @@ fn internal_values_and_failed_keywords_replay_canonically() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -1289,7 +1244,6 @@ fn internal_values_and_failed_keywords_replay_canonically() {
     universe.set_meaning(symbol, Meaning::CountRegister(17));
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1307,13 +1261,11 @@ fn internal_values_and_failed_keywords_replay_canonically() {
 fn fractional_in_unit_retires_the_final_probe_backup_before_n() {
     let mut command = CommandState::default();
     push(&mut command, "1.25in ".chars().map(char_token).collect());
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -1350,12 +1302,10 @@ fn fractional_in_unit_retires_the_final_probe_backup_before_n() {
 fn leading_decimal_dimension_replays_the_point_before_scanning_its_fraction() {
     let mut command = CommandState::default();
     push(&mut command, ".75in 42".chars().map(char_token).collect());
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1390,14 +1340,12 @@ fn a_decimal_fraction_absorbs_the_space_that_ends_it() {
     // delivery one step behind the oracle (umber2-johp.267).
     let mut command = CommandState::default();
     push(&mut command, ".5 in42".chars().map(char_token).collect());
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -1467,14 +1415,12 @@ fn leading_decimal_point_never_reaches_the_integer_scanner() {
     // backup, and an integer scanner result TeX never computes.
     let mut command = CommandState::default();
     push(&mut command, ".5cm".chars().map(char_token).collect());
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -1553,11 +1499,9 @@ fn scan_with_profile<T>(
 ) -> T {
     let mut command = CommandState::new(profile);
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -1571,7 +1515,6 @@ fn scan_missing_number_internal<T>(
     scan: impl FnOnce(&mut CommandProcessor<'_>) -> ScannedScalar<T>,
 ) -> (ScalarRecovery, Vec<&'static str>, usize, String, Meaning) {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let rejected = universe.intern("rejected-internal").symbol();
     universe.set_meaning(rejected, meaning);
@@ -1581,7 +1524,6 @@ fn scan_missing_number_internal<T>(
     let (recovery, replayed) = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -2231,7 +2173,6 @@ fn prev_depth_and_prev_graf_read_through_the_host_capability() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let prev_depth = universe.intern("prevdepth").symbol();
     universe.set_meaning(prev_depth, Meaning::UnexpandablePrimitive(P::PrevDepth));
@@ -2247,7 +2188,6 @@ fn prev_depth_and_prev_graf_read_through_the_host_capability() {
     capabilities.set_prev_graf(Some(4));
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2286,7 +2226,6 @@ fn auxiliary_internal_values_report_wrong_mode_and_preserve_write_zero() {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let symbol = universe.intern(name).symbol();
         universe.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
@@ -2294,7 +2233,6 @@ fn auxiliary_internal_values_report_wrong_mode_and_preserve_write_zero() {
         {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             );
@@ -2353,7 +2291,6 @@ fn font_integers_fetch_hyphen_and_skew_characters_of_the_current_font() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let hyphen_char = universe.intern("hyphenchar").symbol();
     let skew_char = universe.intern("skewchar").symbol();
@@ -2376,7 +2313,6 @@ fn font_integers_fetch_hyphen_and_skew_characters_of_the_current_font() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2404,7 +2340,6 @@ fn font_integers_read_the_named_font_rather_than_the_current_one() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let tenrm = universe.intern("tenrm").symbol();
     let named = universe
@@ -2421,7 +2356,6 @@ fn font_integers_read_the_named_font_rather_than_the_current_one() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2441,7 +2375,6 @@ fn the_font_identifier_backs_the_command_up_and_rereads_it_through_scan_font_ide
     use tex_state::font::NULL_FONT;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let tenrm = universe.intern("tenrm").symbol();
     let named = universe
@@ -2455,7 +2388,6 @@ fn the_font_identifier_backs_the_command_up_and_rereads_it_through_scan_font_ide
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -2524,7 +2456,6 @@ fn scan_font_ident_resolves_a_math_family_font() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let teni = universe.intern("teni").symbol();
     let family_font = universe
@@ -2545,7 +2476,6 @@ fn scan_font_ident_resolves_a_math_family_font() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2569,7 +2499,6 @@ fn an_integer_request_for_a_font_identifier_scans_no_operand() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let text_font = universe.intern("textfont").symbol();
     universe.set_meaning(text_font, Meaning::UnexpandablePrimitive(P::TextFont));
@@ -2581,7 +2510,6 @@ fn an_integer_request_for_a_font_identifier_scans_no_operand() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2617,7 +2545,6 @@ fn an_integer_request_for_a_font_identifier_scans_no_operand() {
 #[test]
 fn a_failed_keyword_backs_the_offender_and_the_matched_prefix_up_separately() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     push(&mut command, "ex".chars().map(char_token).collect());
     let mut capabilities = CommandHostCapabilities::default();
@@ -2625,7 +2552,6 @@ fn a_failed_keyword_backs_the_offender_and_the_matched_prefix_up_separately() {
     let replayed = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -2742,7 +2668,6 @@ fn a_keyword_scan_drops_leading_spaces_and_rejects_interior_ones() {
 #[test]
 fn a_control_sequence_let_to_a_keyword_letter_does_not_match() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let letter_p = universe.intern("p").symbol();
     universe.set_meaning(
@@ -2756,7 +2681,6 @@ fn a_control_sequence_let_to_a_keyword_letter_does_not_match() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2823,12 +2747,10 @@ fn scan_internal_with_diagnostics(
 ) -> (InternalValue, Vec<crate::CommandSemanticDiagnostic>) {
     let mut command = CommandState::default();
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     configure_host(&mut capabilities);
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -2986,7 +2908,6 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
     use tex_state::meaning::UnexpandablePrimitive as P;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let saved = universe.intern_token_list(&[char_token('x'), char_token(' ')]);
     universe.set_toks(7, saved);
@@ -2997,7 +2918,6 @@ fn tex82_scanner_conditionals_observes_token_list_internal_results() {
     let value = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -3127,8 +3047,6 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
             .conditions
             .change_if_limit(crate::processor::status::ConditionId(0), IfLimit::Fi)
     );
-
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let relax = universe.intern("relax").symbol();
     universe.set_meaning(relax, Meaning::Relax);
@@ -3167,7 +3085,6 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -3213,7 +3130,6 @@ fn input_line_group_and_conditional_internal_integers_read_live_command_state() 
 #[test]
 fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     let interaction_mode = universe.intern("interactionmode").symbol();
@@ -3227,7 +3143,6 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -3249,7 +3164,6 @@ fn etex_profile_interaction_mode_read_has_named_and_generic_observations() {
 #[test]
 fn current_group_and_condition_enquiries_have_canonical_scanner_identities() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.enter_group_with_kind(tex_state::GroupKind::HBox);
     let group_type = universe.intern("currentgrouptype").symbol();
@@ -3292,7 +3206,6 @@ fn current_group_and_condition_enquiries_have_canonical_scanner_identities() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -3425,11 +3338,9 @@ fn etex_font_character_dimensions_select_metrics_and_preserve_following_token() 
         tokens.push(char_token('!'));
         let mut command = CommandState::new(CommandProfile::ETEX26);
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -3526,11 +3437,9 @@ fn etex_parshape_enquiries_cover_empty_nonempty_repeated_and_interleaved_lines()
         tokens.push(char_token('!'));
         let mut command = CommandState::new(CommandProfile::ETEX26);
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -3624,12 +3533,10 @@ fn etex_glue_component_enquiries_observe_typed_internal_and_outer_boundaries() {
             .collect();
         let mut command = CommandState::new(CommandProfile::ETEX26);
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -3713,11 +3620,9 @@ fn etex_glue_component_enquiry_preserves_the_following_token() {
     tokens.extend(scanner_tokens("1pt plus 2fil!"));
     let mut command = CommandState::new(CommandProfile::ETEX26);
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -4448,13 +4353,11 @@ fn dimension_fractions_cover_point_catcodes_zero_seventeen_and_excess_digits() {
 fn dimension_prefixes_preserve_unit_terminator_and_scanner_observation_order() {
     let mut command = CommandState::default();
     push(&mut command, scanner_tokens(".5pt  9"));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -4989,7 +4892,6 @@ fn dimension_range_recovery_covers_positive_negative_and_arithmetic_overflow() {
 fn tex82_scanner_conditionals_observes_fractional_physical_and_true_units() {
     let mut command = CommandState::default();
     push(&mut command, scanner_tokens("1.25IN 1.5truein"));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_mag_global(1440);
     let mut capabilities = CommandHostCapabilities::default();
@@ -4997,7 +4899,6 @@ fn tex82_scanner_conditionals_observes_fractional_physical_and_true_units() {
     let values = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -5175,13 +5076,11 @@ fn scanner_syntax_optional_equals_catcode_and_relax_boundaries() {
                 char_token('x'),
             ],
         );
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let (accepted, replayed, following) = {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )
@@ -5565,12 +5464,10 @@ fn integer_character_constants_recover_values_above_255_in_exact_profile() {
             &mut command,
             vec![char_token('`'), lambda, char_token(' '), char_token('7')],
         );
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let (scanned, replayed, spacer, continuation) = {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             );
@@ -5981,12 +5878,10 @@ fn integer_overflow_reports_before_scanning_the_optional_space() {
     );
     let penalty = universe.intern("penalty").symbol();
     universe.set_meaning(penalty, Meaning::UnexpandablePrimitive(P::Penalty));
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -6021,12 +5916,10 @@ fn scanner_error_fixtures_match_full_tex82_and_pdftex_reports() {
         let mut command = CommandState::new(profile);
         command.set_engine_semantics(engine);
         push(&mut command, scanner_tokens(source));
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let (value, next) = {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             );
@@ -6248,13 +6141,11 @@ fn pdftex_dimension_units_do_not_enter_tex82_keyword_probes() {
     fn scan(profile: CommandProfile, source: &str) -> (Scaled, usize) {
         let mut command = CommandState::new(profile);
         push(&mut command, scanner_tokens(source));
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let value = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -6296,14 +6187,12 @@ fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
         &mut command,
         scanner_tokens("1pt plus 2pt minus 3pt 4pt PLUS 5filll 2mu plus 1fil minus 3mu"),
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     let values = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )

@@ -76,7 +76,7 @@ generation. Dropping either candidate leaves the previously accepted revision,
 root binding, generated files, and output unchanged.
 
 The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
-main control (including command state and discardable runtime), rollback roots,
+main control and command state, rollback roots,
 speculative checkpoint sink, command trace, and candidate output remain
 live across progressing resource responses.
 Provisioning changes only immutable session resource bindings and increments a

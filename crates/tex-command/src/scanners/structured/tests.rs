@@ -13,7 +13,7 @@ use crate::input::{
 use crate::observation::{MutationTarget, ObservationValue, RecoveryKind};
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandReplayDelivery, CommandRuntime, CommandState, RegisteredSourceKind, SourceRegistration,
+    CommandReplayDelivery, CommandState, RegisteredSourceKind, SourceRegistration,
 };
 
 #[derive(Default)]
@@ -75,14 +75,12 @@ fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
     let scan = |allowed| {
         let mut command = CommandState::default();
         push(&mut command, text_tokens("0=x"));
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let (assignment, next, context) = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             let assignment = processor
                 .scan_setbox_assignment(allowed)
                 .expect("setbox operand scans");
@@ -145,7 +143,6 @@ fn setbox_forbidden_path_does_not_fetch_or_back_up_the_box_command() {
 #[test]
 fn math_scalar_requests_are_completed_before_replay() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -186,7 +183,7 @@ fn math_scalar_requests_are_completed_before_replay() {
         ],
     );
     let (character, fraction) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let character = processor
             .scan_math_character()
             .expect("math character scans");
@@ -206,7 +203,6 @@ fn math_scalar_requests_are_completed_before_replay() {
 #[test]
 fn character_definition_scanner_owns_target_optional_equals_and_integer() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("definedchar").symbol();
@@ -233,7 +229,7 @@ fn character_definition_scanner_owns_target_optional_equals_and_integer() {
         ],
     );
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("character definition scans");
 
@@ -246,7 +242,6 @@ fn character_definition_scanner_owns_target_optional_equals_and_integer() {
 #[test]
 fn frozen_control_target_becomes_inaccessible_without_consuming_following_input() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -264,7 +259,7 @@ fn frozen_control_target_becomes_inaccessible_without_consuming_following_input(
         ],
     );
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("frozen target recovers");
 
@@ -279,13 +274,12 @@ fn inaccessible_recovery_is_inserted_above_the_ordinary_backup() {
     // then `ins_error` makes the synthesized control sequence an `inserted`
     // level before `show_context` runs.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("x=65"));
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("character definition recovers");
 
@@ -303,13 +297,12 @@ fn missing_macro_target_reports_once_and_leaves_following_command() {
     // episode. Its rejected `{` starts the definition; no executor recovery
     // remains, and the command after the balanced replacement stays unread.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("{}?"));
 
     let (definition, next) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let definition = processor
             .scan_macro_definition(false)
             .expect("missing macro target recovers");
@@ -351,7 +344,6 @@ fn ordinary_error_backup_remains_to_be_read_again() {
     // TeX82 §§325, 314: a normal `back_input` used by number recovery is not
     // retyped as §327's inserted input.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("ordinary").symbol();
@@ -366,7 +358,7 @@ fn ordinary_error_backup_remains_to_be_read_again() {
         ],
     );
 
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    processor(&mut command, &mut universe, &mut capabilities)
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("missing number recovers");
 
@@ -390,7 +382,6 @@ fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
         (RestrictedIntegerClass::FifteenBit, "32768", 32_768),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let target = universe.intern("definedbadchar").symbol();
@@ -411,7 +402,7 @@ fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
         }));
         push(&mut command, tokens);
 
-        let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        let definition = processor(&mut command, &mut universe, &mut capabilities)
             .scan_character_definition(class, false)
             .expect("character definition scans");
 
@@ -425,7 +416,6 @@ fn character_definition_scanner_recovers_out_of_range_operands_to_zero() {
 #[test]
 fn register_definition_scanner_owns_target_scope_equals_and_bounded_index() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("definedregister").symbol();
@@ -456,7 +446,7 @@ fn register_definition_scanner_owns_target_scope_equals_and_bounded_index() {
         ],
     );
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .scan_register_definition(true)
         .expect("register definition scans");
 
@@ -472,7 +462,6 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
     // so the identifier already denotes the null font while those operands are
     // delivered, and the observed mutation precedes them.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("tenrm").symbol();
@@ -482,8 +471,8 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
 
     let mut recorder = Recorder::default();
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         processor
             .scan_font_definition(false)
             .expect("font definition scans")
@@ -526,7 +515,6 @@ fn font_definition_scanner_defines_the_null_font_before_scanning_operands() {
 #[test]
 fn generated_font_scanner_binds_null_before_source_and_scans_letterspace_tail() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("spaced").symbol();
@@ -537,7 +525,7 @@ fn generated_font_scanner_binds_null_before_source_and_scans_letterspace_tail() 
     tokens.extend(text_tokens(" 1200 nolig "));
     push(&mut command, tokens);
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .scan_generated_font_definition(GeneratedFontKind::Letterspace, false)
         .expect("letterspace definition scans");
 
@@ -557,7 +545,6 @@ fn font_size_recovery_carries_the_backed_up_error_context() {
     // `back_input`; the deferred stomach-side `int_error` must display that
     // exact command-owned stack state.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("oversized").symbol();
@@ -565,7 +552,7 @@ fn font_size_recovery_carries_the_backed_up_error_context() {
     tokens.extend(text_tokens("=cmr10 scaled 32769="));
     push(&mut command, tokens);
 
-    let request = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let request = processor(&mut command, &mut universe, &mut capabilities)
         .scan_font_definition(false)
         .expect("font definition scans");
     let FontSizeRecovery::IllegalMagnification { value, context } =
@@ -582,13 +569,12 @@ fn show_context_labels_an_exhausted_backup_as_recently_read() {
     // TeX82 §530: a backed-up token list with `loc=null` names the token just
     // consumed, while a nonempty backup remains `<to be read again>`.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let font = universe.intern("font").symbol();
     push(&mut command, [Token::Cs(font)]);
 
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    processor(&mut command, &mut universe, &mut capabilities)
         .scan_show()
         .expect("show operand scans");
 
@@ -604,7 +590,6 @@ fn show_prints_control_character_meaning_with_caret_notation() {
     // one-character string. The generated `^^Y` spelling is not rescanned
     // through the live `\newlinechar`, even when that parameter is `Y`.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(IntParam::NEWLINE_CHAR, i32::from(b'Y'));
     let mut capabilities = CommandHostCapabilities::default();
@@ -616,7 +601,7 @@ fn show_prints_control_character_meaning_with_caret_notation() {
         }],
     );
 
-    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let shown = processor(&mut command, &mut universe, &mut capabilities)
         .scan_show()
         .expect("show operand scans");
     assert_eq!(shown.content, "> the character ^^Y");
@@ -631,7 +616,6 @@ fn show_moves_singular_mark_contents_to_the_next_line() {
         ("0.", "> \\botmark=\\botmark:\n0."),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let botmark = universe.intern("botmark").symbol();
@@ -643,7 +627,7 @@ fn show_moves_singular_mark_contents_to_the_next_line() {
         universe.set_page_mark(tex_state::page::PageMark::Bot, tokens);
         push(&mut command, [Token::Cs(botmark)]);
 
-        let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        let shown = processor(&mut command, &mut universe, &mut capabilities)
             .scan_show()
             .expect("show operand scans");
         assert_eq!(shown.content, expected);
@@ -656,7 +640,6 @@ fn show_of_end_template_alias_retains_outer_identity_and_empty_body_line() {
     // call-class command. Its empty token list still puts the completion
     // diagnostic on the line after the colon.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let alias = universe.intern("endt").symbol();
@@ -666,7 +649,7 @@ fn show_of_end_template_alias_retains_outer_identity_and_empty_body_line() {
     );
     push(&mut command, [Token::Cs(alias)]);
 
-    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let shown = processor(&mut command, &mut universe, &mut capabilities)
         .scan_show()
         .expect("show operand scans");
     assert_eq!(shown.content, "> \\endt=\\outer endtemplate:\n");
@@ -677,7 +660,6 @@ fn show_does_not_scan_or_render_etex_mark_class_contents() {
     // e-TeX change [20.296] leaves plural mark enquiries at print_cmd_chr:
     // `\show\botmarks` neither scans a class number nor appends class zero.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let botmarks = universe.intern("botmarks").symbol();
@@ -689,7 +671,7 @@ fn show_does_not_scan_or_render_etex_mark_class_contents() {
     universe.set_page_mark_class(tex_state::page::PageMark::Bot, 0, tokens);
     push(&mut command, [Token::Cs(botmarks)]);
 
-    let shown = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let shown = processor(&mut command, &mut universe, &mut capabilities)
         .scan_show()
         .expect("show operand scans");
     assert_eq!(shown.content, "> \\botmarks=\\botmarks");
@@ -698,7 +680,6 @@ fn show_does_not_scan_or_render_etex_mark_class_contents() {
 #[test]
 fn math_field_brace_opens_group_without_absorbing_its_body() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -727,7 +708,7 @@ fn math_field_brace_opens_group_without_absorbing_its_body() {
         ],
     );
     let field = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor.scan_math_field_episode().expect("field scans")
     };
     // TeX82 §1153 consumes only the mandatory brace; the body stays live
@@ -736,7 +717,7 @@ fn math_field_brace_opens_group_without_absorbing_its_body() {
     assert_eq!(field.body, MathFieldBody::OpenGroup);
     let mut delivered = Vec::new();
     for _ in 0..4 {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         delivered.push(
             processor
                 .get_x_token()
@@ -772,7 +753,6 @@ fn math_field_brace_opens_group_without_absorbing_its_body() {
 #[test]
 fn replay_completion_precedes_parent_delivery() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -793,7 +773,7 @@ fn replay_completion_precedes_parent_delivery() {
     let episode = command.push_discretionary_episode(part);
 
     let first = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token_with_replay_completion()
             .expect("episode token delivers")
@@ -807,7 +787,7 @@ fn replay_completion_precedes_parent_delivery() {
     ));
 
     let completed = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token_with_replay_completion()
             .expect("completion delivers")
@@ -819,7 +799,7 @@ fn replay_completion_precedes_parent_delivery() {
     ));
 
     let parent = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token_with_replay_completion()
             .expect("parent delivery succeeds")
@@ -836,7 +816,6 @@ fn replay_completion_precedes_parent_delivery() {
 #[test]
 fn output_replay_completion_follows_final_macro_replacement() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let value = universe.intern("value").symbol();
@@ -864,7 +843,7 @@ fn output_replay_completion_follows_final_macro_replacement() {
     );
 
     let expanded = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .expand_output_replay(replay)
             .expect("output replay expands")
@@ -874,7 +853,7 @@ fn output_replay_completion_follows_final_macro_replacement() {
         text_tokens("DEFERRED-TWO")
     );
     let parent = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("parent delivery succeeds")
@@ -892,7 +871,6 @@ fn output_replay_completion_follows_final_macro_replacement() {
 #[test]
 fn math_choice_group_consumes_only_its_opening_brace() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -916,14 +894,14 @@ fn math_choice_group_consumes_only_its_opening_brace() {
     // branch body is live input the stomach reads through main control, so
     // no episode is opened and the first body token is delivered next.
     let recovered = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_math_choice_group()
             .expect("branch brace scans")
     };
     assert!(!recovered);
     let body = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("body stays live")
@@ -941,7 +919,6 @@ fn math_choice_group_consumes_only_its_opening_brace() {
 #[test]
 fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -952,7 +929,7 @@ fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
         }],
     );
     let recovered = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_math_choice_group()
             .expect("recovery completes")
@@ -962,7 +939,7 @@ fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
     // token of the branch body.
     assert!(recovered);
     let replayed = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("replay remains command owned")
@@ -985,7 +962,6 @@ fn missing_math_choice_brace_recovers_without_consuming_rejected_command() {
 #[test]
 fn math_field_scalar_case_resolves_without_replaying_its_command() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -1003,8 +979,8 @@ fn math_field_scalar_case_resolves_without_replaying_its_command() {
     );
     let mut recorder = Recorder::default();
     let field = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         processor.scan_math_field_episode().expect("field scans")
     };
 
@@ -1020,7 +996,7 @@ fn math_field_scalar_case_resolves_without_replaying_its_command() {
         "§1151 opens and retires no input level for a scalar field"
     );
     let next = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("delivery succeeds")
@@ -1049,7 +1025,6 @@ fn math_field_operand_cases_reduce_to_one_math_code() {
         (UnexpandablePrimitive::Delimiter, "\"1161361 ", 0x1161),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let symbol = universe.intern("p").symbol();
@@ -1058,8 +1033,7 @@ fn math_field_operand_cases_reduce_to_one_math_code() {
         tokens.extend(text_tokens(text));
         push(&mut command, tokens);
         let field = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             processor.scan_math_field_episode().expect("field scans")
         };
         let expected = if primitive == UnexpandablePrimitive::Char {
@@ -1080,7 +1054,6 @@ fn math_given_field_preserves_every_non_ord_code_without_input_events() {
     for class in 1_u16..=7 {
         let code = (class << 12) | 0x13a;
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let symbol = universe.intern("field").symbol();
@@ -1089,9 +1062,8 @@ fn math_given_field_preserves_every_non_ord_code_without_input_events() {
         let mut recorder = Recorder::default();
 
         let field = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             processor.scan_math_field_episode().expect("field scans")
         };
 
@@ -1114,7 +1086,6 @@ fn math_given_field_preserves_every_non_ord_code_without_input_events() {
 #[test]
 fn math_field_rejects_a_non_field_command_into_an_open_group() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let symbol = universe.intern("hbox").symbol();
@@ -1124,7 +1095,7 @@ fn math_field_rejects_a_non_field_command_into_an_open_group() {
     );
     push(&mut command, [Token::Cs(symbol)]);
     let field = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor.scan_math_field_episode().expect("field scans")
     };
 
@@ -1134,7 +1105,7 @@ fn math_field_rejects_a_non_field_command_into_an_open_group() {
         crate::processor::TOP_LEVEL_ALIGN_STATE + 1
     );
     let next = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("delivery succeeds")
@@ -1165,19 +1136,12 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
     ];
     push(&mut plain, tokens);
     push(&mut observed, tokens);
-    let mut plain_runtime = CommandRuntime::default();
-    let mut observed_runtime = CommandRuntime::default();
     let mut plain_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut observed_universe = crate::test_harness::universe_with_plain_catcodes();
     let mut plain_capabilities = CommandHostCapabilities::default();
     let mut observed_capabilities = CommandHostCapabilities::default();
     let plain_field = {
-        let mut processor = processor(
-            &mut plain,
-            &mut plain_runtime,
-            &mut plain_universe,
-            &mut plain_capabilities,
-        );
+        let mut processor = processor(&mut plain, &mut plain_universe, &mut plain_capabilities);
         processor
             .scan_math_field_episode()
             .expect("plain field scans")
@@ -1186,7 +1150,6 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
     let observed_field = {
         let mut processor = processor(
             &mut observed,
-            &mut observed_runtime,
             &mut observed_universe,
             &mut observed_capabilities,
         )
@@ -1204,7 +1167,6 @@ fn math_episode_observation_does_not_change_frozen_command_state() {
 #[test]
 fn math_delimiter_and_mu_requests_recover_and_consume_units() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -1265,7 +1227,7 @@ fn math_delimiter_and_mu_requests_recover_and_consume_units() {
         ],
     );
     let (delimiter, material) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let delimiter = processor.scan_delimiter_number().expect("delimiter scans");
         let material = processor
             .scan_math_mu_material(false)
@@ -1289,14 +1251,13 @@ fn generalized_fraction_delimiters_read_delimiter_codes_not_integers() {
     // integers made `\abovewithdelims()3pt` read `()` as a vacuous number and
     // consumed the fraction's own operands as digits.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     universe.set_delcode('(', 0x02_8300);
     universe.set_delcode(')', 0x02_9301);
     push(&mut command, text_tokens("()3pt 16"));
     let (fraction, family) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let fraction = processor
             .scan_math_fraction(MathFractionKind::Above, true)
             .expect("fraction scans");
@@ -1324,7 +1285,6 @@ fn a_non_radical_delimiter_consumes_delimiter_in_place_and_backs_up_nothing_else
     // token of a `scan_int`, which §444's `vacuous` case backed up and
     // redelivered.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let delimiter = universe.intern("delimiter").symbol();
@@ -1337,8 +1297,8 @@ fn a_non_radical_delimiter_consumes_delimiter_in_place_and_backs_up_nothing_else
     push(&mut command, tokens);
     let mut recorder = Recorder::default();
     let (boundary, next) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         let boundary = processor
             .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Left)
             .expect("boundary scans");
@@ -1373,12 +1333,11 @@ fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
     // TeX82 §1160's `othercases cur_val:=-1` and §1161's `back_error`: the
     // rejected token returns to the input and the delimiter becomes null.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("  x"));
     let (boundary, next) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let boundary = processor
             .scan_math_delimiter_boundary(MathDelimiterBoundaryKind::Right)
             .expect("boundary scans");
@@ -1401,13 +1360,11 @@ fn a_non_radical_delimiter_backs_up_a_token_with_no_delimiter_code() {
 
 fn processor<'a>(
     command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     universe: &'a mut Universe,
     capabilities: &'a mut CommandHostCapabilities,
 ) -> CommandProcessor<'a> {
     CommandProcessor::new(
         command,
-        runtime,
         universe.command_context(),
         CommandHostContext::new(capabilities),
     )
@@ -1425,13 +1382,12 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("defined").symbol();
     let mut capabilities = CommandHostCapabilities::default();
     let snapshot = command.snapshot();
     let balanced = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_balanced_text(false)
             .expect("balanced text scans")
@@ -1454,7 +1410,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         .rollback(snapshot)
         .expect("balanced scan rolls back exactly");
     let replayed = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_balanced_text(false)
             .expect("balanced replay scans")
@@ -1492,7 +1448,7 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
         ],
     );
     let definition = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_macro_definition(false)
             .expect("definition scans")
@@ -1511,7 +1467,6 @@ fn balanced_text_and_macro_definition_freeze_typed_lists_with_provenance() {
 #[test]
 fn expanded_macro_definition_splices_the_spacefactor_from_the_host() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let target = universe.intern("captured_space_factor").symbol();
     let the = universe.intern("the").symbol();
@@ -1541,7 +1496,7 @@ fn expanded_macro_definition_splices_the_spacefactor_from_the_host() {
         ],
     );
 
-    let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let definition = processor(&mut command, &mut universe, &mut capabilities)
         .with_observer(&mut recorder)
         .scan_macro_definition(true)
         .expect("expanded definition scans the current space factor");
@@ -1609,12 +1564,11 @@ fn balanced_text_enters_absorbing_before_its_opening_brace() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
 
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    processor(&mut command, &mut universe, &mut capabilities)
         .with_observer(&mut recorder)
         .scan_balanced_text(true)
         .expect("balanced text scans");
@@ -1646,11 +1600,10 @@ fn special_shipout_probe_is_owned_only_by_the_pdftex_profile() {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let (deferred, _) = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        let (deferred, _) = processor(&mut command, &mut universe, &mut capabilities)
             .with_observer(&mut recorder)
             .scan_special()
             .expect("special scans");
@@ -1692,12 +1645,11 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
 
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    processor(&mut command, &mut universe, &mut capabilities)
         .with_observer(&mut recorder)
         .scan_discretionary_opening()
         .expect("opening scans");
@@ -1724,7 +1676,7 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
         event,
         CommandObservation::ScannerStatus(status) if status.to == "absorbing"
     )));
-    let next = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let next = processor(&mut command, &mut universe, &mut capabilities)
         .get_x_token()
         .expect("body remains live")
         .expect("body command exists");
@@ -1740,7 +1692,6 @@ fn discretionary_delivers_each_opening_brace_before_body_collection() {
 #[test]
 fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let macro_name = universe.intern("arg").symbol();
     let parameters = universe.intern_token_list(&[Token::Param(1)]);
@@ -1785,7 +1736,7 @@ fn expanded_balanced_text_uses_canonical_macro_argument_matching() {
     );
     let mut capabilities = CommandHostCapabilities::default();
     let scanned = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_balanced_text(true)
             .expect("macro argument expands")
@@ -1811,17 +1762,16 @@ fn rule_spec_scans_expanded_keywords_and_dimensions() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    let spec = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let spec = processor(&mut command, &mut universe, &mut capabilities)
         .scan_rule_spec(UnexpandablePrimitive::VRule)
         .expect("rule spec scans");
 
     assert_eq!(spec.width.map(Scaled::raw), Some(Scaled::UNITY));
     assert_eq!(spec.height.map(Scaled::raw), Some(2 * Scaled::UNITY));
     assert_eq!(spec.depth.map(Scaled::raw), Some(0));
-    let terminator = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let terminator = processor(&mut command, &mut universe, &mut capabilities)
         .get_x_token()
         .expect("terminator delivers")
         .expect("terminator exists");
@@ -1896,10 +1846,9 @@ fn rule_spec_defaults_and_last_keyword_are_observable() {
     for (name, primitive, source_text, expected) in cases {
         let mut command = CommandState::default();
         push(&mut command, text_tokens(source_text));
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(
             processor
@@ -1954,14 +1903,13 @@ fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
             },
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    let accent = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let accent = processor(&mut command, &mut universe, &mut capabilities)
         .scan_accent()
         .expect("accent operands scan");
     assert_eq!(accent.accent, 18);
-    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let base = processor(&mut command, &mut universe, &mut capabilities)
         .scan_accent_base()
         .expect("base lookahead scans");
     assert!(matches!(
@@ -1972,7 +1920,7 @@ fn accent_scanner_separates_the_accent_code_from_the_base_lookahead() {
         }
     ));
 
-    let punctuation = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let punctuation = processor(&mut command, &mut universe, &mut capabilities)
         .get_x_token()
         .expect("punctuation delivers")
         .expect("punctuation exists");
@@ -2007,10 +1955,9 @@ fn accent_base_lookahead_hands_a_prefixed_command_back_unreplayed() {
             Token::Cs(target),
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
-    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let base = processor(&mut command, &mut universe, &mut capabilities)
         .with_observer(&mut recorder)
         .scan_accent_base()
         .expect("base lookahead scans");
@@ -2063,16 +2010,15 @@ fn assignment_loop_skips_relaxations_and_stops_before_following_token() {
             },
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
 
-    let first = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let first = processor(&mut command, &mut universe, &mut capabilities)
         .scan_accent_base()
         .expect("assignment-loop command scans");
     assert!(matches!(first, ScannedAccentBase::Assignment(command)
         if command.meaning() == Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Advance)));
 
-    let second = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let second = processor(&mut command, &mut universe, &mut capabilities)
         .scan_accent_base()
         .expect("following token remains available");
     assert!(matches!(
@@ -2097,14 +2043,13 @@ fn accent_base_lookahead_replays_a_command_that_is_neither_base_nor_assignment()
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::HBox),
     );
     push(&mut command, [Token::Cs(target)]);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
-    let base = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let base = processor(&mut command, &mut universe, &mut capabilities)
         .scan_accent_base()
         .expect("base lookahead scans");
     assert!(matches!(base, ScannedAccentBase::Missing));
 
-    let replayed = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let replayed = processor(&mut command, &mut universe, &mut capabilities)
         .get_x_token()
         .expect("replayed command delivers")
         .expect("replayed command exists");
@@ -2131,7 +2076,6 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
     ] {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(1);
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let delimiter = if let Some(primitive) = primitive {
@@ -2181,7 +2125,7 @@ fn rule_spec_starts_v_template_when_scalar_lookahead_hits_cell_delimiters() {
         tokens.push(delimiter);
         push(&mut command, tokens);
 
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let spec = processor
             .scan_rule_spec(UnexpandablePrimitive::VRule)
             .unwrap_or_else(|error| panic!("{name} rule scan succeeds: {error}"));
@@ -2233,7 +2177,6 @@ fn alignment_preamble_opening_scans_the_scan_spec_clause() {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
@@ -2242,8 +2185,7 @@ fn alignment_preamble_opening_scans_the_scan_spec_clause() {
         );
         let mut capabilities = CommandHostCapabilities::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             let packing = processor
                 .scan_alignment_preamble_opening()
                 .unwrap_or_else(|_| panic!("scan_spec accepts `{body}`"));
@@ -2264,7 +2206,6 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
     let mut command = CommandState::default();
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let hfil = universe.intern("hfil").symbol();
     let cr = universe.intern("cr").symbol();
@@ -2315,7 +2256,7 @@ fn alignment_preamble_discards_leading_spaces_from_each_u_template_only() {
     );
     let mut capabilities = CommandHostCapabilities::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
@@ -2349,7 +2290,6 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
     let mut command = CommandState::default();
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let initial = universe.intern_glue(tex_state::glue::GlueSpec {
         width: tex_state::scaled::Scaled::from_raw(tex_state::scaled::Scaled::UNITY),
@@ -2407,7 +2347,7 @@ fn alignment_preamble_tabskip_assignment_preserves_the_prior_boundary() {
     );
     let mut capabilities = CommandHostCapabilities::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
@@ -2484,7 +2424,6 @@ fn assert_missing_preamble_parameter(
     let mut command = CommandState::default();
     let alignment = crate::AlignmentIdentity::new(1);
     command.begin_alignment(alignment);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let cr = universe.intern("cr").symbol();
     universe.set_meaning(
@@ -2497,8 +2436,8 @@ fn assert_missing_preamble_parameter(
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         processor
             .scan_alignment_preamble_opening()
             .expect("scan_spec consumes the opening brace");
@@ -2571,7 +2510,6 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
         ],
     );
     let snapshot = command.snapshot();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
@@ -2582,7 +2520,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
         ),
     );
     let input = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .open_registered_input()
             .expect("registered input opens")
@@ -2600,7 +2538,7 @@ fn filename_registered_input_recovery_and_rollback_stay_command_owned() {
         }],
     );
     let error = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .open_registered_input()
             .expect_err("unregistered input is structured recovery")
@@ -2619,7 +2557,6 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("nested "));
     let before = command.snapshot();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
@@ -2627,7 +2564,7 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
         SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"x"[..])),
     );
     let opened = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .open_registered_input()
             .expect("default-area retry")
@@ -2640,7 +2577,7 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
     push(&mut command, text_tokens("missing "));
     let failed = command.snapshot();
     let error = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .open_registered_input()
             .expect_err("both attempts fail")
@@ -2661,11 +2598,10 @@ fn start_input_retries_the_default_area_and_retires_failed_attempt() {
 fn start_input_retains_parent_relative_authored_spelling() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("../secret "));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
 
-    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let error = processor(&mut command, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect_err("parent-relative request remains host-owned");
     assert_eq!(
@@ -2694,7 +2630,6 @@ fn start_input_normalizes_empty_and_nonempty_first_lines() {
     ] {
         let mut command = CommandState::default();
         push(&mut command, text_tokens("case "));
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         universe.set_int_param(IntParam::END_LINE_CHAR, 13);
         let par = universe.intern("par").symbol();
@@ -2708,8 +2643,7 @@ fn start_input_normalizes_empty_and_nonempty_first_lines() {
             SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(bytes)),
         );
         let actual = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             processor.open_registered_input().expect("input opens");
             processor
                 .get_x_token()
@@ -2725,7 +2659,6 @@ fn start_input_normalizes_empty_and_nonempty_first_lines() {
 fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("case "));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(IntParam::END_LINE_CHAR, -1);
     let mut capabilities = CommandHostCapabilities::default();
@@ -2734,7 +2667,7 @@ fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
         SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"z"[..])),
     );
     let (first, end) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor.open_registered_input().expect("input opens");
         (
             processor
@@ -2753,7 +2686,6 @@ fn start_input_honors_inactive_endlinechar_on_the_opening_line() {
 fn start_input_nests_and_initializes_the_job_name_only_once() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("outer "));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.register_input(
@@ -2768,7 +2700,7 @@ fn start_input_nests_and_initializes_the_job_name_only_once() {
         SourceRegistration::new(RegisteredSourceKind::World, Arc::<[u8]>::from(&b"c"[..])),
     );
     let (child, parent) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor.open_registered_input().expect("outer opens");
         processor.open_registered_input().expect("inner opens");
         let child = processor
@@ -2795,7 +2727,6 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
     // command lookahead, but the recursive `\pdfobj` case checks output mode
     // before recognizing any keyword or scanning any operand.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfobj = universe.intern("pdfobj").symbol();
@@ -2814,7 +2745,7 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
     let snapshot = command.snapshot();
 
     let result = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(false)
             .expect("DVI result needs no operand scan")
@@ -2824,7 +2755,7 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
         ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfObject)
     );
     let next = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("operand input remains valid")
@@ -2843,7 +2774,7 @@ fn immediate_pdf_object_dvi_result_precedes_every_operand_scan() {
         .rollback(snapshot)
         .expect("scanner attempt rolls back");
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(true)
             .expect("PDF retry scans the preserved request")
@@ -2866,7 +2797,6 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
     // lookahead, then the recursive `\pdfxform` case checks output mode before
     // allocating a form or scanning attr/resources/the box register.
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfxform = universe.intern("pdfxform").symbol();
@@ -2885,7 +2815,7 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
     let snapshot = command.snapshot();
 
     let result = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(false)
             .expect("DVI result needs no form operand scan")
@@ -2895,7 +2825,7 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
         ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfXForm)
     );
     let next = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("operand input remains valid")
@@ -2914,7 +2844,7 @@ fn immediate_pdf_form_dvi_result_precedes_every_operand_scan() {
         .rollback(snapshot)
         .expect("scanner attempt rolls back");
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(true)
             .expect("PDF retry scans the preserved form request")
@@ -2939,7 +2869,6 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
     // before image allocation or any dimension, attr, page, box, or file
     // scan.
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let pdfximage = universe.intern("pdfximage").symbol();
@@ -2958,7 +2887,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
     let snapshot = command.snapshot();
 
     let result = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(false)
             .expect("DVI result needs no image operand scan")
@@ -2968,7 +2897,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
         ImmediateExtension::PdfExtensionInDviMode(UnexpandablePrimitive::PdfXImage)
     );
     let next = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect("operand input remains valid")
@@ -2987,7 +2916,7 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
         .rollback(snapshot)
         .expect("scanner attempt rolls back");
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_immediate_extension(true)
             .expect("PDF retry scans the preserved image request")
@@ -3009,7 +2938,6 @@ fn immediate_pdf_image_dvi_result_precedes_every_operand_scan() {
 #[test]
 fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
     let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -3020,7 +2948,7 @@ fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
     );
 
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_pdf_image_request()
             .expect("scan named-page image request")
@@ -3035,7 +2963,7 @@ fn pdf_image_scans_named_page_colorspace_and_general_text_in_source_order() {
     assert!(request.page_box_explicit);
     assert_eq!(request.name, "image.pdf");
     assert!(request.attr.is_some());
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     assert_eq!(
         processor
             .get_x_token()
@@ -3058,21 +2986,19 @@ fn pdf_image_filename_uses_canonical_quoted_unquoted_and_grouped_boundaries() {
         ("{figure.png}!", "figure.png", '!'),
     ] {
         let mut command = CommandState::new(crate::CommandProfile::PDFTEX14029);
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         push(&mut command, text_tokens(source));
 
         let request = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             processor
                 .scan_pdf_image_request()
                 .expect("pdfximage filename scans")
         };
         assert_eq!(request.name, expected, "source {source:?}");
 
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         assert_eq!(
             processor
                 .get_x_token()
@@ -3092,12 +3018,11 @@ fn pdf_image_filename_uses_canonical_quoted_unquoted_and_grouped_boundaries() {
 #[test]
 fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("direct{q}shipout page{Q}"));
     let (immediate, deferred) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         (
             processor
                 .scan_pdf_graphics_request(UnexpandablePrimitive::PdfLiteral)
@@ -3130,12 +3055,11 @@ fn pdf_graphics_scanners_freeze_immediate_and_shipout_literal_payloads() {
 #[test]
 fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("2 set{g}3"));
     let (set, missing) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         (
             processor
                 .scan_pdf_graphics_request(UnexpandablePrimitive::PdfColorStack)
@@ -3166,7 +3090,6 @@ fn pdf_colorstack_scanner_keeps_setter_text_and_missing_action_typed() {
 #[test]
 fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -3174,7 +3097,7 @@ fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
         text_tokens(" 3pt plus 2fil minus 1pt -7 1007"),
     );
     let (reference, snap, low, high) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         (
             processor
                 .scan_pdf_graphics_request(UnexpandablePrimitive::PdfSnapRefPoint)
@@ -3210,7 +3133,6 @@ fn pdf_snapping_scanners_preserve_glue_and_clamp_compensation() {
 #[test]
 fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -3218,7 +3140,7 @@ fn pdf_navigation_applies_halfword_bound_only_to_dest_and_thread_ids() {
         text_tokens("struct 1073741824 num 1 fit goto page 1073741824{Fit}num 1073741824 fit"),
     );
     let (destination, action, too_large) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let destination = processor
             .scan_pdf_navigation_request(UnexpandablePrimitive::PdfDest)
             .expect("large structure object remains a scan_int value");
@@ -3284,13 +3206,11 @@ fn malformed_pdf_navigation_keeps_the_nonoperand_token() {
         ),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         push(&mut command, text_tokens("Z"));
         let (error, following) = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             let error = processor
                 .scan_pdf_navigation_request(primitive)
                 .expect_err("malformed request is rejected");
@@ -3311,7 +3231,6 @@ fn pdf_catalog_scanner_consumes_the_complete_open_action_suffix() {
     // pdftex.web §1571 scans the expanded catalog fragment and the complete
     // optional action before DVI-mode execution decides whether to publish it.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(
@@ -3320,7 +3239,7 @@ fn pdf_catalog_scanner_consumes_the_complete_open_action_suffix() {
     );
 
     let request = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .scan_pdf_document_fragment_request(UnexpandablePrimitive::PdfCatalog)
             .expect("scan catalog open action")
@@ -3338,7 +3257,7 @@ fn pdf_catalog_scanner_consumes_the_complete_open_action_suffix() {
         tex_state::PdfActionTarget::Page { number: 2, .. }
     ));
 
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     assert_eq!(
         processor
             .get_x_token()
@@ -3365,14 +3284,13 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_catcode('b', Catcode::Active);
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         processor.shift_case(true).expect("shift_case completes");
     }
 
@@ -3463,11 +3381,10 @@ fn shift_case_rewrites_characters_and_backs_the_shifted_list_up() {
 #[test]
 fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, text_tokens("-1 0 15 16 999999 "));
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     // TeX82 §1350: `if cur_val<0 then cur_val:=17 else if cur_val>15 then
     // cur_val:=16`, so `write_stream` is always one of §1342's eighteen
     // slots and `\wlog`'s `\m@ne` is recorded as 17, not -1.
@@ -3493,7 +3410,6 @@ fn write_stream_scan_normalizes_out_of_range_stream_numbers() {
 #[test]
 fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::new(54), 10);
     let mut capabilities = CommandHostCapabilities::default();
@@ -3522,7 +3438,7 @@ fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
         }),
     ];
     let tokens = universe.finish_traced_token_list(&words);
-    let expanded = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let expanded = processor(&mut command, &mut universe, &mut capabilities)
         .expand_write_text(tokens)
         .expect("write text expands");
 
@@ -3547,7 +3463,6 @@ fn unbalanced_write_captures_context_before_recovery_retires_its_levels() {
 #[test]
 fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
     let target = universe.intern("bad-register").symbol();
@@ -3565,7 +3480,7 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
         ]
         .concat(),
     );
-    let register = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let register = processor(&mut command, &mut universe, &mut capabilities)
         .scan_register_definition(false)
         .expect("register definition scans");
     assert_eq!(register.index, 0);
@@ -3586,7 +3501,7 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
         ]
         .concat(),
     );
-    let character = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let character = processor(&mut command, &mut universe, &mut capabilities)
         .scan_character_definition(RestrictedIntegerClass::CharacterCode, false)
         .expect("character definition scans");
     assert_eq!(
@@ -3599,7 +3514,6 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
     let mut recorder = Recorder::default();
     let family = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -3614,7 +3528,7 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
 
     let mut command = CommandState::default();
     push(&mut command, text_tokens("134217728"));
-    let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let delimiter = processor(&mut command, &mut universe, &mut capabilities)
         .scan_delimiter_number()
         .expect("delimiter number scans");
     assert_eq!((delimiter.code, delimiter.recovered), (0, true));
@@ -3624,7 +3538,6 @@ fn restricted_integer_consumers_observe_recovered_zero_before_commit() {
 fn register_definition_uses_the_profile_register_bound() {
     fn scan(profile: crate::CommandProfile, index: &str) -> (u16, String) {
         let mut command = CommandState::new(profile);
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let target = universe.intern("alias").symbol();
@@ -3632,7 +3545,7 @@ fn register_definition_uses_the_profile_register_bound() {
             &mut command,
             [vec![Token::Cs(target)], text_tokens(&format!("={index}"))].concat(),
         );
-        let definition = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        let definition = processor(&mut command, &mut universe, &mut capabilities)
             .scan_register_definition(false)
             .expect("register definition scans");
         (definition.index, diagnostic_text(&universe))
@@ -3675,7 +3588,6 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
             ("1000000", 0, true),
         ] {
             let mut command = CommandState::default();
-            let mut runtime = CommandRuntime::default();
             let mut universe = crate::test_harness::universe_with_plain_catcodes();
             // §484 reads `\read`'s replacement from the terminal only when
             // `interaction>nonstop_mode`, so this one case needs a mode above
@@ -3701,7 +3613,6 @@ fn restricted_input_stream_consumers_recover_out_of_range_to_zero() {
             let mut recorder = Recorder::default();
             let request = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )
@@ -3769,7 +3680,6 @@ fn read_stream_selector_is_unrestricted() {
     for primitive in [P::Read, P::ReadLine] {
         for source in ["-1", "15", "16", "1000000"] {
             let mut command = CommandState::default();
-            let mut runtime = CommandRuntime::default();
             let mut universe = crate::test_harness::universe_with_plain_catcodes();
             // §484 reads `\read`'s replacement from the terminal only when
             // `interaction>nonstop_mode`, so this one case needs a mode above
@@ -3796,7 +3706,6 @@ fn read_stream_selector_is_unrestricted() {
                 .expect("operand source opens");
             let request = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )
@@ -3822,7 +3731,6 @@ fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     universe.set_delcode('(', 0x0123_4567);
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     push(
         &mut command,
@@ -3831,7 +3739,7 @@ fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
             cat: Catcode::Other,
         }],
     );
-    let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let delimiter = processor(&mut command, &mut universe, &mut capabilities)
         .scan_delimiter(false)
         .expect("direct delimiter scans");
     assert_eq!((delimiter.code, delimiter.recovered), (0x0123_4567, false));
@@ -3851,7 +3759,7 @@ fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
             &mut command,
             [vec![Token::Cs(delimiter_primitive)], text_tokens(source)].concat(),
         );
-        let delimiter = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+        let delimiter = processor(&mut command, &mut universe, &mut capabilities)
             .scan_delimiter(false)
             .expect("numeric delimiter scans");
         assert_eq!((delimiter.code, delimiter.recovered), (expected, recovered));
@@ -3860,7 +3768,7 @@ fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("-1x"));
     let (radical, following) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let radical = processor
             .scan_delimiter(true)
             .expect("radical delimiter recovers");
@@ -3881,7 +3789,7 @@ fn delimiter_direct_numeric_min_max_overflow_and_radical_policy_matrix() {
     let mut command = CommandState::default();
     push(&mut command, vec![invalid]);
     let (delimiter, following) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let delimiter = processor
             .scan_delimiter(false)
             .expect("invalid delimiter recovers");

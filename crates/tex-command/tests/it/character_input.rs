@@ -2,9 +2,8 @@ use std::sync::Arc;
 
 use tex_command::{
     Catcode, CatcodeQueries, CharacterCode, CommandDialect, CommandHostCapabilities,
-    CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime, CommandState,
-    RegisteredSourceKind, SourceControlSequenceKind, SourceRegistration, SourceToken,
-    SourceTokenizationStep,
+    CommandHostContext, CommandProcessor, CommandProfile, CommandState, RegisteredSourceKind,
+    SourceControlSequenceKind, SourceRegistration, SourceToken, SourceTokenizationStep,
 };
 use tex_state::Universe;
 use tex_state::token::Token;
@@ -148,7 +147,6 @@ fn processor_projection(profile: CommandProfile, use_get_token: bool) -> Vec<Raw
     command
         .open_registered_source(source)
         .expect("registered fixture source opens");
-    let mut runtime = CommandRuntime::default();
     // The focused source assigns `{`, `}`, `#`, and `&` (INITEX leaves them
     // `other_char`, tex.web §232) and makes `!` ignored before entering this
     // body. Feed the committed body with that already-observed aggregate
@@ -159,7 +157,6 @@ fn processor_projection(profile: CommandProfile, use_get_token: bool) -> Vec<Raw
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -337,7 +334,6 @@ fn tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery() {
     command
         .open_registered_source(source)
         .expect("conditional fixture opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     for (name, primitive) in [
         ("ifnum", tex_state::meaning::ExpandablePrimitive::IfNum),
@@ -354,7 +350,6 @@ fn tex82_scanner_conditionals_observes_signed_radix_and_integer_recovery() {
     let delivered = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );

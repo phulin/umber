@@ -9,8 +9,8 @@ use crate::input::{
     ReplayTrace, RetirementBehavior, SharedTokenBuffer, TokenBehavior, TokenPayload,
 };
 use crate::{
-    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime,
-    CommandState, RegisteredSourceKind, SourceRegistration,
+    CommandError, CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
+    RegisteredSourceKind, SourceRegistration,
 };
 
 fn traced(token: Token) -> TracedTokenWord {
@@ -45,13 +45,11 @@ fn push(command: &mut CommandState, tokens: impl IntoIterator<Item = Token>) {
 
 fn processor<'a>(
     command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     universe: &'a mut Universe,
     capabilities: &'a mut CommandHostCapabilities,
 ) -> CommandProcessor<'a> {
     CommandProcessor::new(
         command,
-        runtime,
         universe.command_context(),
         CommandHostContext::new(capabilities),
     )
@@ -60,10 +58,9 @@ fn processor<'a>(
 fn scan_text(text: &str) -> ScannedFileName {
     let mut command = CommandState::default();
     push(&mut command, text_tokens(text));
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    processor(&mut command, &mut universe, &mut capabilities)
         .scan_file_name()
         .expect("filename scans")
 }
@@ -145,7 +142,6 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
     assert_eq!(scanned.packed(), long_name);
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let terminator = universe.intern("stop").symbol();
     universe.set_meaning(terminator, Meaning::Relax);
@@ -155,7 +151,7 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
     let (scanned, replayed) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let scanned = processor.scan_file_name().expect("unbraced filename scans");
         let replayed = processor
             .get_x_token()
@@ -174,10 +170,9 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
         &mut command,
         text_tokens(&format!("{} ", "a".repeat(FILE_NAME_POOL_CAPACITY + 1))),
     );
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
-    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let error = processor(&mut command, &mut universe, &mut capabilities)
         .scan_file_name()
         .expect_err("filename string-pool capacity is bounded");
     assert_eq!(
@@ -193,7 +188,6 @@ fn filename_component_terminators_and_string_overflow_follow_tex82() {
 #[test]
 fn filename_scan_expands_characters_and_backs_up_first_noncharacter() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let macro_name = universe.intern("stem").symbol();
     let terminator = universe.intern("stop").symbol();
@@ -222,7 +216,7 @@ fn filename_scan_expands_characters_and_backs_up_first_noncharacter() {
     let mut capabilities = CommandHostCapabilities::default();
 
     let (scanned, next) = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let scanned = processor.scan_file_name().expect("expanded filename scans");
         let next = processor
             .get_x_token()
@@ -239,12 +233,10 @@ fn filename_scan_consumes_delimiters_and_preserves_following_tokens() {
     for input in ["paper tail", "{paper}tail"] {
         let mut command = CommandState::default();
         push(&mut command, text_tokens(input));
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let (scanned, following) = {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             let scanned = processor.scan_file_name().expect("filename scans");
             let following = processor
                 .get_x_token()
@@ -269,11 +261,10 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     let mut command = CommandState::default();
     push(&mut command, text_tokens("chapter.tex "));
     let snapshot = command.snapshot();
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let mut capabilities = CommandHostCapabilities::default();
 
-    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let error = processor(&mut command, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect_err("unavailable input requests host retry");
     assert_eq!(
@@ -294,7 +285,7 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
             std::sync::Arc::<[u8]>::from(b"x".as_slice()),
         ),
     );
-    let opened = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let opened = processor(&mut command, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect("registered retry opens");
     assert_eq!(opened.file_name.packed(), "chapter.tex");
@@ -310,7 +301,7 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     push(&mut command, nested);
     universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
     let error = {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         processor
             .get_x_token()
             .expect_err("empty outer filename requests interactive recovery")
@@ -324,7 +315,7 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     );
     assert!(!command.name_in_progress());
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let sentinel = processor
             .get_x_token()
             .expect("sentinel delivery succeeds")
@@ -363,7 +354,7 @@ fn filename_scan_recursion_guard_and_retry_modes_follow_tex82() {
     universe.set_interaction_mode(tex_state::InteractionMode::Nonstop);
     capabilities.mark_input_unavailable("missing.tex");
     capabilities.mark_input_unavailable("TeXinputs:missing.tex");
-    let error = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+    let error = processor(&mut command, &mut universe, &mut capabilities)
         .open_registered_input()
         .expect_err("noninteractive missing input is fatal");
     assert_eq!(

@@ -70,8 +70,8 @@ use crate::input::{
 };
 use crate::processor::status::{AbsorbingContext, DefinitionContext, TokenBuilderId};
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandRuntime, CommandState, ConditionalMode, ConditionalState,
+    CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver, CommandState,
+    ConditionalMode, ConditionalState,
 };
 
 #[derive(Default)]
@@ -85,13 +85,11 @@ impl CommandObserver for Recorder {
 
 fn processor<'a>(
     command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     universe: &'a mut Universe,
     capabilities: &'a mut CommandHostCapabilities,
 ) -> CommandProcessor<'a> {
     CommandProcessor::new(
         command,
-        runtime,
         universe.command_context(),
         CommandHostContext::new(capabilities),
     )
@@ -212,7 +210,6 @@ fn pass_text_uses_get_next_and_skips_nested_conditionals() {
     let mut command = CommandState::default();
     let condition = command.conditions.push(ConditionalKind::IfFalse, 1);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let nested_if = install(&mut universe, "nestedif", ExpandablePrimitive::IfTrue);
     let nested_fi = install(&mut universe, "nestedfi", ExpandablePrimitive::Fi);
@@ -230,7 +227,7 @@ fn pass_text_uses_get_next_and_skips_nested_conditionals() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(
         processor.pass_text(condition, ScannerWarning(41)),
@@ -256,12 +253,11 @@ fn pass_text_only_accepts_or_when_the_frame_limit_allows_it() {
     let mut command = CommandState::default();
     let condition = command.conditions.push(ConditionalKind::IfCase, 1);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Or));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     push(&mut command, vec![or]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(
         processor.pass_text(condition, ScannerWarning(7)),
@@ -338,7 +334,6 @@ fn boxed_with_dimensions(
 #[test]
 fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -348,7 +343,7 @@ fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
         vec![if_false, other('f'), otherwise, other('t'), fi],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 't');
     let frame = processor
@@ -364,7 +359,6 @@ fn boolean_condition_skips_false_limb_and_else_skips_true_remainder() {
 #[test]
 fn ifx_reads_unexpanded_operands_through_get_token() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
@@ -383,7 +377,7 @@ fn ifx_reads_unexpanded_operands_through_get_token() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     // If the operands were delivered with get_x_token, either `iftrue` would
     // open a nested condition or the following text would be consumed.
@@ -396,7 +390,6 @@ fn ifx_temporarily_normalizes_an_absorbing_scanner() {
     // `get_next` operand deliveries, and restores the saved status. This is
     // observable when an expanded token-list scan encounters `\ifx`.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -428,8 +421,8 @@ fn ifx_temporarily_normalizes_an_absorbing_scanner() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 'y');
         assert_eq!(processor.command.scanner.status(), &absorbing);
     }
@@ -450,7 +443,6 @@ fn ifx_temporarily_normalizes_an_absorbing_scanner() {
 #[test]
 fn ifx_in_normal_scanner_status_publishes_no_status_transition() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -470,8 +462,8 @@ fn ifx_in_normal_scanner_status_publishes_no_status_transition() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 'y');
     }
     assert!(
@@ -485,7 +477,6 @@ fn ifx_in_normal_scanner_status_publishes_no_status_transition() {
 #[test]
 fn true_ifx_fi_observes_branch_before_popping_its_frame() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -511,8 +502,8 @@ fn true_ifx_fi_observes_branch_before_popping_its_frame() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         assert_eq!(next_character(&mut processor), 'y');
         assert!(
@@ -543,7 +534,6 @@ fn true_ifx_fi_observes_branch_before_popping_its_frame() {
 #[test]
 fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_x = install(&mut universe, "ifx", ExpandablePrimitive::IfX);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -589,7 +579,7 @@ fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'y');
     assert_eq!(next_character(&mut processor), 'n');
@@ -598,7 +588,6 @@ fn ifx_compares_macro_flags_and_raw_definition_tokens_not_storage_identity() {
 #[test]
 fn character_and_category_tests_normalize_non_character_operands() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
@@ -626,7 +615,7 @@ fn character_and_category_tests_normalize_non_character_operands() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'c');
     assert_eq!(next_character(&mut processor), 'k');
@@ -635,7 +624,6 @@ fn character_and_category_tests_normalize_non_character_operands() {
 #[test]
 fn skipped_text_recovers_extra_delimiters_deterministically() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -654,7 +642,7 @@ fn skipped_text_recovers_extra_delimiters_deterministically() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 't');
     assert_eq!(processor.command.expansion.pending_diagnostics.len(), 1);
@@ -668,15 +656,14 @@ fn skipped_text_recovers_extra_delimiters_deterministically() {
 #[test]
 fn extra_delimiter_is_observed_at_its_raw_delivery() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
     push(&mut command, vec![or]);
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(
             processor.get_x_token().expect("extra delimiter is ignored"),
             None
@@ -704,7 +691,6 @@ fn extra_delimiter_is_observed_at_its_raw_delivery() {
 #[test]
 fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -712,7 +698,7 @@ fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
     universe.install_primitive_meaning("relax", Meaning::Relax);
     push(&mut command, vec![if_char, otherwise, other('a'), fi]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(
         processor
@@ -730,7 +716,6 @@ fn delimiter_during_operand_scan_replays_each_missing_if_operand() {
 #[test]
 fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
@@ -743,8 +728,8 @@ fn unless_reuses_boolean_conditional_evaluation_with_inversion() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 'y');
     }
     let transitions: Vec<_> = recorder
@@ -776,14 +761,13 @@ fn tracingcommands_two_prints_unless_with_its_boolean_operand() {
     // boolean `if_test`, so §367 prints one combined command before §502's
     // boolean result rather than tracing the prefix independently.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
     let if_false = install(&mut universe, "iffalse", ExpandablePrimitive::IfFalse);
     push(&mut command, vec![unless, if_false, other('y')]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'y');
     drop(processor);
@@ -805,16 +789,14 @@ fn malformed_unless_character_is_diagnosed_and_replayed_in_extended_profiles() {
         crate::CommandProfile::PDFTEX14029,
     ] {
         let mut command = CommandState::new(profile);
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
         push(&mut command, vec![unless, letter('x'), other('z')]);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             assert_eq!(next_character(&mut processor), 'x');
             assert!(processor.command.conditions.current().is_none());
             assert_eq!(next_character(&mut processor), 'z');
@@ -859,7 +841,6 @@ fn malformed_unless_ifcase_is_replayed_as_an_ordinary_conditional() {
     // illegal as the prefix operand but is backed up and then executes in its
     // ordinary, non-inverted form.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
@@ -869,7 +850,7 @@ fn malformed_unless_ifcase_is_replayed_as_an_ordinary_conditional() {
         vec![unless, if_case, other('0'), other('a'), fi, other('z')],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'a');
     assert!(processor.command.conditions.current().is_some());
@@ -891,7 +872,6 @@ fn malformed_unless_ifcase_is_replayed_as_an_ordinary_conditional() {
 #[test]
 fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_num = install(&mut universe, "ifnum", ExpandablePrimitive::IfNum);
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
@@ -920,7 +900,7 @@ fn numeric_and_ifcase_selection_use_the_same_skip_machine() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'y');
     assert_eq!(next_character(&mut processor), '1');
@@ -950,7 +930,6 @@ fn tracingcommands_two_reports_true_and_false_boolean_results() {
     // entering the selected limb. Both outcomes use the shared §245
     // diagnostic channel.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
     let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
@@ -973,7 +952,7 @@ fn tracingcommands_two_reports_true_and_false_boolean_results() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 't');
     assert_eq!(next_character(&mut processor), 'f');
@@ -994,7 +973,6 @@ fn tracingcommands_two_reports_true_and_false_boolean_results() {
 #[test]
 fn tracingcommands_two_reports_ifcase_selection_before_limb_skips() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
@@ -1014,7 +992,7 @@ fn tracingcommands_two_reports_ifcase_selection_before_limb_skips() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'c');
     assert!(processor.get_x_token().expect("input exhausts").is_none());
@@ -1032,14 +1010,13 @@ fn tracingcommands_one_or_less_omits_boolean_results() {
     // TeX82 §502 uses the strict `tracing_commands>1` threshold.
     for level in [0, 1] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, level);
         let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
         let fi = install(&mut universe, "fi", ExpandablePrimitive::Fi);
         push(&mut command, vec![if_true, other('t'), fi]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(next_character(&mut processor), 't');
         assert!(processor.get_x_token().expect("input exhausts").is_none());
@@ -1067,7 +1044,6 @@ fn boolean_result_trace_uses_tracingonline_diagnostic_routing() {
         (1, tex_state::PrintSink::TerminalAndLog),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
         universe.set_int_param(
@@ -1077,7 +1053,7 @@ fn boolean_result_trace_uses_tracingonline_diagnostic_routing() {
         let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
         push(&mut command, vec![if_true, other('t')]);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(next_character(&mut processor), 't');
         drop(processor);
@@ -1095,7 +1071,6 @@ fn boolean_result_trace_uses_tracingonline_diagnostic_routing() {
 #[test]
 fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
@@ -1116,8 +1091,8 @@ fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 'c');
     }
 
@@ -1151,7 +1126,6 @@ fn ifcase_observes_its_limit_only_after_skipping_to_the_selected_limb() {
 #[test]
 fn ifdim_uses_typed_units_and_internal_dimensions() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -1176,7 +1150,7 @@ fn ifdim_uses_typed_units_and_internal_dimensions() {
     tokens.extend([other('i'), otherwise, other('n'), fi]);
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'y');
     assert_eq!(next_character(&mut processor), 'i');
@@ -1188,7 +1162,6 @@ fn ifdim_scans_box_dimensions_as_internal_dimensions() {
     use tex_state::scaled::Scaled;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -1225,7 +1198,7 @@ fn ifdim_scans_box_dimensions_as_internal_dimensions() {
     }
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'w');
     assert_eq!(next_character(&mut processor), 'h');
@@ -1239,7 +1212,6 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
     use tex_state::scaled::Scaled;
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let ifdim = install(&mut universe, "ifdim", ExpandablePrimitive::IfDim);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -1280,7 +1252,7 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'y');
 }
@@ -1288,7 +1260,6 @@ fn ifdim_box_dimension_accepts_a_dimension_register_selector() {
 #[test]
 fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_hmode = install(&mut universe, "ifhmode", ExpandablePrimitive::IfHMode);
     let if_inner = install(&mut universe, "ifinner", ExpandablePrimitive::IfInner);
@@ -1336,7 +1307,7 @@ fn mode_and_box_predicates_use_host_and_aggregate_queries() {
     );
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.set_conditional_state(ConditionalState::new(ConditionalMode::Horizontal, true));
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['h', 'i', 'v', 'h', 'b'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -1347,7 +1318,6 @@ fn mode_and_box_predicates_use_host_and_aggregate_queries() {
 #[test]
 fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_case = install(&mut universe, "ifcase", ExpandablePrimitive::IfCase);
     let or = install(&mut universe, "or", ExpandablePrimitive::Or);
@@ -1375,8 +1345,8 @@ fn selected_ifcase_limb_skips_remaining_limbs_without_extra_delimiter_errors() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         assert_eq!(next_character(&mut processor), 'a');
         assert_eq!(next_character(&mut processor), 'e');
@@ -1410,7 +1380,6 @@ fn active_macro(universe: &mut Universe, ch: char) -> Token {
 #[test]
 fn noexpand_before_an_active_character_compares_as_that_character() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_char = install(&mut universe, "if", ExpandablePrimitive::If);
     let if_cat = install(&mut universe, "ifcat", ExpandablePrimitive::IfCat);
@@ -1478,7 +1447,7 @@ fn noexpand_before_an_active_character_compares_as_that_character() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 's');
     assert_eq!(next_character(&mut processor), 'd');
@@ -1495,7 +1464,6 @@ fn if_and_ifcat_compare_noexpand_active_characters() {
 #[test]
 fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_eof = install(&mut universe, "ifeof", ExpandablePrimitive::IfEof);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -1537,7 +1505,7 @@ fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'x');
     assert_eq!(next_character(&mut processor), 'c');
@@ -1551,7 +1519,6 @@ fn ifeof_reads_stream_open_state_and_recovers_a_bad_stream_number() {
 #[test]
 fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_true = install(&mut universe, "iftrue", ExpandablePrimitive::IfTrue);
     let otherwise = install(&mut universe, "else", ExpandablePrimitive::Else);
@@ -1572,7 +1539,7 @@ fn redundant_else_inside_a_selected_true_limb_is_skipped_silently() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 't');
     assert_eq!(next_character(&mut processor), 'z');
@@ -1645,7 +1612,6 @@ fn tex82_predicate_aliases_preserve_classification() {
     }
 
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let first = install(&mut universe, "truth-alias-a", ExpandablePrimitive::IfTrue);
     let second = install(&mut universe, "truth-alias-b", ExpandablePrimitive::IfTrue);
@@ -1661,7 +1627,7 @@ fn tex82_predicate_aliases_preserve_classification() {
     );
     push(&mut command, vec![first, second, frozen_fi]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for _ in 0..2 {
         let alias = processor
@@ -1753,7 +1719,6 @@ fn pass_text_does_not_expand_or_execute_skipped_tokens() {
     let mut command = CommandState::default();
     let condition = command.conditions.push(ConditionalKind::IfFalse, 11);
     assert!(command.conditions.change_if_limit(condition, IfLimit::Fi));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let nested_if = install(&mut universe, "skip-nested-if", ExpandablePrimitive::IfTrue);
     let nested_fi = install(&mut universe, "skip-nested-fi", ExpandablePrimitive::Fi);
@@ -1786,7 +1751,7 @@ fn pass_text_does_not_expand_or_execute_skipped_tokens() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(
         processor.pass_text(condition, ScannerWarning(11)),
@@ -1806,7 +1771,6 @@ fn pass_text_does_not_expand_or_execute_skipped_tokens() {
 #[test]
 fn ifcase_zero_negative_else_and_fi_boundaries() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let ifcase = install(
         &mut universe,
@@ -1836,7 +1800,7 @@ fn ifcase_zero_negative_else_and_fi_boundaries() {
     tokens.extend([or, other('b'), fi, other('z')]);
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['a', 'c', 'e', 'z'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -1848,7 +1812,6 @@ fn ifcase_zero_negative_else_and_fi_boundaries() {
 #[test]
 fn negative_ifcase_unwinds_condition_opened_while_scanning_its_operand() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
     let ifcase = install(
@@ -1876,7 +1839,7 @@ fn negative_ifcase_unwinds_condition_opened_while_scanning_its_operand() {
     tokens.extend([fi, fi, other('z')]);
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'z');
     assert!(processor.get_x_token().expect("input exhausts").is_none());
@@ -1923,14 +1886,13 @@ fn conditional_delimiter_legality_matrix() {
     let mut command = CommandState::default();
     let frame = command.conditions.push(ConditionalKind::IfTrue, 7);
     assert!(command.conditions.change_if_limit(frame, IfLimit::Else));
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let or = install(&mut universe, "legality-or", ExpandablePrimitive::Or);
     let otherwise = install(&mut universe, "legality-else", ExpandablePrimitive::Else);
     let fi = install(&mut universe, "legality-fi", ExpandablePrimitive::Fi);
     push(&mut command, vec![or, fi, or, otherwise, fi]);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     assert!(
         processor
             .get_x_token()
@@ -1952,7 +1914,6 @@ fn conditional_delimiter_legality_matrix() {
 #[test]
 fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let hbox = boxed(&mut universe, false);
     let vbox = boxed(&mut universe, true);
@@ -2089,7 +2050,7 @@ fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
     let mut capabilities = CommandHostCapabilities::default();
     capabilities.set_conditional_state(ConditionalState::new(ConditionalMode::Horizontal, true));
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         for selected in expected {
             assert_eq!(next_character(&mut processor), selected);
         }
@@ -2123,7 +2084,7 @@ fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
         (ConditionalMode::Math, true, [false, false, true, true]),
     ] {
         capabilities.set_conditional_state(ConditionalState::new(mode, inner));
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         assert_eq!(
             processor.evaluate_boolean(ConditionalKind::IfVMode),
             Ok(truth[0])
@@ -2146,7 +2107,6 @@ fn predicate_dispatch_covers_all_seventeen_kinds_and_state_queries() {
 #[test]
 fn ifnum_ifdim_relation_and_missing_equals_matrix() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     for (index, expression) in ["1<2", "2=2", "3>2"].into_iter().enumerate() {
@@ -2183,7 +2143,7 @@ fn ifnum_ifdim_relation_and_missing_equals_matrix() {
     );
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for _ in 0..7 {
         assert_eq!(next_character(&mut processor), 't');
@@ -2208,7 +2168,6 @@ fn malformed_ifdim_keeps_nested_conditional_traces_after_its_diagnostic() {
     // nested condition and its delimiters during that same expansion call;
     // those later traces must remain behind the synchronous §82 report.
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_COMMANDS, 2);
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_IFS, 1);
@@ -2232,7 +2191,7 @@ fn malformed_ifdim_keeps_nested_conditional_traces_after_its_diagnostic() {
         .concat(),
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'f');
     assert!(processor.get_x_token().expect("input exhausts").is_none());
@@ -2261,7 +2220,6 @@ fn malformed_ifdim_keeps_nested_conditional_traces_after_its_diagnostic() {
 #[test]
 fn ifodd_signed_parity_and_scanner_recovery_matrix() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     for (index, value) in ["0", "2", "-2", "1", "-1"].into_iter().enumerate() {
@@ -2282,7 +2240,7 @@ fn ifodd_signed_parity_and_scanner_recovery_matrix() {
     );
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['f', 'f', 'f', 't', 't', 'f'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -2332,7 +2290,6 @@ fn box_with_content(
 #[test]
 fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let hbox_empty = box_with_content(&mut universe, false, false);
     let hbox_nonempty = box_with_content(&mut universe, false, true);
@@ -2384,7 +2341,7 @@ fn ifvoid_ifhbox_ifvbox_register_kind_matrix() {
     }
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for selected in expected {
         assert_eq!(next_character(&mut processor), selected);
@@ -2403,7 +2360,6 @@ fn etex_box_conditionals_read_sparse_register_kinds() {
     // e-TeX 2.6 [28.505] replaces TeX82 §505's eight-bit selector with
     // `scan_register_num; fetch_box(p)` for all three box predicates.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let dense_sentinel = box_with_content(&mut universe, true, false);
     let sparse_hbox = box_with_content(&mut universe, false, false);
@@ -2429,8 +2385,8 @@ fn etex_box_conditionals_read_sparse_register_kinds() {
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-        .with_observer(&mut recorder);
+    let mut processor =
+        processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
     assert_eq!(next_character(&mut processor), 't');
     assert_eq!(next_character(&mut processor), 't');
@@ -2454,7 +2410,6 @@ fn etex_box_conditionals_read_sparse_register_kinds() {
 #[test]
 fn if_ifcat_and_ifx_complete_operand_matrix() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let if_true = install(&mut universe, "operand-iftrue", ExpandablePrimitive::IfTrue);
     let if_false = install(
@@ -2553,7 +2508,7 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
     }
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['t', 'f', 't', 'f', 't', 't', 'f', 't', 'f', 'f'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -2570,7 +2525,6 @@ fn if_ifcat_and_ifx_complete_operand_matrix() {
 #[test]
 fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let undefined_symbol = universe.intern("ifdefined-undefined").symbol();
     let macro_operand = macro_token(
@@ -2596,7 +2550,7 @@ fn etex_ifdefined_tests_one_unexpanded_raw_meaning() {
     }
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['f', 't', 't'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -2617,7 +2571,6 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
     // value. The canonical transition trace records state changes, so an
     // already-normal scan has no synthetic normal-to-normal records.
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut tokens = Vec::new();
     append_boolean_case(
@@ -2631,8 +2584,8 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 't');
     }
     assert!(
@@ -2646,7 +2599,6 @@ fn etex_ifdefined_observes_only_an_actual_scanner_status_change() {
 #[test]
 fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let outer = macro_token(
         &mut universe,
@@ -2673,8 +2625,8 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 't');
         assert_eq!(processor.command.scanner.status(), &defining);
         assert!(processor.command.expansion.pending_diagnostics.is_empty());
@@ -2692,7 +2644,7 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
         vec![("defining", "normal"), ("normal", "defining")]
     );
     let defining = command.begin_scanner_status(ScannerStatus::Normal);
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
     assert!(
         processor
             .get_x_token()
@@ -2706,7 +2658,6 @@ fn etex_ifdefined_temporarily_allows_an_outer_operand() {
 #[test]
 fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let endcsname = install(
         &mut universe,
@@ -2747,7 +2698,7 @@ fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
     );
     push(&mut command, tokens);
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     for expected in ['t', 'f', 'f'] {
         assert_eq!(next_character(&mut processor), expected);
@@ -2769,7 +2720,6 @@ fn etex_ifcsname_expands_names_without_creating_missing_control_sequences() {
 #[test]
 fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let relax = universe.intern("ifcsname-recovery-relax").symbol();
     universe.set_meaning(relax, Meaning::Relax);
@@ -2790,8 +2740,8 @@ fn etex_ifcsname_uses_csname_boundary_recovery_and_conditional_lifecycle() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     {
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
         assert_eq!(next_character(&mut processor), 'f');
         assert!(
             processor
@@ -2833,7 +2783,6 @@ fn etex_iffontchar_tests_metric_existence_and_unless_inverts_the_same_frame() {
     use tex_state::scaled::Scaled;
 
     let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let iffontchar = install(&mut universe, "iffontchar", ExpandablePrimitive::IfFontChar);
     let unless = install(&mut universe, "unless", ExpandablePrimitive::Unless);
@@ -2916,7 +2865,7 @@ fn etex_iffontchar_tests_metric_existence_and_unless_inverts_the_same_frame() {
         ],
     );
     let mut capabilities = CommandHostCapabilities::default();
-    let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+    let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
     assert_eq!(next_character(&mut processor), 'p');
     assert_eq!(next_character(&mut processor), 'a');

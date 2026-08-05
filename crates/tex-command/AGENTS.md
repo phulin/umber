@@ -37,7 +37,8 @@ print channel of its own outside the borrowed
   immutable command/character profiles, the distinct canonical compiled-engine
   semantics that survive loading an older format, capabilities, stable
   fingerprints, and focused value/identity tests.
-- `src/state.rs`: persistent command state and discardable runtime ownership.
+- `src/state.rs`: persistent command state and the process-local bounded
+  traced-token scratch pool.
   Also owns `\tracingnesting`'s `record_source_open_depths`/
   `source_open_depths`, the `grp_stack`/`if_stack` recording e-TeX 2.6
   [23.328] compares at a source level's `end_file_reading`.

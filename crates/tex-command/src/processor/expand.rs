@@ -2565,8 +2565,8 @@ mod tests;
 ///
 /// Resource fuel is deliberately absent: [`crate::CommandFuel`] is a
 /// monotonic owner lent to processor episodes and is not restored with
-/// semantic state. Caches and profiling likewise belong to
-/// [`crate::CommandRuntime`].
+/// semantic state. Discardable scratch allocation and profiling likewise
+/// remain outside this state.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct ExpansionState {
     pub(crate) cumulative_expansions: u64,

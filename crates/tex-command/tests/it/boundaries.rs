@@ -461,29 +461,6 @@ fn host_context_cannot_be_serialized() {
 }
 
 #[test]
-fn runtime_cannot_become_semantic_or_serialized_by_convenience() {
-    let manifest_dir = test_support::repository_root().join("crates/tex-command");
-    let dependencies = [
-        CompileFailDependency::path("tex-command", &manifest_dir),
-        CompileFailDependency::registry("serde", "1"),
-    ];
-
-    assert_compile_fail(
-        "command-runtime-traits",
-        &manifest_dir.join("tests/ui/runtime_traits.rs"),
-        &dependencies,
-        &[
-            "CommandRuntime",
-            "Clone",
-            "DeserializeOwned",
-            "Eq",
-            "Hash",
-            "Serialize",
-        ],
-    );
-}
-
-#[test]
 fn ephemeral_command_types_cannot_be_serialized() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let dependencies = [

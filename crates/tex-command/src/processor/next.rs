@@ -2647,8 +2647,8 @@ mod tests {
         DefinitionContext, MatchingContext, ScannerWarning, SkippingContext, TokenBuilderId,
     };
     use crate::{
-        CommandHostCapabilities, CommandHostContext, CommandRuntime, CommandState,
-        RegisteredSourceKind, SourceRegistration,
+        CommandHostCapabilities, CommandHostContext, CommandState, RegisteredSourceKind,
+        SourceRegistration,
     };
 
     #[derive(Default)]
@@ -2662,13 +2662,11 @@ mod tests {
 
     fn processor<'a>(
         command: &'a mut CommandState,
-        runtime: &'a mut CommandRuntime,
         universe: &'a mut Universe,
         capabilities: &'a mut CommandHostCapabilities,
     ) -> CommandProcessor<'a> {
         CommandProcessor::new(
             command,
-            runtime,
             universe.command_context(),
             CommandHostContext::new(capabilities),
         )
@@ -2695,12 +2693,11 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         universe.set_catcode('\x7f', tex_state::token::Catcode::Invalid);
         let mut capabilities = CommandHostCapabilities::default();
 
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let following = processor
             .get_next()
             .expect("invalid-character recovery succeeds")
@@ -2767,12 +2764,11 @@ mod tests {
         command
             .apply_alignment_request(crate::AlignmentRequest::InstallCellTemplate(alignment))
             .expect("empty template installs");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         assert!(
             matches!(processor.get_x_alignment_delivery(false).expect("brace delivers"), Some(crate::AlignmentDelivery::Command(command)) if matches!(command.meaning(), Meaning::CharToken { cat: Catcode::BeginGroup, .. }))
@@ -2850,12 +2846,11 @@ mod tests {
             crate::processor::TOP_LEVEL_ALIGN_STATE,
             "§331 initializes align_state far above the recovery window"
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         let delimiter = processor
             .get_x_token()
@@ -2928,13 +2923,12 @@ mod tests {
                 templates: templates(),
             })
             .expect("empty-template cell begins");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         let event = match processor
             .get_x_alignment_delivery(false)
@@ -2987,10 +2981,9 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let first = processor
             .get_next()
@@ -3068,13 +3061,12 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         universe.set_catcode('~', Catcode::Active);
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         let delivered = processor
             .get_next()
@@ -3119,14 +3111,12 @@ mod tests {
     fn raw_delivery_never_enters_a_new_multiletter_name_in_the_hash_table() {
         let mut command = CommandState::default();
         open_generated(&mut command, b"\\brm\\brm");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             let first = processor
                 .get_next()
                 .expect("raw delivery")
@@ -3183,12 +3173,10 @@ mod tests {
     fn get_token_enters_a_new_multiletter_name_a_later_raw_scan_then_finds() {
         let mut command = CommandState::default();
         open_generated(&mut command, b"\\brm\\brm");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities);
             let created = processor
                 .get_token()
                 .expect("raw delivery")
@@ -3214,10 +3202,9 @@ mod tests {
     fn permanent_control_sequence_locations_are_never_the_undefined_dummy() {
         let mut command = CommandState::default();
         open_generated(&mut command, b"\\+\\\n\n");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         while let Some(delivered) = processor.get_next().expect("raw delivery") {
             assert!(
                 !delivered
@@ -3241,14 +3228,12 @@ mod tests {
             .open_registered_source(source)
             .expect("source opens");
         let snapshot = command.snapshot();
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
         let mut first = Recorder::default();
         {
             let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut first);
+                processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut first);
             processor
                 .get_x_token()
                 .expect("expanded delivery")
@@ -3302,9 +3287,8 @@ mod tests {
         command.rollback(snapshot).expect("rollback succeeds");
         let mut second = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut second);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut second);
             processor
                 .get_x_token()
                 .expect("replayed delivery")
@@ -3333,11 +3317,10 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         universe.set_catcode('\r', Catcode::Active);
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let endline = processor
             .get_next()
@@ -3363,10 +3346,9 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let symbol = processor
             .get_token()
@@ -3398,7 +3380,6 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         universe.install_primitive_meaning(
             "hfil",
@@ -3407,9 +3388,8 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             processor
                 .get_x_token()
                 .expect("hfil delivers")
@@ -3449,7 +3429,6 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         universe.install_primitive_meaning(
             "hskip",
@@ -3458,9 +3437,8 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             processor
                 .get_x_token()
                 .expect("hskip delivers")
@@ -3500,16 +3478,14 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let alias = universe.intern("alias").symbol();
         universe.set_meaning(alias, Meaning::SkipRegister(32_767));
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             processor
                 .get_x_token()
                 .expect("sparse shorthand delivers")
@@ -3557,15 +3533,13 @@ mod tests {
             command
                 .open_registered_source(source)
                 .expect("source opens");
-            let mut runtime = CommandRuntime::default();
             let mut universe = Universe::new_with_plain_catcodes();
             universe.install_primitive_meaning(name, Meaning::UnexpandablePrimitive(primitive));
             let mut capabilities = CommandHostCapabilities::default();
             let mut recorder = Recorder::default();
             {
-                let mut processor =
-                    processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                        .with_observer(&mut recorder);
+                let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
                 processor
                     .get_x_token()
                     .expect("row return delivers")
@@ -3607,8 +3581,6 @@ mod tests {
                 .expect("source registers");
             state.open_registered_source(source).expect("source opens");
         }
-        let mut observed_runtime = CommandRuntime::default();
-        let mut unobserved_runtime = CommandRuntime::default();
         let mut observed_universe = Universe::new_with_plain_catcodes();
         let mut unobserved_universe = Universe::new_with_plain_catcodes();
         let mut observed_capabilities = CommandHostCapabilities::default();
@@ -3617,7 +3589,6 @@ mod tests {
         {
             let mut processor = processor(
                 &mut observed,
-                &mut observed_runtime,
                 &mut observed_universe,
                 &mut observed_capabilities,
             )
@@ -3627,7 +3598,6 @@ mod tests {
         {
             let mut processor = processor(
                 &mut unobserved,
-                &mut unobserved_runtime,
                 &mut unobserved_universe,
                 &mut unobserved_capabilities,
             );
@@ -3666,9 +3636,8 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::MacroReplacement,
         );
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(
             processor
@@ -3708,10 +3677,9 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let opening = processor
             .get_token()
@@ -3767,10 +3735,9 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let decoded = processor
             .get_next()
@@ -3805,10 +3772,9 @@ mod tests {
     #[test]
     fn etex_aftergroup_prepend_promotes_inline_backup_and_preserves_order() {
         let mut command = CommandState::new(crate::CommandProfile::ETEX26);
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         let words = ['a', 'b', 'c'].map(|ch| {
             TracedTokenWord::pack(
                 Token::Char {
@@ -3853,10 +3819,9 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let first = processor
             .get_next()
@@ -3900,10 +3865,9 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         // §342 runs §789's insertion inside `get_next`, so no scanner ever
         // sees the delimiter. Main control is the one reader that does:
@@ -3944,7 +3908,6 @@ mod tests {
         command
             .begin_alignment_cell(alignment, templates())
             .expect("cell begins");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let alias = universe.intern("endt").symbol();
         universe.set_meaning(
@@ -3961,7 +3924,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let crate::AlignmentDelivery::Command(endv) = processor
             .get_x_alignment_delivery(false)
@@ -3985,7 +3948,6 @@ mod tests {
     fn get_next_inserts_the_v_template_for_a_top_level_alignment_delimiter() {
         let mut command = CommandState::default();
         let alignment = crate::AlignmentIdentity::new(19);
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let v_template =
             tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
@@ -4020,7 +3982,7 @@ mod tests {
             ReplayTrace::BackedUp,
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         assert_eq!(
             processor
@@ -4048,7 +4010,6 @@ mod tests {
         command
             .install_alignment_cell_template(alignment)
             .expect("cell without a u-template installs");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let cr = universe.intern("cr").symbol();
         universe.set_meaning(
@@ -4066,8 +4027,8 @@ mod tests {
         );
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-            .with_observer(&mut recorder);
+        let mut processor =
+            processor(&mut command, &mut universe, &mut capabilities).with_observer(&mut recorder);
 
         let delimiter = processor
             .get_next()
@@ -4131,10 +4092,9 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         processor.get_next().expect("opening brace delivers");
         let nested_tab = processor
@@ -4174,7 +4134,6 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let u_template =
             tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
@@ -4207,9 +4166,8 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
 
             let u = processor
                 .get_next()
@@ -4362,7 +4320,6 @@ mod tests {
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
         );
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let u_template =
             tex_state::input::TracedTokenList::synthetic(universe.intern_token_list(&[
@@ -4394,9 +4351,8 @@ mod tests {
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         {
-            let mut processor =
-                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
-                    .with_observer(&mut recorder);
+            let mut processor = processor(&mut command, &mut universe, &mut capabilities)
+                .with_observer(&mut recorder);
             processor.get_next().expect("u-template delivers");
             let delimiter = match processor
                 .get_x_alignment_delivery(false)
@@ -4485,10 +4441,9 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let opening = processor
             .get_next()
@@ -4520,7 +4475,6 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let target = universe.intern("target").symbol();
         universe.set_meaning(
@@ -4528,7 +4482,7 @@ mod tests {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::ExpandAfter),
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let target = processor
             .get_next()
@@ -4568,7 +4522,6 @@ mod tests {
     #[test]
     fn noexpand_treatment_survives_rewindable_token_input() {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let target = universe.intern("target").symbol();
         universe.set_meaning(
@@ -4585,7 +4538,7 @@ mod tests {
             ReplayTrace::MacroReplacement,
         );
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         let target = processor
             .get_next()
@@ -4625,7 +4578,6 @@ mod tests {
     #[test]
     fn runaway_recovery_inserts_the_status_specific_canonical_tokens() {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let mut capabilities = CommandHostCapabilities::default();
@@ -4695,8 +4647,7 @@ mod tests {
 
         for (status, expected, expected_heading) in cases {
             let actual = command.with_scanner_status(status, |command| {
-                let mut processor =
-                    processor(command, &mut runtime, &mut universe, &mut capabilities);
+                let mut processor = processor(command, &mut universe, &mut capabilities);
                 let mut delivered = Vec::new();
                 for _ in 0..expected.len() {
                     delivered.push(
@@ -4782,11 +4733,10 @@ mod tests {
                 help: &[],
                 context: String::new(),
             });
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         let caution = universe.intern("caution").symbol();
         let mut capabilities = CommandHostCapabilities::default();
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
 
         processor.set_runaway_partial(
             RUNAWAY_SCAN_DIAGNOSTIC,
@@ -4819,7 +4769,6 @@ mod tests {
     #[test]
     fn aligning_eof_recovery_preserves_frozen_cr_identity_as_an_inserted_control_sequence() {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_cr = universe.primitive_token("cr").expect("cr is registered");
@@ -4849,7 +4798,7 @@ mod tests {
             }),
             |command| {
                 let mut processor =
-                    processor(command, &mut runtime, &mut universe, &mut capabilities)
+                    processor(command, &mut universe, &mut capabilities)
                         .with_observer(&mut recorder);
                 assert_eq!(
                     processor
@@ -4915,7 +4864,6 @@ mod tests {
     #[test]
     fn skipping_eof_reports_diagnostics_before_frozen_fi_recovery() {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
@@ -4930,9 +4878,8 @@ mod tests {
                 conditional: crate::conditionals::ConditionalKind::IfTrue,
             }),
             |command| {
-                let mut processor =
-                    processor(command, &mut runtime, &mut universe, &mut capabilities)
-                        .with_observer(&mut recorder);
+                let mut processor = processor(command, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
                 let recovered = processor
                     .get_next()
                     .expect("EOF recovery succeeds")
@@ -4997,7 +4944,6 @@ mod tests {
         command
             .open_registered_source(child)
             .expect("nested source opens above parent");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let frozen_fi = universe.primitive_token("fi").expect("fi is registered");
@@ -5012,9 +4958,8 @@ mod tests {
                 conditional: crate::conditionals::ConditionalKind::IfTrue,
             }),
             |command| {
-                let mut processor =
-                    processor(command, &mut runtime, &mut universe, &mut capabilities)
-                        .with_observer(&mut recorder);
+                let mut processor = processor(command, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
                 let recovered = processor
                     .get_next()
                     .expect("nested EOF recovery succeeds")
@@ -5058,7 +5003,6 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let outer = universe.intern("outer").symbol();
@@ -5086,8 +5030,7 @@ mod tests {
                 warning: ScannerWarning(23),
             }),
             |command| {
-                let mut processor =
-                    processor(command, &mut runtime, &mut universe, &mut capabilities);
+                let mut processor = processor(command, &mut universe, &mut capabilities);
                 let recovered = processor
                     .get_next()
                     .expect("outer delivery succeeds")
@@ -5135,7 +5078,6 @@ mod tests {
         command
             .open_registered_source(source)
             .expect("source opens");
-        let mut runtime = CommandRuntime::default();
         let mut universe = Universe::new_with_plain_catcodes();
         recovery_primitives(&mut universe);
         let outer = universe.intern("outer").symbol();
@@ -5162,7 +5104,7 @@ mod tests {
 
         let snapshot = command.with_scanner_status(matching.clone(), |command| {
             let snapshot = command.snapshot();
-            let mut processor = processor(command, &mut runtime, &mut universe, &mut capabilities);
+            let mut processor = processor(command, &mut universe, &mut capabilities);
             assert_eq!(
                 processor
                     .get_next()
@@ -5199,7 +5141,7 @@ mod tests {
             .rollback(snapshot)
             .expect("snapshot restores the live scanner episode and input cursor");
         assert_eq!(command.scanner.status(), &matching);
-        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let mut processor = processor(&mut command, &mut universe, &mut capabilities);
         assert_eq!(
             processor
                 .get_next()

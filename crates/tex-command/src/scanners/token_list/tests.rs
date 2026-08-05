@@ -7,7 +7,7 @@ use tex_state::token::{Catcode, Token};
 use crate::observation::{CommandDeliveryBoundary, CommandObservation, CommandObserver};
 use crate::scan_toks::ScanToksMode;
 use crate::{
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     RegisteredSourceKind, SourceRegistration,
 };
 
@@ -66,11 +66,9 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
     let scan = |bytes, output: bool, universe: &mut tex_state::Universe| {
         let mut command = CommandState::default();
         source(&mut command, bytes);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -111,11 +109,9 @@ fn source_token_list_assignments_preserve_macros_but_expanded_collection_expands
 
     let mut command = CommandState::default();
     source(&mut command, br"{\payload}");
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let expanded = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -136,7 +132,6 @@ fn token_register_runaway_retains_assignment_owner() {
     // `warning_index` throughout its absorbing scan.
     let mut command = CommandState::default();
     source(&mut command, br"{\outer}");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let outer = universe.intern("outer").symbol();
     let empty = universe.intern_token_list(&[]);
@@ -152,7 +147,6 @@ fn token_register_runaway_retains_assignment_owner() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -175,7 +169,6 @@ fn token_register_runaway_retains_assignment_owner() {
 fn source_the_output_observes_operand_as_expanded_but_not_the_opener() {
     let mut command = CommandState::default();
     source(&mut command, br"{\the\output}");
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe_with_plain_catcodes();
     let the = universe.intern("the").symbol();
     universe.set_meaning(the, Meaning::ExpandablePrimitive(ExpandablePrimitive::The));
@@ -188,7 +181,6 @@ fn source_the_output_observes_operand_as_expanded_but_not_the_opener() {
     let mut recorder = Recorder::default();
     CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )

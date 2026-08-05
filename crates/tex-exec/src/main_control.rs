@@ -10,19 +10,19 @@ use std::sync::Arc;
 use tex_command::{
     AlignmentCellDelimiter, AlignmentCellOpening, AlignmentCellTemplates, AlignmentDelivery,
     AlignmentIdentity, AlignmentRequest, AlignmentRequestResult, CommandError,
-    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandRuntime,
-    CommandState, CommandStateSnapshot, FatalError, FontLoadRequest, FontResource,
-    GeneratedFontKind, HyphenationDataKind, ImmediateExtension, InputStreamRequest,
-    MathDelimiterBoundary, MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest,
-    MathScriptKind, MathStyleKind, MathTextFieldKind, PdfAnnotationRequest,
-    PdfColorStackActionRequest, PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest,
-    PdfGraphicsRequest, PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest,
-    PdfOutlineRequest, PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind,
-    RestrictedIntegerClass, ScannedAccent, ScannedAccentBase, ScannedBoxConstruction,
-    ScannedBoxKind, ScannedBoxShift, ScannedBoxShiftPayload, ScannedDiscretionaryOpening,
-    ScannedDisplayDiagnostic, ScannedGeneratedFontDefinition, ScannedInsertConstruction,
-    ScannedLeaderPayload, ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath,
-    ScannedVSplit, SourceRegistration, SourceRegistrationError,
+    CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandProfile, CommandState,
+    CommandStateSnapshot, FatalError, FontLoadRequest, FontResource, GeneratedFontKind,
+    HyphenationDataKind, ImmediateExtension, InputStreamRequest, MathDelimiterBoundary,
+    MathDelimiterBoundaryKind, MathFieldBody, MathLimitKind, MathRequest, MathScriptKind,
+    MathStyleKind, MathTextFieldKind, PdfAnnotationRequest, PdfColorStackActionRequest,
+    PdfDestinationRequest, PdfDocumentFragmentRequest, PdfFormRequest, PdfGraphicsRequest,
+    PdfImageRequest, PdfImageResource, PdfNavigationRequest, PdfObjectRequest, PdfOutlineRequest,
+    PdfReferenceObjectRequest, PdfStartLinkRequest, RegisteredSourceKind, RestrictedIntegerClass,
+    ScannedAccent, ScannedAccentBase, ScannedBoxConstruction, ScannedBoxKind, ScannedBoxShift,
+    ScannedBoxShiftPayload, ScannedDiscretionaryOpening, ScannedDisplayDiagnostic,
+    ScannedGeneratedFontDefinition, ScannedInsertConstruction, ScannedLeaderPayload,
+    ScannedMathMuMaterial, ScannedPackingSpec, ScannedSetBoxPath, ScannedVSplit,
+    SourceRegistration, SourceRegistrationError,
 };
 use tex_command::{
     CommandObservation, CommandObserver, EffectRecord, GeometryRecord, MutationRecord,
@@ -84,7 +84,6 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 #[derive(Debug, Default)]
 pub struct MainControl {
     command: CommandState,
-    runtime: CommandRuntime,
     /// Operational memo service owned by the execution/session layer.
     pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
     pure_memo_initialized: bool,
@@ -544,10 +543,6 @@ impl StepSnapshot {
             .command
             .rollback(self.command)
             .expect("step snapshot keeps its command profile");
-        // CommandRuntime is deliberately non-cloneable: its caches and
-        // profiling cannot become semantic or durable state. Its fresh value
-        // is therefore the retry restoration form.
-        control.runtime = CommandRuntime::default();
         control
             .modes
             .rollback_journal(self.mode_savepoint)
@@ -634,7 +629,6 @@ impl CommandObserver for ObservationBuffer {
 /// parameter instead of four.
 struct CommandMachine<'a> {
     state: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
@@ -650,7 +644,6 @@ impl CommandMachine<'_> {
     fn processor<'a>(&'a mut self, stores: &'a mut Universe) -> CommandProcessor<'a> {
         command_processor(
             self.state,
-            self.runtime,
             self.fuel,
             self.capabilities,
             self.observations,
@@ -661,7 +654,6 @@ impl CommandMachine<'_> {
 
 fn command_processor<'a>(
     command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     fuel: &'a mut tex_command::CommandFuel,
     capabilities: &'a mut CommandHostCapabilities,
     observations: &'a mut ObservationSlot,
@@ -669,7 +661,6 @@ fn command_processor<'a>(
 ) -> CommandProcessor<'a> {
     let processor = CommandProcessor::new(
         command,
-        runtime,
         stores.command_context(),
         CommandHostContext::new(capabilities),
     )
@@ -742,7 +733,6 @@ impl MainControl {
         self.refresh_host_capabilities(stores);
         let context = command_processor(
             &mut self.command,
-            &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
@@ -1528,7 +1518,6 @@ impl MainControl {
     fn command_machine(&mut self) -> CommandMachine<'_> {
         CommandMachine {
             state: &mut self.command,
-            runtime: &mut self.runtime,
             fuel: self.fuel.fuel_mut(),
             capabilities: &mut self.capabilities,
             observations: &mut self.operation_observations,
@@ -1909,7 +1898,6 @@ impl MainControl {
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -1972,7 +1960,6 @@ impl MainControl {
             &mut self.active_alignment,
             &mut CommandMachine {
                 state: &mut self.command,
-                runtime: &mut self.runtime,
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
@@ -2007,7 +1994,6 @@ impl MainControl {
         if fires_afterassignment {
             schedule_afterassignment(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -2287,7 +2273,6 @@ impl MainControl {
             {
                 let mut processor = command_processor(
                     &mut self.command,
-                    &mut self.runtime,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
@@ -2487,7 +2472,6 @@ impl MainControl {
             let command = {
                 let mut processor = command_processor(
                     &mut self.command,
-                    &mut self.runtime,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
@@ -2571,7 +2555,6 @@ impl MainControl {
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -2705,7 +2688,6 @@ impl MainControl {
             &mut self.active_alignment,
             &mut CommandMachine {
                 state: &mut self.command,
-                runtime: &mut self.runtime,
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
@@ -2740,7 +2722,6 @@ impl MainControl {
         if fires_afterassignment {
             schedule_afterassignment(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -2854,7 +2835,6 @@ impl MainControl {
             let outcome = {
                 let mut processor = command_processor(
                     &mut self.command,
-                    &mut self.runtime,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
@@ -2906,7 +2886,6 @@ impl MainControl {
                 crate::page_output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
                         state: &mut self.command,
-                        runtime: &mut self.runtime,
                         fuel: self.fuel.fuel_mut(),
                         capabilities: &mut self.capabilities,
                         observations: &mut self.operation_observations,
@@ -2937,7 +2916,6 @@ impl MainControl {
                     }
                     let mut processor = command_processor(
                         &mut self.command,
-                        &mut self.runtime,
                         self.fuel.fuel_mut(),
                         &mut self.capabilities,
                         &mut self.operation_observations,
@@ -3996,7 +3974,6 @@ impl MainControl {
     ) -> Result<tex_command::MathFieldEpisode, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
-            &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
@@ -4014,7 +3991,6 @@ impl MainControl {
     ) -> Result<tex_command::ScannedMathCharacter, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
-            &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
@@ -4029,7 +4005,6 @@ impl MainControl {
     fn command_scan_math_choice_group(&mut self, stores: &mut Universe) -> Result<bool, ExecError> {
         let mut processor = command_processor(
             &mut self.command,
-            &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
@@ -4231,7 +4206,6 @@ impl MainControl {
         let scanned = {
             let mut processor = command_processor(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -4414,7 +4388,6 @@ impl MainControl {
             &mut self.active_alignment,
             &mut CommandMachine {
                 state: &mut self.command,
-                runtime: &mut self.runtime,
                 fuel: self.fuel.fuel_mut(),
                 capabilities: &mut self.capabilities,
                 observations: &mut self.operation_observations,
@@ -4580,7 +4553,6 @@ impl MainControl {
         if result.is_ok() && fires_afterassignment {
             schedule_afterassignment(
                 &mut self.command,
-                &mut self.runtime,
                 self.fuel.fuel_mut(),
                 &mut self.capabilities,
                 &mut self.operation_observations,
@@ -4615,7 +4587,6 @@ impl MainControl {
             {
                 let mut processor = command_processor(
                     &mut self.command,
-                    &mut self.runtime,
                     self.fuel.fuel_mut(),
                     &mut self.capabilities,
                     &mut self.operation_observations,
@@ -4658,7 +4629,6 @@ impl MainControl {
         let silenced = self.operation_observations.take();
         let mut processor = command_processor(
             &mut self.command,
-            &mut self.runtime,
             self.fuel.fuel_mut(),
             &mut self.capabilities,
             &mut self.operation_observations,
@@ -12121,7 +12091,6 @@ pub(crate) fn test_shipout_replay_box(
     let mut shown_mode = None;
     let mut command = CommandMachine {
         state: &mut CommandState::default(),
-        runtime: &mut CommandRuntime::default(),
         fuel: fuel.fuel_mut(),
         capabilities: &mut CommandHostCapabilities::default(),
         observations: &mut None,
@@ -15443,7 +15412,6 @@ fn apply_scanned_step(
             let unbalanced = {
                 let mut processor = command_processor(
                     command.state,
-                    command.runtime,
                     command.fuel,
                     command.capabilities,
                     command.observations,
@@ -16398,7 +16366,6 @@ fn warn_cross_file_group_close(stores: &mut Universe, command: &mut CommandMachi
 /// §325 `back_input`, so it must use the ordinary canonical backup level.
 fn schedule_afterassignment(
     command: &mut CommandState,
-    runtime: &mut CommandRuntime,
     fuel: &mut tex_command::CommandFuel,
     capabilities: &mut CommandHostCapabilities,
     observations: &mut ObservationSlot,
@@ -16412,8 +16379,7 @@ fn schedule_afterassignment(
         token,
         tex_state::token::OriginId::UNKNOWN,
     );
-    let mut processor =
-        command_processor(command, runtime, fuel, capabilities, observations, stores);
+    let mut processor = command_processor(command, fuel, capabilities, observations, stores);
     let result = processor.back_input_token(tex_state::token::TracedTokenWord::pack(token, origin));
     result.map_err(command_error)
 }

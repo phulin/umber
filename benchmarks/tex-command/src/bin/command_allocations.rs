@@ -5,14 +5,12 @@ use std::sync::Arc;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_command::{
     AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandObservation,
-    CommandObserver, CommandProcessor, CommandRuntime, CommandState, PrintCommand,
-    RegisteredSourceKind, SourceRegistration, append_print_cmd_chr_text,
+    CommandObserver, CommandProcessor, CommandState, PrintCommand, RegisteredSourceKind,
+    SourceRegistration, append_print_cmd_chr_text,
 };
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
-use tex_state::meaning::{
-    ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive,
-};
+use tex_state::meaning::{ExpandablePrimitive, Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 #[global_allocator]
@@ -120,26 +118,8 @@ impl CommandObserver for CountingObserver {
 struct ProcessorCase {
     universe: Universe,
     command: CommandState,
-    runtime: CommandRuntime,
     capabilities: CommandHostCapabilities,
     replay: Option<tex_state::TracedTokenList>,
-}
-
-#[derive(Clone, Copy)]
-enum RuntimeState {
-    Cold,
-    Warm,
-}
-
-impl RuntimeState {
-    const ALL: [Self; 2] = [Self::Cold, Self::Warm];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Cold => "cold",
-            Self::Warm => "warm",
-        }
-    }
 }
 
 enum Case {
@@ -162,29 +142,17 @@ fn main() {
     for workload in Workload::ALL {
         for configuration in Configuration::ALL {
             if workload.supports_configuration(configuration) {
-                for runtime_state in RuntimeState::ALL {
-                    let stats = measure(workload, configuration, runtime_state, perturb);
-                    print_stats(workload, configuration, runtime_state, stats);
-                }
+                let stats = measure(workload, configuration, perturb);
+                print_stats(workload, configuration, stats);
             }
         }
     }
 }
 
-fn measure(
-    workload: Workload,
-    configuration: Configuration,
-    runtime_state: RuntimeState,
-    perturb: bool,
-) -> Stats {
-    let mut shared_runtime = CommandRuntime::default();
-    if matches!(runtime_state, RuntimeState::Warm) {
-        for _ in 0..3 {
-            let mut warm = build_case(workload);
-            swap_runtime(&mut warm, &mut shared_runtime);
-            run_case(workload, configuration, &mut warm, false);
-            swap_runtime(&mut warm, &mut shared_runtime);
-        }
+fn measure(workload: Workload, configuration: Configuration, perturb: bool) -> Stats {
+    for _ in 0..3 {
+        let mut warm = build_case(workload);
+        run_case(workload, configuration, &mut warm, false);
     }
 
     let mut cases = (0..OPERATIONS)
@@ -192,15 +160,9 @@ fn measure(
         .collect::<Vec<_>>();
     let mut measured = None;
     for case in &mut cases {
-        if matches!(runtime_state, RuntimeState::Warm) {
-            swap_runtime(case, &mut shared_runtime);
-        }
         let region = Region::new(GLOBAL);
         run_case(workload, configuration, case, perturb);
         let stats = region.change();
-        if matches!(runtime_state, RuntimeState::Warm) {
-            swap_runtime(case, &mut shared_runtime);
-        }
         measured = Some((stats.allocations, stats.bytes_allocated));
     }
     let (allocations, bytes_allocated) = measured.expect("at least one operation is measured");
@@ -211,26 +173,14 @@ fn measure(
     }
 }
 
-fn print_stats(
-    workload: Workload,
-    configuration: Configuration,
-    runtime_state: RuntimeState,
-    stats: Stats,
-) {
+fn print_stats(workload: Workload, configuration: Configuration, stats: Stats) {
     println!(
-        "{} configuration={} runtime={} allocations_per_op={} requested_bytes_per_op={}",
+        "{} configuration={} scratch_pool=warm allocations_per_op={} requested_bytes_per_op={}",
         workload.name(),
         configuration.name(),
-        runtime_state.name(),
         stats.allocations,
         stats.bytes_allocated,
     );
-}
-
-fn swap_runtime(case: &mut Case, runtime: &mut CommandRuntime) {
-    if let Case::Processor(case) = case {
-        std::mem::swap(&mut case.runtime, runtime);
-    }
 }
 
 fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, perturb: bool) {
@@ -251,7 +201,6 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
             let mut observer = CountingObserver::default();
             let processor = CommandProcessor::new(
                 &mut case.command,
-                &mut case.runtime,
                 case.universe.command_context(),
                 CommandHostContext::new(&mut case.capabilities),
             );
@@ -404,7 +353,6 @@ fn build_case(workload: Workload) -> Case {
     };
 
     let mut command = CommandState::default();
-    let runtime = CommandRuntime::default();
     let capabilities = CommandHostCapabilities::default();
 
     if matches!(workload, Workload::MacroArgumentMatching) {
@@ -488,7 +436,6 @@ fn build_case(workload: Workload) -> Case {
     Case::Processor(Box::new(ProcessorCase {
         universe,
         command,
-        runtime,
         capabilities,
         replay,
     }))
@@ -526,11 +473,9 @@ fn rendering_case() -> Case {
     command
         .open_registered_source(registered)
         .expect("rendering source opens");
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let current = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )

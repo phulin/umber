@@ -1341,18 +1341,12 @@ therefore recreates the same budget deterministically.
 `TransientState` owns builders referenced by live scanner status and rollback
 roots for temporary command data. The contents of a live builder are semantic
 until its enclosing call completes or rolls back. Discardable pooled buffers
-belong to `CommandRuntime`, not to this snapshotted state.
+remain process-local and outside this snapshotted state.
 
 ## 9. Discardable runtime state
 
-Acceleration does not live in `CommandState`. The current runtime capability
-owns one typed, bounded pool:
-
-```rust
-pub struct CommandRuntime {
-    traced_tokens: Arc<TracedTokenBufferPool>,
-}
-```
+Acceleration does not live in `CommandState`. One process-local authority owns
+a typed, bounded traced-token pool.
 
 The `Arc` owns a mutex-protected array of exactly two optional
 `Vec<TracedTokenWord>` values. Checkout takes the first available vector or
@@ -1370,13 +1364,12 @@ macro-definition `scan_toks`, `\read` line collection, and output replay
 expansion. Before the guard returns, those paths copy or intern the live token
 contents into semantic ownership. Macro arguments, shift-case output,
 alignment columns and templates, glue specs, character and name vectors,
-pattern data, and every other element type are excluded. `CommandRuntime` is
-non-cloneable, absent from snapshots, summaries, equality, and hashing, and is
-replaced by a fresh empty runtime on step rollback. Dropping it and continuing
-with a fresh default produces identical semantic events, diagnostics, effects,
-output, snapshots, and summaries. Further discardable acceleration belongs
-here only after measurement and with canonical identity plus exact generation
-or content guards.
+pattern data, and every other element type are excluded. The pool is absent
+from snapshots, summaries, equality, and hashing; step rollback neither
+captures nor reconstructs it. Scratch warmth cannot affect semantic events,
+diagnostics, effects, output, snapshots, or summaries. Further discardable
+acceleration belongs here only after measurement and with canonical identity
+plus exact generation or content guards.
 
 The input stack does not carry meaning-cache state or expansion-policy bits.
 
@@ -1387,7 +1380,6 @@ The input stack does not carry meaning-cache state or expansion-policy bits.
 ```rust
 pub struct CommandProcessor<'a> {
     command: &'a mut CommandState,
-    runtime: &'a mut CommandRuntime,
     state: tex_state::CommandContext<'a>,
     host: CommandHostContext<'a>,
     observer: Option<&'a mut dyn CommandObserver>,
@@ -2856,8 +2848,8 @@ There are two snapshot forms.
 source and token backing. Capture is bounded by live command-state structure,
 not total input bytes. Rollback does not reopen sources or consult host policy.
 The snapshot is an owned clone of `CommandState`; its trait bounds and private
-fields admit no `CommandRuntime`, `CommandProcessor` borrow,
-`CommandHostContext`, or `CurrentCommand`.
+fields admit no `CommandProcessor` borrow, `CommandHostContext`, or
+`CurrentCommand`.
 
 Rollback first compares the captured profile fingerprint with the fixed job
 profile. A mismatch rejects the snapshot without mutating live state.
@@ -2900,8 +2892,8 @@ Command resource fuel is absent as well. `CommandFuel` is a distinct
 monotonic run ledger lent to every `CommandProcessor` episode. It charges
 before each central raw-delivery attempt, including attempts nested beneath
 expanded delivery, macro matching, and scanners. A failed semantic step may
-restore `CommandState` and discard `CommandRuntime`, but neither operation
-restores the ledger. Its finite limit and burned count are host telemetry and
+restore `CommandState`, but that operation does not restore the ledger. Its
+finite limit and burned count are host telemetry and
 never enter snapshot, checkpoint, format, or semantic identity. Canonical
 sessions default to 100,000,000 actions and accept only
 `1..=1,000,000,000`; zero, larger values, and `u64::MAX` are typed
@@ -2931,7 +2923,6 @@ tests, not by a parallel compatibility facade:
 | `tex-state <- tex-command`, with no dependency on the retired command crates or `tex-exec` | `crates/tex-command/tests/it/boundaries.rs` manifest-direction test                 |
 | crate-private state machines and opaque ownership fields                                   | compile-fail fixtures under `crates/tex-command/tests/ui/`                          |
 | one explicitly classified field for each semantic ownership domain                         | exhaustive destructuring in `crates/tex-command/src/state/tests.rs`                 |
-| runtime capability remains outside semantic equality, hashing, and serialization           | runtime-trait compile-fail fixture                                                  |
 | host capabilities and call-local command values cannot enter owned serialized boundaries   | host and ephemeral compile-fail fixtures                                            |
 | snapshots preserve all live semantic fields without runtime or host access                 | nonquiescent snapshot roundtrip in `crates/tex-command/src/snapshot/tests.rs`       |
 | durable summaries reconstruct exact quiescent state and reject every nonquiescent class    | summary roundtrip and rejection tests in `crates/tex-command/src/snapshot/tests.rs` |
@@ -3372,8 +3363,8 @@ Its performance foundations are:
 - no per-scanner generic state facade;
 - cold typed error and resource paths;
 - immutable stored token lists; and
-- a dedicated discardable runtime capability with the measured bounded
-  traced-token scratch pool described in section 9.
+- the measured bounded process-local traced-token scratch pool described in
+  section 9.
 
 ### 32.1 Optimization promotion
 
@@ -3488,7 +3479,7 @@ crates, alternate input-stack delivery, executor dispatch, and compatibility
 fronts across the tex-exec tree. It requires the typed
 `CurrentCommand::meaning()` dispatch boundary and fixes one
 aggregate snapshot/rollback implementation. The rollback snapshot includes
-command state, fresh discardable runtime, mode nest, Universe, active
+command state, mode nest, Universe, active
 box/alignment/output state, artifacts, and effect roots. `ObservationBuffer`
 is a transaction-local commit buffer, not cached command state: a failed
 operation rolls it back without publication, then retries with a fresh
@@ -3913,9 +3904,8 @@ the `align_state` change from the token's own category, exactly as §325 does.
 ### 33.10 Runtime command-entry audit
 
 The 2026-08-04 cutover audit found one production command transition machine.
-`MainControl` explicitly owns `CommandState`, discardable
-`CommandRuntime`, the shared command-fuel ledger, and
-`CommandHostCapabilities`. Its private `command_processor` helper is the only
+`MainControl` explicitly owns `CommandState`, the shared command-fuel ledger,
+and `CommandHostCapabilities`. Its private `command_processor` helper is the only
 `CommandProcessor::new` site in `tex-exec`; each bounded episode borrows those
 roots and creates a borrow-scoped `CommandHostContext`.
 

@@ -1,4 +1,4 @@
-use tex_command::{CommandRuntime, CommandState};
+use tex_command::CommandState;
 
 fn main() {
     let state = CommandState::default();
@@ -9,6 +9,4 @@ fn main() {
 
     let summary = state.publish_summary().unwrap();
     let _ = &summary.input;
-
-    let _runtime = CommandRuntime::default();
 }

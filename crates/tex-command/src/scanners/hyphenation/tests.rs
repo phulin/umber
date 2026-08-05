@@ -7,7 +7,7 @@ use crate::input::{
 };
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandProcessor, CommandRuntime, CommandState,
+    CommandProcessor, CommandState,
 };
 
 #[derive(Default)]
@@ -57,13 +57,11 @@ fn words(scanned: &ScannedHyphenationData) -> Vec<String> {
 fn patterns_keep_exactly_pdftexs_first_63_characters() {
     for supplied in [63, 64] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let mut capabilities = CommandHostCapabilities::default();
         push(&mut command, &format!("{{{}1}}", "a".repeat(supplied)));
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -89,14 +87,12 @@ fn patterns_keep_exactly_pdftexs_first_63_characters() {
 #[test]
 fn hyphenation_data_scan_never_enters_absorbing() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     let mut recorder = Recorder::default();
     push(&mut command, "{ab cd}");
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -120,13 +116,11 @@ fn hyphenation_data_scan_never_enters_absorbing() {
 #[test]
 fn hyphenation_data_continues_after_section_403_inserted_left_brace() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, "ab}");
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -150,13 +144,11 @@ fn hyphenation_data_continues_after_section_403_inserted_left_brace() {
 #[test]
 fn nested_left_brace_opens_no_level_and_the_next_right_brace_ends_the_scan() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = crate::test_harness::universe();
     let mut capabilities = CommandHostCapabilities::default();
     push(&mut command, "{a{b}c}");
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -188,7 +180,6 @@ fn char_given_is_a_hyphenation_word_character_but_not_a_pattern_one() {
         (HyphenationDataKind::Patterns, vec!["ab".to_owned()]),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let given = universe.intern("givenx").symbol();
         universe.set_meaning(given, Meaning::CharGiven('x'));
@@ -207,7 +198,6 @@ fn char_given_is_a_hyphenation_word_character_but_not_a_pattern_one() {
         let mut capabilities = CommandHostCapabilities::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -228,7 +218,6 @@ fn othercases_print_errors_without_inventing_events_and_preserve_the_partial_wor
         (HyphenationDataKind::Patterns, "Bad \\patterns"),
     ] {
         let mut command = CommandState::default();
-        let mut runtime = CommandRuntime::default();
         let mut universe = crate::test_harness::universe();
         let bad = universe.intern("bad").symbol();
         universe.set_meaning(bad, Meaning::Relax);
@@ -249,7 +238,6 @@ fn othercases_print_errors_without_inventing_events_and_preserve_the_partial_wor
         {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )

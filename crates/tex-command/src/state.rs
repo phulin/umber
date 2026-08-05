@@ -1,7 +1,7 @@
-//! Future-relevant state and discardable runtime ownership.
+//! Future-relevant state and discardable scratch allocation ownership.
 
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tex_state::CommandContext;
 use tex_state::input::TracedTokenList;
@@ -1768,51 +1768,29 @@ impl Drop for TracedTokenScratch {
     }
 }
 
-/// Discardable command-processing runtime capability.
+/// Checks out one process-local, discardable traced-token scratch buffer.
 ///
-/// Its bounded pool holds only empty traced-token scratch allocations. The
-/// RAII checkout returns eligible copied-before-return collectors on every
-/// exit path; buffers whose capacity exceeds the retention bound are dropped.
-/// It intentionally implements neither equality nor hashing, preventing it
-/// from becoming part of semantic state comparisons by convenience.
-#[derive(Debug)]
-pub struct CommandRuntime {
-    traced_tokens: Arc<TracedTokenBufferPool>,
+/// The pool contains only empty allocations and is deliberately outside
+/// semantic command state. This keeps allocation reuse without requiring a
+/// zero-behavior runtime capability to be threaded through every processor
+/// construction.
+pub(crate) fn traced_token_scratch() -> TracedTokenScratch {
+    static POOL: OnceLock<Arc<TracedTokenBufferPool>> = OnceLock::new();
+    let pool = Arc::clone(POOL.get_or_init(|| Arc::new(TracedTokenBufferPool::default())));
+    traced_token_scratch_from(pool)
 }
 
-impl Default for CommandRuntime {
-    fn default() -> Self {
-        Self {
-            traced_tokens: Arc::new(TracedTokenBufferPool::default()),
-        }
-    }
-}
-
-impl CommandRuntime {
-    pub(crate) fn traced_token_scratch(&self) -> TracedTokenScratch {
-        let buffer = self
-            .traced_tokens
-            .buffers
-            .lock()
-            .expect("traced-token pool lock is not poisoned")
-            .iter_mut()
-            .find_map(Option::take)
-            .unwrap_or_default();
-        TracedTokenScratch {
-            pool: Arc::clone(&self.traced_tokens),
-            buffer: Some(buffer),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn retained_traced_token_capacities(&self) -> Vec<usize> {
-        self.traced_tokens
-            .buffers
-            .lock()
-            .expect("traced-token pool lock is not poisoned")
-            .iter()
-            .filter_map(|buffer| buffer.as_ref().map(Vec::capacity))
-            .collect()
+fn traced_token_scratch_from(pool: Arc<TracedTokenBufferPool>) -> TracedTokenScratch {
+    let buffer = pool
+        .buffers
+        .lock()
+        .expect("traced-token pool lock is not poisoned")
+        .iter_mut()
+        .find_map(Option::take)
+        .unwrap_or_default();
+    TracedTokenScratch {
+        pool,
+        buffer: Some(buffer),
     }
 }
 

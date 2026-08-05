@@ -1026,7 +1026,7 @@ fn hidden_difference_excerpt(expected: &dyn fmt::Debug, actual: &dyn fmt::Debug)
 mod tests {
     use super::*;
     use tex_command::{
-        CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandRuntime, CommandState,
+        CommandHostCapabilities, CommandHostContext, CommandProcessor, CommandState,
     };
     use tex_oracle::{
         CanonicalCommand, CanonicalValue, CommandDelivery, CommandEvent, Event, InputEvent,
@@ -1370,10 +1370,8 @@ mod tests {
             universe: &mut Universe,
             capabilities: &mut CommandHostCapabilities,
         ) -> Vec<(char, u64)> {
-            let mut runtime = CommandRuntime::default();
             let mut processor = CommandProcessor::new(
                 command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(capabilities),
             );
@@ -1407,10 +1405,8 @@ mod tests {
         );
 
         {
-            let mut runtime = CommandRuntime::default();
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             );

@@ -11,7 +11,7 @@ use crate::input::{
 };
 use crate::{
     CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandProfile, CommandRuntime, CommandState,
+    CommandProfile, CommandState,
 };
 
 #[derive(Default)]
@@ -102,11 +102,9 @@ fn numexpr_honors_precedence_parentheses_relax_and_following_token() {
     tokens.extend(chars("2+3*4"));
     tokens.extend([relax, char_token('X')]);
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -129,12 +127,10 @@ fn numexpr_honors_precedence_parentheses_relax_and_following_token() {
     let mut tokens = vec![numexpr];
     tokens.extend(chars("(2+3)*4"));
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     assert_eq!(
         CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -161,11 +157,9 @@ fn expression_operators_require_other_character_tokens() {
             },
         ],
     );
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -193,11 +187,9 @@ fn dimexpr_uses_etex_rounding_for_division_and_combined_scaling() {
         let mut tokens = vec![dimexpr];
         tokens.extend(chars(source));
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let value = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -242,11 +234,9 @@ fn glueexpr_and_muexpr_scale_every_component_and_keep_orders() {
         let mut tokens = vec![expression];
         tokens.extend(chars(source));
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let value = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -269,11 +259,9 @@ fn glueexpr_normalizes_zero_orders_only_at_etex_mutation_points() {
         let mut tokens = vec![glueexpr];
         tokens.extend(chars(source));
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let value = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -319,12 +307,10 @@ fn glue_conversions_preserve_components_orders_and_destination_level() {
         let mut tokens = vec![conversion];
         tokens.extend(chars(source));
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let value = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -364,12 +350,10 @@ fn overflow_zeros_the_whole_expression_once_and_consumes_relax() {
     tokens.extend(chars("2147483647+1"));
     tokens.extend([relax, char_token('X')]);
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -402,12 +386,10 @@ fn missing_parenthesis_is_inserted_without_consuming_the_terminator() {
     let mut tokens = vec![numexpr];
     tokens.extend(chars("(1+2X"));
     push(&mut command, tokens);
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -441,7 +423,6 @@ fn expression_observations_and_checkpoint_retry_are_deterministic() {
     tokens.extend(chars("2+3X"));
     push(&mut command, tokens);
     let snapshot = command.snapshot();
-    let mut runtime = CommandRuntime::default();
     let mut capabilities = CommandHostCapabilities::default();
     let mut attempts = Vec::new();
 
@@ -450,7 +431,6 @@ fn expression_observations_and_checkpoint_retry_are_deterministic() {
         {
             let mut processor = CommandProcessor::new(
                 &mut command,
-                &mut runtime,
                 universe.command_context(),
                 CommandHostContext::new(&mut capabilities),
             )
@@ -492,12 +472,10 @@ fn expression_primitives_return_before_the_generic_internal_observation() {
         let mut tokens = vec![expression];
         tokens.extend(chars(source));
         push(&mut command, tokens);
-        let mut runtime = CommandRuntime::default();
         let mut capabilities = CommandHostCapabilities::default();
         let mut recorder = Recorder::default();
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )

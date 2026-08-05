@@ -30,13 +30,13 @@ immediately after a named paragraph or shipout boundary;
 it also yields whenever TeX's execution-group depth changes so the environment
 snapshot remains a valid rollback root. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
-`MainControl` retains `CommandRuntime` across successful operation calls so its
-bounded traced-token scratch pool can remain warm. The runtime is discardable,
-is reset to a fresh empty value on step rollback, and never enters a step
-snapshot or named checkpoint. Font, image, and read-recorder host capabilities
-remain borrow-scoped. `CommandStateSnapshot` captures the complete owned
-command state for private step rollback, while validated `CommandSummary` is
-the only durable named-checkpoint continuation.
+The command core retains its bounded traced-token scratch pool outside
+`MainControl`, semantic state, step snapshots, and named checkpoints. Step
+rollback therefore has no discardable command capability to reconstruct.
+Font, image, and read-recorder host capabilities remain borrow-scoped.
+`CommandStateSnapshot` captures the complete owned command state for private
+step rollback, while validated `CommandSummary` is the only durable
+named-checkpoint continuation.
 
 `MainControl` wraps every candidate operation in a private aggregate
 step savepoint. `CanonicalStepRunner` and its `OutputLedger` are the shared

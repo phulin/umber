@@ -1,6 +1,6 @@
 use super::{
-    CommandRuntime, CommandState, MAX_RETAINED_TRACED_TOKEN_CAPACITY, TRACED_TOKEN_POOL_SLOTS,
-    TransientState,
+    CommandState, MAX_RETAINED_TRACED_TOKEN_CAPACITY, TRACED_TOKEN_POOL_SLOTS,
+    TracedTokenBufferPool, TransientState, traced_token_scratch_from,
 };
 use crate::conditionals::ConditionStack;
 use crate::input::{FileFramingEvent, InputState};
@@ -11,6 +11,7 @@ use crate::{
     AlignmentRequestResult, RegisteredSourceKind, SourceFramingPolicy, SourceNameClass,
     SourceRegistration,
 };
+use std::sync::Arc;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 fn traced_a() -> TracedTokenWord {
@@ -23,47 +24,53 @@ fn traced_a() -> TracedTokenWord {
     )
 }
 
-fn fail_with_checked_out_scratch(runtime: &CommandRuntime) -> Result<(), ()> {
-    let mut scratch = runtime.traced_token_scratch();
+fn retained_capacities(pool: &TracedTokenBufferPool) -> Vec<usize> {
+    pool.buffers
+        .lock()
+        .expect("traced-token pool lock is not poisoned")
+        .iter()
+        .filter_map(|buffer| buffer.as_ref().map(Vec::capacity))
+        .collect()
+}
+
+fn fail_with_checked_out_scratch(pool: Arc<TracedTokenBufferPool>) -> Result<(), ()> {
+    let mut scratch = traced_token_scratch_from(pool);
     scratch.push(traced_a());
     Err(())
 }
 
 #[test]
 fn traced_token_scratch_returns_on_success_and_error() {
-    let runtime = CommandRuntime::default();
+    let pool = Arc::new(TracedTokenBufferPool::default());
     {
-        let mut scratch = runtime.traced_token_scratch();
+        let mut scratch = traced_token_scratch_from(Arc::clone(&pool));
         scratch.extend([traced_a(); 17]);
     }
-    assert_eq!(runtime.retained_traced_token_capacities().len(), 1);
+    assert_eq!(retained_capacities(&pool).len(), 1);
 
-    let result = fail_with_checked_out_scratch(&runtime);
+    let result = fail_with_checked_out_scratch(Arc::clone(&pool));
     assert_eq!(result, Err(()));
-    assert_eq!(runtime.retained_traced_token_capacities().len(), 1);
+    assert_eq!(retained_capacities(&pool).len(), 1);
 }
 
 #[test]
 fn traced_token_scratch_pool_bounds_slots_and_capacity() {
-    let runtime = CommandRuntime::default();
+    let pool = Arc::new(TracedTokenBufferPool::default());
     let mut checkouts = (0..=TRACED_TOKEN_POOL_SLOTS)
-        .map(|_| runtime.traced_token_scratch())
+        .map(|_| traced_token_scratch_from(Arc::clone(&pool)))
         .collect::<Vec<_>>();
     for scratch in &mut checkouts {
         scratch.push(traced_a());
     }
     drop(checkouts);
-    assert_eq!(
-        runtime.retained_traced_token_capacities().len(),
-        TRACED_TOKEN_POOL_SLOTS
-    );
+    assert_eq!(retained_capacities(&pool).len(), TRACED_TOKEN_POOL_SLOTS);
 
-    let runtime = CommandRuntime::default();
+    let pool = Arc::new(TracedTokenBufferPool::default());
     {
-        let mut oversized = runtime.traced_token_scratch();
+        let mut oversized = traced_token_scratch_from(Arc::clone(&pool));
         oversized.reserve_exact(MAX_RETAINED_TRACED_TOKEN_CAPACITY + 1);
     }
-    assert!(runtime.retained_traced_token_capacities().is_empty());
+    assert!(retained_capacities(&pool).is_empty());
 }
 
 fn templates() -> AlignmentCellTemplates {

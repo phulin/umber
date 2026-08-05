@@ -12,8 +12,7 @@ use crate::CommandState;
 use crate::processor::{DefinitionContext, ScannerStatus, ScannerWarning, TokenBuilderId};
 use crate::{
     CommandError, CommandHostCapabilities, CommandHostContext, CommandObservation, CommandObserver,
-    CommandProcessor, CommandRuntime, InputReason, InputTransition, RegisteredSourceKind,
-    SourceRegistration,
+    CommandProcessor, InputReason, InputTransition, RegisteredSourceKind, SourceRegistration,
 };
 use std::sync::Arc;
 
@@ -172,7 +171,6 @@ fn run_macro_call(
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
@@ -200,7 +198,6 @@ fn run_macro_call(
     let result = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -263,7 +260,6 @@ fn run_observed_macro_call_with_parameters(
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
@@ -279,7 +275,6 @@ fn run_observed_macro_call_with_parameters(
     let outcome = {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         )
@@ -334,7 +329,6 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let empty = universe.intern_token_list(&[]);
@@ -350,7 +344,6 @@ fn parameterless_macro_pushes_replacement_without_matching_status() {
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -389,7 +382,6 @@ fn matching_transition_retains_the_enclosing_definition_status() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let parameters = universe.intern_token_list(&[Token::Param(1)]);
@@ -415,7 +407,6 @@ fn matching_transition_retains_the_enclosing_definition_status() {
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -485,7 +476,6 @@ fn outer_recovery_in_compulsory_prefix_still_reports_definition_mismatch() {
 #[test]
 fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
     let mut command = CommandState::default();
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_MACROS, 1);
     let mismatched = universe.intern("T").symbol();
@@ -500,7 +490,6 @@ fn later_macro_trace_queues_behind_pending_prefix_mismatch() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -534,7 +523,6 @@ fn file_open_framing_precedes_first_macro_trace_from_that_level() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.set_int_param(tex_state::env::banks::IntParam::TRACING_MACROS, 1);
     let traced = universe.intern("stopinput").symbol();
@@ -542,7 +530,6 @@ fn file_open_framing_precedes_first_macro_trace_from_that_level() {
     let mut capabilities = CommandHostCapabilities::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     );
@@ -801,7 +788,6 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
@@ -831,7 +817,6 @@ fn non_long_paragraph_backs_up_before_restoring_matching_status() {
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -891,7 +876,6 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     universe.install_primitive_meaning(
         "par",
@@ -927,7 +911,6 @@ fn matching_outer_recovery_reports_before_backing_up_the_forbidden_control_seque
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -988,7 +971,6 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let name = universe.intern("m").symbol();
     let parameters = universe.intern_token_list(&[Token::param(1)]);
@@ -1011,7 +993,6 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -1076,7 +1057,6 @@ fn successful_call_activates_canonical_replacement_and_replays_parameter_range()
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
@@ -1124,7 +1104,6 @@ fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_calle
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let outer = universe.intern("outer").symbol();
     let inner = universe.intern("inner").symbol();
@@ -1155,7 +1134,6 @@ fn nested_macro_activation_retires_the_exhausted_caller_before_pushing_the_calle
     let mut recorder = Recorder::default();
     let mut processor = CommandProcessor::new(
         &mut command,
-        &mut runtime,
         universe.command_context(),
         CommandHostContext::new(&mut capabilities),
     )
@@ -1202,7 +1180,6 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
     command
         .open_registered_source(source)
         .expect("source opens");
-    let mut runtime = CommandRuntime::default();
     let mut universe = Universe::new_with_plain_catcodes();
     let outer = universe.intern("outer").symbol();
     let inner = universe.intern("inner").symbol();
@@ -1241,7 +1218,6 @@ fn nested_calls_keep_out_parameter_ownership_and_invocation_provenance() {
     {
         let mut processor = CommandProcessor::new(
             &mut command,
-            &mut runtime,
             universe.command_context(),
             CommandHostContext::new(&mut capabilities),
         );
