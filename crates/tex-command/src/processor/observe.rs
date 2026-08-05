@@ -40,6 +40,7 @@ impl CommandProcessor<'_> {
             transition: InputTransition::Recovery,
             reason: InputReason::Recovery,
             source_name: None,
+            source: None,
             level: level.0,
             position: 0,
         }));
@@ -64,6 +65,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition,
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+            nesting: self.command.alignment_observation_nesting(),
             align_state: previous,
             delimiter: None,
             previous_align_state: None,
@@ -71,6 +73,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition: "state_change",
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+            nesting: self.command.alignment_observation_nesting(),
             align_state: self.command.alignment.align_state,
             delimiter: None,
             previous_align_state: Some(previous),
@@ -86,6 +89,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition: "backup_correction",
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+            nesting: self.command.alignment_observation_nesting(),
             align_state: self.command.alignment.align_state,
             delimiter: None,
             previous_align_state: Some(previous),
@@ -106,6 +110,7 @@ impl CommandProcessor<'_> {
             transition: InputTransition::Push,
             reason: InputReason::Write,
             source_name: None,
+            source: None,
             level: level.0,
             position: 0,
         }));
@@ -123,6 +128,7 @@ impl CommandProcessor<'_> {
         self.observe(CommandObservation::Alignment(AlignmentRecord {
             transition: "state_change",
             alignment: self.command.alignment.active_alignment.map(|id| id.raw()),
+            nesting: self.command.alignment_observation_nesting(),
             align_state: self.command.alignment.align_state,
             delimiter: None,
             previous_align_state: None,

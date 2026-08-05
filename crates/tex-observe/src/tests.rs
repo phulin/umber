@@ -15,7 +15,6 @@ fn geometry_translation_captures_active_source_and_observation_line() {
             line: 47,
             source: None,
         }),
-        &mut AlignmentNesting::default(),
         false,
     );
     assert_eq!(
@@ -43,6 +42,7 @@ fn source_push_uses_its_inherited_name_before_the_child_becomes_active() {
             transition: InputTransition::Push,
             reason: CommandInputReason::Source,
             source_name: Some(tex_command::SourceNameClass::Terminal),
+            source: None,
             level: 7,
             position: 0,
         },
@@ -71,6 +71,7 @@ fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
             transition: InputTransition::Push,
             reason: CommandInputReason::Source,
             source_name: Some(tex_command::SourceNameClass::ReadStream(1)),
+            source: None,
             level: 9,
             position: 0,
         }),
@@ -78,6 +79,7 @@ fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
             transition: InputTransition::Retire,
             reason: CommandInputReason::Source,
             source_name: Some(tex_command::SourceNameClass::ReadStream(1)),
+            source: None,
             level: 9,
             position: 0,
         }),
@@ -100,13 +102,14 @@ fn pseudo_source_retirement_keeps_the_surrounding_file_active() {
         translator.events[2].context.starts_with("source=root.tex"),
         "retiring the nested readline level must not pop its outer file"
     );
-    assert_eq!(translator.sources.len(), 2);
+    assert_eq!(translator.sources.len(), 1);
 
     let terminal = translate_input(
         InputRecord {
             transition: InputTransition::Retire,
             reason: CommandInputReason::Source,
             source_name: Some(tex_command::SourceNameClass::Terminal),
+            source: None,
             level: 10,
             position: 0,
         },
@@ -377,11 +380,11 @@ fn brace_delivery_transitions_preserve_command_owned_align_state_changes() {
                 AlignmentRecord {
                     transition,
                     alignment: Some(1),
+                    nesting: Some(1),
                     align_state,
                     delimiter: None,
                     previous_align_state: Some(previous_align_state),
                 },
-                Some(1),
             ),
             Event::Alignment(AlignmentEvent {
                 transition: AlignmentTransition::StateChange,
@@ -403,11 +406,11 @@ fn missing_right_brace_alignment_correction_is_canonical_recovery() {
             AlignmentRecord {
                 transition: "missing_right_brace",
                 alignment: Some(1),
+                nesting: Some(1),
                 align_state: 1,
                 delimiter: None,
                 previous_align_state: None,
             },
-            Some(1),
         ),
         Event::Alignment(AlignmentEvent {
             transition: AlignmentTransition::Recovery,
@@ -422,26 +425,30 @@ fn missing_right_brace_alignment_correction_is_canonical_recovery() {
 }
 
 #[test]
-fn alignment_nesting_returns_to_one_after_nested_finish() {
-    let mut nesting = AlignmentNesting::default();
-    let record = |transition, alignment| AlignmentRecord {
+fn engine_owned_alignment_nesting_projects_without_shadow_state() {
+    let record = |transition, alignment, nesting| AlignmentRecord {
         transition,
         alignment: Some(alignment),
+        nesting: Some(nesting),
         align_state: 0,
         delimiter: None,
         previous_align_state: None,
     };
-
-    assert_eq!(nesting.observe(&record("begin", 1)), Some(1));
-    assert_eq!(nesting.observe(&record("suspend", 1)), Some(1));
-    assert_eq!(nesting.observe(&record("begin", 2)), Some(2));
-    assert_eq!(nesting.observe(&record("finish", 2)), Some(2));
-    assert_eq!(nesting.observe(&record("resume", 1)), Some(1));
-    assert_eq!(nesting.observe(&record("finish", 1)), Some(1));
-
-    // Identity allocation is monotonic, but TeX82 §37's `pop_alignment`
-    // removes the completed structural level before this new alignment.
-    assert_eq!(nesting.observe(&record("begin", 3)), Some(1));
+    for (transition, identity, nesting) in [
+        ("begin", 1, 1),
+        ("suspend", 1, 1),
+        ("begin", 2, 2),
+        ("finish", 2, 2),
+        ("resume", 1, 1),
+        ("finish", 1, 1),
+        ("begin", 3, 1),
+    ] {
+        let Event::Alignment(event) = translate_alignment(record(transition, identity, nesting))
+        else {
+            unreachable!()
+        };
+        assert_eq!(event.nesting, Some(nesting));
+    }
 }
 
 #[test]

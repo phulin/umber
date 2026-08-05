@@ -281,6 +281,7 @@ mod tests {
             transition: CommandInputTransition::Stop,
             reason: CommandInputReason::Source,
             source_name: None,
+            source: None,
             level: 0,
             position: 0,
         }));
@@ -310,6 +311,7 @@ mod tests {
                 transition: CommandInputTransition::Retire,
                 reason: CommandInputReason::Source,
                 source_name: Some(source_name),
+                source: None,
                 level: 1,
                 position: 0,
             }));

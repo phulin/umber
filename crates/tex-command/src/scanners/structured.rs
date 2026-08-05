@@ -3237,6 +3237,7 @@ impl CommandProcessor<'_> {
             crate::CommandObservation::Alignment(crate::AlignmentRecord {
                 transition: "preamble_start",
                 alignment: Some(alignment.raw()),
+                nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -3312,6 +3313,7 @@ impl CommandProcessor<'_> {
                         crate::CommandObservation::Alignment(crate::AlignmentRecord {
                             transition: "missing_parameter",
                             alignment: Some(alignment.raw()),
+                            nesting: self.command.alignment_observation_nesting(),
                             align_state: self.command.alignment.align_state,
                             delimiter: None,
                             previous_align_state: None,
@@ -3401,6 +3403,7 @@ impl CommandProcessor<'_> {
                         crate::CommandObservation::Alignment(crate::AlignmentRecord {
                             transition: "extra_parameter",
                             alignment: Some(alignment.raw()),
+                            nesting: self.command.alignment_observation_nesting(),
                             align_state: self.command.alignment.align_state,
                             delimiter: None,
                             previous_align_state: None,
@@ -3455,6 +3458,7 @@ impl CommandProcessor<'_> {
             crate::CommandObservation::Alignment(crate::AlignmentRecord {
                 transition: "preamble_finish",
                 alignment: Some(alignment.raw()),
+                nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -3612,6 +3616,7 @@ impl CommandProcessor<'_> {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::Backup,
             source_name: None,
+            source: None,
             level: level.0,
             position: 0,
         }));

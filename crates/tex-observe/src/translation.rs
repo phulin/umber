@@ -7,7 +7,6 @@ pub(crate) fn translate_observation(
     source_bytes: Option<&[u8]>,
     source_line_starts: Option<&[usize]>,
     observation: CommandObservation,
-    alignment_nesting: &mut AlignmentNesting,
     preserve_macro_reference_operands: bool,
 ) -> ObservedEvent {
     match observation {
@@ -146,9 +145,9 @@ pub(crate) fn translate_observation(
             ObservedEvent::new(translate_token_list(record), format!("source={source}"))
         }
         CommandObservation::Alignment(record) => {
-            let nesting = alignment_nesting.observe(&record);
+            let nesting = record.nesting;
             let context = format!("source={source}; nesting={nesting:?}");
-            ObservedEvent::new(translate_alignment(record, nesting), context)
+            ObservedEvent::new(translate_alignment(record), context)
         }
         CommandObservation::Mutation(record) => {
             ObservedEvent::new(translate_mutation(record), format!("source={source}"))
@@ -470,48 +469,7 @@ pub(crate) fn translate_token_list(record: TokenListRecord) -> Event {
         tokens: record.tokens.into_iter().map(oracle_token).collect(),
     })
 }
-/// Projects TeX82's `align_ptr` stack onto the portable one-based nesting
-/// field. Alignment identities are process-local replay handles: §37's
-/// `fin_align` calls `pop_alignment`, so a later independent alignment can
-/// have a larger identity while returning to nesting one.
-#[derive(Debug, Default)]
-pub(crate) struct AlignmentNesting {
-    stack: Vec<u64>,
-}
-
-impl AlignmentNesting {
-    pub(crate) fn observe(&mut self, record: &AlignmentRecord) -> Option<u32> {
-        let identity = record.alignment?;
-        match record.transition {
-            "begin" => {
-                self.stack.push(identity);
-                Self::depth(self.stack.len())
-            }
-            "finish" => {
-                let nesting = Self::depth(self.stack.len());
-                if self.stack.last() == Some(&identity) {
-                    self.stack.pop();
-                }
-                nesting
-            }
-            "suspend" | "resume" => {
-                debug_assert_eq!(self.stack.last(), Some(&identity));
-                Self::depth(self.stack.len())
-            }
-            _ => self
-                .stack
-                .iter()
-                .rposition(|active| *active == identity)
-                .and_then(|index| Self::depth(index + 1)),
-        }
-    }
-
-    fn depth(depth: usize) -> Option<u32> {
-        u32::try_from(depth).ok().filter(|depth| *depth != 0)
-    }
-}
-
-pub(crate) fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>) -> Event {
+pub(crate) fn translate_alignment(record: AlignmentRecord) -> Event {
     Event::Alignment(AlignmentEvent {
         transition: match record.transition {
             "begin" => AlignmentTransition::Begin,
@@ -540,7 +498,7 @@ pub(crate) fn translate_alignment(record: AlignmentRecord, nesting: Option<u32>)
             "omit_template_push" | "omit_template_retire" => Some("omit".into()),
             _ => None,
         },
-        nesting,
+        nesting: record.nesting,
         previous_align_state: record.previous_align_state.map(i64::from),
         delimiter: record.delimiter.map(str::to_owned),
         recovery: match record.transition {

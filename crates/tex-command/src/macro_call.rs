@@ -336,6 +336,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Push,
                 reason: InputReason::Macro,
                 source_name: None,
+                source: None,
                 level: _level.0,
                 position: 0,
             }),

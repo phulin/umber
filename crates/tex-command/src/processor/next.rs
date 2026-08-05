@@ -94,6 +94,7 @@ impl CommandProcessor<'_> {
                     },
                     reason: observed_retirement_reason(retirement.action, retirement.reason),
                     source_name: retirement.name_class,
+                    source: retirement.source,
                     level: retirement.identity.0,
                     position: 0,
                 }),
@@ -106,6 +107,7 @@ impl CommandProcessor<'_> {
                 // tex.web §1335 unwinds down to `input_ptr=0`, which §331
                 // established as the `name=0` terminal level.
                 source_name: Some(SourceNameClass::Terminal),
+                source: None,
                 level: 0,
                 position: 0,
             }));
@@ -451,6 +453,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -511,6 +514,7 @@ impl CommandProcessor<'_> {
             self.observe(CommandObservation::Alignment(AlignmentRecord {
                 transition: "state_change",
                 alignment: Some(alignment.raw()),
+                nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: Some(CELL_ALIGN_STATE),
@@ -773,6 +777,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }),
@@ -821,6 +826,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -911,6 +917,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -1025,6 +1032,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Push,
                 reason: InputReason::OutputRoutine,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }),
@@ -1178,6 +1186,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -1361,6 +1370,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -1382,6 +1392,7 @@ impl CommandProcessor<'_> {
                         .alignment
                         .active_alignment
                         .map(|identity| identity.raw()),
+                    nesting: self.command.alignment_observation_nesting(),
                     align_state: self.command.alignment.align_state,
                     delimiter: None,
                     previous_align_state: Some(previous_align_state),
@@ -1458,6 +1469,7 @@ impl CommandProcessor<'_> {
                             transition: InputTransition::Push,
                             reason: InputReason::Parameter,
                             source_name: None,
+                            source: None,
                             level: _parameter_level.0,
                             position: 0,
                         }),
@@ -1506,6 +1518,7 @@ impl CommandProcessor<'_> {
                         .alignment
                         .active_alignment
                         .map(|identity| identity.raw()),
+                    nesting: self.command.alignment_observation_nesting(),
                     align_state: if matches!(
                         adjustment,
                         crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
@@ -1552,6 +1565,7 @@ impl CommandProcessor<'_> {
                         // Nothing is left on the stack, so what has stopped is
                         // §331's `name=0` base terminal level.
                         source_name: Some(SourceNameClass::Terminal),
+                        source: None,
                         level: 0,
                         position: 0,
                     }),
@@ -1606,6 +1620,7 @@ impl CommandProcessor<'_> {
                                     transition: InputTransition::Push,
                                     reason: InputReason::EveryEof,
                                     source_name: None,
+                                    source: None,
                                     level: level.0,
                                     position: 0,
                                 }));
@@ -1742,6 +1757,7 @@ impl CommandProcessor<'_> {
                 },
                 reason,
                 source_name: retirement.name_class,
+                source: retirement.source,
                 level: identity.0,
                 position: 0,
             }));
@@ -1765,6 +1781,7 @@ impl CommandProcessor<'_> {
                     .alignment
                     .active_alignment
                     .map(|alignment| alignment.raw()),
+                nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -1799,6 +1816,7 @@ impl CommandProcessor<'_> {
                                 .alignment
                                 .active_alignment
                                 .map(|alignment| alignment.raw()),
+                            nesting: self.command.alignment_observation_nesting(),
                             align_state: self.command.alignment.align_state,
                             delimiter: None,
                             previous_align_state: Some(previous_align_state),
@@ -2093,6 +2111,7 @@ impl CommandProcessor<'_> {
                     .alignment
                     .active_alignment
                     .map(|identity| identity.raw()),
+                nesting: self.command.alignment_observation_nesting(),
                 align_state: self.command.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -2267,6 +2286,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }),

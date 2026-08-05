@@ -316,6 +316,7 @@ fn paragraph_input_recording_rolls_back_with_command_snapshot() {
         transition: crate::InputTransition::Backup,
         reason: crate::InputReason::Backup,
         source_name: None,
+        source: None,
         level: 7,
         position: 11,
     }));

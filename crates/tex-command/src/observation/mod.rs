@@ -502,6 +502,12 @@ pub struct InputRecord {
     /// is expressible as an `InputReason`, whose remaining arms are a strict
     /// one-to-one model of §307's `token_type` codes.
     pub source_name: Option<SourceNameClass>,
+    /// Immutable engine source identity for source-level transitions.
+    ///
+    /// This is absent for token-list levels. Carrying it at the owning input
+    /// transition lets detached projection name nested retirements without a
+    /// parallel source stack.
+    pub source: Option<tex_state::SourceId>,
     pub level: u64,
     pub position: u64,
 }
@@ -595,6 +601,8 @@ pub struct TokenListRecord {
 pub struct AlignmentRecord {
     pub transition: &'static str,
     pub alignment: Option<u64>,
+    /// Portable one-based alignment nesting owned by command state.
+    pub nesting: Option<u32>,
     pub align_state: i32,
     /// Original spelling for an intercepted alignment delimiter.
     pub delimiter: Option<&'static str>,

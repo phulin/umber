@@ -202,7 +202,7 @@ parity bind its independently sequenced channels through the same oracle API.
 **Migration and rollback.**
 
 1. Add typed producer fields while continuing to emit the old records.
-2. Compare old and new translations for every live observation.
+2. Compare old and new translations for every live observation. _(Completed for source identity and alignment nesting: the complete committed TeX82 command suite is byte-equivalent after deleting both projection-side stacks.)_
 3. Move detached evidence encoding behind the oracle crate while retaining the old decoder. _(Completed: the existing schema-2 `UMBREVID` bytes and all limits moved unchanged.)_
 4. Migrate command-stream, TRIP, and parity consumers.
 5. Delete shadow source/alignment state and string conversion only after byte-level stream parity.

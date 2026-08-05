@@ -460,6 +460,7 @@ impl CommandState {
                     transition: crate::InputTransition::Push,
                     reason: crate::processor::stored_input_reason(reason),
                     source_name: None,
+                    source: None,
                     level: level.0,
                     position: 0,
                 }
@@ -535,6 +536,7 @@ impl CommandState {
             .map(|alignment| AlignmentRecord {
                 transition: "begin",
                 alignment: Some(alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
                 align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -549,6 +551,14 @@ impl CommandState {
     #[must_use]
     pub fn alignment_scanner_is_active(&self) -> bool {
         self.alignment.active_alignment.is_some()
+    }
+
+    /// One-based portable nesting for the active or just-suspended alignment.
+    #[must_use]
+    pub fn alignment_observation_nesting(&self) -> Option<u32> {
+        u32::try_from(self.alignment.align_stack.len())
+            .ok()
+            .filter(|depth| *depth != 0)
     }
 
     /// Returns the committed observation for a command-owned outer alignment
@@ -569,6 +579,9 @@ impl CommandState {
             .map(|suspended| AlignmentRecord {
                 transition: "suspend",
                 alignment: Some(suspended.alignment.raw()),
+                nesting: u32::try_from(self.alignment.suspended.len())
+                    .ok()
+                    .filter(|depth| *depth != 0),
                 align_state: saved.unwrap_or(self.alignment.align_state),
                 delimiter: None,
                 previous_align_state: None,
@@ -584,6 +597,7 @@ impl CommandState {
             .map(|alignment| AlignmentRecord {
                 transition: "resume",
                 alignment: Some(alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
                 align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -602,6 +616,7 @@ impl CommandState {
         (self.alignment.active_alignment == Some(alignment)).then_some(AlignmentRecord {
             transition: "finish",
             alignment: Some(alignment.raw()),
+            nesting: self.alignment_observation_nesting(),
             align_state: self.alignment.align_state,
             delimiter: None,
             previous_align_state: None,
@@ -765,6 +780,7 @@ impl CommandState {
         (cell.alignment == alignment).then_some(AlignmentRecord {
             transition: "state_change",
             alignment: Some(alignment.raw()),
+            nesting: self.alignment_observation_nesting(),
             align_state: self.alignment.align_state,
             delimiter: None,
             previous_align_state: cell.omit_previous_align_state,
@@ -787,6 +803,7 @@ impl CommandState {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::AlignmentUTemplate,
             source_name: None,
+            source: None,
             level: level.0,
             position: 0,
         })
@@ -803,6 +820,7 @@ impl CommandState {
             .map(|_| crate::AlignmentRecord {
                 transition: "u_template_push",
                 alignment: Some(alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
                 align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -832,6 +850,7 @@ impl CommandState {
             .map(|cell| AlignmentRecord {
                 transition: "state_change",
                 alignment: Some(cell.alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
                 align_state: self.alignment.align_state,
                 delimiter: None,
                 previous_align_state: None,
@@ -879,6 +898,7 @@ impl CommandState {
             transition: crate::InputTransition::Push,
             reason: crate::InputReason::AlignmentVTemplate,
             source_name: None,
+            source: None,
             level: level.0,
             position: 0,
         })
@@ -904,6 +924,7 @@ impl CommandState {
                     "v_template_push"
                 },
                 alignment: Some(alignment.raw()),
+                nesting: self.alignment_observation_nesting(),
                 // TeX82's v-template insertion (`init_col`) begins the
                 // token list before assigning the post-insertion sentinel.
                 // The command state is already guarded against a second
@@ -1001,6 +1022,7 @@ impl CommandState {
         Some(crate::AlignmentRecord {
             transition: "state_change",
             alignment: Some(alignment.raw()),
+            nesting: self.alignment_observation_nesting(),
             // `finish_cell` assigns the v-template sentinel after `do_endv`
             // has proven the retained input shape. This observation is
             // captured before that typed request commits.
@@ -1019,6 +1041,7 @@ impl CommandState {
         Some(crate::AlignmentRecord {
             transition: "extra_tab",
             alignment: Some(alignment.raw()),
+            nesting: self.alignment_observation_nesting(),
             align_state: 1_000_000,
             delimiter: None,
             previous_align_state: None,

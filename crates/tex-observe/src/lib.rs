@@ -22,7 +22,7 @@ use tex_state::SourceId;
 
 mod translation;
 
-use translation::{AlignmentNesting, source_line_starts, translate_observation};
+use translation::{source_line_starts, translate_observation};
 
 const CANONICAL_ROOT_PUSH_NAME: &str = "terminal";
 
@@ -79,9 +79,9 @@ pub struct LiveSessionStreams {
 /// mutates a `EngineSession`; callers may hand it observations after
 /// the engine has returned, including after an early failure.
 pub struct LiveSessionTranslator {
+    default_source: String,
     sources: Vec<ActiveSource>,
-    known_source_names: Vec<(SourceId, String)>,
-    alignment_nesting: AlignmentNesting,
+    current_source: Option<SourceId>,
     events: Vec<ObservedEvent>,
     geometry: bool,
     preserve_macro_reference_operands: bool,
@@ -91,7 +91,7 @@ type Recorder = LiveSessionTranslator;
 
 struct ActiveSource {
     name: String,
-    source: Option<SourceId>,
+    source: SourceId,
     bytes: Arc<[u8]>,
     /// Physical line starts, calculated once when the source becomes active.
     ///
@@ -105,14 +105,9 @@ struct ActiveSource {
 impl LiveSessionTranslator {
     pub fn new(source: impl Into<String>, schema: SchemaVersion) -> Self {
         Self {
-            sources: vec![ActiveSource {
-                name: source.into(),
-                source: None,
-                bytes: Arc::from(&b""[..]),
-                line_starts: Arc::from([0]),
-            }],
-            known_source_names: Vec::new(),
-            alignment_nesting: AlignmentNesting::default(),
+            default_source: source.into(),
+            sources: Vec::new(),
+            current_source: None,
             events: Vec::new(),
             geometry: schema >= SchemaVersion::V2,
             preserve_macro_reference_operands: false,
@@ -249,15 +244,19 @@ impl LiveSessionTranslator {
     pub fn activate_source(&mut self, name: impl Into<String>, source: SourceId, bytes: Arc<[u8]>) {
         let name = name.into();
         let line_starts = source_line_starts(&bytes);
-        if !self.known_source_names.iter().any(|(id, _)| *id == source) {
-            self.known_source_names.push((source, name.clone()));
+        if let Some(known) = self.sources.iter_mut().find(|known| known.source == source) {
+            known.name = name;
+            known.bytes = bytes;
+            known.line_starts = line_starts;
+        } else {
+            self.sources.push(ActiveSource {
+                name,
+                source,
+                bytes,
+                line_starts,
+            });
         }
-        self.sources.push(ActiveSource {
-            name,
-            source: Some(source),
-            bytes,
-            line_starts,
-        });
+        self.current_source = Some(source);
     }
 
     fn activate_registered_input(&mut self, name: &str, source: SourceId, bytes: Arc<[u8]>) {
@@ -265,16 +264,8 @@ impl LiveSessionTranslator {
         self.activate_source(name.to_owned(), source, bytes);
     }
 
-    fn current_source(&self) -> &ActiveSource {
-        self.sources
-            .last()
-            .expect("terminal source is always active during replay")
-    }
-
-    fn retire_current_source(&mut self) {
-        if self.sources.len() > 1 {
-            self.sources.pop();
-        }
+    fn source(&self, source: SourceId) -> Option<&ActiveSource> {
+        self.sources.iter().find(|known| known.source == source)
     }
 }
 
@@ -292,8 +283,19 @@ fn encode_observed_stream<'a>(
     tex_oracle::canonical_bundle_json_lines(&events, &oracle)
 }
 
-fn geometry_source(observation: &CommandObservation) -> Option<SourceId> {
+fn observation_source(observation: &CommandObservation) -> Option<SourceId> {
     match observation {
+        CommandObservation::Command(record) => record
+            .provenance
+            .source_location
+            .map(tex_command::SourceLocation::source)
+            .or_else(|| {
+                record
+                    .provenance
+                    .source_range
+                    .map(tex_command::SourceRange::source)
+            }),
+        CommandObservation::Input(record) => record.source,
         CommandObservation::Geometry(
             GeometryRecord::Hpack { source, .. }
             | GeometryRecord::Vpack { source, .. }
@@ -341,47 +343,23 @@ impl CommandObserver for Recorder {
             self.activate_registered_input(detail, source.id, Arc::clone(&source.bytes));
             return;
         }
-        let (source_name, source_id, source_bytes, source_line_starts) = {
-            let source = self.current_source();
-            (
-                source.name.clone(),
-                source.source,
-                Arc::clone(&source.bytes),
-                Arc::clone(&source.line_starts),
-            )
-        };
-        let source_name = geometry_source(&observation)
-            .and_then(|source| {
-                self.known_source_names
-                    .iter()
-                    .find_map(|(id, name)| (*id == source).then_some(name.clone()))
-            })
-            .unwrap_or(source_name);
+        let source_id = observation_source(&observation).or(self.current_source);
+        if let Some(source) = observation_source(&observation) {
+            self.current_source = Some(source);
+        }
+        let source = source_id.and_then(|source| self.source(source));
+        let source_name = source
+            .map_or_else(|| self.default_source.clone(), |source| source.name.clone());
+        let source_bytes = source.map(|source| Arc::clone(&source.bytes));
+        let source_line_starts = source.map(|source| Arc::clone(&source.line_starts));
         self.events.push(translate_observation(
             &source_name,
             source_id,
-            Some(&source_bytes),
-            Some(&source_line_starts),
-            observation.clone(),
-            &mut self.alignment_nesting,
+            source_bytes.as_deref(),
+            source_line_starts.as_deref(),
+            observation,
             self.preserve_macro_reference_operands,
         ));
-        if let CommandObservation::Input(InputRecord {
-            transition: InputTransition::Retire,
-            reason: CommandInputReason::Source,
-            source_name,
-            ..
-        }) = observation
-            && matches!(
-                source_name,
-                None | Some(
-                    tex_command::SourceNameClass::Scantokens(_)
-                        | tex_command::SourceNameClass::File
-                )
-            )
-        {
-            self.retire_current_source();
-        }
     }
 }
 

@@ -25,6 +25,7 @@ pub(crate) struct InputRetirement {
     /// only retirement that consults it (`if name>17 then a_close`), and
     /// §307's token-list levels have no `name` classification at all.
     pub(crate) name_class: Option<SourceNameClass>,
+    pub(crate) source: Option<tex_state::SourceId>,
     pub(crate) trace: Option<ReplayTrace>,
 }
 
@@ -285,6 +286,7 @@ impl CommandState {
                 unreachable!("the inspected top level was not a token cursor");
             };
             let name_class = source.name_class;
+            let source_id = source.cursor.current_backing().id;
             let action = source_retirement_action(source.retirement);
             // TeX82 §362 tests and clears the process-global `force_eof`
             // only in §360's `name>17` (real-file) refill branch. §483's
@@ -327,6 +329,7 @@ impl CommandState {
                 action,
                 reason: InputRetirementReason::Source,
                 name_class: Some(name_class),
+                source: Some(source_id),
                 trace: None,
             });
         };
@@ -349,6 +352,7 @@ impl CommandState {
                 action: InputRetirementAction::VTemplateRetained,
                 reason: input_retirement_reason(&cursor.behavior, &trace),
                 name_class: None,
+                source: None,
                 trace: Some(trace),
             });
         }
@@ -381,6 +385,7 @@ impl CommandState {
             action,
             reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
             name_class: None,
+            source: None,
             trace: Some(cursor.trace),
         })
     }
@@ -408,6 +413,7 @@ impl CommandState {
                 action,
                 reason: InputRetirementReason::Source,
                 name_class: Some(source.name_class),
+                source: Some(source.cursor.current_backing().id),
                 trace: None,
             });
         };
@@ -425,6 +431,7 @@ impl CommandState {
             action,
             reason: input_retirement_reason(&cursor.behavior, &cursor.trace),
             name_class: None,
+            source: None,
             trace: Some(cursor.trace),
         })
     }

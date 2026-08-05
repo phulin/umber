@@ -201,6 +201,10 @@ observer records at the host boundary. Token-list splice and completion
 records carry their committed purpose and semantic tokens from the
 command-owned collection seam; executor-owned macro-definition mutation is
 captured before application and emitted only after that application commits.
+Source-level input transitions carry the engine's immutable source identity,
+and alignment records carry the engine-owned one-based nesting. The detached
+projection therefore resolves registered bytes and names directly; it does
+not replay a parallel source or alignment stack.
 This preserves observer ordering at the ownership boundary without
 reconstructing a fixture event from later state. The runner
 compares every produced event against the complete committed stream without

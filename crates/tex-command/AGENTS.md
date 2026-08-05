@@ -188,7 +188,8 @@ print channel of its own outside the borrowed
 - `src/paragraph.rs`: typed command-owned paragraph input recording, exact
   replay transactions, source coverage, and rollback-coupled transition state.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the
-  record union and the exhaustive `Meaning`-level command classification;
+  record union, engine-owned source identity and alignment nesting, and the
+  exhaustive `Meaning`-level command classification;
   `primitive_identity.rs` and `variable_identity.rs` own the exhaustive
   primitive and eqtb-addressed variable identities beneath it. None of the
   three may reintroduce a catch-all: an unclassified meaning must be a build

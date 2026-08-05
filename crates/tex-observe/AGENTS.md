@@ -15,7 +15,9 @@ persistent evidence transport.
 
 ## File Map
 
-- `src/lib.rs`: source/session projection into oracle-owned bundles.
+- `src/lib.rs`: source/session projection into oracle-owned bundles; source
+  identity is resolved directly from engine records rather than a shadow
+  input stack.
 - `src/translation.rs`: exact observation-to-oracle event mappings.
 - `src/tests.rs`: focused internal translation tests.
 - `tests/live_session.rs`: public live-session and extraction-equivalence tests.

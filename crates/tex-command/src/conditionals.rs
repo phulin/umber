@@ -1221,6 +1221,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));

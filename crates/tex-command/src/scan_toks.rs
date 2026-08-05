@@ -1157,6 +1157,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Push,
                 reason: InputReason::Source,
                 source_name: Some(crate::input::SourceNameClass::Terminal),
+                source: None,
                 level: level.0,
                 position: 0,
             }),

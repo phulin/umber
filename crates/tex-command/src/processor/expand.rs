@@ -944,6 +944,7 @@ impl CommandProcessor<'_> {
         // `\tracingscantokens>0`, and `name=18` otherwise. TeX82 §48's
         // initial character strings render those names as `^^S` and `^^R`.
         let source_name = scantokens_source_name(tracing_scantokens);
+        let source_id = source.id;
         self.observe(CommandObservation::GeneratedSource(
             crate::GeneratedSourceRecord {
                 name: source_name.to_owned(),
@@ -961,6 +962,7 @@ impl CommandProcessor<'_> {
             // file-like in command state, but its push is the transient
             // terminal-class transition the reference engine performs.
             source_name: Some(SourceNameClass::Terminal),
+            source: Some(source_id),
             level: level.0,
             position: 0,
         }));
@@ -1519,6 +1521,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Push,
                 reason: InputReason::Mark,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }),
@@ -1592,6 +1595,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Recovery,
                 reason: InputReason::Recovery,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));
@@ -1625,6 +1629,7 @@ impl CommandProcessor<'_> {
                 transition: InputTransition::Backup,
                 reason: InputReason::Backup,
                 source_name: None,
+                source: None,
                 level: level.0,
                 position: 0,
             }));

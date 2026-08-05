@@ -193,6 +193,7 @@ fn normal_stable_projection_is_byte_identical() {
             transition: tex_command::InputTransition::Retire,
             reason: tex_command::InputReason::Source,
             source_name: None,
+            source: None,
             level: 1,
             position: 2,
         }),
@@ -200,6 +201,7 @@ fn normal_stable_projection_is_byte_identical() {
             transition: tex_command::InputTransition::Stop,
             reason: tex_command::InputReason::Source,
             source_name: None,
+            source: None,
             level: 0,
             position: 0,
         }),
@@ -421,6 +423,7 @@ fn repeated_packed_name_uses_each_opened_source_snapshot_until_its_retirement() 
             transition: tex_command::InputTransition::Retire,
             reason: tex_command::InputReason::Source,
             source_name: Some(tex_command::SourceNameClass::File),
+            source: None,
             level: 1,
             position: 0,
         })
