@@ -1816,3 +1816,64 @@ fn accepted_history_hands_openout_page_to_prepared_finalization() {
         1
     );
 }
+
+#[test]
+fn adopted_openout_suffix_rebases_positive_and_negative_effect_prefix_deltas() {
+    let text = "\\setbox0=\\hbox{\\openout2=original.out \\write2{x}\\closeout2}\
+                \\shipout\\copy0\\end";
+    let mut session = Session::start(
+        template(),
+        "adopted-openout-rebase",
+        RevisionId::new(1),
+        text,
+        usize::MAX,
+    )
+    .expect("session starts");
+    let accepted = session.cold().expect("revision accepts");
+    let open_index = accepted
+        .effects
+        .iter()
+        .position(|effect| matches!(effect, EffectRecord::StreamOpen { .. }))
+        .expect("accepted output contains OpenOut");
+    let original_position = accepted.artifacts[0].open_out_occurrences()[0].1;
+    assert_eq!(original_position.raw(), (open_index + 1) as u64);
+
+    // Model adoption after a scratch prefix gained an effect which lowering
+    // omitted from the prepared page. The adopted OpenOut remains the first
+    // effect in the old suffix, one absolute position later in the joined log.
+    let mut positive_effects = accepted.effects.clone();
+    positive_effects.insert(
+        open_index,
+        EffectRecord::StreamWriteBytes {
+            sink: tex_state::PrintSink::Log,
+            bytes: b"omitted-prefix-model".to_vec(),
+        },
+    );
+    let mut positive_artifacts = accepted.artifacts.clone();
+    rebase_and_validate_adopted_artifacts(
+        &mut positive_artifacts,
+        open_index,
+        open_index + 1,
+        &positive_effects,
+    )
+    .expect("positive prefix delta rebases adopted suffix");
+    assert_eq!(
+        positive_artifacts[0].open_out_occurrences()[0].1.raw(),
+        original_position.raw() + 1
+    );
+
+    // The inverse splice removes that scratch-prefix effect. Starting with
+    // the positively shifted accepted artifact proves subtraction rather than
+    // merely reconstructing the original sidecar.
+    rebase_and_validate_adopted_artifacts(
+        &mut positive_artifacts,
+        open_index + 1,
+        open_index,
+        &accepted.effects,
+    )
+    .expect("negative prefix delta rebases adopted suffix");
+    assert_eq!(
+        positive_artifacts[0].open_out_occurrences()[0].1,
+        original_position
+    );
+}

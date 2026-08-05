@@ -748,8 +748,8 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // Exercises a real finalization failure after reuse.
-fn incremental_effect_prefix_shift_rebases_reused_openout_identity() {
+#[allow(clippy::disallowed_methods)] // Exercises a real failure after an incremental edit.
+fn incremental_effect_prefix_edit_preserves_openout_retry_identity() {
     let temp = tempfile::Builder::new()
         .prefix("openout-splice.")
         .tempdir_in(".")
