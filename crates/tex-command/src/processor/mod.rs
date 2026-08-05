@@ -313,19 +313,24 @@ impl<'a> CommandProcessor<'a> {
         self.state.untracked_int_param(parameter)
     }
 
-    /// Installs a non-fallible semantic observer for this bounded processor
-    /// episode.
+    /// Installs a non-fallible external semantic observer for this bounded
+    /// processor episode.
     ///
-    /// An episode without one pays a single `Option` test per observation
-    /// site and builds no records: every site goes through the `observe!`
-    /// macro, which does not evaluate its payload unless this returns true.
+    /// When paragraph input recording is also inactive, an episode without an
+    /// external observer builds no records: every site goes through the
+    /// `observe!` macro, which does not evaluate its payload unless the shared
+    /// runtime predicate returns true.
     #[must_use]
     pub fn with_observer(mut self, observer: &'a mut dyn CommandObserver) -> Self {
         self.observer = Some(observer);
         self
     }
 
-    /// Whether this episode publishes observations.
+    /// Whether this episode has either observation consumer active.
+    ///
+    /// Construction is active when an external observer is attached or the
+    /// command state is recording paragraph input. Each constructed record is
+    /// offered to the paragraph transaction before optional external delivery.
     ///
     /// Observation-only: no delivery, expansion, scanner, conditional, or
     /// alignment decision may branch on this, and no committed artifact may
@@ -335,6 +340,10 @@ impl<'a> CommandProcessor<'a> {
         self.observer.is_some() || self.command.paragraph_input_is_recording()
     }
 
+    /// Offers a constructed record to both consumers in canonical order.
+    ///
+    /// Paragraph recording always sees the record first; an attached external
+    /// observer receives the owned record afterwards.
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
         self.command.record_paragraph_observation(&observation);
         if let Some(observer) = self.observer.as_deref_mut() {

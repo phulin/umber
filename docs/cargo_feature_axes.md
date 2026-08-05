@@ -110,12 +110,15 @@ Three things were wrong with it, and only the third is about tidiness:
    (`umber2-johp.200`). Fifteen `#[cfg(not(...))] let _ = level;` suppressors
    existed for the same reason.
 
-What replaced it is a runtime guard that was already there: `CommandProcessor`
-holds `Option<&mut dyn CommandObserver>`, and the `observe!` macro in
+What replaced it is one runtime predicate. Observation construction is active
+when `CommandProcessor` has an external `CommandObserver` attached or its
+`CommandState` has paragraph input recording active. The `observe!` macro in
 `crates/tex-command/src/lib.rs` takes its payload as a textual argument, so an
-unobserved episode evaluates nothing and pays one `Option` test per site. The
-macro's argument is deliberately not a closure: a closure would capture the
-processor immutably and collide with `observe`'s mutable borrow.
+episode with neither consumer evaluates nothing and pays only the predicate
+check per site. Every constructed record is first offered to the paragraph
+transaction, then optionally delivered to the external observer. The macro's
+argument is deliberately not a closure: a closure would capture the processor
+immutably and collide with `observe`'s mutable borrow.
 
 One thing this must never become: observation state inside semantic state.
 The first attempt added an `observed: bool` to `CommandState` to guard an

@@ -4,14 +4,16 @@
 //! executor integration requires stable, end-state operations.
 
 /// Publishes one semantic observation, evaluating its payload only when the
-/// episode has an observer installed.
+/// episode has an external observer or active paragraph input recording.
 ///
 /// The payload is a textual argument rather than a closure, so it may borrow
 /// the processor immutably before `observe` takes it mutably, and it costs
-/// nothing beyond one `Option` test in an unobserved episode. Every
+/// nothing beyond the runtime predicate in an unobserved episode. Every
 /// observation site in this crate goes through here, which is what lets the
-/// observation vocabulary compile unconditionally without a shipped engine
-/// paying to build records it would immediately drop.
+/// observation vocabulary compile unconditionally without building records
+/// when neither consumer is active. Every constructed record is first offered
+/// to the paragraph transaction, then optionally delivered to the external
+/// observer.
 ///
 /// This replaced `#[cfg(any(test, feature = "observe"))]` on roughly 250
 /// sites. Those attributes compiled the engine three different ways -- the

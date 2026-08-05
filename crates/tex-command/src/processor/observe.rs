@@ -1,17 +1,15 @@
-//! Observation entry points whose callers must not know they are optional.
+//! Observation entry points for canonical multi-record transitions.
 //!
-//! `crate::observation` compiles only under `cfg(any(test, feature =
-//! "instrumentation"))`. A transition whose sole consumer is an observer would
-//! therefore have to assemble its values inside a `cfg` block at the call
-//! site, which leaves every binding that feeds it unused in the resolution a
-//! shipped binary is actually built in -- the one `cargo build -p umber`
-//! selects (`umber2-johp.200`).
+//! Observation vocabulary and construction compile unconditionally. At
+//! runtime, [`CommandProcessor::is_observed`] enables construction when either
+//! an external observer is attached or paragraph input recording is active.
+//! When active, [`CommandProcessor::observe`] first offers every record to the
+//! paragraph transaction, then optionally delivers it to the external
+//! observer.
 //!
-//! Each entry point below is defined twice against one signature: once
-//! building the record, and once with an empty body. Call sites stay
-//! unconditional, so the values they compute are consumed in every feature
-//! resolution, while the shipping build still compiles the observation, its
-//! record allocation, and its spelling resolution away to nothing.
+//! These helpers keep transitions that publish multiple related records in
+//! canonical order. They have one definition in every build; there is no
+//! compile-time observation feature or alternate empty implementation.
 
 use tex_state::token::Token;
 
