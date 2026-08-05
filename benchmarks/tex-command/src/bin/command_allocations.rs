@@ -53,12 +53,15 @@ enum Workload {
     CommandTextRendering,
     TokenListIteration,
     ShiftCase,
+    MacroDefinition,
+    ReadTokenCollection,
+    OutputReplayExpansion,
     InlineControlSequenceTokenization,
     SpilledControlSequenceTokenization,
 }
 
 impl Workload {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 16] = [
         Self::SingleTokenBackup,
         Self::MacroArgumentMatching,
         Self::ScanToksAbsorption,
@@ -70,6 +73,9 @@ impl Workload {
         Self::CommandTextRendering,
         Self::TokenListIteration,
         Self::ShiftCase,
+        Self::MacroDefinition,
+        Self::ReadTokenCollection,
+        Self::OutputReplayExpansion,
         Self::InlineControlSequenceTokenization,
         Self::SpilledControlSequenceTokenization,
     ];
@@ -87,6 +93,9 @@ impl Workload {
             Self::CommandTextRendering => "command_text_rendering",
             Self::TokenListIteration => "token_list_iteration",
             Self::ShiftCase => "shift_case",
+            Self::MacroDefinition => "macro_definition",
+            Self::ReadTokenCollection => "read_token_collection",
+            Self::OutputReplayExpansion => "output_replay_expansion",
             Self::InlineControlSequenceTokenization => "inline_control_sequence_tokenization",
             Self::SpilledControlSequenceTokenization => "spilled_control_sequence_tokenization",
         }
@@ -113,6 +122,24 @@ struct ProcessorCase {
     command: CommandState,
     runtime: CommandRuntime,
     capabilities: CommandHostCapabilities,
+    replay: Option<tex_state::TracedTokenList>,
+}
+
+#[derive(Clone, Copy)]
+enum RuntimeState {
+    Cold,
+    Warm,
+}
+
+impl RuntimeState {
+    const ALL: [Self; 2] = [Self::Cold, Self::Warm];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Cold => "cold",
+            Self::Warm => "warm",
+        }
+    }
 }
 
 enum Case {
@@ -135,46 +162,75 @@ fn main() {
     for workload in Workload::ALL {
         for configuration in Configuration::ALL {
             if workload.supports_configuration(configuration) {
-                let stats = measure(workload, configuration, perturb);
-                print_stats(workload, configuration, stats);
+                for runtime_state in RuntimeState::ALL {
+                    let stats = measure(workload, configuration, runtime_state, perturb);
+                    print_stats(workload, configuration, runtime_state, stats);
+                }
             }
         }
     }
 }
 
-fn measure(workload: Workload, configuration: Configuration, perturb: bool) -> Stats {
-    let mut warm = build_case(workload);
-    run_case(workload, configuration, &mut warm, false);
-    drop(warm);
+fn measure(
+    workload: Workload,
+    configuration: Configuration,
+    runtime_state: RuntimeState,
+    perturb: bool,
+) -> Stats {
+    let mut shared_runtime = CommandRuntime::default();
+    if matches!(runtime_state, RuntimeState::Warm) {
+        for _ in 0..3 {
+            let mut warm = build_case(workload);
+            swap_runtime(&mut warm, &mut shared_runtime);
+            run_case(workload, configuration, &mut warm, false);
+            swap_runtime(&mut warm, &mut shared_runtime);
+        }
+    }
 
     let mut cases = (0..OPERATIONS)
         .map(|_| build_case(workload))
         .collect::<Vec<_>>();
-    let region = Region::new(GLOBAL);
+    let mut measured = None;
     for case in &mut cases {
+        if matches!(runtime_state, RuntimeState::Warm) {
+            swap_runtime(case, &mut shared_runtime);
+        }
+        let region = Region::new(GLOBAL);
         run_case(workload, configuration, case, perturb);
+        let stats = region.change();
+        if matches!(runtime_state, RuntimeState::Warm) {
+            swap_runtime(case, &mut shared_runtime);
+        }
+        measured = Some((stats.allocations, stats.bytes_allocated));
     }
-    region.change()
+    let (allocations, bytes_allocated) = measured.expect("at least one operation is measured");
+    Stats {
+        allocations,
+        bytes_allocated,
+        ..Stats::default()
+    }
 }
 
-fn print_stats(workload: Workload, configuration: Configuration, stats: Stats) {
-    assert_eq!(
-        stats.allocations % OPERATIONS,
-        0,
-        "allocation count must be stable per operation"
-    );
-    assert_eq!(
-        stats.bytes_allocated % OPERATIONS,
-        0,
-        "requested bytes must be stable per operation"
-    );
+fn print_stats(
+    workload: Workload,
+    configuration: Configuration,
+    runtime_state: RuntimeState,
+    stats: Stats,
+) {
     println!(
-        "{} configuration={} allocations_per_op={} requested_bytes_per_op={}",
+        "{} configuration={} runtime={} allocations_per_op={} requested_bytes_per_op={}",
         workload.name(),
         configuration.name(),
-        stats.allocations / OPERATIONS,
-        stats.bytes_allocated / OPERATIONS,
+        runtime_state.name(),
+        stats.allocations,
+        stats.bytes_allocated,
     );
+}
+
+fn swap_runtime(case: &mut Case, runtime: &mut CommandRuntime) {
+    if let Case::Processor(case) = case {
+        std::mem::swap(&mut case.runtime, runtime);
+    }
 }
 
 fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, perturb: bool) {
@@ -283,6 +339,27 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
                 Workload::ShiftCase => {
                     processor.shift_case(true).expect("case shift completes");
                 }
+                Workload::MacroDefinition => {
+                    black_box(
+                        processor
+                            .scan_macro_definition(false)
+                            .expect("macro definition scans"),
+                    );
+                }
+                Workload::ReadTokenCollection => {
+                    black_box(
+                        processor
+                            .scan_input_stream_request(UnexpandablePrimitive::Read, false)
+                            .expect("read token collection succeeds"),
+                    );
+                }
+                Workload::OutputReplayExpansion => {
+                    black_box(
+                        processor
+                            .expand_output_replay(case.replay.expect("replay fixture is present"))
+                            .expect("output replay expands"),
+                    );
+                }
                 Workload::InlineControlSequenceTokenization
                 | Workload::SpilledControlSequenceTokenization => {
                     black_box(
@@ -316,6 +393,9 @@ fn build_case(workload: Workload) -> Case {
         Workload::RenderedTokenInstallation => r"\number12345 ",
         Workload::TokenListIteration => "",
         Workload::ShiftCase => "{abcdefghijklmnop}",
+        Workload::MacroDefinition => r"\m#1{abcdefghijklmnop}",
+        Workload::ReadTokenCollection => r"99 to \line",
+        Workload::OutputReplayExpansion => "",
         Workload::InlineControlSequenceTokenization => r"\allocationbaseline ",
         Workload::SpilledControlSequenceTokenization => {
             r"\pathologicalcontrolsequencenameoverinlinebound "
@@ -345,6 +425,13 @@ fn build_case(workload: Workload) -> Case {
             Meaning::ExpandablePrimitive(ExpandablePrimitive::Number),
         );
     }
+    if matches!(workload, Workload::ReadTokenCollection) {
+        universe.set_interaction_mode(tex_state::InteractionMode::ErrorStop);
+        universe
+            .world_mut()
+            .push_memory_terminal_line("abcdefghijklmnop")
+            .expect("terminal line registers");
+    }
     if matches!(
         workload,
         Workload::InlineControlSequenceTokenization | Workload::SpilledControlSequenceTokenization
@@ -355,6 +442,24 @@ fn build_case(workload: Workload) -> Case {
             _ => unreachable!(),
         });
     }
+
+    let replay = if matches!(workload, Workload::OutputReplayExpansion) {
+        let traced = "abcdefghijklmnop"
+            .chars()
+            .map(|ch| {
+                TracedTokenWord::pack(
+                    Token::Char {
+                        ch,
+                        cat: Catcode::Letter,
+                    },
+                    OriginId::UNKNOWN,
+                )
+            })
+            .collect::<Vec<_>>();
+        Some(universe.finish_traced_token_list(&traced))
+    } else {
+        None
+    };
 
     if matches!(workload, Workload::TokenListIteration) {
         let tokens = (0..16)
@@ -385,6 +490,7 @@ fn build_case(workload: Workload) -> Case {
         command,
         runtime,
         capabilities,
+        replay,
     }))
 }
 

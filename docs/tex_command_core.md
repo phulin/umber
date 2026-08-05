@@ -1344,8 +1344,14 @@ pub struct CommandRuntime {
 
 Measured optimization work may add discardable acceleration here only with
 canonical identity and exact generation or content guards. Dropping
-`CommandRuntime` and continuing with a fresh default must produce identical
-semantic events, diagnostics, effects, and output.
+`CommandRuntime` owns a two-slot pool solely for copied-before-return
+`Vec<TracedTokenWord>` scratch used by token-list absorption, macro parameter
+and replacement collection, `\read`, and output replay expansion. An RAII
+checkout clears and returns each buffer on success or error, retains at most
+4,096 token words per slot, and never receives alignment columns, glue specs,
+character vectors, pattern data, or any other element type. Dropping
+`CommandRuntime` and continuing with a fresh default produces identical
+semantic events, diagnostics, effects, output, snapshots, and summaries.
 
 The input stack does not carry meaning-cache state or expansion-policy bits.
 

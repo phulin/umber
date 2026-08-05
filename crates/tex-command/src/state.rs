@@ -1,5 +1,8 @@
 //! Future-relevant state and discardable runtime ownership.
 
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, Mutex};
+
 use tex_state::CommandContext;
 use tex_state::input::TracedTokenList;
 use tex_state::token::TracedTokenWord;
@@ -1679,15 +1682,99 @@ pub(crate) struct LiveTokenBuilder {
     pub(crate) tokens: Vec<TracedTokenWord>,
 }
 
+const TRACED_TOKEN_POOL_SLOTS: usize = 2;
+const MAX_RETAINED_TRACED_TOKEN_CAPACITY: usize = 4_096;
+
+#[derive(Debug, Default)]
+struct TracedTokenBufferPool {
+    buffers: Mutex<[Option<Vec<TracedTokenWord>>; TRACED_TOKEN_POOL_SLOTS]>,
+}
+
+pub(crate) struct TracedTokenScratch {
+    pool: Arc<TracedTokenBufferPool>,
+    buffer: Option<Vec<TracedTokenWord>>,
+}
+
+impl Deref for TracedTokenScratch {
+    type Target = Vec<TracedTokenWord>;
+
+    fn deref(&self) -> &Self::Target {
+        self.buffer.as_ref().expect("checked-out buffer is present")
+    }
+}
+
+impl DerefMut for TracedTokenScratch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buffer.as_mut().expect("checked-out buffer is present")
+    }
+}
+
+impl Drop for TracedTokenScratch {
+    fn drop(&mut self) {
+        let mut buffer = self.buffer.take().expect("checked-out buffer is present");
+        buffer.clear();
+        if buffer.capacity() > MAX_RETAINED_TRACED_TOKEN_CAPACITY {
+            return;
+        }
+        if let Some(slot) = self
+            .pool
+            .buffers
+            .lock()
+            .expect("traced-token pool lock is not poisoned")
+            .iter_mut()
+            .find(|slot| slot.is_none())
+        {
+            *slot = Some(buffer);
+        }
+    }
+}
+
 /// Discardable command-processing runtime capability.
 ///
-/// The capability is currently zero-sized: measured optimization work may add
-/// acceleration here, but only when it remains independent of semantic state.
+/// Its bounded pool holds only empty traced-token scratch allocations. The
+/// RAII checkout returns eligible copied-before-return collectors on every
+/// exit path; buffers whose capacity exceeds the retention bound are dropped.
 /// It intentionally implements neither equality nor hashing, preventing it
 /// from becoming part of semantic state comparisons by convenience.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CommandRuntime {
-    _private: (),
+    traced_tokens: Arc<TracedTokenBufferPool>,
+}
+
+impl Default for CommandRuntime {
+    fn default() -> Self {
+        Self {
+            traced_tokens: Arc::new(TracedTokenBufferPool::default()),
+        }
+    }
+}
+
+impl CommandRuntime {
+    pub(crate) fn traced_token_scratch(&self) -> TracedTokenScratch {
+        let buffer = self
+            .traced_tokens
+            .buffers
+            .lock()
+            .expect("traced-token pool lock is not poisoned")
+            .iter_mut()
+            .find_map(Option::take)
+            .unwrap_or_default();
+        TracedTokenScratch {
+            pool: Arc::clone(&self.traced_tokens),
+            buffer: Some(buffer),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retained_traced_token_capacities(&self) -> Vec<usize> {
+        self.traced_tokens
+            .buffers
+            .lock()
+            .expect("traced-token pool lock is not poisoned")
+            .iter()
+            .filter_map(|buffer| buffer.as_ref().map(Vec::capacity))
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -391,6 +391,10 @@ impl<'a> CommandProcessor<'a> {
         self.fuel.charge()
     }
 
+    pub(crate) fn traced_token_scratch(&self) -> crate::state::TracedTokenScratch {
+        self.runtime.traced_token_scratch()
+    }
+
     /// Claims command-owned semantic diagnostics in detection order.
     pub fn take_semantic_diagnostics(&mut self) -> Vec<crate::CommandSemanticDiagnostic> {
         self.command.take_semantic_diagnostics()

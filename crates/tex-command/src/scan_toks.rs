@@ -253,7 +253,7 @@ impl ScannedLeftBrace {
 }
 
 struct ScannedParameterText {
-    tokens: Vec<TracedTokenWord>,
+    tokens: crate::state::TracedTokenScratch,
     highest_parameter: u8,
     hash_brace: Option<TracedTokenWord>,
     primary: OriginId,
@@ -370,7 +370,14 @@ impl CommandProcessor<'_> {
                 // expanded path even when the replacement text itself is
                 // collected unexpanded.
                 let primary = self.scan_left_brace(true)?.origin();
-                (Vec::new(), None, None, primary, false, false)
+                (
+                    self.traced_token_scratch(),
+                    None,
+                    None,
+                    primary,
+                    false,
+                    false,
+                )
             }
             (ScanToksGrammar::General, ScanToksOpening::Prevalidated { primary }) => {
                 // The opening command was already classified through
@@ -393,7 +400,14 @@ impl CommandProcessor<'_> {
                     return Err(CommandError::input_invariant());
                 }
                 self.observe_expanded_delivery(&opening);
-                (Vec::new(), None, None, primary, false, false)
+                (
+                    self.traced_token_scratch(),
+                    None,
+                    None,
+                    primary,
+                    false,
+                    false,
+                )
             }
             (ScanToksGrammar::MacroDefinition, ScanToksOpening::AfterParameterText) => {
                 let parameters = self.scan_parameter_text()?;
@@ -415,7 +429,7 @@ impl CommandProcessor<'_> {
             _ => unreachable!("ScanToksConfig admits no other grammar/opening pair"),
         };
         let replacement = if missing_left_brace {
-            Vec::new()
+            self.traced_token_scratch()
         } else {
             self.collect_replacement(config.expansion, macro_parameters, episode)?
         };
@@ -505,7 +519,7 @@ impl CommandProcessor<'_> {
     /// brace.  Compact `Token::Param` values are the stored out-parameter
     /// representation; doubled hashes remain literal parameter characters.
     fn scan_parameter_text(&mut self) -> Result<ScannedParameterText, CommandError> {
-        let mut output = Vec::new();
+        let mut output = self.traced_token_scratch();
         let mut next_parameter = 1_u8;
         let mut primary = OriginId::UNKNOWN;
         let mut malformed_parameter = false;
@@ -639,8 +653,8 @@ impl CommandProcessor<'_> {
         expansion: ScanToksExpansion,
         macro_parameters: Option<(u8, Option<Symbol>)>,
         episode: &ScannerEpisode,
-    ) -> Result<Vec<TracedTokenWord>, CommandError> {
-        let mut output = Vec::new();
+    ) -> Result<crate::state::TracedTokenScratch, CommandError> {
+        let mut output = self.traced_token_scratch();
         let mut depth = 1_u32;
         let mut pending_parameter: Option<(_, u8, Option<Symbol>)> = None;
         loop {
@@ -1193,14 +1207,14 @@ impl CommandProcessor<'_> {
         stream: i32,
         target: tex_state::interner::Symbol,
         raw_catcodes: bool,
-    ) -> Result<Vec<TracedTokenWord>, CommandError> {
+    ) -> Result<crate::state::TracedTokenScratch, CommandError> {
         // §482: `if (n<0)or(n>15) then m:=16 else m:=n`. Stream 16 is never
         // open, so §483 always takes §484's terminal branch for it.
         let slot = u8::try_from(stream)
             .ok()
             .filter(|slot| *slot < tex_state::world::STREAM_SLOT_COUNT as u8)
             .map(tex_state::world::StreamSlot::new);
-        let mut tokens = Vec::new();
+        let mut tokens = self.traced_token_scratch();
         // §484's own `n`, which decides whether the user is prompted at all:
         // a negative stream is prompted with the empty string, so `\read-1 to
         // \x` never prints `\x=`. §484 then assigns `n:=-1` after prompting,

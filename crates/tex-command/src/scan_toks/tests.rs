@@ -117,6 +117,99 @@ fn diagnostic_text(universe: &Universe) -> String {
 }
 
 #[test]
+fn replacing_a_warm_runtime_preserves_scan_semantics_and_publications() {
+    fn run(
+        replace_runtime: bool,
+    ) -> (
+        Vec<Token>,
+        Vec<Token>,
+        crate::CommandStateSnapshot,
+        crate::CommandSummary,
+        Vec<CommandObservation>,
+        String,
+    ) {
+        let mut command = CommandState::default();
+        push(
+            &mut command,
+            vec![
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '{',
+                    cat: Catcode::BeginGroup,
+                },
+                Token::Char {
+                    ch: 'a',
+                    cat: Catcode::Letter,
+                },
+                Token::Char {
+                    ch: '#',
+                    cat: Catcode::Parameter,
+                },
+                Token::Char {
+                    ch: '1',
+                    cat: Catcode::Other,
+                },
+                Token::Char {
+                    ch: '}',
+                    cat: Catcode::EndGroup,
+                },
+            ],
+        );
+        let mut runtime = CommandRuntime::default();
+        {
+            let mut first = runtime.traced_token_scratch();
+            first.extend([traced(Token::Param(1)); 32]);
+            let mut second = runtime.traced_token_scratch();
+            second.extend([traced(Token::Param(1)); 16]);
+        }
+        if replace_runtime {
+            runtime = CommandRuntime::default();
+        }
+        let mut universe = crate::test_harness::universe_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut recorder = Recorder::default();
+        let (parameters, replacement) = {
+            let mut processor =
+                processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
+                    .with_observer(&mut recorder);
+            let scanned = processor
+                .scan_toks(ScanToksMode::MacroDefinition { expanded: false })
+                .expect("macro definition scans");
+            (
+                processor
+                    .state
+                    .tokens(scanned.parameter_text.token_list())
+                    .to_vec(),
+                processor
+                    .state
+                    .tokens(scanned.replacement_text.token_list())
+                    .to_vec(),
+            )
+        };
+        let summary = command
+            .publish_summary()
+            .expect("completed scan is quiescent");
+        (
+            parameters,
+            replacement,
+            command.snapshot(),
+            summary,
+            recorder.0,
+            diagnostic_text(&universe),
+        )
+    }
+
+    assert_eq!(run(false), run(true));
+}
+
+#[test]
 fn general_scan_toks_continues_after_section_403_inserted_left_brace() {
     let mut command = CommandState::default();
     push(

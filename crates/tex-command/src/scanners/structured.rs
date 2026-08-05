@@ -1017,7 +1017,7 @@ impl CommandProcessor<'_> {
         tokens: TracedTokenList,
     ) -> Result<TracedTokenList, CommandError> {
         let episode = self.command.push_output_replay_episode(tokens);
-        let mut expanded = Vec::new();
+        let mut expanded = self.traced_token_scratch();
         loop {
             match self.get_x_or_protected_with_replay_completion()? {
                 Some(CommandReplayDelivery::Command(command)) => {

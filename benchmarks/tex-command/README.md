@@ -13,15 +13,18 @@ cargo run --release --manifest-path benchmarks/tex-command/Cargo.toml \
 `command_allocations` directly exercises single-token backup, macro argument
 matching, `scan_toks` absorption, keyword and dimension scanning, alignment
 preamble scanning, two-token `off_save` recovery, rendered-token installation,
-command-text rendering, token-list iteration, case shifting, and
+command-text rendering, token-list iteration, case shifting, macro-definition
+collection, `\read` token collection, output replay expansion, and
 control-sequence tokenization for both inline and pathological spill names. The
 recovery and rendered-token rows detect fixed-array-to-`Arc` staging regressions
-separately from the common single-token backup row. Each row reports allocation
-count and requested bytes per operation. The program builds fixed cases before
-measurement, runs a
-discarded warmup, and then measures 64 operations with the same
-`stats_alloc::Region` convention as the `tex-state` and `tex-exec` allocation
-gates.
+separately from the common single-token backup row. Each row reports cold and
+warm-runtime allocation count and requested bytes per operation. The program
+builds fixed cases before measurement and executes 64 independently measured
+operations. Warm rows first run three discarded operations through one reused
+`CommandRuntime`; cold rows use each case's fresh default runtime. The reported
+value is the final representative operation, after allocator and runtime state
+have settled, using the same `stats_alloc::Region` convention as the
+`tex-state` and `tex-exec` allocation gates.
 
 The `unobserved` configuration has no external observer.
 `external_observer` attaches a non-allocating sink so the counts include
