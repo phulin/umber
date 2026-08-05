@@ -12096,14 +12096,8 @@ fn shipout_replay_box(
     // two identical `\shipout\copy0` calls). It is a no-op under retained
     // sessions, which consume their effect suffix on export instead.
     //
-    // This is not free: a checkpoint/retry session (`crates/umber`'s
-    // `EngineSession`) can still roll this whole step back if a
-    // *later* command turns out to need a resource this speculative run did
-    // not have, and `commit_effects` materializes into
-    // `World::memory_terminal_output`/`memory_log_output`, which that
-    // rollback does not undo -- confirmed to duplicate the marker under
-    // `retained_session_retries_input_without_duplicate_effect_or_receipt`.
-    // `umber2-v4dx` tracks giving rollback that reach.
+    // Memory-backed retained hosts checkpoint this materialized suffix at a
+    // later resource suspension and reconcile its exact replay once.
     stores.commit_effects(stores.world().effect_pos())?;
     // TeX82's `ship_out` clears the consecutive-dead-output counter (§638).
     // The shipout boundary owns the page-state bookkeeping, so keep

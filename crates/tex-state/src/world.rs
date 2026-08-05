@@ -1730,6 +1730,11 @@ pub struct World {
     stream_open_contexts: BTreeMap<EffectPos, String>,
 }
 
+/// Memory-backed materialization prefix retained across one host retry.
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct MemoryMaterializationCheckpoint(Arc<MemoryBackend>);
+
 /// Final semantic disposition of one effect publication commit.
 #[doc(hidden)]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2331,7 +2336,7 @@ impl World {
         shell_escape_policy: ShellEscapePolicy,
     ) -> Self {
         Self::new(
-            WorldBackend::Memory(MemoryBackend::default()),
+            WorldBackend::Memory(Arc::new(MemoryBackend::default())),
             job_clock,
             random_seed,
             monotonic_micros,
@@ -2517,7 +2522,9 @@ impl World {
                 "world is not memory-backed",
             ));
         };
-        memory.files.insert(path.into(), Arc::from(bytes.into()));
+        Arc::make_mut(memory)
+            .files
+            .insert(path.into(), Arc::from(bytes.into()));
         Ok(())
     }
 
@@ -2534,7 +2541,9 @@ impl World {
                 "world is not memory-backed",
             ));
         };
-        memory.modification_dates.insert(path.into(), date);
+        Arc::make_mut(memory)
+            .modification_dates
+            .insert(path.into(), date);
         Ok(())
     }
 
@@ -2638,7 +2647,9 @@ impl World {
     ) -> Result<FileContent, WorldError> {
         let pending = self.pending_output_bytes(path)?;
         if let WorldBackend::Memory(memory) = &mut self.backend {
-            memory.files.insert(path.to_owned(), Arc::clone(&supplied));
+            Arc::make_mut(memory)
+                .files
+                .insert(path.to_owned(), Arc::clone(&supplied));
         }
         let (bytes, modification_date, origin) = match pending {
             Some(bytes) => (
@@ -2790,7 +2801,7 @@ impl World {
                 WorldError::new("write file", Some(path.to_owned()), err.to_string())
             }),
             WorldBackend::Memory(memory) => {
-                memory
+                Arc::make_mut(memory)
                     .files
                     .insert(path.to_owned(), Arc::from(bytes.as_ref()));
                 Ok(())
@@ -2925,6 +2936,7 @@ impl World {
                 Ok(())
             }
             WorldBackend::Memory(memory) => {
+                let memory = Arc::make_mut(memory);
                 for (path, bytes) in files {
                     memory.files.insert(path, Arc::from(bytes));
                 }
@@ -3158,7 +3170,7 @@ impl World {
                 self.verified_artifacts.insert(hash);
             }
             WorldBackend::Memory(memory) => {
-                memory
+                Arc::make_mut(memory)
                     .artifacts
                     .entry(hash)
                     .or_insert_with(|| bytes.to_vec());
@@ -4704,6 +4716,39 @@ impl World {
         Some(&memory.log_output)
     }
 
+    /// Captures the already materialized memory prefix before a host retry.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn memory_materialization_checkpoint(&self) -> Option<MemoryMaterializationCheckpoint> {
+        let WorldBackend::Memory(memory) = &self.backend else {
+            return None;
+        };
+        Some(MemoryMaterializationCheckpoint(Arc::clone(memory)))
+    }
+
+    /// Removes a replayed suffix that was already materialized by the
+    /// suspended attempt, while retaining non-replayed output from that
+    /// attempt and all new output following the replay.
+    #[doc(hidden)]
+    pub fn reconcile_memory_retry_materialization(
+        &mut self,
+        checkpoint: &MemoryMaterializationCheckpoint,
+    ) -> bool {
+        let WorldBackend::Memory(current) = &mut self.backend else {
+            return false;
+        };
+        let current = Arc::make_mut(current);
+        let mut reconciled =
+            deduplicate_retry_suffix(&checkpoint.0.terminal_output, &mut current.terminal_output);
+        reconciled |= deduplicate_retry_suffix(&checkpoint.0.log_output, &mut current.log_output);
+        for (path, before) in &checkpoint.0.outputs {
+            if let Some(after) = current.outputs.get_mut(path) {
+                reconciled |= deduplicate_retry_suffix(before, after);
+            }
+        }
+        reconciled
+    }
+
     #[must_use]
     pub fn stream_bufs(&self) -> &StreamBufState {
         &self.stream_bufs
@@ -5259,7 +5304,9 @@ impl World {
                 WorldError::new("open output", Some(path.to_owned()), err.to_string())
             }),
             WorldBackend::Memory(memory) => {
-                memory.outputs.insert(path.to_owned(), Vec::new());
+                Arc::make_mut(memory)
+                    .outputs
+                    .insert(path.to_owned(), Vec::new());
                 Ok(())
             }
         }
@@ -5286,7 +5333,7 @@ impl World {
                 })
             }
             WorldBackend::Memory(memory) => {
-                memory
+                Arc::make_mut(memory)
                     .outputs
                     .entry(path.to_owned())
                     .or_default()
@@ -5303,7 +5350,9 @@ impl World {
                     .effect_retry(EffectRetrySafety::Poisoned)
             }),
             WorldBackend::Memory(memory) => {
-                memory.terminal_output.extend_from_slice(bytes);
+                Arc::make_mut(memory)
+                    .terminal_output
+                    .extend_from_slice(bytes);
                 Ok(())
             }
         }
@@ -5311,7 +5360,7 @@ impl World {
 
     fn write_log(backend: &mut WorldBackend, bytes: &[u8]) {
         if let WorldBackend::Memory(memory) = backend {
-            memory.log_output.extend_from_slice(bytes);
+            Arc::make_mut(memory).log_output.extend_from_slice(bytes);
         }
     }
 }
@@ -5325,7 +5374,24 @@ impl Default for World {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum WorldBackend {
     Real { artifact_dir: PathBuf },
-    Memory(MemoryBackend),
+    Memory(Arc<MemoryBackend>),
+}
+
+fn deduplicate_retry_suffix(before: &[u8], current: &mut Vec<u8>) -> bool {
+    if current.len() <= before.len() || !current.starts_with(before) {
+        return false;
+    }
+    let replay = &current[before.len()..];
+    let overlap_limit = before.len().min(replay.len());
+    let overlap = (1..=overlap_limit)
+        .rev()
+        .find(|&len| before.ends_with(&replay[..len]))
+        .unwrap_or(0);
+    if overlap != 0 {
+        current.drain(before.len()..before.len() + overlap);
+        return true;
+    }
+    false
 }
 
 type StagedPublication = (PathBuf, PathBuf, Option<PathBuf>);

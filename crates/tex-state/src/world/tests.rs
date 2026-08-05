@@ -1781,3 +1781,20 @@ fn installed_publication_boundary_claim_restarts_its_local_ordinals() {
         "legitimate records within one boundary claim remain distinct"
     );
 }
+
+#[test]
+fn retry_suffix_reconciliation_preserves_prefix_and_new_tail() {
+    let mut current = b"accepted marker marker tail".to_vec();
+    assert!(super::deduplicate_retry_suffix(
+        b"accepted marker",
+        &mut current
+    ));
+    assert_eq!(current, b"accepted marker tail");
+
+    let mut unrelated = b"accepted marker new".to_vec();
+    assert!(!super::deduplicate_retry_suffix(
+        b"accepted marker",
+        &mut unrelated
+    ));
+    assert_eq!(unrelated, b"accepted marker new");
+}

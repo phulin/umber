@@ -240,6 +240,13 @@ Effects are recorded in execution order and published at explicit commit
 boundaries. A failed or rolled-back transaction cannot leak writes, artifact
 receipts, DVI plans, or auxiliary output. Virtual compile sessions clone or
 fork accepted `World` state so output inspection does not mutate the session.
+Memory-backed retained hosts checkpoint the materialized terminal, log, and
+stream prefixes when a resource suspension crosses the host boundary. As the
+step replays, an exact suffix/prefix overlap is removed once, preserving both
+earlier accepted output and new output after the replay. This makes an eager
+commit inside the speculative region idempotent without withdrawing unrelated
+materialization. Real host publication remains an irreversible barrier and
+cannot be rolled back after bytes cross it.
 After an effect commit, native downstream files publish as one recoverable
 staged set: a failed destination rename restores all pre-publication files and
 removes every newly installed member.

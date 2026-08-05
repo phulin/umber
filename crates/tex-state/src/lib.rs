@@ -173,12 +173,13 @@ pub use world::{
     EffectPublicationRecordOrdinal, EffectRecord, EffectRetrySafety, EffectRootIdentity,
     EffectSemanticRecordOrdinal, EffectSequence, ExecutionTraceEvent, FileContent,
     FileModificationDate, InputDependency, InputDependencyAccess, InputDependencyOutcome,
-    InputOrigin, InputRecord, InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput,
-    PageOutputPublicationReceipt, PageOutputPublicationReceiptId, PrintSink, ReadTarget,
-    RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
-    ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot,
-    TerminalInputPosition, TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact,
-    World, WorldCommitMode, WorldError, WorldSnapshot,
+    InputOrigin, InputRecord, InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES,
+    MemoryMaterializationCheckpoint, MemoryOutput, PageOutputPublicationReceipt,
+    PageOutputPublicationReceiptId, PrintSink, ReadTarget, RenderOriginIter, RenderOrigins,
+    RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState, ShellEscapePolicy,
+    ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot, TerminalInputPosition,
+    TerminalPublicationId, TerminalPublicationPhase, VerifiedArtifact, World, WorldCommitMode,
+    WorldError, WorldSnapshot,
 };
 
 #[cfg(test)]

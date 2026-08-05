@@ -270,6 +270,7 @@ pub struct EngineSession<'a> {
     no_progress_limit: u8,
     mode_transitions: Vec<tex_exec::Mode>,
     output_ledger: tex_exec::OutputLedger,
+    retry_materialization: Option<tex_state::MemoryMaterializationCheckpoint>,
 }
 
 impl<'a> EngineSession<'a> {
@@ -321,6 +322,7 @@ impl<'a> EngineSession<'a> {
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
+            retry_materialization: None,
         }
     }
 
@@ -351,6 +353,7 @@ impl<'a> EngineSession<'a> {
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
+            retry_materialization: None,
         }
     }
 
@@ -378,6 +381,7 @@ impl<'a> EngineSession<'a> {
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
             output_ledger: tex_exec::OutputLedger::default(),
+            retry_materialization: None,
         }
     }
 
@@ -746,8 +750,19 @@ impl<'a> EngineSession<'a> {
                 }
                 None => runner.step(checkpoints, &tex_exec::Cancellation::new()),
             };
+            if let Some(checkpoint) = self.retry_materialization.take() {
+                let reconciled = self
+                    .stores
+                    .world_mut()
+                    .reconcile_memory_retry_materialization(&checkpoint);
+                if !reconciled {
+                    self.retry_materialization = Some(checkpoint);
+                }
+            }
             match result {
                 CanonicalStepResult::ResourceNeed(need) => {
+                    self.retry_materialization =
+                        self.stores.world().memory_materialization_checkpoint();
                     return Ok(SessionState::NeedResource(need));
                 }
                 CanonicalStepResult::Progress(_) | CanonicalStepResult::Committed(_) => {
@@ -1800,7 +1815,7 @@ mod tests {
     #[test]
     fn retained_session_retries_input_without_duplicate_effect_or_receipt() {
         let (mut stores, root) =
-            prepared_session(b"\\message{once}\\input child x\\par\\shipout\\hbox{x}\\end");
+            prepared_session(b"\\message{once}\\shipout\\hbox{x}\\input child \\end");
         let mut session = EngineSession::new(&mut stores, CommandProfile::TEX82);
         session
             .register_authored_job("job.tex", root)
@@ -1814,41 +1829,21 @@ mod tests {
         assert_eq!(host.calls, 1);
         assert_eq!(
             session.stores().world().memory_terminal_output(),
-            // §537/§362 bracket the retried `\input child` exactly once:
-            // `(child.tex)` with nothing between the parens, since `child`'s
-            // sole line is `\relax`, which prints nothing. §537 prints the
-            // name as opened, extension included, which is what the pinned
-            // oracle brackets too (`(./child.tex)`; Umber's missing `./`
-            // prefix is the separately tracked umber2-alfh.18). Both `[0]`s are
-            // §638's progress marker, one per shipped page (the explicit
-            // `\shipout`, then TeX82 §1054's residual page ejected at
-            // `\end`) -- except the first one is duplicated here, which
-            // this test's own name says should not happen. It is a known,
-            // separately tracked gap (umber2-0t8z): `shipout_replay_box`
-            // commits its marker through `Universe::commit_effects`
-            // immediately (needed so the marker cannot instead leak into a
-            // *later* page's committed artifact bytes, umber2-v4dx), but
-            // that materialization is not itself part of the rollback
-            // boundary this session's `\input child` retry restores, so a
-            // `\shipout` that already ran speculatively before the retry
-            // was discovered leaves its committed marker behind and prints
-            // a second one on the replay that actually commits.
-            Some(&b"(job.tex once (child.tex) [0] [0]"[..]),
-            "aggregate rollback must not repeat an already committed write \
-             (umber2-0t8z: it currently does, for `commit_effects`-driven \
-             output specifically)"
+            // The first attempt materializes §638's `[0]` before the later
+            // `\input` suspends. The replay reaches that same marker again,
+            // but the retained session reconciles the repeated suffix. The
+            // input framing remains virtual because no later shipout commits
+            // it in this fragment.
+            Some(&b"(job.tex once [0]"[..]),
+            "aggregate rollback must not repeat a materialized write"
         );
-        // Two pages: the explicit `\shipout`, then TeX82 §1054's residual
-        // page -- `x\par` is still on the current page when `\end` arrives,
-        // so `its_all_over` is false and the end-job trio ejects it.
-        assert_eq!(run.artifacts.len(), 2);
+        assert_eq!(run.artifacts.len(), 1);
         assert_eq!(run.dvi_pages.len(), run.artifacts.len());
         let boundaries = checkpoints
             .iter()
             .map(tex_exec::EngineCheckpoint::boundary)
             .collect::<Vec<_>>();
         assert!(boundaries.contains(&EngineBoundary::JobStart));
-        assert!(boundaries.contains(&EngineBoundary::OuterParagraphEnd));
         assert!(boundaries.contains(&EngineBoundary::ShipoutComplete));
     }
 
