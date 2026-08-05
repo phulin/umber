@@ -3016,7 +3016,7 @@ fn paragraph_acceptance_publishes_replay_witnesses_and_provenance() {
     let expected_bounds = (*starting_provenance, *ending_provenance);
 
     let resolver = stores.paragraph_origin_resolver();
-    let mut memo = stores.take_pure_memo_runtime();
+    let mut memo = control.take_pure_memo_runtime();
     memo.accept_paragraph_history(resolver);
     let accepted = &memo.accepted_paragraph_history()[0];
     assert_eq!(accepted.dependencies.as_ref(), region.dependencies.as_ref());
@@ -3068,7 +3068,7 @@ fn carried_history_rehomes_prefix_coordinates_and_keeps_provenance() {
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
     let resolver = replay_stores.paragraph_origin_resolver();
-    let mut memo = replay_stores.take_pure_memo_runtime();
+    let mut memo = replay.take_pure_memo_runtime();
     memo.accept_paragraph_history(resolver);
     let accepted = &memo.accepted_paragraph_history()[0];
     assert_eq!(accepted.root_start, expected_start);
@@ -3269,7 +3269,7 @@ fn paragraph_rehome_replays_unchanged_prefix_and_suffix_only() {
         register_source(&mut control, &new);
         control.install_paragraph_replay_regions([region]);
         run_to_end(&mut control, &mut stores);
-        stores.pure_memo_stats()
+        control.pure_memo_stats()
     };
     assert_eq!(run(rebound[0].clone()).paragraph_hits, 1);
     assert_eq!(run(rebound[1].clone()).paragraph_hits, 1);
@@ -3305,7 +3305,7 @@ fn rebound_front_key_keeps_dependency_validation_selective() {
         register_source(&mut control, &revised);
         control.install_paragraph_replay_regions([region.clone()]);
         run_to_end(&mut control, &mut stores);
-        stores.pure_memo_stats()
+        control.pure_memo_stats()
     };
 
     let unrelated = run(0, 41);
@@ -3398,7 +3398,7 @@ stable suffix\par
     let (mut replay, mut stores, region) = fork_after_first_paragraph(old, Arc::clone(&revised));
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut stores);
-    assert_eq!(stores.pure_memo_stats().paragraph_hits, 1);
+    assert_eq!(control.pure_memo_stats().paragraph_hits, 1);
     assert!(
         replay
             .take_finished_paragraph_regions()
@@ -3454,7 +3454,7 @@ stateful \count5=42 paragraph text\par
         .expect("job-start editor checkpoint forks");
     replay.install_paragraph_replay_regions(regions);
     run_to_end(&mut replay, &mut stores);
-    assert_eq!(stores.pure_memo_stats().paragraph_hits, 2);
+    assert_eq!(control.pure_memo_stats().paragraph_hits, 2);
     assert_eq!(stores.count(99), 3);
     assert_job_start_fork_rejects_changed_mutation_precondition();
 }
@@ -3501,7 +3501,7 @@ fn assert_job_start_fork_rejects_changed_mutation_precondition() {
         .expect("job-start editor checkpoint forks");
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut stores);
-    let stats = stores.pure_memo_stats();
+    let stats = control.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0);
     assert_eq!(stats.paragraph.key_misses, 1);
     assert_eq!(stores.count(5), 41, "cold execution applies the paragraph");
@@ -3540,7 +3540,7 @@ fn rebound_history_reaccepts_finished_lines_with_revised_owner() {
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
     let revised_resolver = replay_stores.paragraph_origin_resolver();
-    let mut memo = replay_stores.take_pure_memo_runtime();
+    let mut memo = replay.take_pure_memo_runtime();
     memo.accept_paragraph_history(Arc::clone(&revised_resolver));
     let accepted = &memo.accepted_paragraph_history()[0];
     assert!(accepted.finished_lines.is_some());
@@ -3576,7 +3576,7 @@ fn paragraph_diagnostic_writes_replay_without_a_world_barrier() {
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut replay_stores);
 
-    assert_eq!(replay_stores.pure_memo_stats().paragraph_hits, 1);
+    assert_eq!(replay.pure_memo_stats().paragraph_hits, 1);
     assert!(
         replay_stores.world().effect_records().len() >= before,
         "replay republishes the paragraph diagnostic effect"

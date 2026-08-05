@@ -760,20 +760,33 @@ pub fn cached_pretolerance_plan(
     hlist: &[Node],
     line_params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
-    if !stores.pretolerance_memo_enabled() {
-        if stores.pure_memo_enabled() {
-            stores.record_pure_memo_not_attempted(tex_state::PureMemoLayer::Pretolerance);
+    if !stores
+        .with_pure_memo(|memo| memo.pretolerance_enabled())
+        .unwrap_or(false)
+    {
+        if stores
+            .with_pure_memo(|memo| memo.is_enabled())
+            .unwrap_or(false)
+        {
+            stores.with_pure_memo(|memo| {
+                memo.record_not_attempted(tex_state::PureMemoLayer::Pretolerance);
+            });
         }
         return try_line_break_without_hyphenation(stores, hlist, line_params);
     }
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = pretolerance_memo_key(stores, hlist, line_params);
-    stores.record_pure_memo_timing(
-        tex_state::PureMemoLayer::Pretolerance,
-        tex_state::MemoTimingPhase::Validation,
-        validation_started.elapsed(),
-    );
-    match stores.lookup_pure_pretolerance(key) {
+    stores.with_pure_memo(|memo| {
+        memo.record_timing(
+            tex_state::PureMemoLayer::Pretolerance,
+            tex_state::MemoTimingPhase::Validation,
+            validation_started.elapsed(),
+        );
+    });
+    match stores
+        .with_pure_memo(|memo| memo.lookup_pretolerance(key))
+        .flatten()
+    {
         Some(plan) => plan,
         None => compute_and_cache_pretolerance(stores, key, hlist, line_params),
     }
@@ -795,7 +808,7 @@ fn compute_and_cache_pretolerance(
     params: &LineBreakParams,
 ) -> Option<tex_typeset::linebreak::BreakPlan> {
     let plan = try_line_break_without_hyphenation(stores, hlist, params);
-    stores.insert_pure_pretolerance(key, plan.clone());
+    stores.with_pure_memo(|memo| memo.insert_pretolerance(key, plan.clone()));
     plan
 }
 

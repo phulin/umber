@@ -10,7 +10,7 @@ use crate::glue::GlueSpec;
 use crate::ids::FontId;
 use crate::interner::Symbol;
 use crate::survivor::RetainedNodeList;
-use crate::{ContentHash, DetachedMemoValue, InputSummary, ObservedDependency, RootSpanId};
+use crate::{ContentHash, DetachedMemoValue, ObservedDependency, RootSpanId};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -292,24 +292,6 @@ impl ParagraphRecordingStats {
                 .saturating_sub(earlier.line_retention_nanos),
         }
     }
-
-    fn add(&mut self, phase: ParagraphRecordingPhase, elapsed: Duration, samples: u64) {
-        let target = match phase {
-            ParagraphRecordingPhase::FrontEndDependencies => &mut self.front_end_dependency_nanos,
-            ParagraphRecordingPhase::InputTransition => &mut self.input_transition_nanos,
-            ParagraphRecordingPhase::RegionPublication => &mut self.region_publication_nanos,
-            ParagraphRecordingPhase::BreakDependencies => &mut self.break_dependency_nanos,
-            ParagraphRecordingPhase::BreakKeyDiscovery => &mut self.break_key_discovery_nanos,
-            ParagraphRecordingPhase::BreakStampRegistration => {
-                &mut self.break_stamp_registration_nanos
-            }
-            ParagraphRecordingPhase::BreakValueProjection => &mut self.break_value_projection_nanos,
-            ParagraphRecordingPhase::LineProvenance => &mut self.line_provenance_nanos,
-            ParagraphRecordingPhase::LineRetention => &mut self.line_retention_nanos,
-        };
-        *target = target.saturating_add(elapsed_nanos(elapsed));
-        self.timer_samples = self.timer_samples.saturating_add(samples);
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -528,107 +510,6 @@ pub struct ParagraphProvenanceNode {
     pub slot: u32,
 }
 
-/// Recorder output for one normally executed paragraph. Accepted history owns
-/// shared survivor mounts with stable output-provenance recipes.
-#[derive(Clone, Debug)]
-pub struct RecordedParagraphRegion {
-    /// Cheap candidate identity captured before the first raw delivery.
-    pub starting_span: Option<RootSpanId>,
-    /// Underlying root cursor used to prove complete physical-source coverage.
-    /// This remains available while a token-list frame supplies the next token.
-    pub starting_root_span: Option<RootSpanId>,
-    /// Semantic start continuation needed only when no direct root delivery can
-    /// identify the paragraph. The ordered accepted trace supplies alignment.
-    pub starting_input: Option<InputSummary>,
-    /// Allocation-independent content identity for `starting_input`.
-    pub starting_input_identity: Option<u64>,
-    /// Stable raw cursor reached after the paragraph terminator.
-    pub ending_span: Option<RootSpanId>,
-    pub consumed_spans: Arc<[RootSpanId]>,
-    /// Delivered-token count retained only for avoided-work telemetry. No
-    /// token values or origins are recorded.
-    pub delivered_tokens: usize,
-    /// Generation-local ordinals into `dependency_observations`.
-    pub dependency_ordinals: Arc<[u32]>,
-    /// One immutable observation table shared by every newly accepted region
-    /// in a paragraph history generation. `None` exists only while recording.
-    pub dependency_observations: Option<Arc<[ObservedDependency]>>,
-    /// Root and live-group mutation scripts use different compaction rules.
-    pub mutation_entry_in_group: bool,
-    pub mutations: Arc<[PureParagraphMutation]>,
-    pub effects: Arc<[crate::DetachedVirtualEffect]>,
-    pub ending_input: InputSummary,
-    /// Accepted common prefix between the starting and ending input stacks.
-    /// Replay reuses this proof instead of comparing revision-local handles.
-    pub input_transition_common_frames: u32,
-    /// Stable current-revision rebinding recipe for provenance owned by input
-    /// frames introduced by this paragraph's stack transition.
-    pub input_provenance: ParagraphProvenanceRecipe,
-    /// Origin-list lengths for stored token-list frames in the introduced
-    /// suffix, in frame order. Empty lists remain empty after rebinding.
-    pub input_origin_list_lengths: Arc<[u32]>,
-    /// Handle-free token content for stored token-list frames introduced by
-    /// the paragraph. Common-prefix frames remain live and need no copy.
-    pub input_suffix_token_lists: Arc<[crate::DetachedMemoValue]>,
-    pub barriers: Arc<[ParagraphBarrierReason]>,
-    /// Dependencies observed by horizontal-list construction, line breaking,
-    /// materialization, and packing. A mismatch invalidates finished lines and
-    /// sends the revision down the ordinary cold path.
-    pub break_dependency_ordinals: Arc<[u32]>,
-    /// Enclosing vertical-list line offset consumed by `line_shape`, when a
-    /// non-natural paragraph shape can observe it.
-    pub break_prev_graf: Option<i32>,
-    /// Finished line boxes interleaved with migrating material and penalties.
-    pub lines: Option<RetainedNodeList>,
-    pub line_count: i32,
-    /// `\badness` left by packing the final materialized line.
-    pub line_last_badness: i32,
-    /// Direction stack needed when replay must continue in display math.
-    /// `None` means ordinary paragraph termination; `Some` also identifies an
-    /// empty direction stack as a display continuation without an extra flag.
-    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
-    pub line_provenance: ParagraphLineProvenance,
-}
-
-/// Finished line-breaking payload attached to the most recently recorded
-/// paragraph region.
-pub struct RecordedParagraphLines {
-    pub dependency_ordinals: Vec<u32>,
-    pub prev_graf: Option<i32>,
-    pub lines: RetainedNodeList,
-    pub line_count: i32,
-    pub last_badness: i32,
-    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
-    /// Effects line breaking itself produced -- tex.web §660-§675's
-    /// over/underfull box reports, one per packed line. The region's own
-    /// `effects` close before `line_break` runs, so without these a reused
-    /// paragraph would replay what building its hlist printed and drop what
-    /// breaking it printed.
-    pub effects: Vec<crate::DetachedVirtualEffect>,
-}
-
-impl RecordedParagraphRegion {
-    /// Front-end observations in canonical paragraph order.
-    pub fn dependencies(&self) -> impl ExactSizeIterator<Item = &ObservedDependency> {
-        let observations = self.dependency_observations.as_deref().unwrap_or_default();
-        self.dependency_ordinals.iter().map(|&ordinal| {
-            observations
-                .get(ordinal as usize)
-                .expect("accepted paragraph observation ordinal is valid")
-        })
-    }
-
-    /// Line-result observations in canonical paragraph order.
-    pub fn break_dependencies(&self) -> impl ExactSizeIterator<Item = &ObservedDependency> {
-        let observations = self.dependency_observations.as_deref().unwrap_or_default();
-        self.break_dependency_ordinals.iter().map(|&ordinal| {
-            observations
-                .get(ordinal as usize)
-                .expect("accepted paragraph observation ordinal is valid")
-        })
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct PurePageEntry {
     pub transition: DetachedMemoValue,
@@ -706,7 +587,6 @@ enum PureMemoValue {
     Pretolerance(Option<PureBreakPlan>),
     Page(PurePageEntry),
     Shipout(PureShipoutEntry),
-    Detached,
 }
 
 #[derive(Clone, Debug)]
@@ -730,26 +610,6 @@ pub struct PureMemoRuntime {
     pretolerance: bool,
     page_episodes: bool,
     shipout_episodes: bool,
-    paragraph_recording: Option<crate::env::paragraph::ParagraphMutationCheckpoint>,
-    paragraph_recording_barriers: Vec<ParagraphBarrierReason>,
-    paragraph_recording_group_depth: u32,
-    paragraph_local_boxes: HashSet<u16>,
-    prior_paragraphs: Vec<RecordedParagraphRegion>,
-    /// Stable-source alignment index for the ordered accepted paragraph trace.
-    prior_paragraph_starts: HashMap<RootSpanId, usize>,
-    /// Candidate buckets for paragraphs whose first delivery is not direct
-    /// root source. Full input semantics verify every candidate.
-    prior_paragraph_input_starts: HashMap<(RootSpanId, u64), Vec<usize>>,
-    /// Next accepted occurrence to consider for each semantic replay-input
-    /// boundary. Positions only move forward, making skipped entries linear
-    /// over a complete revision rather than per lookup.
-    prior_paragraph_input_cursors: HashMap<(RootSpanId, u64), usize>,
-    /// First accepted paragraph that may still align with the new execution.
-    prior_paragraph_cursor: usize,
-    recorded_paragraphs: Vec<RecordedParagraphRegion>,
-    recorded_paragraph_observations: Vec<ObservedDependency>,
-    reuse_prior_paragraphs: bool,
-    preserve_prior_paragraphs: bool,
     prior_accepted_paragraphs: Vec<ParagraphHistoryRecord>,
     recorded_accepted_paragraphs: Vec<ParagraphHistoryRecord>,
     paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
@@ -757,6 +617,13 @@ pub struct PureMemoRuntime {
 
 #[allow(clippy::disallowed_methods)] // Operational profiling timers never become TeX facts.
 impl PureMemoRuntime {
+    #[must_use]
+    pub fn new(config: PureMemoConfig) -> Self {
+        let mut runtime = Self::default();
+        runtime.enable(config);
+        runtime
+    }
+
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
         self.cache.is_some()
@@ -808,18 +675,7 @@ impl PureMemoRuntime {
         });
     }
 
-    pub(crate) fn disable(&mut self) {
-        self.cache = None;
-        self.pretolerance = false;
-        self.paragraph_front_ends = false;
-        self.page_episodes = false;
-        self.shipout_episodes = false;
-    }
-
-    pub(crate) fn lookup_pretolerance(
-        &mut self,
-        key: PureMemoKey,
-    ) -> Option<Option<PureBreakPlan>> {
+    pub fn lookup_pretolerance(&mut self, key: PureMemoKey) -> Option<Option<PureBreakPlan>> {
         if !self.pretolerance {
             self.record_not_attempted(PureMemoLayer::Pretolerance);
             return None;
@@ -836,19 +692,10 @@ impl PureMemoRuntime {
                     entry.protected_until_reuse = false;
                     Some(plan.clone())
                 }
-                PureMemoValue::Page(_) | PureMemoValue::Shipout(_) | PureMemoValue::Detached => {
-                    None
-                }
+                PureMemoValue::Page(_) | PureMemoValue::Shipout(_) => None,
             });
         if hit.is_some() {
             cache.stats.hits = cache.stats.hits.saturating_add(1);
-        } else if matches!(
-            cache.entries.get(&key).map(|entry| &entry.value),
-            Some(PureMemoValue::Detached)
-        ) {
-            cache.stats.malformed = cache.stats.malformed.saturating_add(1);
-            cache.remove(key, false);
-            cache.stats.misses = cache.stats.misses.saturating_add(1);
         } else {
             cache.stats.misses = cache.stats.misses.saturating_add(1);
             if cache.evicted_keys.remove(&key) {
@@ -876,7 +723,7 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub(crate) fn lookup_page(&mut self, key: PureMemoKey) -> Option<PurePageEntry> {
+    pub fn lookup_page(&mut self, key: PureMemoKey) -> Option<PurePageEntry> {
         if !self.page_episodes {
             self.record_not_attempted(PureMemoLayer::Page);
             return None;
@@ -922,7 +769,7 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub(crate) fn insert_page(&mut self, key: PureMemoKey, value: PurePageEntry) {
+    pub fn insert_page(&mut self, key: PureMemoKey, value: PurePageEntry) {
         if !self.page_episodes {
             return;
         }
@@ -946,7 +793,7 @@ impl PureMemoRuntime {
         );
     }
 
-    pub(crate) fn record_page_hit(&mut self, contributions: usize, imported_bytes: usize) {
+    pub fn record_page_hit(&mut self, contributions: usize, imported_bytes: usize) {
         if let Some(cache) = &mut self.cache {
             cache.stats.page_contributions_skipped = cache
                 .stats
@@ -959,14 +806,14 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_page_import_failure(&mut self) {
+    pub fn record_page_import_failure(&mut self) {
         if let Some(cache) = &mut self.cache {
             cache.stats.page_import_failures = cache.stats.page_import_failures.saturating_add(1);
             cache.stats.page.import_failures = cache.stats.page.import_failures.saturating_add(1);
         }
     }
 
-    pub(crate) fn lookup_shipout(&mut self, key: PureMemoKey) -> Option<PureShipoutEntry> {
+    pub fn lookup_shipout(&mut self, key: PureMemoKey) -> Option<PureShipoutEntry> {
         if !self.shipout_episodes {
             self.record_not_attempted(PureMemoLayer::Shipout);
             return None;
@@ -1012,7 +859,7 @@ impl PureMemoRuntime {
         hit
     }
 
-    pub(crate) fn insert_shipout(&mut self, key: PureMemoKey, value: PureShipoutEntry) {
+    pub fn insert_shipout(&mut self, key: PureMemoKey, value: PureShipoutEntry) {
         if !self.shipout_episodes {
             return;
         }
@@ -1039,7 +886,7 @@ impl PureMemoRuntime {
         );
     }
 
-    pub(crate) fn record_shipout_hit(&mut self, imported_bytes: usize) {
+    pub fn record_shipout_hit(&mut self, imported_bytes: usize) {
         if let Some(cache) = &mut self.cache {
             cache.stats.shipout_imported_bytes = cache
                 .stats
@@ -1048,7 +895,7 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_shipout_barrier(&mut self) {
+    pub fn record_shipout_barrier(&mut self) {
         if let Some(cache) = &mut self.cache {
             cache.stats.shipout_barriers = cache.stats.shipout_barriers.saturating_add(1);
             cache.stats.shipout.ineligible_barriers =
@@ -1056,68 +903,14 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_output_routine_execution(&mut self) {
+    pub fn record_output_routine_execution(&mut self) {
         if let Some(cache) = &mut self.cache {
             cache.stats.output_routine_executions =
                 cache.stats.output_routine_executions.saturating_add(1);
         }
     }
 
-    pub(crate) fn begin_paragraph_recording(
-        &mut self,
-        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
-        group_depth: u32,
-    ) {
-        if self.paragraph_front_ends_enabled() {
-            self.paragraph_recording = Some(checkpoint);
-            self.paragraph_recording_barriers.clear();
-            self.paragraph_recording_group_depth = group_depth;
-            self.paragraph_local_boxes.clear();
-        }
-    }
-
-    pub(crate) fn mark_paragraph_recording_barrier(&mut self, reason: ParagraphBarrierReason) {
-        if self.paragraph_recording.is_some()
-            && !self.paragraph_recording_barriers.contains(&reason)
-        {
-            self.paragraph_recording_barriers.push(reason);
-        }
-    }
-
-    pub(crate) fn record_paragraph_local_box(&mut self, index: u16, group_depth: u32) {
-        if self.paragraph_recording.is_some() && group_depth > self.paragraph_recording_group_depth
-        {
-            self.paragraph_local_boxes.insert(index);
-        }
-    }
-
-    pub(crate) fn paragraph_box_is_locally_owned(&self, index: u16) -> bool {
-        self.paragraph_recording.is_some() && self.paragraph_local_boxes.contains(&index)
-    }
-
-    pub(crate) fn paragraph_local_write_escapes(&self, group_depth: u32) -> bool {
-        self.paragraph_recording.is_some() && group_depth <= self.paragraph_recording_group_depth
-    }
-
-    pub(crate) fn take_paragraph_recording_barriers(&mut self) -> Vec<ParagraphBarrierReason> {
-        std::mem::take(&mut self.paragraph_recording_barriers)
-    }
-
-    pub(crate) fn finish_paragraph_recording(
-        &mut self,
-    ) -> Option<crate::env::paragraph::ParagraphMutationCheckpoint> {
-        self.paragraph_recording.take()
-    }
-
-    pub(crate) fn abandon_paragraph_recording(
-        &mut self,
-    ) -> Option<crate::env::paragraph::ParagraphMutationCheckpoint> {
-        self.paragraph_recording_barriers.clear();
-        self.paragraph_local_boxes.clear();
-        self.paragraph_recording.take()
-    }
-
-    pub(crate) fn record_paragraph_hit(&mut self, commands: usize, mutations: usize) {
+    pub fn record_paragraph_hit(&mut self, commands: usize, mutations: usize) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1134,7 +927,7 @@ impl PureMemoRuntime {
             .saturating_add(mutations as u64);
     }
 
-    pub(crate) fn record_accepted_paragraph_region(&mut self, record: ParagraphHistoryRecord) {
+    pub fn record_accepted_paragraph_region(&mut self, record: ParagraphHistoryRecord) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1157,10 +950,7 @@ impl PureMemoRuntime {
         self.recorded_accepted_paragraphs.push(record);
     }
 
-    pub(crate) fn record_carried_accepted_paragraph_region(
-        &mut self,
-        record: ParagraphHistoryRecord,
-    ) {
+    pub fn record_carried_accepted_paragraph_region(&mut self, record: ParagraphHistoryRecord) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1179,7 +969,7 @@ impl PureMemoRuntime {
         self.recorded_accepted_paragraphs.push(record);
     }
 
-    pub(crate) fn record_accepted_paragraph_lookup(
+    pub fn record_accepted_paragraph_lookup(
         &mut self,
         hit: bool,
         commands: usize,
@@ -1211,42 +1001,11 @@ impl PureMemoRuntime {
         &self.prior_accepted_paragraphs
     }
 
-    pub(crate) fn record_paragraph_line_hit(&mut self) {
+    pub fn record_paragraph_line_hit(&mut self) {
         let Some(cache) = &mut self.cache else {
             return;
         };
         cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
-    }
-
-    pub(crate) fn record_paragraph_cold_start(&mut self, anchored: Option<bool>) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        let target = match anchored {
-            Some(true) => &mut cache.stats.paragraph_anchored_cold_starts,
-            Some(false) => &mut cache.stats.paragraph_unanchored_cold_starts,
-            None => &mut cache.stats.paragraph_blocked_cold_starts,
-        };
-        *target = target.saturating_add(1);
-    }
-
-    pub(crate) fn finish_recorded_paragraph_lines(&mut self, result: RecordedParagraphLines) {
-        let Some(region) = self.recorded_paragraphs.last_mut() else {
-            return;
-        };
-        if region.barriers.is_empty() && region.lines.is_none() {
-            region.break_dependency_ordinals = result.dependency_ordinals.into();
-            region.break_prev_graf = result.prev_graf;
-            region.lines = Some(result.lines);
-            region.line_count = result.line_count;
-            region.line_last_badness = result.last_badness;
-            region.display_active_directions = result.display_active_directions;
-            if !result.effects.is_empty() {
-                let mut effects = region.effects.to_vec();
-                effects.extend(result.effects);
-                region.effects = effects.into();
-            }
-        }
     }
 
     pub(crate) fn record_paragraph_validation_miss(&mut self) {
@@ -1258,7 +1017,7 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_paragraph_barriers(&mut self, reasons: &[ParagraphBarrierReason]) {
+    pub fn record_paragraph_barriers(&mut self, reasons: &[ParagraphBarrierReason]) {
         let Some(cache) = &mut self.cache else {
             return;
         };
@@ -1326,142 +1085,15 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn record_paragraph_region(&mut self, region: RecordedParagraphRegion) {
-        debug_assert!(region.barriers.is_empty());
-        let started = TelemetryTimer::start();
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_eligible_regions =
-            cache.stats.paragraph_eligible_regions.saturating_add(1);
-        cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
-        cache.stats.paragraph.inserts = cache.stats.paragraph.inserts.saturating_add(1);
-        let bytes = recorded_paragraph_retained_bytes(&region) as u64;
-        let published = &mut cache.stats.paragraph_opportunities.published;
-        published.regions = published.regions.saturating_add(1);
-        published.bytes = published.bytes.saturating_add(bytes);
-        self.recorded_paragraphs.push(region);
-        let elapsed = started.elapsed();
-        cache.stats.paragraph_opportunities.published.nanos = cache
-            .stats
-            .paragraph_opportunities
-            .published
-            .nanos
-            .saturating_add(elapsed_nanos(elapsed));
-        self.record_timing(PureMemoLayer::Paragraph, MemoTimingPhase::Record, elapsed);
-    }
-
-    pub(crate) fn record_carried_paragraph(&mut self, region: &RecordedParagraphRegion) {
-        let started = TelemetryTimer::start();
-        if let Some(cache) = &mut self.cache {
-            let metric = &mut cache.stats.paragraph_opportunities.carried_forward;
-            metric.regions = metric.regions.saturating_add(1);
-            metric.bytes = metric
-                .bytes
-                .saturating_add(recorded_paragraph_retained_bytes(region) as u64);
-            metric.nanos = metric
-                .nanos
-                .saturating_add(elapsed_nanos(started.elapsed()));
-        }
-    }
-
-    pub(crate) fn align_recorded_paragraph_start(
-        &mut self,
-        starting_span: Option<RootSpanId>,
-        starting_root_span: Option<RootSpanId>,
-        starting_input_identity: Option<u64>,
-    ) -> Option<RecordedParagraphRegion> {
-        if !self.reuse_prior_paragraphs || !self.paragraph_front_ends {
-            self.record_not_attempted(PureMemoLayer::Paragraph);
-            return None;
-        }
-        let started = TelemetryTimer::start();
-        let cache = self.cache.as_mut()?;
-        cache.stats.lookups = cache.stats.lookups.saturating_add(1);
-        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
-        let aligned_by_root = starting_span
-            .and_then(|span| self.prior_paragraph_starts.get(&span).copied())
-            .filter(|&index| index >= self.prior_paragraph_cursor);
-        let aligned_by_input = starting_root_span
-            .zip(starting_input_identity)
-            .and_then(|key| {
-                let bucket = self.prior_paragraph_input_starts.get(&key)?;
-                let position = self.prior_paragraph_input_cursors.entry(key).or_default();
-                while bucket
-                    .get(*position)
-                    .is_some_and(|&index| index < self.prior_paragraph_cursor)
-                {
-                    *position = position.saturating_add(1);
-                }
-                bucket.get(*position).copied()
-            });
-        let aligned_index = aligned_by_root.or(aligned_by_input);
-        let result = aligned_index.and_then(|index| self.prior_paragraphs.get(index).cloned());
-        if let Some(index) = aligned_index {
-            self.prior_paragraph_cursor = index.saturating_add(1);
-        }
-        if result.is_none() {
-            cache.stats.misses = cache.stats.misses.saturating_add(1);
-            cache.stats.paragraph.key_misses = cache.stats.paragraph.key_misses.saturating_add(1);
-        }
-        cache.stats.paragraph.lookups = cache.stats.paragraph.lookups.saturating_add(1);
-        cache.stats.paragraph.lookup_nanos = cache
-            .stats
-            .paragraph
-            .lookup_nanos
-            .saturating_add(elapsed_nanos(started.elapsed()));
-        result
-    }
-
     /// Starts one speculative accepted-history suffix. Only a fork of the prior
     /// accepted substrate may resolve the retained node handles.
-    pub fn begin_paragraph_history(&mut self, reuse_prior: bool) {
-        self.recorded_paragraphs.clear();
-        self.recorded_paragraph_observations.clear();
+    pub fn begin_paragraph_history(&mut self, _reuse_prior: bool) {
         self.recorded_accepted_paragraphs.clear();
-        self.reuse_prior_paragraphs = reuse_prior;
-        self.preserve_prior_paragraphs = false;
-        self.prior_paragraph_cursor = 0;
-        self.prior_paragraph_input_cursors.clear();
-    }
-
-    /// Keeps the last accepted trace when a run-wide dependency mismatch makes
-    /// every candidate unusable for the current revision. The trace may become
-    /// valid again after a later inverse edit, and dropping its retained graphs
-    /// here only adds deallocation and future priming work.
-    pub(crate) fn preserve_prior_paragraph_history(&mut self) {
-        self.recorded_paragraphs.clear();
-        self.recorded_paragraph_observations.clear();
-        self.preserve_prior_paragraphs = true;
-        self.reuse_prior_paragraphs = false;
-        self.prior_paragraph_cursor = 0;
     }
 
     /// Publishes the speculative trace wholesale after its owning Universe is
     /// accepted as the new retained generation.
     pub fn accept_paragraph_history(&mut self, resolver: Arc<crate::ParagraphOriginResolver>) {
-        if self.preserve_prior_paragraphs {
-            self.recorded_paragraphs.clear();
-            self.recorded_paragraph_observations.clear();
-            self.recorded_accepted_paragraphs.clear();
-            self.preserve_prior_paragraphs = false;
-            self.prior_paragraph_cursor = 0;
-            self.prior_paragraph_input_cursors.clear();
-            self.reuse_prior_paragraphs = false;
-            return;
-        }
-        let observations: Arc<[ObservedDependency]> =
-            std::mem::take(&mut self.recorded_paragraph_observations).into();
-        for region in &mut self.recorded_paragraphs {
-            if region.dependency_observations.is_none() {
-                region.dependency_observations = Some(Arc::clone(&observations));
-            }
-            if region.lines.is_some()
-                && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
-            {
-                region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));
-            }
-        }
         for region in &mut self.recorded_accepted_paragraphs {
             if region.finished_lines.is_some()
                 && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
@@ -1469,59 +1101,15 @@ impl PureMemoRuntime {
                 region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));
             }
         }
-        self.prior_paragraphs = std::mem::take(&mut self.recorded_paragraphs);
         self.prior_accepted_paragraphs = std::mem::take(&mut self.recorded_accepted_paragraphs);
-        self.prior_paragraph_starts.clear();
-        self.prior_paragraph_input_starts.clear();
-        for (index, region) in self.prior_paragraphs.iter().enumerate() {
-            if let Some(start) = region.starting_span {
-                self.prior_paragraph_starts.entry(start).or_insert(index);
-            }
-            if let Some(key) = region
-                .starting_root_span
-                .zip(region.starting_input_identity)
-            {
-                self.prior_paragraph_input_starts
-                    .entry(key)
-                    .or_default()
-                    .push(index);
-            }
-        }
-        self.prior_paragraph_cursor = 0;
-        self.prior_paragraph_input_cursors.clear();
-        self.reuse_prior_paragraphs = false;
     }
 
     /// Drops all trace metadata produced by an abandoned execution branch.
     pub fn discard_paragraph_history(&mut self) {
-        self.recorded_paragraphs.clear();
-        self.recorded_paragraph_observations.clear();
         self.recorded_accepted_paragraphs.clear();
-        self.preserve_prior_paragraphs = false;
-        self.reuse_prior_paragraphs = false;
-        self.prior_paragraph_cursor = 0;
-        self.prior_paragraph_input_cursors.clear();
     }
 
-    pub fn recorded_paragraphs(&self) -> &[RecordedParagraphRegion] {
-        &self.recorded_paragraphs
-    }
-
-    /// Interns one observation into the speculative history generation.
-    pub(crate) fn record_paragraph_observation(&mut self, observation: ObservedDependency) -> u32 {
-        let ordinal = u32::try_from(self.recorded_paragraph_observations.len())
-            .expect("paragraph observation generation exceeds u32");
-        self.recorded_paragraph_observations.push(observation);
-        ordinal
-    }
-
-    /// Returns the currently accepted ordered paragraph history.
-    #[doc(hidden)]
-    pub fn accepted_paragraphs(&self) -> &[RecordedParagraphRegion] {
-        &self.prior_paragraphs
-    }
-
-    pub(crate) fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
+    pub fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
         if !self.pretolerance {
             self.record_not_attempted(PureMemoLayer::Pretolerance);
             return;
@@ -1538,13 +1126,6 @@ impl PureMemoRuntime {
             MemoTimingPhase::Record,
             started.elapsed(),
         );
-    }
-
-    pub(crate) fn insert_detached(&mut self, key: PureMemoKey, value: DetachedMemoValue) {
-        let owned_bytes = value
-            .retained_bytes()
-            .saturating_sub(std::mem::size_of::<DetachedMemoValue>());
-        self.insert_value(key, PureMemoValue::Detached, owned_bytes);
     }
 
     fn insert_value(&mut self, key: PureMemoKey, value: PureMemoValue, owned_bytes: usize) {
@@ -1603,7 +1184,7 @@ impl PureMemoRuntime {
         }
     }
 
-    pub(crate) fn reject(&mut self, key: PureMemoKey) {
+    pub fn reject(&mut self, key: PureMemoKey) {
         let Some(cache) = self.cache.as_mut() else {
             return;
         };
@@ -1652,27 +1233,6 @@ impl PureMemoRuntime {
         *target = target.saturating_add(elapsed);
     }
 
-    pub(crate) fn record_paragraph_phase(
-        &mut self,
-        phase: ParagraphRecordingPhase,
-        elapsed: Duration,
-    ) {
-        if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_recording.add(phase, elapsed, 1);
-        }
-    }
-
-    pub(crate) fn record_paragraph_phase_samples(
-        &mut self,
-        phase: ParagraphRecordingPhase,
-        elapsed: Duration,
-        samples: u64,
-    ) {
-        if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_recording.add(phase, elapsed, samples);
-        }
-    }
-
     pub fn record_paragraph_validation_failure(&mut self, reason: ParagraphValidationFailure) {
         self.record_paragraph_validation_miss();
         if let Some(cache) = &mut self.cache {
@@ -1682,36 +1242,11 @@ impl PureMemoRuntime {
     }
 
     fn paragraph_metadata_bytes(&self) -> usize {
-        let regions = self
-            .prior_paragraphs
+        self.prior_accepted_paragraphs
             .iter()
-            .chain(&self.recorded_paragraphs);
-        let region_bytes = regions
-            .clone()
-            .map(recorded_paragraph_retained_bytes)
-            .sum::<usize>();
-        let mut tables = HashSet::new();
-        let observation_bytes = regions
-            .filter_map(|region| region.dependency_observations.as_ref())
-            .filter(|table| tables.insert(Arc::as_ptr(table) as *const ObservedDependency as usize))
-            .map(|table| {
-                table
-                    .len()
-                    .saturating_mul(std::mem::size_of::<ObservedDependency>())
-            })
-            .sum::<usize>()
-            .saturating_add(
-                self.recorded_paragraph_observations
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ObservedDependency>()),
-            );
-        region_bytes
-            .saturating_add(observation_bytes)
-            .saturating_add(
-                self.prior_paragraph_starts
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<(RootSpanId, usize)>()),
-            )
+            .chain(&self.recorded_accepted_paragraphs)
+            .map(|record| record.retained_bytes)
+            .sum()
     }
 }
 
@@ -1770,7 +1305,7 @@ enum PureMemoKind {
 impl PureMemoValue {
     fn kind(&self) -> PureMemoKind {
         match self {
-            Self::Pretolerance(_) | Self::Detached => PureMemoKind::Pretolerance,
+            Self::Pretolerance(_) => PureMemoKind::Pretolerance,
             Self::Page(_) => PureMemoKind::Page,
             Self::Shipout(_) => PureMemoKind::Shipout,
         }
@@ -1847,97 +1382,6 @@ impl PureMemoStats {
 
 fn elapsed_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
-}
-
-fn recorded_paragraph_retained_bytes(region: &RecordedParagraphRegion) -> usize {
-    std::mem::size_of::<RecordedParagraphRegion>()
-        .saturating_add(
-            region
-                .starting_input
-                .as_ref()
-                .map_or(0, InputSummary::retained_bytes),
-        )
-        .saturating_add(region.ending_input.retained_bytes())
-        .saturating_add(paragraph_provenance_retained_bytes(
-            &region.input_provenance,
-        ))
-        .saturating_add(
-            region
-                .input_origin_list_lengths
-                .len()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
-        .saturating_add(
-            region
-                .lines
-                .as_ref()
-                .map_or(0, RetainedNodeList::resource_retained_bytes),
-        )
-        .saturating_add(
-            region
-                .consumed_spans
-                .len()
-                .saturating_mul(std::mem::size_of::<RootSpanId>()),
-        )
-        .saturating_add(
-            region
-                .dependency_ordinals
-                .len()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
-        .saturating_add(
-            region
-                .mutations
-                .len()
-                .saturating_mul(std::mem::size_of::<PureParagraphMutation>()),
-        )
-        .saturating_add(
-            region
-                .effects
-                .iter()
-                .map(|effect| {
-                    effect
-                        .operation
-                        .capacity()
-                        .saturating_add(effect.payload.capacity())
-                })
-                .sum::<usize>(),
-        )
-        .saturating_add(
-            region
-                .input_suffix_token_lists
-                .iter()
-                .map(crate::DetachedMemoValue::retained_bytes)
-                .sum::<usize>(),
-        )
-        .saturating_add(
-            region
-                .barriers
-                .len()
-                .saturating_mul(std::mem::size_of::<ParagraphBarrierReason>()),
-        )
-        .saturating_add(
-            region
-                .break_dependency_ordinals
-                .len()
-                .saturating_mul(std::mem::size_of::<u32>()),
-        )
-        .saturating_add(
-            region
-                .display_active_directions
-                .as_ref()
-                .map_or(0, |directions| {
-                    directions
-                        .len()
-                        .saturating_mul(std::mem::size_of::<crate::node::Direction>())
-                }),
-        )
-        .saturating_add(match &region.line_provenance {
-            ParagraphLineProvenance::Pending => 0,
-            ParagraphLineProvenance::Accepted(_) => {
-                std::mem::size_of::<Arc<crate::ParagraphOriginResolver>>()
-            }
-        })
 }
 
 fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> usize {

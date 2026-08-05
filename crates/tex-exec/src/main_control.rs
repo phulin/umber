@@ -106,6 +106,9 @@ fn take_prepared_dvi_pages(pages: &mut PreparedDviPages) -> Vec<crate::dispatch:
 pub struct MainControl {
     command: CommandState,
     runtime: CommandRuntime,
+    /// Operational memo service owned by the execution/session layer.
+    pure_memo: Arc<std::sync::Mutex<tex_state::PureMemoRuntime>>,
+    pure_memo_initialized: bool,
     fuel: tex_command::CommandFuelLedger,
     capabilities: CommandHostCapabilities,
     /// Host output capability for shipout traversal. `None` preserves the
@@ -915,7 +918,9 @@ impl ParagraphRegion {
 
     /// Publishes this accepted replay region into universe-owned history.
     pub fn publish_carried_history(&self, stores: &mut Universe) {
-        stores.record_carried_accepted_paragraph_region(self.history_record());
+        stores.with_pure_memo(|memo| {
+            memo.record_carried_accepted_paragraph_region(self.history_record());
+        });
     }
 
     #[must_use]
@@ -1176,9 +1181,11 @@ impl ParagraphRecorder {
         // carry the operational dependency cursor from that event-time root;
         // discharge that ownerless cursor before opening the next paragraph.
         if stores.dependency_region_is_active() {
-            stores.record_pure_paragraph_validation_failure(
-                tex_state::ParagraphValidationFailure::ParagraphStart,
-            );
+            stores.with_pure_memo(|memo| {
+                memo.record_paragraph_validation_failure(
+                    tex_state::ParagraphValidationFailure::ParagraphStart,
+                );
+            });
             let _ = stores.finish_paragraph_dependency_region();
             let _ = stores.abandon_pure_paragraph_recording();
         }
@@ -1192,7 +1199,10 @@ impl ParagraphRecorder {
             .world_mut()
             .set_active_effect_domain(Some(tex_state::EffectDomain::Paragraph(self.next_identity)));
         stores.begin_dependency_region();
-        stores.begin_pure_paragraph_recording();
+        let memo_enabled = stores
+            .with_pure_memo(|memo| memo.paragraph_front_ends_enabled())
+            .unwrap_or(false);
+        stores.begin_pure_paragraph_recording(memo_enabled);
         modes.clear_completed_paragraph_nodes();
         self.lookup_attempted = false;
         self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
@@ -1408,10 +1418,12 @@ impl ParagraphRecorder {
             line_provenance: tex_state::ParagraphLineProvenance::Pending,
         };
         if barriers.is_empty() {
-            stores.record_accepted_paragraph_region(region.history_record());
+            stores.with_pure_memo(|memo| {
+                memo.record_accepted_paragraph_region(region.history_record());
+            });
         }
         if !barriers.is_empty() {
-            stores.record_pure_paragraph_barriers(&barriers);
+            stores.with_pure_memo(|memo| memo.record_paragraph_barriers(&barriers));
         }
         if !barriers.contains(&tex_state::ParagraphBarrierReason::UnsupportedGroupTransition) {
             Arc::make_mut(&mut self.finished).push(region);
@@ -1524,6 +1536,36 @@ fn command_processor<'a>(
 }
 
 impl MainControl {
+    /// Replaces the execution-owned memo service between candidate runs.
+    pub fn install_pure_memo_runtime(&mut self, runtime: tex_state::PureMemoRuntime) {
+        self.pure_memo = Arc::new(std::sync::Mutex::new(runtime));
+        self.pure_memo_initialized = true;
+    }
+
+    /// Returns the execution-owned memo service to its session owner.
+    pub fn take_pure_memo_runtime(&mut self) -> tex_state::PureMemoRuntime {
+        let runtime = std::mem::take(&mut self.pure_memo);
+        self.pure_memo_initialized = false;
+        Arc::try_unwrap(runtime)
+            .expect("Universe retains only a weak memo capability")
+            .into_inner()
+            .expect("memo runtime mutex is not poisoned")
+    }
+
+    #[must_use]
+    pub fn pure_memo_stats(&self) -> tex_state::PureMemoStats {
+        self.pure_memo
+            .lock()
+            .expect("memo runtime mutex is not poisoned")
+            .stats()
+    }
+
+    /// Attaches this execution-owned service before candidate setup records
+    /// carried history outside the command step loop.
+    pub fn attach_pure_memo_capability(&self, stores: &mut Universe) {
+        stores.attach_pure_memo_capability(&self.pure_memo);
+    }
+
     fn activate_page_output_receipt(
         &mut self,
         episode: tex_state::PageOutputEpisodeId,
@@ -2669,7 +2711,9 @@ impl MainControl {
             self.paragraph_recorder.lookup_attempted = true;
             if !region.barriers.is_empty() {
                 Arc::make_mut(&mut self.paragraph_recorder.replay).drain(index..);
-                stores.record_accepted_paragraph_lookup(false, 0, 0);
+                stores.with_pure_memo(|memo| {
+                    memo.record_accepted_paragraph_lookup(false, 0, 0);
+                });
                 return false;
             }
             if !crate::paragraph_memo::same_mutation_entry_class(
@@ -2714,12 +2758,14 @@ impl MainControl {
         }
         let Some(index) = selected else {
             if let Some(failure) = validation_failure {
-                stores.record_pure_paragraph_validation_failure(failure);
+                stores.with_pure_memo(|memo| memo.record_paragraph_validation_failure(failure));
                 if failure == tex_state::ParagraphValidationFailure::BreakDependency {
                     Arc::make_mut(&mut self.paragraph_recorder.replay).clear();
                 }
             }
-            stores.record_accepted_paragraph_lookup(false, 0, 0);
+            stores.with_pure_memo(|memo| {
+                memo.record_accepted_paragraph_lookup(false, 0, 0);
+            });
             return false;
         };
         let input = self.paragraph_recorder.replay[index].input.clone();
@@ -2732,7 +2778,9 @@ impl MainControl {
             })
             .is_err()
         {
-            stores.record_accepted_paragraph_lookup(false, 0, 0);
+            stores.with_pure_memo(|memo| {
+                memo.record_accepted_paragraph_lookup(false, 0, 0);
+            });
             return false;
         }
         let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
@@ -2753,13 +2801,15 @@ impl MainControl {
         }
         let finished_nodes = region.materialize_finished_nodes(stores);
         if finished_nodes.is_some() {
-            stores.record_pure_paragraph_line_hit();
+            stores.with_pure_memo(tex_state::PureMemoRuntime::record_paragraph_line_hit);
         }
-        stores.record_accepted_paragraph_lookup(
-            true,
-            region.input.coverage().delivered_commands(),
-            region.mutations.len(),
-        );
+        stores.with_pure_memo(|memo| {
+            memo.record_accepted_paragraph_lookup(
+                true,
+                region.input.coverage().delivered_commands(),
+                region.mutations.len(),
+            );
+        });
         self.command.abandon_paragraph_input_transaction();
         self.paragraph_recorder.pending = false;
         self.paragraph_recorder.pending_identity = None;
@@ -2820,7 +2870,9 @@ impl MainControl {
         stores.world_mut().set_active_output_episode(None);
         stores.world_mut().set_active_effect_publication(None);
         stores.world_mut().set_active_effect_domain(None);
-        stores.record_carried_accepted_paragraph_region(region.history_record());
+        stores.with_pure_memo(|memo| {
+            memo.record_carried_accepted_paragraph_region(region.history_record());
+        });
         let entry_prev_graf = self.paragraph_recorder.starting_prev_graf;
         self.modes = ModeNest::from_summary(region.ending_modes.clone())
             .expect("accepted canonical paragraph mode summary remains valid");
@@ -3650,6 +3702,14 @@ impl MainControl {
     /// remain ordinary diagnostics. In either case the next call creates a
     /// fresh command processor; no delivered `CurrentCommand` is retained.
     pub fn advance(&mut self, stores: &mut Universe) -> Result<StepResult, ExecError> {
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }
@@ -5523,6 +5583,14 @@ impl MainControl {
         stores: &mut Universe,
         observer: &mut dyn CommandObserver,
     ) -> Result<StepResult, ExecError> {
+        if !self.pure_memo_initialized {
+            let runtime = stores.take_pure_memo_config().map_or_else(
+                tex_state::PureMemoRuntime::default,
+                tex_state::PureMemoRuntime::new,
+            );
+            self.install_pure_memo_runtime(runtime);
+        }
+        stores.attach_pure_memo_capability(&self.pure_memo);
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
         }

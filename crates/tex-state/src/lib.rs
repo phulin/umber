@@ -156,8 +156,7 @@ pub use pure_memo::{
     ParagraphRecordingPhase, ParagraphRecordingStats, ParagraphValidationFailure,
     PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
     PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphMutation,
-    PureParagraphMutationSummary, PureShipoutEntry, RecordedParagraphLines,
-    RecordedParagraphRegion,
+    PureParagraphMutationSummary, PureShipoutEntry,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,

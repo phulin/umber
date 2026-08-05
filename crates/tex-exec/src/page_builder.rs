@@ -39,21 +39,32 @@ pub(crate) fn build_page_with_error_context(
     if stores.page_contributions().is_empty() {
         return build_page_cold(stores, error_context);
     }
-    if !stores.page_memo_enabled() {
-        if stores.pure_memo_enabled() {
-            stores.record_pure_memo_not_attempted(PureMemoLayer::Page);
+    if !stores
+        .with_pure_memo(|memo| memo.page_episodes_enabled())
+        .unwrap_or(false)
+    {
+        if stores
+            .with_pure_memo(|memo| memo.is_enabled())
+            .unwrap_or(false)
+        {
+            stores.with_pure_memo(|memo| memo.record_not_attempted(PureMemoLayer::Page));
         }
         return build_page_cold(stores, error_context);
     }
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = page_episode_key(stores);
-    stores.record_pure_memo_timing(
-        PureMemoLayer::Page,
-        MemoTimingPhase::Validation,
-        validation_started.elapsed(),
-    );
+    stores.with_pure_memo(|memo| {
+        memo.record_timing(
+            PureMemoLayer::Page,
+            MemoTimingPhase::Validation,
+            validation_started.elapsed(),
+        );
+    });
     let input_origins = stores.page_memo_origins().ok();
-    if let Some(entry) = stores.lookup_pure_page(key) {
+    if let Some(entry) = stores
+        .with_pure_memo(|memo| memo.lookup_page(key))
+        .flatten()
+    {
         let import_started = crate::timing::TelemetryTimer::start();
         let imported_bytes = entry.transition.retained_bytes();
         let replay_origins = input_origins.as_ref().map(|input_origins| {
@@ -74,17 +85,23 @@ pub(crate) fn build_page_with_error_context(
                 .import_page_memo_transition(&entry.transition, MemoValueLimits::default(), origins)
                 .is_ok()
         });
-        stores.record_pure_memo_timing(
-            PureMemoLayer::Page,
-            MemoTimingPhase::Import,
-            import_started.elapsed(),
-        );
+        stores.with_pure_memo(|memo| {
+            memo.record_timing(
+                PureMemoLayer::Page,
+                MemoTimingPhase::Import,
+                import_started.elapsed(),
+            );
+        });
         if imported {
-            stores.record_pure_page_hit(entry.contributions, imported_bytes);
+            stores.with_pure_memo(|memo| {
+                memo.record_page_hit(entry.contributions, imported_bytes);
+            });
             return Ok(());
         }
-        stores.record_pure_page_import_failure();
-        stores.reject_pure_memo(key);
+        stores.with_pure_memo(|memo| {
+            memo.record_page_import_failure();
+            memo.reject(key);
+        });
     }
     let contributions = stores.page_contributions().len();
     let effect_start = stores.world().effect_records().len();
@@ -103,14 +120,16 @@ pub(crate) fn build_page_with_error_context(
                     .unwrap_or(u32::MAX)
             })
             .collect();
-        stores.insert_pure_page(
-            key,
-            PurePageEntry {
-                transition,
-                contributions,
-                origin_ordinals,
-            },
-        );
+        stores.with_pure_memo(|memo| {
+            memo.insert_page(
+                key,
+                PurePageEntry {
+                    transition,
+                    contributions,
+                    origin_ordinals,
+                },
+            );
+        });
     }
     Ok(())
 }

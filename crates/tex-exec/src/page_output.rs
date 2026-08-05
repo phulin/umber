@@ -58,7 +58,7 @@ pub(crate) fn select_pending_page_output(
         stores.clear_page_discards();
         return Ok(SelectedPageOutput::Default(page, ownership, owners));
     }
-    stores.record_output_routine_execution();
+    stores.with_pure_memo(tex_state::PureMemoRuntime::record_output_routine_execution);
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles + 1);
     Ok(SelectedPageOutput::UserRoutine(ownership, owners))
 }

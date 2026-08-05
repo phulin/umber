@@ -276,17 +276,6 @@ impl RetainedNodeList {
     pub(crate) const fn is_mountable(&self) -> bool {
         self.mountable
     }
-
-    pub(crate) fn resource_retained_bytes(&self) -> usize {
-        self.glues
-            .len()
-            .saturating_mul(core::mem::size_of::<(GlueId, GlueSpec)>())
-            .saturating_add(
-                self.fonts
-                    .len()
-                    .saturating_mul(core::mem::size_of::<RetainedFont>()),
-            )
-    }
 }
 
 impl PartialEq for RetainedNodeList {

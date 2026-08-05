@@ -364,7 +364,6 @@ pub struct RevisionCandidate {
     universe: Universe,
     control: MainControl,
     sink: CandidateSink,
-    memo: tex_state::PureMemoRuntime,
     completed: Option<CandidateCompletion>,
     output_ledger: OutputLedger,
     delivered_commands: usize,
@@ -870,7 +869,7 @@ impl RevisionCandidate {
                 .universe
                 .live_generation_charged_bytes()
                 .saturating_add(std::mem::size_of::<MainControl>()),
-            memo_result_bytes: self.universe.pure_memo_stats().retained_bytes,
+            memo_result_bytes: self.control.pure_memo_stats().retained_bytes,
             diagnostic_bytes,
             output_bytes,
             protected_overage_bytes: 0,
@@ -1138,7 +1137,10 @@ impl Session {
         let mut output_id = [0; 16];
         getrandom::fill(&mut output_id).map_err(SessionError::OutputIdentity)?;
         let mut template = template;
-        let pure_memo = template.take_pure_memo_runtime();
+        let pure_memo = template.take_pure_memo_config().map_or_else(
+            tex_state::PureMemoRuntime::default,
+            tex_state::PureMemoRuntime::new,
+        );
         Ok(Self {
             template,
             pure_memo,
@@ -1361,7 +1363,7 @@ impl Session {
         universe.begin_retained_session()?;
         universe.install_editor_fragments(&self.fragments, &self.layout)?;
         universe.set_root_editor_content_hash(ContentHash::from_bytes(self.source.as_bytes()));
-        let control = candidate_control(
+        let mut control = candidate_control(
             &mut universe,
             CandidateControlOptions {
                 job_name: &self.job_name,
@@ -1376,13 +1378,13 @@ impl Session {
         )?;
         let mut memo = self.pure_memo.clone();
         memo.begin_paragraph_history(false);
-        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.attach_pure_memo_capability(&mut universe);
         let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
             universe,
             control,
             sink: CandidateSink::Cold(HistorySink::default()),
-            memo,
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
@@ -1644,13 +1646,16 @@ impl Session {
             && paragraph_start_rehome_failures > 0
         {
             let mut candidate = self.start_replacement_candidate(setup)?;
-            let mut memo = candidate.universe.take_pure_memo_runtime();
+            let mut memo = candidate.control.take_pure_memo_runtime();
             for _ in 0..paragraph_start_rehome_failures {
                 memo.record_paragraph_validation_failure(
                     tex_state::ParagraphValidationFailure::ParagraphStart,
                 );
             }
-            candidate.universe.install_pure_memo_runtime(memo);
+            candidate.control.install_pure_memo_runtime(memo);
+            candidate
+                .control
+                .attach_pure_memo_capability(&mut candidate.universe);
             return Ok(candidate);
         }
         let mut control = if self.initex {
@@ -1739,7 +1744,8 @@ impl Session {
         for failure in validation_failures {
             memo.record_paragraph_validation_failure(failure);
         }
-        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.attach_pure_memo_capability(&mut universe);
         for region in &carried_paragraphs {
             region.publish_carried_history(&mut universe);
         }
@@ -1749,7 +1755,6 @@ impl Session {
             universe,
             control,
             sink: CandidateSink::Advance(sink),
-            memo,
             completed: None,
             output_ledger: OutputLedger::resume(CheckpointIdentity::Exact),
             delivered_commands: 0,
@@ -1823,13 +1828,13 @@ impl Session {
         };
         control.install_contiguous_cold_paragraph_replay_regions(replay_suffix.iter().cloned());
         memo.begin_paragraph_history(false);
-        universe.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.install_pure_memo_runtime(std::mem::take(&mut memo));
+        control.attach_pure_memo_capability(&mut universe);
         let effect_start = universe.world().effect_records().len();
         Ok(RevisionCandidate {
             universe,
             control,
             sink: CandidateSink::Cold(HistorySink::default()),
-            memo,
             completed: None,
             output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
@@ -1873,7 +1878,7 @@ impl Session {
             return Err(SessionError::CandidateKindMismatch);
         };
         let before_memo = self.pure_memo.stats();
-        let mut memo = candidate.universe.take_pure_memo_runtime();
+        let mut memo = candidate.control.take_pure_memo_runtime();
         memo.accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
         let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
         for record in &mut sink.records {
@@ -2015,7 +2020,7 @@ impl Session {
             return Err(SessionError::CandidateKindMismatch);
         };
         let before_memo = self.pure_memo.stats();
-        let mut memo = candidate.universe.take_pure_memo_runtime();
+        let mut memo = candidate.control.take_pure_memo_runtime();
         let paragraph_replay = paragraph_replay_delta(before_memo, memo.stats());
         let break_dependency_index =
             tex_state::ParagraphValidationFailure::BreakDependency as usize;
@@ -3131,10 +3136,8 @@ fn finish_cold_candidate(
     let CandidateSink::Cold(sink) = candidate.sink else {
         return Err(SessionError::CandidateKindMismatch);
     };
-    candidate.memo = candidate.universe.take_pure_memo_runtime();
-    candidate
-        .memo
-        .accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
+    let mut memo = candidate.control.take_pure_memo_runtime();
+    memo.accept_paragraph_history(candidate.universe.paragraph_origin_resolver());
     let effects = candidate.universe.world().effect_records().to_vec();
     let effect_sequences = candidate
         .universe
@@ -3220,7 +3223,7 @@ fn finish_cold_candidate(
             executed_source_text_span_tokens: 0,
             executed_paragraphs,
         },
-        memo: candidate.memo,
+        memo,
     })
 }
 

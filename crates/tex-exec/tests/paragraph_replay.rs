@@ -483,9 +483,11 @@ fn fork_after_first_paragraph(
         .expect("stable suffix paragraph records")
         .rehome_edited_root(old, Arc::clone(&revised), edit_start..edit_start + 4)
         .expect("stable suffix rehomes");
+    let memo = control.take_pure_memo_runtime();
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
     let mut replay = MainControl::with_profile(CommandProfile::TEX82);
+    replay.install_pure_memo_runtime(memo);
     let (forked, _) = checkpoint
         .fork_editor(&mut replay, &substrate, old, revised, &fragments, &layout)
         .expect("canonical editor checkpoint forks");
@@ -507,7 +509,7 @@ stable suffix\par
     let (mut replay, mut stores, region) = fork_after_first_paragraph(old, Arc::clone(&revised));
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut stores);
-    assert_eq!(stores.pure_memo_stats().paragraph_hits, 1);
+    assert_eq!(replay.pure_memo_stats().paragraph_hits, 1);
     assert!(
         replay
             .take_finished_paragraph_regions()
@@ -548,9 +550,11 @@ stateful \count5=42 paragraph text\par
                 .expect("unchanged paragraph rehomes after prefix insertion")
         })
         .collect::<Vec<_>>();
+    let memo = cold.take_pure_memo_runtime();
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
     let mut replay = MainControl::with_profile(CommandProfile::TEX82);
+    replay.install_pure_memo_runtime(memo);
     let (mut stores, _) = checkpoint
         .fork_editor(
             &mut replay,
@@ -563,7 +567,7 @@ stateful \count5=42 paragraph text\par
         .expect("job-start editor checkpoint forks");
     replay.install_paragraph_replay_regions(regions);
     run_to_end(&mut replay, &mut stores);
-    assert_eq!(stores.pure_memo_stats().paragraph_hits, 2);
+    assert_eq!(replay.pure_memo_stats().paragraph_hits, 2);
     assert_eq!(stores.count(99), 3);
 }
 
@@ -595,9 +599,11 @@ fn job_start_fork_rejects_changed_mutation_precondition() {
         .expect("stateful paragraph records")
         .rehome_edited_root(old, Arc::clone(&revised), 0..0)
         .expect("unchanged paragraph input rehomes");
+    let memo = cold.take_pure_memo_runtime();
     let substrate = stores.freeze_generation();
     let (fragments, layout) = editor_layout_for(&revised);
     let mut replay = MainControl::with_profile(CommandProfile::TEX82);
+    replay.install_pure_memo_runtime(memo);
     let (mut stores, _) = checkpoint
         .fork_editor(
             &mut replay,
@@ -610,7 +616,7 @@ fn job_start_fork_rejects_changed_mutation_precondition() {
         .expect("job-start editor checkpoint forks");
     replay.install_paragraph_replay_regions([region]);
     run_to_end(&mut replay, &mut stores);
-    let stats = stores.pure_memo_stats();
+    let stats = replay.pure_memo_stats();
     assert_eq!(stats.paragraph_hits, 0);
     assert_eq!(stats.paragraph.key_misses, 1);
     assert_eq!(stores.count(5), 41, "cold execution applies the paragraph");

@@ -71,7 +71,7 @@ use crate::world::{
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1367,8 +1367,12 @@ pub struct Universe {
     fork_origin: Option<ForkOrigin>,
     /// Operational memo metadata; excluded from snapshots and semantic hashes.
     dependencies: DependencyRuntime,
-    /// Optional pure-query cache; excluded from snapshots and semantic hashes.
-    pure_memo: crate::pure_memo::PureMemoRuntime,
+    /// Driver-requested memo configuration. Execution consumes this once;
+    /// retained values and acceptance policy never live in aggregate state.
+    pure_memo_config: Option<crate::PureMemoConfig>,
+    pure_memo_capability: std::sync::Weak<std::sync::Mutex<crate::PureMemoRuntime>>,
+    /// Narrow mutation recorder used while execution observes one paragraph.
+    paragraph_memo: ParagraphMemoCapability,
     geometry_observations: Vec<GeometryObservation>,
     geometry_observation_enabled: bool,
     /// tex.web's `line` and `pack_begin_line`, the two globals §660/§675's
@@ -1377,6 +1381,14 @@ pub struct Universe {
     /// internal quantity -- so, like [`Self::error_context_widths`], they
     /// stay out of formats, snapshots, and semantic hashes.
     diagnostic_position: DiagnosticPosition,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ParagraphMemoCapability {
+    checkpoint: Option<crate::env::paragraph::ParagraphMutationCheckpoint>,
+    barriers: Vec<crate::ParagraphBarrierReason>,
+    group_depth: u32,
+    local_boxes: HashSet<u16>,
 }
 
 /// TeX82 §177's `print_spec(p,"pt")`, used by §252 `show_eqtb` when §283
@@ -1622,7 +1634,9 @@ impl Clone for Universe {
             next_snapshot_serial: self.next_snapshot_serial,
             fork_origin: self.fork_origin,
             dependencies: self.dependencies.clone(),
-            pure_memo: self.pure_memo.clone(),
+            pure_memo_config: self.pure_memo_config,
+            pure_memo_capability: self.pure_memo_capability.clone(),
+            paragraph_memo: self.paragraph_memo.clone(),
             geometry_observations: self.geometry_observations.clone(),
             geometry_observation_enabled: self.geometry_observation_enabled,
             diagnostic_position: DiagnosticPosition::default(),
@@ -1876,7 +1890,9 @@ impl Universe {
             next_snapshot_serial: 0,
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
-            pure_memo: crate::pure_memo::PureMemoRuntime::default(),
+            pure_memo_config: None,
+            pure_memo_capability: std::sync::Weak::new(),
+            paragraph_memo: ParagraphMemoCapability::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
             diagnostic_position: DiagnosticPosition::default(),
@@ -2363,9 +2379,9 @@ impl Universe {
         }
     }
 
-    /// Enables the bounded session-local pure-query cache.
+    /// Requests a bounded session-local pure-query cache from the next executor.
     pub fn enable_pure_memo(&mut self, config: crate::PureMemoConfig) {
-        self.pure_memo.enable(config);
+        self.pure_memo_config = Some(config);
     }
 
     /// Enables effect-free paragraph-front-end entries in the pure memo runtime.
@@ -2373,321 +2389,122 @@ impl Universe {
     /// This is separate from pure-kernel memoization so callers can measure and
     /// release the broader executor optimization independently.
     pub fn enable_paragraph_memo(&mut self) {
-        self.pure_memo.enable_paragraph_front_ends();
+        self.pure_memo_config
+            .get_or_insert_with(crate::PureMemoConfig::default)
+            .recording
+            .paragraphs = true;
     }
 
     /// Enables detached page-builder episode reuse in the session cache.
     pub fn enable_page_memo(&mut self) {
-        self.pure_memo.enable_page_episodes();
+        self.pure_memo_config
+            .get_or_insert_with(crate::PureMemoConfig::default)
+            .recording
+            .pages = true;
     }
 
     /// Enables finalized effect-free shipout artifact reuse.
     pub fn enable_shipout_memo(&mut self) {
-        self.pure_memo.enable_shipout_episodes();
+        self.pure_memo_config
+            .get_or_insert_with(crate::PureMemoConfig::default)
+            .recording
+            .shipouts = true;
     }
 
-    /// Disables the pure-query cache and releases every retained value.
+    /// Clears a memo request that has not yet been consumed by an executor.
     pub fn disable_pure_memo(&mut self) {
-        self.pure_memo.disable();
+        self.pure_memo_config = None;
     }
 
-    /// Removes the operational memo runtime without touching semantic state.
-    pub fn take_pure_memo_runtime(&mut self) -> crate::PureMemoRuntime {
-        std::mem::take(&mut self.pure_memo)
-    }
-
-    /// Installs a session-owned operational memo runtime.
-    pub fn install_pure_memo_runtime(&mut self, runtime: crate::PureMemoRuntime) {
-        self.pure_memo = runtime;
-    }
-
-    #[must_use]
-    pub fn pure_memo_stats(&self) -> crate::PureMemoStats {
-        self.pure_memo.stats()
-    }
-
-    #[must_use]
-    pub const fn pure_memo_enabled(&self) -> bool {
-        self.pure_memo.is_enabled()
-    }
-
-    #[must_use]
-    pub const fn paragraph_memo_enabled(&self) -> bool {
-        self.pure_memo.paragraph_front_ends_enabled()
-    }
-
-    #[must_use]
-    pub const fn pretolerance_memo_enabled(&self) -> bool {
-        self.pure_memo.pretolerance_enabled()
-    }
-
-    #[must_use]
-    pub const fn page_memo_enabled(&self) -> bool {
-        self.pure_memo.page_episodes_enabled()
-    }
-
-    #[must_use]
-    pub const fn shipout_memo_enabled(&self) -> bool {
-        self.pure_memo.shipout_episodes_enabled()
-    }
-
+    /// Consumes the driver-requested memo configuration. Aggregate state
+    /// never constructs or owns the corresponding runtime.
     #[doc(hidden)]
-    pub fn record_pure_memo_timing(
+    pub fn take_pure_memo_config(&mut self) -> Option<crate::PureMemoConfig> {
+        self.pure_memo_config.take()
+    }
+
+    /// Installs a borrow-only execution capability. The aggregate retains no
+    /// cache values and cannot keep the session service alive.
+    #[doc(hidden)]
+    pub fn attach_pure_memo_capability(
         &mut self,
-        layer: crate::PureMemoLayer,
-        phase: crate::MemoTimingPhase,
-        elapsed: std::time::Duration,
+        runtime: &std::sync::Arc<std::sync::Mutex<crate::PureMemoRuntime>>,
     ) {
-        self.pure_memo.record_timing(layer, phase, elapsed);
+        self.pure_memo_capability = std::sync::Arc::downgrade(runtime);
+    }
+
+    /// Returns the currently attached execution capability, when any.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn pure_memo_capability(
+        &self,
+    ) -> Option<std::sync::Arc<std::sync::Mutex<crate::PureMemoRuntime>>> {
+        self.pure_memo_capability.upgrade()
+    }
+
+    /// Borrows the execution-owned memo service without exposing ownership.
+    #[doc(hidden)]
+    pub fn with_pure_memo<R>(
+        &self,
+        operation: impl FnOnce(&mut crate::PureMemoRuntime) -> R,
+    ) -> Option<R> {
+        let capability = self.pure_memo_capability()?;
+        let mut runtime = capability
+            .lock()
+            .expect("memo runtime mutex is not poisoned");
+        Some(operation(&mut runtime))
     }
 
     #[doc(hidden)]
-    pub fn record_pure_paragraph_phase(
-        &mut self,
-        phase: crate::ParagraphRecordingPhase,
-        elapsed: std::time::Duration,
-    ) {
-        self.pure_memo.record_paragraph_phase(phase, elapsed);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_phase_samples(
-        &mut self,
-        phase: crate::ParagraphRecordingPhase,
-        elapsed: std::time::Duration,
-        samples: u64,
-    ) {
-        self.pure_memo
-            .record_paragraph_phase_samples(phase, elapsed, samples);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_memo_not_attempted(&mut self, layer: crate::PureMemoLayer) {
-        self.pure_memo.record_not_attempted(layer);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_validation_failure(
-        &mut self,
-        reason: crate::ParagraphValidationFailure,
-    ) {
-        self.pure_memo.record_paragraph_validation_failure(reason);
-    }
-
-    #[doc(hidden)]
-    pub fn lookup_pure_pretolerance(
-        &mut self,
-        key: crate::PureMemoKey,
-    ) -> Option<Option<crate::PureBreakPlan>> {
-        self.pure_memo.lookup_pretolerance(key)
-    }
-
-    #[doc(hidden)]
-    pub fn insert_pure_pretolerance(
-        &mut self,
-        key: crate::PureMemoKey,
-        plan: Option<crate::PureBreakPlan>,
-    ) {
-        self.pure_memo.insert_pretolerance(key, plan);
-    }
-
-    #[doc(hidden)]
-    pub fn lookup_pure_page(&mut self, key: crate::PureMemoKey) -> Option<crate::PurePageEntry> {
-        self.pure_memo.lookup_page(key)
-    }
-
-    #[doc(hidden)]
-    pub fn insert_pure_page(&mut self, key: crate::PureMemoKey, value: crate::PurePageEntry) {
-        self.pure_memo.insert_page(key, value);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_page_hit(&mut self, contributions: usize, imported_bytes: usize) {
-        self.pure_memo
-            .record_page_hit(contributions, imported_bytes);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_page_import_failure(&mut self) {
-        self.pure_memo.record_page_import_failure();
-    }
-
-    #[doc(hidden)]
-    pub fn lookup_pure_shipout(
-        &mut self,
-        key: crate::PureMemoKey,
-    ) -> Option<crate::PureShipoutEntry> {
-        self.pure_memo.lookup_shipout(key)
-    }
-
-    #[doc(hidden)]
-    pub fn insert_pure_shipout(&mut self, key: crate::PureMemoKey, value: crate::PureShipoutEntry) {
-        self.pure_memo.insert_shipout(key, value);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_shipout_hit(&mut self, imported_bytes: usize) {
-        self.pure_memo.record_shipout_hit(imported_bytes);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_shipout_barrier(&mut self) {
-        self.pure_memo.record_shipout_barrier();
-    }
-
-    #[doc(hidden)]
-    pub fn record_output_routine_execution(&mut self) {
-        self.pure_memo.record_output_routine_execution();
-    }
-
-    #[doc(hidden)]
-    pub fn begin_pure_paragraph_recording(&mut self) {
-        if self.pure_memo.paragraph_front_ends_enabled() {
-            let checkpoint = self.stores.begin_paragraph_mutations();
-            self.pure_memo.begin_paragraph_recording(
-                checkpoint,
-                crate::ExpansionState::execution_group_depth(self),
-            );
+    pub fn begin_pure_paragraph_recording(&mut self, enabled: bool) {
+        if !enabled {
+            return;
         }
+        self.paragraph_memo.checkpoint = Some(self.stores.begin_paragraph_mutations());
+        self.paragraph_memo.barriers.clear();
+        self.paragraph_memo.group_depth = crate::ExpansionState::execution_group_depth(self);
+        self.paragraph_memo.local_boxes.clear();
     }
 
     /// Marks an effect that cannot be reproduced by paragraph redo while the
     /// current canonical paragraph recording is active.
     #[doc(hidden)]
     pub fn mark_pure_paragraph_barrier(&mut self, reason: crate::ParagraphBarrierReason) {
-        self.pure_memo.mark_paragraph_recording_barrier(reason);
+        if self.paragraph_memo.checkpoint.is_some()
+            && !self.paragraph_memo.barriers.contains(&reason)
+        {
+            self.paragraph_memo.barriers.push(reason);
+        }
     }
 
     #[doc(hidden)]
     pub fn paragraph_box_is_locally_owned(&self, index: u16) -> bool {
-        self.pure_memo.paragraph_box_is_locally_owned(index)
+        self.paragraph_memo.checkpoint.is_some() && self.paragraph_memo.local_boxes.contains(&index)
     }
 
     #[doc(hidden)]
     pub fn take_pure_paragraph_barriers(&mut self) -> Vec<crate::ParagraphBarrierReason> {
-        self.pure_memo.take_paragraph_recording_barriers()
-    }
-
-    #[doc(hidden)]
-    pub fn record_carried_paragraph(&mut self, region: &crate::RecordedParagraphRegion) {
-        self.pure_memo.record_carried_paragraph(region);
-    }
-
-    #[doc(hidden)]
-    pub fn record_paragraph_observation(&mut self, observation: crate::ObservedDependency) -> u32 {
-        self.pure_memo.record_paragraph_observation(observation)
-    }
-
-    #[doc(hidden)]
-    pub fn preserve_prior_paragraph_history(&mut self) {
-        self.pure_memo.preserve_prior_paragraph_history();
+        std::mem::take(&mut self.paragraph_memo.barriers)
     }
 
     #[doc(hidden)]
     pub fn finish_pure_paragraph_recording(
         &mut self,
     ) -> Option<crate::PureParagraphMutationSummary> {
-        let checkpoint = self.pure_memo.finish_paragraph_recording()?;
+        let checkpoint = self.paragraph_memo.checkpoint.take()?;
+        self.paragraph_memo.local_boxes.clear();
         Some(self.stores.finish_paragraph_mutations(checkpoint))
     }
 
     #[doc(hidden)]
     pub fn abandon_pure_paragraph_recording(&mut self) -> bool {
-        let Some(checkpoint) = self.pure_memo.abandon_paragraph_recording() else {
+        let Some(checkpoint) = self.paragraph_memo.checkpoint.take() else {
             return false;
         };
+        self.paragraph_memo.barriers.clear();
+        self.paragraph_memo.local_boxes.clear();
         self.stores.abandon_paragraph_mutations(checkpoint);
         true
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_hit(&mut self, commands: usize, mutations: usize) {
-        self.pure_memo.record_paragraph_hit(commands, mutations);
-    }
-
-    #[doc(hidden)]
-    pub fn record_accepted_paragraph_region(&mut self, record: crate::ParagraphHistoryRecord) {
-        self.pure_memo.record_accepted_paragraph_region(record);
-    }
-
-    #[doc(hidden)]
-    pub fn record_carried_accepted_paragraph_region(
-        &mut self,
-        record: crate::ParagraphHistoryRecord,
-    ) {
-        self.pure_memo
-            .record_carried_accepted_paragraph_region(record);
-    }
-
-    #[doc(hidden)]
-    pub fn record_accepted_paragraph_lookup(
-        &mut self,
-        hit: bool,
-        commands: usize,
-        mutations: usize,
-    ) {
-        self.pure_memo
-            .record_accepted_paragraph_lookup(hit, commands, mutations);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_line_hit(&mut self) {
-        self.pure_memo.record_paragraph_line_hit();
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_cold_start(&mut self, anchored: Option<bool>) {
-        self.pure_memo.record_paragraph_cold_start(anchored);
-    }
-
-    #[doc(hidden)]
-    pub fn finish_recorded_paragraph_lines(&mut self, result: crate::RecordedParagraphLines) {
-        self.pure_memo.finish_recorded_paragraph_lines(result);
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_validation_miss(&mut self) {
-        self.pure_memo.record_paragraph_validation_miss();
-    }
-
-    #[doc(hidden)]
-    pub fn record_pure_paragraph_barriers(&mut self, reasons: &[crate::ParagraphBarrierReason]) {
-        self.pure_memo.record_paragraph_barriers(reasons);
-    }
-
-    #[doc(hidden)]
-    pub fn record_paragraph_region(&mut self, region: crate::RecordedParagraphRegion) {
-        self.pure_memo.record_paragraph_region(region);
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn recorded_paragraphs(&self) -> &[crate::RecordedParagraphRegion] {
-        self.pure_memo.recorded_paragraphs()
-    }
-
-    #[doc(hidden)]
-    pub fn align_recorded_paragraph_start(
-        &mut self,
-        starting_span: Option<crate::RootSpanId>,
-        starting_root_span: Option<crate::RootSpanId>,
-        starting_input_identity: Option<u64>,
-    ) -> Option<crate::RecordedParagraphRegion> {
-        self.pure_memo.align_recorded_paragraph_start(
-            starting_span,
-            starting_root_span,
-            starting_input_identity,
-        )
-    }
-
-    #[doc(hidden)]
-    pub fn insert_pure_memo(&mut self, key: crate::PureMemoKey, value: crate::DetachedMemoValue) {
-        self.pure_memo.insert_detached(key, value);
-    }
-
-    #[doc(hidden)]
-    pub fn reject_pure_memo(&mut self, key: crate::PureMemoKey) {
-        self.pure_memo.reject(key);
     }
 
     fn mark_code_changed(&mut self, table: DependencyCodeTable, _ch: char) {
@@ -2940,7 +2757,9 @@ impl Universe {
             next_snapshot_serial: 0,
             fork_origin: None,
             dependencies: DependencyRuntime::default(),
-            pure_memo: crate::pure_memo::PureMemoRuntime::default(),
+            pure_memo_config: None,
+            pure_memo_capability: std::sync::Weak::new(),
+            paragraph_memo: ParagraphMemoCapability::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
             diagnostic_position: DiagnosticPosition::default(),
@@ -6611,9 +6430,8 @@ impl Universe {
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        if self
-            .pure_memo
-            .paragraph_local_write_escapes(crate::ExpansionState::execution_group_depth(self))
+        if self.paragraph_memo.checkpoint.is_some()
+            && crate::ExpansionState::execution_group_depth(self) <= self.paragraph_memo.group_depth
         {
             self.mark_pure_paragraph_barrier(
                 crate::ParagraphBarrierReason::UnsupportedEscapingWrite,
@@ -6680,8 +6498,11 @@ impl Universe {
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        self.pure_memo
-            .record_paragraph_local_box(index, crate::ExpansionState::execution_group_depth(self));
+        if self.paragraph_memo.checkpoint.is_some()
+            && crate::ExpansionState::execution_group_depth(self) > self.paragraph_memo.group_depth
+        {
+            self.paragraph_memo.local_boxes.insert(index);
+        }
         self.stores.set_box_reg(index, value);
         self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }

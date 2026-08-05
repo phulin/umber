@@ -111,27 +111,37 @@ pub(crate) fn shipout_node_with_input_summary(
         report_huge_page_deleted_box(stores, &node, stores.int_param(IntParam::TRACING_OUTPUT));
         return Ok(None);
     }
-    if stores.pure_memo_enabled() && !stores.shipout_memo_enabled() {
-        stores.record_pure_memo_not_attempted(PureMemoLayer::Shipout);
+    let memo_enabled = stores
+        .with_pure_memo(|memo| memo.is_enabled())
+        .unwrap_or(false);
+    let shipout_memo_enabled = stores
+        .with_pure_memo(|memo| memo.shipout_episodes_enabled())
+        .unwrap_or(false);
+    if memo_enabled && !shipout_memo_enabled {
+        stores.with_pure_memo(|memo| memo.record_not_attempted(PureMemoLayer::Shipout));
     }
-    let cacheable = stores.shipout_memo_enabled()
+    let cacheable = shipout_memo_enabled
         && effect_free_shipout_graph(stores, &node)
         && stores.world().effect_records()[..pending_end].is_empty()
         && (1..=32_768).contains(&stores.int_param(IntParam::MAG));
     let validation_started = crate::timing::TelemetryTimer::start();
     let key = cacheable.then(|| shipout_key(stores, &node));
     if cacheable {
-        stores.record_pure_memo_timing(
-            PureMemoLayer::Shipout,
-            MemoTimingPhase::Validation,
-            validation_started.elapsed(),
-        );
+        stores.with_pure_memo(|memo| {
+            memo.record_timing(
+                PureMemoLayer::Shipout,
+                MemoTimingPhase::Validation,
+                validation_started.elapsed(),
+            );
+        });
     }
     if !cacheable {
-        stores.record_pure_shipout_barrier();
+        stores.with_pure_memo(tex_state::PureMemoRuntime::record_shipout_barrier);
     }
     if let Some(key) = key
-        && let Some(entry) = stores.lookup_pure_shipout(key)
+        && let Some(entry) = stores
+            .with_pure_memo(|memo| memo.lookup_shipout(key))
+            .flatten()
     {
         let import_started = crate::timing::TelemetryTimer::start();
         let detached = entry.artifact.artifact(MemoValueLimits::default());
@@ -143,12 +153,14 @@ pub(crate) fn shipout_node_with_input_summary(
                 entry.render_provenance,
                 receipt,
             )?;
-            stores.record_pure_memo_timing(
-                PureMemoLayer::Shipout,
-                MemoTimingPhase::Import,
-                import_started.elapsed(),
-            );
-            stores.record_pure_shipout_hit(imported_bytes);
+            stores.with_pure_memo(|memo| {
+                memo.record_timing(
+                    PureMemoLayer::Shipout,
+                    MemoTimingPhase::Import,
+                    import_started.elapsed(),
+                );
+                memo.record_shipout_hit(imported_bytes);
+            });
             // The memo retains the detached artifact, not an execution-owned
             // plan. Rebuild its equivalent pure receipt exactly once at this
             // publication boundary so callers never need to lower
@@ -179,12 +191,14 @@ pub(crate) fn shipout_node_with_input_summary(
                 effect_output_attempt: None,
             }));
         }
-        stores.record_pure_memo_timing(
-            PureMemoLayer::Shipout,
-            MemoTimingPhase::Import,
-            import_started.elapsed(),
-        );
-        stores.reject_pure_memo(key);
+        stores.with_pure_memo(|memo| {
+            memo.record_timing(
+                PureMemoLayer::Shipout,
+                MemoTimingPhase::Import,
+                import_started.elapsed(),
+            );
+            memo.reject(key);
+        });
     }
     let effect_start = stores.world().effect_records().len();
     // Absolute, unlike the index above: committing the transaction *drains*
@@ -249,14 +263,16 @@ pub(crate) fn shipout_node_with_input_summary(
     {
         let render_provenance =
             crate::paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
-        stores.insert_pure_shipout(
-            key,
-            PureShipoutEntry {
-                artifact,
-                render_origin_ends,
-                render_provenance,
-            },
-        );
+        stores.with_pure_memo(|memo| {
+            memo.insert_shipout(
+                key,
+                PureShipoutEntry {
+                    artifact,
+                    render_origin_ends,
+                    render_provenance,
+                },
+            );
+        });
     }
     Ok(Some(CommittedPagePublication {
         artifact,
