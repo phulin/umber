@@ -29,6 +29,8 @@ mod page_builder;
 mod page_output;
 mod paragraph_end;
 mod paragraph_memo;
+#[cfg(feature = "profiling")]
+mod paragraph_replay_measurement;
 mod retained_resource;
 mod session_api;
 mod shipout;
@@ -38,6 +40,8 @@ mod vertical;
 
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
+#[cfg(feature = "profiling")]
+pub use paragraph_replay_measurement::{ParagraphReplayMeasurement, paragraph_replay_measurement};
 
 pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,

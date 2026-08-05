@@ -14,7 +14,7 @@ bench = false
 default = []
 shadow = ["tex-state/shadow"]
 profiling-runner = ["dep:test-support"]
-profiling = ["tex-state/profiling"]
+profiling = ["tex-exec/profiling", "tex-state/profiling"]
 
 [dependencies]
 bib-engine = { path = "../bib-engine" }

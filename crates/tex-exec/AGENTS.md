@@ -26,6 +26,7 @@ Command operands are scanned by `tex-command` into typed request and result valu
 - `src/box_runtime/`: source-free box-register, material, packing, migration, horizontal contribution, shaping, spacing, indentation, whatsit, leader, and list-commit operations.
 - `src/paragraph_end.rs` and `src/paragraph_end/`: typed paragraph completion, hyphenation, line materialization, packing, migration, contribution, diagnostics, and pretolerance memoization.
 - `src/paragraph_memo.rs`: source-free paragraph dependency validation, replay, and provenance recipes.
+- `src/paragraph_replay_measurement.rs`: profiling-only process-local attribution for the paragraph replay deletion baseline; it owns no semantic state.
 - `src/page_output.rs`: input-free page-output selection, `\box255` packaging, insertion distribution, held-over material, page marks, diagnostics, and final `\end` state.
 - `src/shipout.rs` and `src/shipout/`: typed page/PDF-form staging, direct artifact and DVI emission, normalization, lowering, replay hosts, transactions, and publication.
 - `src/diagnostics.rs`, `src/error.rs`, and `src/error_report.rs`: canonical error identity, provenance, rendering, recovery reporting, and fatal propagation. `ExecError::Fatal` is TeX82 §81's non-local exit and only main control may catch it.

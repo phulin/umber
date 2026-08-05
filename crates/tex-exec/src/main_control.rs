@@ -539,7 +539,14 @@ struct StepSnapshot {
 
 impl StepSnapshot {
     fn capture(control: &mut MainControl, stores: &mut Universe) -> Self {
-        Self {
+        #[cfg(feature = "profiling")]
+        let started = std::time::Instant::now();
+        #[cfg(feature = "profiling")]
+        let active_paragraph_recorder_logical_bytes = control
+            .paragraph_recorder
+            .pending
+            .then(|| control.paragraph_recorder.snapshot_clone_logical_bytes());
+        let snapshot = Self {
             command: control.command.snapshot(),
             mode_savepoint: control.modes.begin_journal(),
             next_alignment_identity: control.next_alignment_identity,
@@ -563,7 +570,14 @@ impl StepSnapshot {
             retained_page_output_receipt_active: control.retained_page_output_receipt_active,
             job: control.job.clone(),
             universe: stores.snapshot(),
-        }
+        };
+        #[cfg(feature = "profiling")]
+        crate::paragraph_replay_measurement::record_step_snapshot(
+            started.elapsed(),
+            std::mem::size_of::<Self>(),
+            active_paragraph_recorder_logical_bytes,
+        );
+        snapshot
     }
 
     fn rollback(self, control: &mut MainControl, stores: &mut Universe) {
@@ -1118,6 +1132,31 @@ mod paragraph_recorder_tests {
 }
 
 impl ParagraphRecorder {
+    #[cfg(feature = "profiling")]
+    fn snapshot_clone_logical_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.output_producers
+                    .len()
+                    .saturating_mul(std::mem::size_of::<(
+                        u64,
+                        tex_state::StreamBufState,
+                        usize,
+                        usize,
+                    )>()),
+            )
+            .saturating_add(
+                self.pending_output_episode_ids
+                    .len()
+                    .saturating_mul(std::mem::size_of::<u64>()),
+            )
+            .saturating_add(
+                self.superseded_output_episodes
+                    .len()
+                    .saturating_mul(std::mem::size_of::<SupersededPageOutputEpisode>()),
+            )
+    }
+
     fn start_output_episode(
         &mut self,
         owners: &[tex_state::ParagraphRegionOwner],

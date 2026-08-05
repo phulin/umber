@@ -339,12 +339,19 @@ impl EngineCheckpoint {
         let summary = self.command_summary();
         let (mut universe, (owned, detached_meanings)) = substrate
             .fork_at_prepared(&self.universe, |source| {
+                #[cfg(feature = "profiling")]
+                let detach_started = std::time::Instant::now();
                 let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
                     summary,
                     paragraphs
                         .iter()
                         .map(|paragraph| (paragraph.input(), paragraph.accepted_origin_resolver())),
                     source,
+                );
+                #[cfg(feature = "profiling")]
+                crate::paragraph_replay_measurement::record_continuation_detach(
+                    detach_started.elapsed(),
+                    paragraphs.len(),
                 );
                 let mut meanings = std::collections::HashMap::new();
                 for paragraph in paragraphs {
@@ -365,8 +372,15 @@ impl EngineCheckpoint {
         universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
+        #[cfg(feature = "profiling")]
+        let materialize_started = std::time::Instant::now();
         let (materialized, materialized_paragraphs) =
             owned.materialize_with_paragraphs(&mut universe);
+        #[cfg(feature = "profiling")]
+        crate::paragraph_replay_measurement::record_continuation_materialize(
+            materialize_started.elapsed(),
+            paragraphs.len(),
+        );
         **command = materialized;
         if !command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
