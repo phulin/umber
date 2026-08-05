@@ -1,10 +1,13 @@
 ! Missing $ inserted.
 <inserted text>
 ...
+l.13 \setbox0=\hbox{\mathopen
 ! Math formula deleted: Insufficient symbol fonts.
+l.13 \setbox0=\hbox{\mathopen{}$
 > \box0=
 \hbox(0.0+0.0)x0.0
 .\mathon
 .\mathoff
 
 ! OK.
+l.14 \showbox0

@@ -37,6 +37,7 @@
 ..\glue(\rightskip) 3.0
 
 ! OK.
+l.19 \showbox0
 > \box1=
 \vbox(40.30554+0.0)x35.0
 .\hbox(4.30554+0.0)x35.0
@@ -69,3 +70,4 @@
 ..\glue(\rightskip) 3.0
 
 ! OK.
+l.21 \showbox1

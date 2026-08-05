@@ -1838,6 +1838,32 @@ fn run_recovers_from_undefined_control_sequence() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
+fn run_show_publishes_canonical_error_context() {
+    let temp_dir = tempfile::tempdir().expect("create show-context temp dir");
+    let source = temp_dir.path().join("show.tex");
+    fs::write(&source, "\\def\\foo{bar}\\show\\foo\\end\n").expect("write show fixture");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_umber"))
+        .env("SOURCE_DATE_EPOCH", PINNED_SOURCE_DATE_EPOCH)
+        .arg("run")
+        .arg(&source)
+        .output()
+        .expect("run umber show fixture");
+
+    assert!(output.status.success(), "recovered show should succeed");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is utf-8");
+    // TeX82 §§82, 310 publish the live input context after `show_eqtb`'s
+    // diagnostic and before returning from the recoverable error.
+    assert!(stdout.contains("> \\foo=macro:\n->bar."), "{stdout}");
+    assert!(stdout.contains("l.1 \\def\\foo{bar}\\show\\foo"), "{stdout}");
+    assert!(
+        output.stderr.is_empty(),
+        "recovered diagnostic must stay on the terminal channel"
+    );
+}
+
+#[test]
+#[allow(clippy::disallowed_methods)] // host-side temporary files and command execution.
 fn run_recovers_from_extra_endgroup_in_macro() {
     let temp_dir = tempfile::tempdir().expect("create macro diagnostic temp dir");
     let source = temp_dir.path().join("macro.tex");

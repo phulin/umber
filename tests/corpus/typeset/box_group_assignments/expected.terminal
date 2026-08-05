@@ -11,3 +11,4 @@ regs=1,1.0pt,7 more=1,1.0pt,4.0pt,8
 ..\glue(\tabskip) 0.0
 
 ! OK.
+l.16 \showbox1

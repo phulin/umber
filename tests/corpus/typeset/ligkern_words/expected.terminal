@@ -6,6 +6,7 @@
 .\tenrm e
 
 ! OK.
+l.8 \showbox30
 > \box31=
 \hbox(6.94444+0.0)x33.33342
 .\tenrm d
@@ -17,3 +18,4 @@
 .\tenrm t
 
 ! OK.
+l.10 \showbox31

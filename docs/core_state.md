@@ -245,8 +245,10 @@ stream prefixes when a resource suspension crosses the host boundary. As the
 step replays, an exact suffix/prefix overlap is removed once, preserving both
 earlier accepted output and new output after the replay. This makes an eager
 commit inside the speculative region idempotent without withdrawing unrelated
-materialization. Real host publication remains an irreversible barrier and
-cannot be rolled back after bytes cross it.
+materialization. Diagnostic writes, including TeX82 §310 input context, use
+that same effect path and therefore survive the accepted memory-backed retry
+and native-driver handoff exactly once. Real host publication remains an
+irreversible barrier and cannot be rolled back after bytes cross it.
 After an effect commit, native downstream files publish as one recoverable
 staged set: a failed destination rename restores all pre-publication files and
 removes every newly installed member.

@@ -248,6 +248,8 @@ outside the selected checkout.
 `tests/corpus/exec` contains fast execution-core parity cases. These compare
 `umber run`'s terminal output with committed normalized reference terminal
 fixtures through the shared `test_support::normalize::exec_log` helper. The
+normalizer retains TeX82 §310's `show_context` lines, so the committed terminal
+fixtures cover live input context rather than treating it as incidental framing. The
 manual parity test reads the committed `expected.terminal` files; regenerate them through
 `scripts/regen-fixtures.sh` when reference output intentionally changes. Live
 reference regeneration uses `-ini` plus the seven printable catcodes installed
@@ -266,7 +268,8 @@ are copied into the reference run directory for `\readline` coverage.
 typesetting layer. These compare `umber run --show-fixtures` terminal output
 with committed normalized reference terminal fixtures through the shared
 `test_support::normalize::box_dump` helper; that helper uses the same
-diagnostic-log normalizer as `exec_log`. Reference regeneration uses `-ini`
+diagnostic-log normalizer as `exec_log` and likewise retains §310 context.
+Reference regeneration uses `-ini`
 plus `umber run`'s printable catcodes, so TeX82 §660-§675 box diagnostics
 are compared under the same parameters and on the same output channel; they
 are not normalized away. In this mode, `umber` writes only the
