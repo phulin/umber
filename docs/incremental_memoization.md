@@ -17,7 +17,10 @@ external-input observation changed, execution starts at `JobStart`.
 Paragraph construction, dependency observation, line breaking, page building,
 effects, and shipout then execute normally. A candidate may adopt an accepted
 suffix only after the generic canonical-state and boundary-schedule convergence
-checks succeed. No paragraph-specific validation or mount path participates.
+checks succeed. `InputSummary` retains only the generic future-state comparison
+needed by that convergence check; it exposes no paragraph boundary identity or
+cursor-transition API. No paragraph-specific validation or mount path
+participates.
 
 ## Preserved reuse
 

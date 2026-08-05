@@ -56,7 +56,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/identity/tests.rs`: Property and boundary tests for rollback, fork, exhaustion, and foreign-handle rejection.
 - `src/ids.rs`: Opaque ids for token lists, origin lists, macros, glue, fonts, snapshots, survivor roots, and node-list spans.
 - `src/ids/tests.rs`: Unit tests for opaque id raw values and node/origin-list span metadata.
-- `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and replay frame metadata.
+- `src/input.rs`: Snapshot-ready lexer/input stack summaries, macro argument slots, source ids, and generic checkpoint future-state comparison.
 - `src/input/tests.rs`: Structural-sharing tests for frozen input-summary roots and source payloads.
 - `src/interner.rs`: Control-sequence name interner with dense symbols, lookup, hashing, and rollback marks.
 - `src/interner/tests.rs`: Unit tests for symbol interning, resolution, rollback, and content hashing.
@@ -127,7 +127,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/stores/format/font_validation.rs`: Pre-publication validation of detached font metrics, identifiers, and serialized Env font banks, plus test-only corruption fixtures.
 - `src/stores/state_hash.rs`: Store snapshot cursor and semantic hashing implementation for changed cells and store-owned slices.
 - `src/stores/tests.rs`: Unit tests for aggregate store rollback, builders, handle validation, parameters, boxes, and state hashes.
-- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including accepted-history retained mounts, shared immutable payload ownership, root-safe buffer recycling, and profiling-only promotion measurements.
+- `src/survivor.rs`: Survivor arena for node lists that escape epoch rollback boundaries, including shared immutable payload ownership, root-safe buffer recycling, and profiling-only promotion measurements.
 - `src/tests.rs`: Crate-level integration-style unit tests for `Universe`, snapshots, world effects, and module test wiring.
 - `src/tests/handle_matrix.rs`: Table-driven aggregate rollback, fork, and cross-Universe liveness coverage for every production opaque handle class.
 - `src/tests/live_boundary.rs`: Unit tests proving live-state capability boundaries and restricted context APIs.
