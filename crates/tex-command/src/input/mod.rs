@@ -1,5 +1,7 @@
 //! Private input state machines.
 
+use std::collections::BTreeMap;
+
 mod levels;
 mod lines;
 mod source;
@@ -42,7 +44,11 @@ pub use tokenizer::{
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(crate) struct InputState {
     pub(crate) levels: Vec<InputLevel>,
-    pub(crate) registered_sources: Vec<RegisteredSource>,
+    /// Backing registered for a future one-shot open, keyed by `SourceId`.
+    ///
+    /// Opening removes the entry and moves its backing into the source level,
+    /// so retired sources leave neither bytes nor registry state behind.
+    pub(crate) pending_sources: BTreeMap<u32, RegisteredSource>,
     pub(crate) next_level_identity: u64,
     pub(crate) next_source_identity: u64,
     /// TeX82 §362's process-global `force_eof`.

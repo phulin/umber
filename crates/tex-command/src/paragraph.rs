@@ -202,11 +202,6 @@ fn rebind_root_input_with_delta(
         .backing
         .rebind_generated(id, Arc::clone(&new))
         .ok()?;
-    let registered = input
-        .registered_sources
-        .iter_mut()
-        .find(|registered| registered.id == id)?;
-    *registered = backing.clone();
     source.cursor.backing = backing;
     source.cursor.next_physical_offset = source
         .cursor

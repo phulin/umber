@@ -302,7 +302,7 @@ impl fmt::Display for SourceRegistrationError {
 
 impl std::error::Error for SourceRegistrationError {}
 
-/// Complete immutable source backing retained by command state.
+/// Complete immutable source backing owned by a pending open or live level.
 #[derive(Clone)]
 pub(crate) struct RegisteredSource {
     pub(crate) id: SourceId,

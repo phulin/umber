@@ -34,7 +34,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     let InputState {
         levels,
-        registered_sources,
+        pending_sources,
         next_level_identity,
         next_source_identity,
         force_eof,
@@ -79,7 +79,7 @@ fn semantic_ownership_domains_are_exhaustively_classified() {
 
     drop((
         levels,
-        registered_sources,
+        pending_sources,
         next_level_identity,
         next_source_identity,
         force_eof,
@@ -136,7 +136,7 @@ fn default_state_is_quiescent() {
     let state = CommandState::default();
 
     assert!(state.input.levels.is_empty());
-    assert!(state.input.registered_sources.is_empty());
+    assert!(state.input.pending_sources.is_empty());
     assert!(state.parameters.activations.is_empty());
     assert!(state.conditions.frames.is_empty());
     assert!(state.alignment.suspended.is_empty());
@@ -273,6 +273,51 @@ fn current_file_source_identity_matches_the_line_owner() {
         .expect("named source opens as a text file");
 
     assert_eq!(state.current_file_source_id(), Some(source));
+}
+
+#[test]
+fn opening_consumes_pending_backing_and_reopening_the_id_fails() {
+    let mut state = CommandState::default();
+    let source = register_named(&mut state, "one-shot.tex", b"x\n");
+
+    assert_eq!(state.input.pending_sources.len(), 1);
+    state
+        .open_registered_source(source)
+        .expect("pending source opens once");
+
+    assert!(state.input.pending_sources.is_empty());
+    assert_eq!(
+        state
+            .open_registered_source(source)
+            .expect_err("consumed source cannot reopen")
+            .source(),
+        source
+    );
+}
+
+#[test]
+fn retiring_an_opened_source_releases_its_backing() {
+    let mut state = CommandState::default();
+    let bytes: std::sync::Arc<[u8]> = std::sync::Arc::from(&b"x\n"[..]);
+    let weak = std::sync::Arc::downgrade(&bytes);
+    let source = state
+        .register_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            std::sync::Arc::clone(&bytes),
+        ))
+        .expect("source registers");
+    drop(bytes);
+    state
+        .open_registered_source(source)
+        .expect("source opens once");
+    let identity = source_level_identity(&state);
+
+    state
+        .retire_exhausted_input(identity)
+        .expect("source level retires");
+
+    assert!(state.input.pending_sources.is_empty());
+    assert!(weak.upgrade().is_none());
 }
 
 #[test]

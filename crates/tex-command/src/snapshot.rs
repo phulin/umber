@@ -182,15 +182,6 @@ impl CommandSummary {
         let Ok(backing) = source.cursor.backing.rebind_generated(id, new) else {
             return false;
         };
-        let Some(registered) = self
-            .input
-            .registered_sources
-            .iter_mut()
-            .find(|registered| registered.id == id)
-        else {
-            return false;
-        };
-        *registered = backing.clone();
         source.cursor.backing = backing;
         let Some(next_physical_offset) = source
             .cursor

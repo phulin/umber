@@ -1101,8 +1101,21 @@ impl CommandState {
         let id = tex_state::SourceId::new(raw);
         let source = RegisteredSource::register(id, self.profile(), registration)?;
         self.input.next_source_identity += 1;
-        self.input.registered_sources.push(source);
+        let previous = self.input.pending_sources.insert(raw, source);
+        debug_assert!(previous.is_none(), "source identities are unique");
         Ok(id)
+    }
+
+    fn take_registered_source(
+        &mut self,
+        source: tex_state::SourceId,
+    ) -> Result<RegisteredSource, UnknownRegisteredSource> {
+        let registered = self
+            .input
+            .pending_sources
+            .remove(&source.raw())
+            .ok_or(UnknownRegisteredSource(source))?;
+        Ok(registered)
     }
 
     /// Opens an already registered source as a text file, the way tex.web
@@ -1114,8 +1127,10 @@ impl CommandState {
     /// some other way (§331 and §483); they use
     /// [`Self::open_registered_source_as`].
     ///
-    /// This operation only clones retained immutable backing. It cannot search
-    /// for files, invoke a host callback, or diagnose text encoding.
+    /// This operation consumes the registered immutable backing. A source ID
+    /// is therefore openable exactly once; the live level becomes its sole
+    /// command-state owner. It cannot search for files, invoke a host
+    /// callback, or diagnose text encoding.
     pub fn open_registered_source(
         &mut self,
         source: tex_state::SourceId,
@@ -1138,19 +1153,13 @@ impl CommandState {
     }
 
     /// Opens an already registered source under an explicit tex.web §303
-    /// `name` classification.
+    /// `name` classification, consuming the source's pending backing.
     pub fn open_registered_source_as(
         &mut self,
         source: tex_state::SourceId,
         name_class: SourceNameClass,
     ) -> Result<(), UnknownRegisteredSource> {
-        let registered = self
-            .input
-            .registered_sources
-            .iter()
-            .find(|registered| registered.id == source)
-            .cloned()
-            .ok_or(UnknownRegisteredSource(source))?;
+        let registered = self.take_registered_source(source)?;
         self.push_source_level(
             registered,
             name_class,
@@ -1174,11 +1183,7 @@ impl CommandState {
             &b""[..],
         ))?;
         let registered = self
-            .input
-            .registered_sources
-            .iter()
-            .find(|registered| registered.id == source)
-            .cloned()
+            .take_registered_source(source)
             .expect("a source registered above is present");
         let identity = self.push_source_level(
             registered,
@@ -1199,11 +1204,7 @@ impl CommandState {
             bytes,
         ))?;
         let registered = self
-            .input
-            .registered_sources
-            .iter()
-            .find(|registered| registered.id == source)
-            .cloned()
+            .take_registered_source(source)
             .expect("a source registered above is present");
         let identity = self.push_source_level(
             registered,
@@ -1232,11 +1233,7 @@ impl CommandState {
             bytes,
         ))?;
         let registered = self
-            .input
-            .registered_sources
-            .iter()
-            .find(|registered| registered.id == source)
-            .cloned()
+            .take_registered_source(source)
             .expect("a source registered above is present");
         let Some(InputLevel::Source(active)) = self.input.levels.last_mut() else {
             unreachable!("begin_read_line keeps its source level active during acquisition");
@@ -1261,11 +1258,7 @@ impl CommandState {
         assert!(matches!(numeric_name, 18 | 19));
         let source = self.register_source(registration)?;
         let registered = self
-            .input
-            .registered_sources
-            .iter()
-            .find(|registered| registered.id == source)
-            .cloned()
+            .take_registered_source(source)
             .expect("a source registered above is present");
         Ok(self.push_source_level(
             registered,
@@ -1477,7 +1470,7 @@ impl CommandState {
     }
 
     /// Captures the active source's immutable identity and bytes for detached
-    /// observation without exposing the registered-source store.
+    /// observation without exposing the live source level.
     pub(crate) fn active_source_snapshot(
         &self,
     ) -> Option<crate::observation::OpenedSourceSnapshot> {

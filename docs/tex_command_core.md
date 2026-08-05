@@ -1514,8 +1514,10 @@ immutable bytes and records whether they came from World, generated input, an
 editor fragment, or typed read-line acquisition. Registration allocates the
 stable `SourceId`; Unicode mode validates the complete UTF-8 backing before
 allocation and reports the exact malformed byte range, while exact mode never
-decodes or rewrites bytes. Opening a registered source only clones retained
-backing and therefore cannot invoke host policy.
+decodes or rewrites bytes. Opening a registered source consumes its one-shot
+pending backing into the live source level and therefore cannot invoke host
+policy. A `SourceId` cannot be reopened; provenance source-map registration is
+independent and retains the exact ID after the source level retires.
 
 Physical refill distinguishes LF, CR, CRLF, and a missing final terminator.
 A final terminator does not manufacture another empty line. Normalization

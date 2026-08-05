@@ -54,7 +54,7 @@ print channel of its own outside the borrowed
   present and future `succumb` site raises this type; §81 `jump_out` is
   modelled by the executor latching it as the session's terminal state.
 - `src/input/source.rs`, `src/input/source/tests.rs`: public host-neutral
-  source-registration inputs and errors plus private immutable backing,
+  one-shot source-registration inputs and errors plus private immutable backing,
   source cursors, retained World modification metadata for typed file
   enquiries, and focused registration tests. It also owns
   `SourceNameClass`, TeX82 §303's partition of a source level's `name` into
