@@ -170,7 +170,7 @@ without weakening the unexpected-response check. Already required, registered,
 unavailable, or user-supplied keys are removed before emission; native local
 search has first refusal; and stale or ignored hints create no unavailable
 binding and do not count as retry progress.
-`FileProvisioner` also owns the session's layered user and resolved-resource
+`ProjectWorkspace` also owns the session's layered user and resolved-resource
 storage plus its accepted generated layer. Each TeX attempt reads inputs and
 TFM files from one immutable stage snapshot; the resolver passes selected
 shared bytes through `World`, whose memory backend retains the selected path
@@ -180,7 +180,7 @@ auxiliary files publish through the same stage transaction in deterministic
 path order.
 
 Before an edited candidate is constructed, the driver installs its synthetic
-root in a private provisioner generation and opens the exact stage snapshot
+root in a private workspace generation and opens the exact stage snapshot
 that its resolvers will read. It compares every accepted positive and
 authoritative-negative dependency with that snapshot. An exact match permits
 ordinary checkpoint selection; any mismatch creates a private candidate that
@@ -192,8 +192,8 @@ stage, so the session retains no parallel byte maps, file-accounting counters,
 or partially published generated files.
 
 For an editor patch, the candidate root replaces the main user binding only in
-the cloned provisioner generation used by the candidate build. Build
-acceptance on that clone is still private; the provisioner generation and
+the private workspace generation used by the candidate build. Build
+acceptance on that clone is still private; the workspace generation and
 `tex-incr` candidate are installed together after output validation. This is
 the synthetic immutable root file promised by the VFS contract, without a
 second root-byte store in the WASM adapter.
@@ -286,7 +286,7 @@ While a candidate is suspended, live retention telemetry adds its private
 engine-generation charge, shallow control/command owners, speculative editor
 fragments and layout, memo results, and private output state to the accepted
 revision's charge. The VFS resource charge comes from the candidate's private
-provisioner generation, whose immutable backing may be shared with accepted
+workspace generation, whose immutable backing may be shared with accepted
 state; shared bytes are not double-counted merely because both generations
 reference them. Candidate charges disappear on cancellation, terminal failure,
 or acceptance.

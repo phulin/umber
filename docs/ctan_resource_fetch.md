@@ -117,7 +117,7 @@ layer: the next attempt's resolver reports the ordinary TeX missing-file
 condition instead of re-requesting, duplicates are idempotent, and a later
 attempt to bind bytes to the same key is a typed conflict. An unavailable
 answer counts as progress for no-progress detection. This lands in
-`umber-vfs` (`FileProvisioner`), the session resolvers, the WASM wire
+`umber-vfs` (`ProjectWorkspace`), the session resolvers, the WASM wire
 encoding, and the JavaScript facade, and replaces the resolver-side
 `missing-key` hard failure for requests the manifest does not contain.
 

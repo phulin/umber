@@ -151,31 +151,18 @@ Rollback is a per-consumer parser switch; old manifests remain readable througho
 
 Affected crates: `umber-vfs`, `umber`, `tex-incr`, `bib-engine`, and `umber-wasm`.
 
-**Current design — observed.** `umber-vfs` already exports layered storage, resource provisioning, snapshots, and build transactions through [`crates/umber-vfs/src/lib.rs:23`](/home/phulin/umber/crates/umber-vfs/src/lib.rs:23) and [`crates/umber-vfs/src/lib.rs:27`](/home/phulin/umber/crates/umber-vfs/src/lib.rs:27). Its `VirtualFs` owns a storage layer and limits at [`crates/umber-vfs/src/transaction.rs:146`](/home/phulin/umber/crates/umber-vfs/src/transaction.rs:146), while `umber` project orchestration maintains additional outer/inner VFS state, generated-file maps, resource observations, and rehydration paths in [`crates/umber/src/latex_project.rs:199`](/home/phulin/umber/crates/umber/src/latex_project.rs:199), [`crates/umber/src/latex_project.rs:389`](/home/phulin/umber/crates/umber/src/latex_project.rs:389), and [`crates/umber/src/virtual_compile.rs:710`](/home/phulin/umber/crates/umber/src/virtual_compile.rs:710).
+**Implementation — completed by `umber2-fjfh.3`.** `umber-vfs::ProjectWorkspace` owns layered storage, validated limits, the typed `ResourceLedger`, immutable snapshots, and the pending generated transaction. Compile attempts borrow the ledger beside the disjoint build overlay; incremental execution, bibliography, and WASM receive snapshots or the existing session adapter. The project response cache, per-attempt resolver maps, and reverse resolved-path map have been deleted.
 
-**End state.** Introduce one `ProjectWorkspace` owning:
-
-- layered virtual storage;
-- one path and generation index;
-- one `ResourceLedger` keyed by typed request and generation;
-- one pending overlay transaction;
-- one limit/accounting policy.
+**End state.** One `ProjectWorkspace` owns layered storage, the path/generation
+index, typed `ResourceLedger`, pending overlay, and limit/accounting policy.
 
 Compilation, incremental editing, bibliography, and WASM sessions receive narrow workspace views instead of cloning VFS state and rebuilding resource maps. `umber-vfs` remains the low-level implementation owner; the project-level duplicate ledgers disappear.
 
-**Estimated net reduction.** 400–800 production LOC and 400–800 test LOC. Confidence: medium-low because resource precedence and generation retention are subtle.
-
 **Preservation argument.** The ledger must retain local-file precedence, aliases, generated-file provenance, immutable bindings, retry behavior, snapshot retention, and limits. The change is an ownership consolidation, not a change to resource lookup policy.
 
-**Migration and rollback.**
-
-1. Wrap current resource maps in a ledger façade that records identical decisions.
-2. Route `latex_project` through one workspace while leaving old maps populated as assertions.
-3. Migrate `VirtualCompileSession`, incremental sessions, and bibliography resource consumers.
-4. Delete duplicated maps and rehydration passes only after the ledger reproduces all snapshots.
-5. Keep the old project façade as a delegating adapter.
-
-Rollback is per session type: each caller can return to the old map implementation while the workspace remains available.
+**Migration status.** Complete. Focused parity tests protected precedence,
+aliases, bindings, retries, snapshots, generations, provenance, and limits as
+the old maps were removed. No compatibility façade or production switch remains.
 
 **Gates and risks.** Test generated-file paths, local shadowing, font/image/input acquisition, retry and limit errors, snapshot retention, incremental generations, LaTeX/Biber resource provenance, and WASM behavior. Risks include changing lookup precedence, retaining too much generation state, and introducing borrow/lifetime complexity.
 

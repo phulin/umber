@@ -46,7 +46,7 @@ observations are staged and delivered only after the candidate commits.
 `tex-incr::RevisionCandidate` and `umber::VirtualCompileSession` now provide
 the host-session retention layer. A candidate owns its `ExecutionRun`, input
 stack, mutable `Universe`, speculative checkpoint sink, paragraph-memo
-generation, editor setup, and private VFS provisioner generation across
+generation, editor setup, and private workspace generation across
 resource batches. Each drive installs resolvers over a fresh immutable VFS
 snapshot and therefore replays only the rolled-back executor step. The host
 tracks response progress separately and rejects a retry that binds no newly
@@ -169,7 +169,7 @@ goes through `FinishEnd`. `\dump` also goes through the explicit end path, then
 the current loop does.
 
 `AwaitingResources` always names the same next `ExecutionStep` that was rolled
-back. Resource registration changes only the provisioner's immutable
+back. Resource registration changes only the workspace's immutable
 resource generation. A complete or partial response batch moves the host
 session back to `Ready`; replay may suspend again with the remaining or newly
 discovered requests. Retrying without a newly bound positive or authoritative
@@ -344,7 +344,7 @@ The implementation and tests must preserve all of these invariants:
    build/revision transaction; accepting it publishes all committed steps at
    once.
 5. A resource response never mutates TeX semantic state directly. It extends
-   the immutable provisioner generation; the replayed TeX operation observes
+   the immutable workspace generation; the replayed TeX operation observes
    and records the selection at its original point in execution order.
 6. A named checkpoint is captured only at the existing `JobStart`, eligible
    `OuterParagraphEnd`, and eligible outermost `ShipoutComplete` schedule. Step

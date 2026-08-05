@@ -1,12 +1,10 @@
 # Shared virtual filesystem
 
-Status: VFS substrate and TeX-session migration complete. Canonical paths,
-immutable files, layered storage, typed file requests, resource registration,
-file limits, deterministic snapshots, generated-file transactions, TeX
-compile-session input/output adapters, shared native/WASM resource batching,
-atomic editor-revision/build acceptance, and legacy-store removal are
-implemented. Bibliography stages and native multipass project orchestration are
-separately tracked by the `umber2-rti9` epic.
+Status: shared project-workspace migration complete. Canonical paths, immutable
+files, layered storage, the typed resource ledger, deterministic snapshots,
+generated-file transactions, TeX and bibliography views, shared native/WASM
+resource batching, atomic editor-revision/build acceptance, and legacy-map
+removal are implemented.
 
 This document defines `umber-vfs`, the host-neutral virtual filesystem shared
 by Umber's TeX driver, bibliography processing, native embeddings, and the
@@ -346,8 +344,9 @@ unavailable is a typed conflict.
 `FileRequestBatch` stores outstanding requests in sorted sets, deduplicates by
 the complete domain/kind/name key, lets a required request dominate the same
 probe, and lets either blocking class dominate the same prefetch hint.
-`FileProvisioner` accepts partial and permuted responses
-atomically, retains identical duplicate registrations as no-ops, and exposes
+`ProjectWorkspace` owns the layered storage, validated `VfsLimits`, and one
+`ResourceLedger`. It accepts partial and permuted responses atomically, retains
+identical duplicate registrations as no-ops, and exposes
 typed unexpected-request, kind, path, digest, conflict, path-conflict, limit,
 and no-progress failures. The combined compile session retains the existing
 `NeedResources` required/probe/prefetch model around this file-only boundary.
@@ -375,12 +374,18 @@ It does not mutate the accepted user layer. Accepting the compile revision
 publishes the new root identity together with the generated build; rollback
 retains the prior root and generated files.
 
-The compile session implements this without weakening the immutable build API:
-it clones the provisioner's copy-on-write generation, replaces the root only
-in that private generation, and runs the complete build transaction there.
-After output construction and build acceptance succeed on the clone, one
-non-fallible provisioner swap is composed with `tex-incr` candidate acceptance.
-Resource suspension or any terminal failure drops the clone.
+The compile session implements this without weakening the immutable build API.
+It forks the workspace's copy-on-write generation, replaces the root only in
+that private attempt, and receives the ledger and generated transaction as
+disjoint narrow borrows. After output construction and build acceptance
+succeed, one non-fallible workspace swap is composed with `tex-incr` candidate
+acceptance. Resource suspension or any terminal failure drops the attempt.
+
+Resolvers consult `ResourceLedger` directly. They do not reconstruct
+request-path or unavailable maps, and path-conflict checks derive the existing
+request owner from the resolved file's typed provenance. Project orchestration
+likewise restores TeX passes from the workspace ledger instead of retaining a
+parallel response map.
 
 ## Limits and accounting
 
@@ -405,7 +410,7 @@ Generated-file count and byte limits are enforced independently for a private
 stage write set and for the complete pending build overlay.
 `VirtualCompileSession::SessionLimits` preserves its public compatibility
 fields but delegates user-file and resolved-file hard ceilings, replacement,
-registration, and accounting to `VfsLimits` and `FileProvisioner`. Its returned
+registration, and accounting to `VfsLimits` and `ProjectWorkspace`. Its returned
 output byte limit also bounds each TeX stage and accepted generated layer, in
 addition to the aggregate terminal, log, DVI, HTML, and auxiliary result.
 
@@ -515,6 +520,6 @@ atomic invalid and conflicting batches, stage/build discard and limit failure,
 accepted-root and generated-output rollback, stale revision rejection, retained
 input and generated-generation accounting, direct Rust/WASM wire conversion,
 persistent native and browser revisions, cancellation before provisioning, and
-the optimized browser package. The `umber` session owns one `FileProvisioner`;
+the optimized browser package. The `umber` session owns one `ProjectWorkspace`;
 `umber-wasm` is a representation adapter and the authored JavaScript facade has
 no private path, request, registration, progress, or byte-accounting store.
