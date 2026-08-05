@@ -458,9 +458,9 @@ Rollback keeps the old cache readers and can repopulate the new cache from verif
 
 Affected crates: `tex-fonts`, `tex-shape`, `tex-exec`, `tex-typeset`, `tex-out`, and `umber`.
 
-**Current design — observed.** `tex-fonts` already owns validated SFNT data, cached shaping faces, OpenType context, and font-unit conversion. It repeats shaping context in request, parsed-font, and selection structures at [`crates/tex-fonts/src/opentype/contract.rs:286`](/home/phulin/umber/crates/tex-fonts/src/opentype/contract.rs:286), [`crates/tex-fonts/src/opentype/parse.rs:180`](/home/phulin/umber/crates/tex-fonts/src/opentype/parse.rs:180), and [`crates/tex-fonts/src/metrics.rs:335`](/home/phulin/umber/crates/tex-fonts/src/metrics.rs:335). `tex-shape` is a thin adapter that extracts the raw face and performs another projection at [`crates/tex-shape/src/lib.rs:105`](/home/phulin/umber/crates/tex-shape/src/lib.rs:105). `tex-exec` independently converts direction and shaping data at [`crates/tex-exec/src/box_runtime/hmode.rs:714`](/home/phulin/umber/crates/tex-exec/src/box_runtime/hmode.rs:714).
+**Implementation — completed by `umber2-fjfh.14`.** `tex-fonts` owns validated SFNT data, cached shaping faces, OpenType context, font-unit conversion, and the private rustybuzz adapter. `LoadedFont::shape_run` is the one typed shaping operation and consumes the context already validated into `OpenTypeFont`. The duplicate `OpenTypeProgramSelection`, `OpenTypeFontSelection`, `ShapingFont`, and shaping-direction projection are gone. `tex-exec` performs run segmentation but neither reconstructs nor overrides font instance context.
 
-**End state.** `tex-fonts` owns one immutable font/shaping context and one typed shaping operation. `tex-shape` becomes a private module or disappears after a compatibility façade period. Output consumers use the same validated face/resource identity instead of reparsing or reconstructing context.
+**End state.** `tex-fonts` owns one immutable font/shaping context and one typed shaping operation. The temporary `tex-shape` package has been removed. Output lowering reads program, object, instance, variation, feature, direction, script, and language values from the same validated font instead of a second selection projection.
 
 **Estimated net reduction.** 250–450 production LOC and 250–500 test LOC. Confidence: medium-high for the boundary deletion; lower for any run-plan redesign, which is intentionally not counted.
 
@@ -468,13 +468,13 @@ Affected crates: `tex-fonts`, `tex-shape`, `tex-exec`, `tex-typeset`, `tex-out`,
 
 **Migration and rollback.**
 
-1. Move the exact shaping implementation into a private `tex-fonts` module.
-2. Keep `tex-shape` as a forwarding façade and compare shaped runs.
-3. Migrate `tex-exec` and layout consumers.
-4. Reuse validated font data in output and resource serialization.
-5. Remove the crate and duplicate context types.
+1. **Completed.** Move the exact shaping implementation and fixtures into a private `tex-fonts` module.
+2. **Completed.** Compare the forwarding façade and owner through the unchanged fixture snapshots.
+3. **Completed.** Migrate `tex-exec` and layout consumers.
+4. **Completed.** Reuse validated font data in output and resource serialization.
+5. **Completed.** Remove the crate and duplicate context types.
 
-Rollback retains the old crate façade and shaping entry point.
+The historical rollback point retained the old crate façade and shaping entry point until all consumers and fixtures had migrated.
 
 **Gates and risks.** Require TFM/OpenType, Arabic/Devanagari, ligature, mark attachment, variation, explicit language/script, break-suppression, line-breaking, DVI, PDF, and WASM parity. Risks include subtle shaping-library lifetime changes and font resource identity changes.
 
@@ -560,7 +560,7 @@ The nine crates over 10,000 Rust lines were reviewed through delegated component
 | `tex-observe`          | Rank 5                                                                                              |
 | `tex-oracle`           | Ranks 5 and 7                                                                                       |
 | `tex-out`              | Delegated component review; ranks 1, 6, 10–12, 15                                                   |
-| `tex-shape`            | Rank 15                                                                                             |
+| `tex-shape` (removed)  | Rank 15                                                                                             |
 | `tex-state`            | Delegated component review; ranks 1, 6, 11, and 13                                                  |
 | `tex-typeset`          | Delegated component review; ranks 1, 13, and 15                                                     |
 | `texlive-wasm-publish` | Rank 3                                                                                              |

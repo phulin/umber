@@ -621,7 +621,7 @@ allowing only the documented rasterization differences.
 
 The CI gate composes the existing hermetic ownership tests rather than adding
 font-name exceptions: `tex-fonts` proves native SFNT/WOFF2 program and MATH
-projection identity; `tex-shape`, `tex-typeset`, and `tex-out` prove shaping,
+projection identity and shaping; `tex-typeset` and `tex-out` prove layout,
 instance, mapping, positioned-math, embedded, and manifest contracts;
 `umber-wasm` proves the same parsing and artifact schema in WASM; and the
 Firefox plus optimized Chromium fixtures install generated output. The browser

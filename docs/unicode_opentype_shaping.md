@@ -16,8 +16,10 @@ future concern and is not part of the linear HTML epic.
 _acquisition_: `FontRequest`/`ResolvedFont`, content-addressed identity, and a
 validated `OpenTypeFont { cmap, metrics, shaping: ShapingTables, math,
 metadata }` produced by `crates/tex-fonts/src/opentype/`. That work is done.
-`tex-shape` now applies the validated face through rustybuzz and the
-shape/break/reshape pipeline consumes its cluster advances.
+`tex-fonts` applies its validated immutable font/instance context through a
+private rustybuzz adapter, and the shape/break/reshape pipeline consumes the
+typed operation's cluster advances. The former `tex-shape` package and its
+parallel context projection have been removed.
 
 The subsequent output-neutral authority and resource-placement contract is
 [cross_output_fonts.md](cross_output_fonts.md). It preserves this shaping
@@ -70,16 +72,16 @@ to justify it, real HarfBuzz could be reintroduced later as an optional
 native-only feature behind a trait boundary — but nothing in this plan
 requires that up front.
 
-## New crate: `crates/tex-shape`
+## Shaping ownership in `crates/tex-fonts`
 
-A pure, backend-neutral shaping kernel, following the same shape as
-`tex-typeset` (pure list-in/list-out, no `Universe`, no direct `tex-state`
-dependency).
+A private, backend-neutral shaping kernel lives beside the validated OpenType
+program it consumes. It remains pure list-in/list-out, with no `Universe`,
+`tex-state`, `tex-exec`, or output-driver dependency.
 
-Depends on `tex-arith` (unit conversion), `tex-fonts` (validated OpenType
-tables, cmap, metrics), `rustybuzz`, and Unicode itemization crates
-(`unicode-bidi`, `unicode-script` or equivalent) for run segmentation. Does
-not depend on `tex-state` or `tex-exec`.
+`tex-fonts` owns font-unit conversion, the cached rustybuzz face, and Unicode
+script/direction helpers. Execution owns run segmentation and calls one typed
+operation on `LoadedFont`; it cannot supply a second feature, variation,
+direction, script, or language projection.
 
 Core shape of the API:
 
@@ -95,26 +97,29 @@ pub struct ShapedGlyph {
 
 pub struct ShapedRun {
     pub glyphs: Vec<ShapedGlyph>,
-    pub direction: Direction,
+    pub direction: WritingDirection,
     pub script: Script,
 }
 
-pub fn shape_run(
-    font: ShapingFont<'_>,
-    text: &str,
-    features: &FontFeaturePolicy,
-    direction: Direction,
-) -> ShapedRun;
+impl LoadedFont {
+    pub fn shape_run(&self, request: ShapingRequest<'_>) -> Option<ShapedRun>;
+}
+
+pub struct ShapingRequest<'a> {
+    text: &'a str,
+    break_offsets: &'a [usize],
+}
 ```
 
-`ShapingFont` is the validated OpenType program plus the size of its enclosing
-`LoadedFont`; classic TFM records cannot produce one. Font-unit-to-scaled-point
-conversion routes through `tex-arith`. A `rustybuzz::Face` is built only after
-the bounded SFNT validation pass and cached with its owned decoded SFNT bytes
-inside the OpenType record shared by `LoadedFont`, so shaping never decodes or
-parses an untrusted transport object. Stage 2 also provides deterministic
-script detection and first-strong base-direction detection for callers
-preparing one run; full bidi run reordering remains Stage 5.
+Classic TFM records return `None`. OpenType records use the size of their
+enclosing `LoadedFont` and the variation, feature, direction, script, and
+language values already validated into `OpenTypeFont`. Conversion from font
+units to scaled points routes through `tex-arith`. A `rustybuzz::Face` is built only
+after the bounded SFNT validation pass and cached with its owned decoded SFNT
+bytes, so shaping never decodes or parses an untrusted transport object. The
+same owner provides deterministic script detection and first-strong base-
+direction detection for callers preparing one run; full bidi run reordering
+remains deferred.
 
 ## Font-metrics abstraction split
 
@@ -215,7 +220,7 @@ This is the hardest part of the design.
 This pipeline is now implemented. Horizontal construction retains Unicode
 character nodes for output compatibility and places a font-kern adjustment at
 the end of each shaped cluster. The character widths plus that adjustment are
-exactly the cluster advance returned by `tex-shape`, so `tex-typeset` can keep
+exactly the cluster advance returned by `tex-fonts`, so `tex-typeset` can keep
 its zero-copy prefix-width traversal while consuming pass-1 shaped widths.
 These adjustments are provisional: post-line-break processing removes and
 rebuilds them by reshaping every materialized line independently.
@@ -288,7 +293,7 @@ outside the linear HTML epic and does not block its release.
 
 ## Testing strategy
 
-- `tex-shape` gets fixture-based unit tests: known input strings against a
+- `tex-fonts` has fixture-based shaping unit tests: known input strings against a
   small set of pinned OpenType test fonts (reusing the existing CMU Serif
   WOFF2 fixture plus a couple of permissively licensed fonts exercising
   ligatures and mark attachment) produce known glyph-ID and advance
@@ -323,8 +328,9 @@ subpixel ink bounds are intentionally outside parity.
 1. **Implemented.** Character-existence and width dispatch fix (font-metrics
    abstraction split above) — fixes the Unicode cmap/advance bug independent
    of shaping and keeps DVI's byte opcode boundary intact.
-2. **Implemented.** `tex-shape` crate and rustybuzz integration: single-run
-   shaping API, no line-break integration yet.
+2. **Implemented, then consolidated.** The rustybuzz single-run shaping API
+   was introduced in `tex-shape`; it now lives in the validated `tex-fonts`
+   owner and the temporary package has been removed.
 3. **Implemented.** OpenType-only `\font` path and fontdimen synthesis.
 4. **Implemented.** Two-pass shape/linebreak/reshape integration into
    `tex-exec` and `tex-typeset` — the largest chunk of this plan.
