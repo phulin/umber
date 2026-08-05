@@ -1029,7 +1029,7 @@ fn rejects_tampered_shard_and_observes_cancellation() {
 
 #[test]
 fn shard_partition_uses_sha256_network_prefix_bits() {
-    assert_eq!(shard_index("tex:article.cls", 8), 0x45);
-    assert_eq!(shard_index("tfm:cmr10.tfm", 8), 0x91);
-    assert_eq!(shard_index("tex:plain.tex", 0), 0);
+    assert_eq!(shard_index_for_key("tex:article.cls", 8), Ok(0x45));
+    assert_eq!(shard_index_for_key("tfm:cmr10.tfm", 8), Ok(0x91));
+    assert_eq!(shard_index_for_key("tex:plain.tex", 0), Ok(0));
 }

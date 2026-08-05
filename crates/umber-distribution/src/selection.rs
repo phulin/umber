@@ -466,6 +466,21 @@ pub fn shard_index(key: &ManifestLogicalKey, shard_bits: u8) -> Result<u32, Sele
     Ok(u32::from(prefix >> (16 - shard_bits)))
 }
 
+/// Validates any canonical catalog request key and returns its shard index.
+pub fn shard_index_for_key(value: &str, shard_bits: u8) -> Result<u32, SelectionError> {
+    let canonical = if value.starts_with("font:") {
+        FontRequestKey::from_manifest_key(value)?.manifest_key()
+    } else if value.starts_with("legacy-mapping:") {
+        LegacyMappingRequestKey::from_manifest_key(value)?.manifest_key()
+    } else {
+        FileRequestKey::from_manifest_key(value)?.manifest_key()
+    };
+    if canonical.as_str() != value {
+        return Err(SelectionError::new("noncanonical distribution request key"));
+    }
+    shard_index(&canonical, shard_bits)
+}
+
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ManifestRequest {
     File(FileRequestKey),
@@ -517,13 +532,13 @@ pub struct SelectionError {
 }
 
 impl SelectionError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
         }
     }
 
-    fn from_manifest(error: ManifestParseError) -> Self {
+    pub(crate) fn from_manifest(error: ManifestParseError) -> Self {
         Self::new(error.to_string())
     }
 }

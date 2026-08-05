@@ -372,8 +372,8 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
         directory_bytes(&sorted_output.join("objects"))?
     );
 
-    let mut corrupt_root: super::RootManifest =
-        serde_json::from_slice(&fs::read(output.join("manifest.json"))?)?;
+    let root_bytes = fs::read(output.join("manifest.json"))?;
+    let mut corrupt_root = super::RootManifest::parse(std::str::from_utf8(&root_bytes)?)?;
     corrupt_root
         .formats
         .get_mut("plain")
@@ -383,9 +383,7 @@ fn format_input_closures_are_canonical_and_verified() -> Result<()> {
         .expect("plain closure")
         .keys
         .insert(0, "tex:missing.tex".to_owned());
-    let mut bytes = serde_json::to_vec(&corrupt_root)?;
-    bytes.push(b'\n');
-    fs::write(output.join("manifest.json"), bytes)?;
+    fs::write(output.join("manifest.json"), corrupt_root.to_json())?;
     let error = verify_sharded_snapshot(&output).expect_err("absent closure key must fail");
     assert!(error.to_string().contains("is absent"));
     Ok(())

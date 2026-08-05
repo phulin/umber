@@ -1,5 +1,6 @@
 //! Strict, host-neutral distribution manifest parsing and object selection.
 
+mod catalog;
 mod html;
 mod json;
 mod manifest;
@@ -20,8 +21,11 @@ pub use selection::{
     AcquisitionJob, FeatureSetting, FileKind, FileRequestKey, FontRequestContext, FontRequestKey,
     JobRequirement, LegacyMappingRequestKey, ManifestLogicalKey, ManifestMiss, ManifestRequest,
     Selection, SelectionError, VariationCoordinate, VariationInstance, WritingDirection, select,
-    select_shard, shard_index,
+    select_shard, shard_index, shard_index_for_key,
 };
 
 #[cfg(test)]
 mod tests;
+pub use catalog::{
+    ShardedCatalog, assemble_sharded_catalog, shard_manifest, shard_manifest_with_records,
+};

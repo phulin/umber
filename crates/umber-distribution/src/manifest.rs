@@ -157,6 +157,17 @@ impl ManifestFont {
     }
 }
 
+impl ManifestFormat {
+    #[must_use]
+    pub fn object_entry(&self) -> ObjectEntry {
+        ObjectEntry {
+            object: self.object.clone(),
+            sha256: self.sha256.clone(),
+            bytes: self.bytes,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManifestParseError {
     message: String,
@@ -319,6 +330,76 @@ impl ShardedManifestRoot {
     #[must_use]
     pub fn shard_digest(&self, index: u32) -> Option<&str> {
         self.shards.get(index as usize).map(String::as_str)
+    }
+
+    /// Canonical compact JSON used for immutable root-manifest hashing.
+    #[must_use]
+    pub fn to_json(&self) -> String {
+        let mut out = format!("{{\"schema\":{},\"distribution\":", self.schema);
+        json_string(&mut out, &self.distribution);
+        out.push_str(",\"objectsBaseUrl\":");
+        json_string(&mut out, &self.objects_base_url);
+        out.push_str(",\"shardBits\":");
+        out.push_str(&self.shard_bits.to_string());
+        out.push_str(",\"shardCount\":");
+        out.push_str(&self.shard_count.to_string());
+        out.push_str(",\"shards\":[");
+        for (index, digest) in self.shards.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            json_string(&mut out, digest);
+        }
+        out.push(']');
+        if !self.formats.is_empty() {
+            out.push_str(",\"formats\":{");
+            for (index, (name, format)) in self.formats.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                json_string(&mut out, name);
+                out.push_str(":{");
+                write_compact_format(&mut out, format);
+                out.push('}');
+            }
+            out.push('}');
+        }
+        out.push_str("}\n");
+        out
+    }
+}
+
+fn write_compact_format(out: &mut String, entry: &ManifestFormat) {
+    json_string(out, "object");
+    out.push(':');
+    json_string(out, &entry.object);
+    out.push_str(",\"sha256\":");
+    json_string(out, &entry.sha256);
+    out.push_str(",\"bytes\":");
+    out.push_str(&entry.bytes.to_string());
+    out.push_str(",\"engine\":");
+    json_string(out, &entry.engine);
+    out.push_str(",\"engineVersion\":");
+    json_string(out, &entry.engine_version);
+    out.push_str(",\"formatSchema\":");
+    out.push_str(&entry.format_schema.to_string());
+    out.push_str(",\"sourceDistribution\":");
+    json_string(out, &entry.source_distribution);
+    out.push_str(",\"sourceManifestSha256\":");
+    json_string(out, &entry.source_manifest_sha256);
+    out.push_str(",\"sourceDateEpoch\":");
+    out.push_str(&entry.source_date_epoch.to_string());
+    if let Some(closure) = &entry.input_closure {
+        out.push_str(",\"inputClosure\":{\"schema\":");
+        out.push_str(&closure.schema.to_string());
+        out.push_str(",\"keys\":[");
+        for (index, key) in closure.keys.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            json_string(out, key);
+        }
+        out.push_str("]}");
     }
 }
 

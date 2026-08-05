@@ -15,7 +15,8 @@ use tex_fonts::AcceptedFontContainers;
 use tex_state::{Universe, World};
 use umber_distribution::{
     DependencyHint, FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey,
-    ManifestShard, ShardFile, ShardedManifestRoot,
+    ManifestMiss, ManifestRequest, ManifestShard, ShardFile, ShardedManifestRoot, select_shard,
+    shard_index_for_key,
 };
 use umber_fetch::{
     FetchCancellation, FetchClient, FetchClientConfig, FetchFailure, FetchRequest,
@@ -922,7 +923,9 @@ impl DistributionResolver {
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
             keys_by_shard
-                .entry(shard_index(key, shard_bits))
+                .entry(shard_index_for_key(key, shard_bits).map_err(|error| {
+                    NativeRunError::Selection(error.to_string())
+                })?)
                 .or_default()
                 .push(key.clone());
         }
@@ -938,7 +941,9 @@ impl DistributionResolver {
             }
             original_hints.insert(key.clone(), request.key().clone());
             hinted_keys
-                .entry(shard_index(&key, shard_bits))
+                .entry(shard_index_for_key(&key, shard_bits).map_err(|error| {
+                    NativeRunError::Selection(error.to_string())
+                })?)
                 .or_default()
                 .push(key);
         }
@@ -958,15 +963,32 @@ impl DistributionResolver {
             telemetry.manifest_lookup_time = telemetry
                 .manifest_lookup_time
                 .saturating_add(manifest_started.elapsed());
-            for key in keys {
-                let Some(entry) = shard.files.get(&key) else {
-                    let original = original_files
-                        .remove(&key)
-                        .expect("requested key has an original file request");
-                    responses.push(ResourceResponse::FileUnavailable(original));
-                    continue;
+            let requests = keys
+                .iter()
+                .map(|key| {
+                    DistributionFileRequestKey::from_manifest_key(key)
+                        .map(ManifestRequest::File)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let selection = select_shard(shard, &requests);
+            for miss in selection.misses {
+                let ManifestMiss::File(key) = miss else {
+                    unreachable!("native distribution batch selects only files")
                 };
-                required.insert(key.clone(), entry.clone());
+                let key = key.manifest_key().to_string();
+                let original = original_files
+                    .remove(&key)
+                    .expect("requested key has an original file request");
+                responses.push(ResourceResponse::FileUnavailable(original));
+            }
+            for job in selection.jobs {
+                let key = job.manifest_key.to_string();
+                let entry = shard
+                    .files
+                    .get(&key)
+                    .expect("shared shard selection returns the selected file");
+                required.insert(key, entry.clone());
                 for dependency in &entry.dependencies {
                     hints
                         .entry(dependency.key.clone())
@@ -1421,7 +1443,10 @@ impl DistributionResolver {
             )
             .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?;
         for key in shard.files.keys() {
-            if shard_index(key, shard_bits) != index {
+            if shard_index_for_key(key, shard_bits)
+                .map_err(|error| NativeRunError::ManifestParse(error.to_string()))?
+                != index
+            {
                 return Err(NativeRunError::ManifestParse(format!(
                     "lookup key {key} is not in its canonical shard"
                 )));
@@ -1600,15 +1625,6 @@ fn check_cancelled(cancellation: &FetchCancellation) -> Result<(), NativeRunErro
     } else {
         Ok(())
     }
-}
-
-fn shard_index(key: &str, shard_bits: u8) -> u32 {
-    if shard_bits == 0 {
-        return 0;
-    }
-    let digest = Sha256::digest(key.as_bytes());
-    let prefix = u16::from_be_bytes([digest[0], digest[1]]);
-    u32::from(prefix >> (16 - shard_bits))
 }
 
 fn local_object_path(root: &Path, object: &str) -> PathBuf {

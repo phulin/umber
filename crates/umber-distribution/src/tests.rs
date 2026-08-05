@@ -460,6 +460,49 @@ fn parses_sharded_root_and_full_inline_dependency_metadata() {
 }
 
 #[test]
+fn root_serialization_and_sharding_are_canonical_catalog_operations() {
+    let root = ShardedManifestRoot::parse(
+        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+    )
+    .expect("root manifest");
+    assert_eq!(
+        root.to_json(),
+        concat!(
+            r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+            "\n"
+        )
+    );
+
+    let manifest = Manifest::parse(&fixture().manifest).expect("monolithic fixture");
+    let catalog = shard_manifest(&manifest, 2).expect("canonical sharding");
+    assert_eq!(catalog.root.schema, SHARDED_ROOT_SCHEMA);
+    assert_eq!(catalog.shards.len(), 4);
+    for shard in &catalog.shards {
+        for key in shard.files.keys() {
+            assert_eq!(
+                shard_index_for_key(key, catalog.root.shard_bits),
+                Ok(shard.index)
+            );
+        }
+        assert_eq!(ManifestShard::parse(&shard.to_json()), Ok(shard.clone()));
+    }
+}
+
+#[test]
+fn assembled_catalog_rejects_cross_shard_and_stale_dependency_semantics() {
+    let root = ShardedManifestRoot::parse(
+        r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":0,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#,
+    )
+    .expect("root manifest");
+    let shard = ManifestShard::parse(
+        r#"{"schema":1,"distribution":"test","index":0,"files":{"tex:plain.tex":{"virtualPath":"/texlive/tex/plain.tex","object":"sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","bytes":10,"dependencies":[{"key":"tfm:absent.tfm","virtualPath":"/texlive/fonts/absent.tfm","object":"sha256-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","bytes":20}]}}}"#,
+    )
+    .expect("structurally valid shard");
+    let error = assemble_sharded_catalog(root, vec![shard]).expect_err("absent dependency");
+    assert!(error.to_string().contains("is absent"));
+}
+
+#[test]
 fn rejects_inconsistent_roots_and_mismatched_shard_identity() {
     let inconsistent = r#"{"schema":2,"distribution":"test","objectsBaseUrl":"https://example.test/objects/","shardBits":1,"shardCount":1,"shards":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#;
     assert!(ShardedManifestRoot::parse(inconsistent).is_err());
