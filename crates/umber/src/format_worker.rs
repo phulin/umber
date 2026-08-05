@@ -44,7 +44,7 @@ const AUTH_DOMAIN: &[u8] = b"umber.format-worker.response.v3\0";
 const FRAME_LENGTH_BYTES: usize = size_of::<u64>();
 const MAX_WORKER_REQUEST_BYTES: usize = crate::SessionLimits::FORMAT_IMAGE_BYTES + 16 * 1024 * 1024;
 const MAX_WORKER_STDOUT_BYTES: usize =
-    crate::SessionLimits::FORMAT_IMAGE_BYTES + tex_observe::MAX_EVIDENCE_BYTES + 64 * 1024;
+    crate::SessionLimits::FORMAT_IMAGE_BYTES + tex_oracle::MAX_BUNDLE_BYTES + 64 * 1024;
 const MAX_WORKER_RESPONSE_BYTES: usize =
     MAX_WORKER_STDOUT_BYTES - RESPONSE_PREFIX.len() - FRAME_LENGTH_BYTES;
 const MAX_WORKER_STDERR_BYTES: usize = 1024 * 1024;
@@ -818,7 +818,7 @@ fn validate_response(
     }
     Universe::from_format(World::memory(), &result.image)
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-    tex_observe::decode_detached_evidence(&result.evidence)
+    tex_oracle::decode_oracle_bundle(&result.evidence)
         .map_err(FormatFixtureError::Evidence)?;
     Ok(ConstructionResult {
         image: result.image,
@@ -1238,7 +1238,7 @@ mod tests {
         if let Ok(result) = &accepted {
             cache
                 .store_entry(&identity, &result.image, &result.evidence, |bytes| {
-                    tex_observe::decode_detached_evidence(bytes).map(|_| ())
+                    tex_oracle::decode_oracle_bundle(bytes).map(|_| ())
                 })
                 .expect("publish accepted image");
         }
@@ -1248,7 +1248,7 @@ mod tests {
         ));
         assert!(
             cache
-                .load_entry(&identity, |bytes| tex_observe::decode_detached_evidence(
+                .load_entry(&identity, |bytes| tex_oracle::decode_oracle_bundle(
                     bytes
                 )
                 .map(|_| ()))

@@ -56,7 +56,7 @@ struct InProcessRun {
 
 enum PhaseCapture {
     Live(LiveCapture),
-    Detached(tex_observe::DetachedEvidence),
+    Detached(tex_oracle::OracleBundle),
 }
 
 impl PhaseCapture {
@@ -81,7 +81,7 @@ impl PhaseCapture {
             Self::Live(capture) => capture.streams(oracle),
             Self::Detached(evidence) => {
                 let diagnostic =
-                    tex_observe::canonical_evidence_json_lines(&evidence.semantic, oracle)
+                    tex_oracle::canonical_bundle_json_lines(&evidence.semantic, oracle)
                         .expect("construction semantic evidence encodes under oracle header");
                 tex_command_stream::LiveSessionStreams {
                     diagnostic: diagnostic.clone(),
@@ -95,7 +95,7 @@ impl PhaseCapture {
         match self {
             Self::Live(capture) => capture.geometry(oracle),
             Self::Detached(evidence) => {
-                tex_observe::canonical_evidence_json_lines(&evidence.geometry, oracle)
+                tex_oracle::canonical_bundle_json_lines(&evidence.geometry, oracle)
                     .expect("construction geometry evidence encodes under oracle header")
             }
         }
@@ -105,7 +105,7 @@ impl PhaseCapture {
 #[test]
 fn detached_geometry_uses_the_pinned_schema_three_header() {
     let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let capture = PhaseCapture::Detached(tex_observe::DetachedEvidence {
+    let capture = PhaseCapture::Detached(tex_oracle::OracleBundle {
         semantic: Vec::new(),
         geometry: vec![tex_oracle::NormalizedEvent {
             sequence: 0,
@@ -159,7 +159,7 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
     );
     let prepared = provider.prepare(&recipe).expect("focused TRIP format");
     let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let semantic = tex_observe::canonical_evidence_json_lines(
+    let semantic = tex_oracle::canonical_bundle_json_lines(
         &prepared.construction_evidence().semantic,
         oracle,
     )
@@ -225,7 +225,7 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
                 && command.command.command == "assign_int"
                 && command.command.control_sequence.as_deref() == Some("righthyphenmin")
     ));
-    let actual = tex_observe::canonical_evidence_json_lines(
+    let actual = tex_oracle::canonical_bundle_json_lines(
         &prepared.construction_evidence().geometry,
         oracle,
     )
@@ -301,7 +301,7 @@ impl LiveCapture {
         let mut translator =
             LiveSessionTranslator::for_root(SchemaVersion::V3, "terminal", self.root.clone());
         translator.translate_captured(self.observations.iter().cloned());
-        tex_observe::canonical_evidence_json_lines(
+        tex_oracle::canonical_bundle_json_lines(
             &translator.finalize_detached_evidence().geometry,
             oracle,
         )

@@ -333,7 +333,7 @@ fn construction_failure_publishes_no_entry() {
     assert!(
         cache
             .load_entry(&recipe.identity().expect("identity"), |bytes| {
-                tex_observe::decode_detached_evidence(bytes).map(|_| ())
+                tex_oracle::decode_oracle_bundle(bytes).map(|_| ())
             })
             .expect("cache remains readable")
             .is_none()

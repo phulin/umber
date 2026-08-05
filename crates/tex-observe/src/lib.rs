@@ -13,9 +13,22 @@ use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
     EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason, MacroEvent,
-    MutationEvent, NormalizedEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken,
+    MutationEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken,
     RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion,
     SourceLocation, StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
+};
+pub use tex_oracle::{
+    OracleBundle as DetachedEvidence, canonical_bundle_json_lines as canonical_evidence_json_lines,
+    decode_oracle_bundle as decode_detached_evidence,
+    encode_oracle_bundle as encode_detached_evidence,
+};
+#[cfg(test)]
+use tex_oracle::{
+    MAX_BUNDLE_EVENTS_PER_STREAM as MAX_EVIDENCE_EVENTS_PER_STREAM,
+    MAX_BUNDLE_NESTING_DEPTH as MAX_EVIDENCE_NESTING_DEPTH,
+    MAX_BUNDLE_STRING_BYTES as MAX_EVIDENCE_STRING_BYTES,
+    NormalizedEvent, ORACLE_BUNDLE_MAGIC as EVIDENCE_MAGIC,
+    ORACLE_BUNDLE_SCHEMA as EVIDENCE_CODEC_SCHEMA,
 };
 use tex_state::SourceId;
 
@@ -48,252 +61,6 @@ impl ObservedEvent {
     pub fn context(&self) -> &str {
         &self.context
     }
-}
-
-/// Detached normalized evidence containing only portable oracle values.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DetachedEvidence {
-    pub semantic: Vec<NormalizedEvent>,
-    pub geometry: Vec<NormalizedEvent>,
-}
-
-/// Encodes already-normalized detached evidence beneath a pinned oracle
-/// stream's exact header.
-///
-/// Construction evidence has no engine- or fixture-owned transport header of
-/// its own. Reusing the independently pinned oracle header binds the portable
-/// values to the comparison profile without reimplementing canonical JSONL in
-/// a host harness.
-pub fn canonical_evidence_json_lines(
-    events: &[NormalizedEvent],
-    oracle: &[u8],
-) -> Result<Vec<u8>, String> {
-    let oracle = ObservationStream::from_canonical_json_lines(oracle)
-        .map_err(|error| format!("pinned oracle stream is invalid: {error}"))?;
-    let mut bytes = serde_json::to_vec(&oracle.header).map_err(|error| error.to_string())?;
-    bytes.push(b'\n');
-    for (sequence, event) in events.iter().enumerate() {
-        if event.sequence != sequence as u64 {
-            return Err(format!(
-                "detached evidence sequence {} is not expected sequence {sequence}",
-                event.sequence
-            ));
-        }
-        bytes.extend_from_slice(&serde_json::to_vec(event).map_err(|error| error.to_string())?);
-        bytes.push(b'\n');
-    }
-    ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
-    Ok(bytes)
-}
-
-/// Versioned hard limits for detached construction-evidence transport.
-pub const EVIDENCE_CODEC_SCHEMA: u32 = 2;
-pub const MAX_EVIDENCE_EVENTS_PER_STREAM: usize = 1_000_000;
-pub const MAX_EVIDENCE_EVENT_BYTES: usize = 1024 * 1024;
-pub const MAX_EVIDENCE_STRING_BYTES: usize = 256 * 1024;
-pub const MAX_EVIDENCE_NESTING_DEPTH: usize = 64;
-pub const MAX_EVIDENCE_BYTES: usize = 64 * 1024 * 1024;
-const EVIDENCE_MAGIC: &[u8; 8] = b"UMBREVID";
-
-/// Encodes portable evidence as two canonical, independently sequenced streams.
-pub fn encode_detached_evidence(evidence: &DetachedEvidence) -> Result<Vec<u8>, String> {
-    validate_evidence(evidence)?;
-    let mut out = Vec::new();
-    out.extend_from_slice(EVIDENCE_MAGIC);
-    out.extend_from_slice(&EVIDENCE_CODEC_SCHEMA.to_le_bytes());
-    out.extend_from_slice(&(evidence.semantic.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(evidence.geometry.len() as u32).to_le_bytes());
-    for event in evidence.semantic.iter().chain(&evidence.geometry) {
-        let bytes = serde_json::to_vec(event).map_err(|error| error.to_string())?;
-        if bytes.len() > MAX_EVIDENCE_EVENT_BYTES {
-            return Err("detached evidence event exceeds byte limit".into());
-        }
-        validate_json_shape(&bytes)?;
-        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-        out.extend_from_slice(&bytes);
-        if out.len() > MAX_EVIDENCE_BYTES {
-            return Err("detached evidence exceeds total byte limit".into());
-        }
-    }
-    Ok(out)
-}
-
-/// Decodes and validates the complete canonical detached-evidence payload.
-pub fn decode_detached_evidence(bytes: &[u8]) -> Result<DetachedEvidence, String> {
-    if bytes.len() > MAX_EVIDENCE_BYTES || bytes.len() < 20 || &bytes[..8] != EVIDENCE_MAGIC {
-        return Err("invalid or oversized detached evidence".into());
-    }
-    let read = |offset: usize| -> Result<u32, String> {
-        Ok(u32::from_le_bytes(
-            bytes
-                .get(offset..offset + 4)
-                .ok_or("truncated detached evidence")?
-                .try_into()
-                .map_err(|_| "truncated detached evidence")?,
-        ))
-    };
-    if read(8)? != EVIDENCE_CODEC_SCHEMA {
-        return Err("unsupported detached evidence schema".into());
-    }
-    let semantic_count = usize::try_from(read(12)?).map_err(|_| "invalid semantic count")?;
-    let geometry_count = usize::try_from(read(16)?).map_err(|_| "invalid geometry count")?;
-    if semantic_count > MAX_EVIDENCE_EVENTS_PER_STREAM
-        || geometry_count > MAX_EVIDENCE_EVENTS_PER_STREAM
-    {
-        return Err("detached evidence event count exceeds limit".into());
-    }
-    let frame_count = semantic_count
-        .checked_add(geometry_count)
-        .ok_or("detached evidence frame count overflow")?;
-    let minimum_bytes = frame_count
-        .checked_mul(4)
-        .and_then(|length| length.checked_add(20))
-        .ok_or("detached evidence frame length overflow")?;
-    if minimum_bytes > bytes.len() {
-        return Err("truncated detached evidence frames".into());
-    }
-    // Validate every frame boundary and JSON resource bound before allocating
-    // event vectors or asking serde to construct any values. A forged large
-    // count in a short payload must remain a cheap rejection.
-    let mut preflight_offset = 20usize;
-    for _ in 0..frame_count {
-        let length_end = preflight_offset
-            .checked_add(4)
-            .ok_or("detached evidence length overflow")?;
-        let length = usize::try_from(u32::from_le_bytes(
-            bytes
-                .get(preflight_offset..length_end)
-                .ok_or("truncated detached evidence")?
-                .try_into()
-                .map_err(|_| "truncated detached evidence")?,
-        ))
-        .map_err(|_| "invalid event length")?;
-        if length > MAX_EVIDENCE_EVENT_BYTES {
-            return Err("detached evidence event exceeds byte limit".into());
-        }
-        let event_end = length_end
-            .checked_add(length)
-            .ok_or("detached evidence length overflow")?;
-        validate_json_shape(
-            bytes
-                .get(length_end..event_end)
-                .ok_or("truncated detached evidence")?,
-        )?;
-        preflight_offset = event_end;
-    }
-    if preflight_offset != bytes.len() {
-        return Err("trailing detached evidence data".into());
-    }
-    let mut offset = 20usize;
-    let mut decode_stream = |count: usize| -> Result<Vec<NormalizedEvent>, String> {
-        // Grow only as events successfully deserialize. The declared count is
-        // bounded and fully frame-scanned above, but must not itself trigger a
-        // large typed allocation for malformed event payloads.
-        let mut events = Vec::new();
-        for sequence in 0..count {
-            let end = offset
-                .checked_add(4)
-                .ok_or("detached evidence length overflow")?;
-            let length = usize::try_from(u32::from_le_bytes(
-                bytes
-                    .get(offset..end)
-                    .ok_or("truncated detached evidence")?
-                    .try_into()
-                    .map_err(|_| "truncated detached evidence")?,
-            ))
-            .map_err(|_| "invalid event length")?;
-            if length > MAX_EVIDENCE_EVENT_BYTES {
-                return Err("detached evidence event exceeds byte limit".into());
-            }
-            offset = end;
-            let end = offset
-                .checked_add(length)
-                .ok_or("detached evidence length overflow")?;
-            let encoded = bytes
-                .get(offset..end)
-                .ok_or("truncated detached evidence")?;
-            validate_json_shape(encoded)?;
-            let event: NormalizedEvent =
-                serde_json::from_slice(encoded).map_err(|error| error.to_string())?;
-            if event.sequence != sequence as u64
-                || serde_json::to_vec(&event).map_err(|error| error.to_string())? != encoded
-            {
-                return Err("noncanonical detached evidence sequence or encoding".into());
-            }
-            events.push(event);
-            offset = end;
-        }
-        Ok(events)
-    };
-    let semantic = decode_stream(semantic_count)?;
-    let geometry = decode_stream(geometry_count)?;
-    if offset != bytes.len() {
-        return Err("trailing detached evidence data".into());
-    }
-    let evidence = DetachedEvidence { semantic, geometry };
-    validate_evidence(&evidence)?;
-    Ok(evidence)
-}
-
-fn validate_json_shape(bytes: &[u8]) -> Result<(), String> {
-    let mut depth = 0usize;
-    let mut string_start = None;
-    let mut escaped = false;
-    for (index, byte) in bytes.iter().copied().enumerate() {
-        if let Some(start) = string_start {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                if index - start > MAX_EVIDENCE_STRING_BYTES {
-                    return Err("detached evidence string exceeds byte limit".into());
-                }
-                string_start = None;
-            }
-            continue;
-        }
-        match byte {
-            b'"' => string_start = Some(index + 1),
-            b'{' | b'[' => {
-                depth = depth
-                    .checked_add(1)
-                    .ok_or("detached evidence nesting overflow")?;
-                if depth > MAX_EVIDENCE_NESTING_DEPTH {
-                    return Err("detached evidence nesting exceeds depth limit".into());
-                }
-            }
-            b'}' | b']' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or("malformed detached evidence nesting")?;
-            }
-            _ => {}
-        }
-    }
-    if string_start.is_some() || depth != 0 {
-        return Err("malformed detached evidence JSON shape".into());
-    }
-    Ok(())
-}
-
-fn validate_evidence(evidence: &DetachedEvidence) -> Result<(), String> {
-    if evidence.semantic.len() > MAX_EVIDENCE_EVENTS_PER_STREAM
-        || evidence.geometry.len() > MAX_EVIDENCE_EVENTS_PER_STREAM
-    {
-        return Err("detached evidence event count exceeds limit".into());
-    }
-    for (index, event) in evidence.semantic.iter().enumerate() {
-        if event.sequence != index as u64 || matches!(event.semantic, Event::Geometry(_)) {
-            return Err("invalid semantic evidence stream".into());
-        }
-    }
-    for (index, event) in evidence.geometry.iter().enumerate() {
-        if event.sequence != index as u64 || !matches!(event.semantic, Event::Geometry(_)) {
-            return Err("invalid geometry evidence stream".into());
-        }
-    }
-    Ok(())
 }
 
 /// Immutable source material needed to translate command provenance.

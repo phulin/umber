@@ -11,10 +11,8 @@ use tex_command::{
     CommandObserver, FileEnquiryResource, FontResource, RegisteredSourceKind, SourceRegistration,
 };
 use tex_exec::{CheckpointSink, ResourceNeed};
-use tex_observe::{
-    DetachedEvidence, LiveSessionTranslator, LiveSource, decode_detached_evidence,
-    encode_detached_evidence,
-};
+use tex_observe::{LiveSessionTranslator, LiveSource};
+use tex_oracle::{OracleBundle, decode_oracle_bundle, encode_oracle_bundle};
 use tex_oracle::SchemaVersion;
 use tex_state::{JobClock, Universe, World};
 use umber_fetch::{
@@ -214,12 +212,12 @@ impl FormatRecipe {
             &profile.fingerprint().get().to_le_bytes(),
             &(self.hyphenation_exception_capacity as u64).to_le_bytes(),
             &registry_state.to_le_bytes(),
-            &tex_observe::EVIDENCE_CODEC_SCHEMA.to_le_bytes(),
-            &(tex_observe::MAX_EVIDENCE_EVENTS_PER_STREAM as u64).to_le_bytes(),
-            &(tex_observe::MAX_EVIDENCE_EVENT_BYTES as u64).to_le_bytes(),
-            &(tex_observe::MAX_EVIDENCE_STRING_BYTES as u64).to_le_bytes(),
-            &(tex_observe::MAX_EVIDENCE_NESTING_DEPTH as u64).to_le_bytes(),
-            &(tex_observe::MAX_EVIDENCE_BYTES as u64).to_le_bytes(),
+            &tex_oracle::ORACLE_BUNDLE_SCHEMA.to_le_bytes(),
+            &(tex_oracle::MAX_BUNDLE_EVENTS_PER_STREAM as u64).to_le_bytes(),
+            &(tex_oracle::MAX_BUNDLE_EVENT_BYTES as u64).to_le_bytes(),
+            &(tex_oracle::MAX_BUNDLE_STRING_BYTES as u64).to_le_bytes(),
+            &(tex_oracle::MAX_BUNDLE_NESTING_DEPTH as u64).to_le_bytes(),
+            &(tex_oracle::MAX_BUNDLE_BYTES as u64).to_le_bytes(),
             &[interaction_tag(self.construction_interaction)],
             &(self.construction_error_context_widths.error_line() as u64).to_le_bytes(),
             &(self.construction_error_context_widths.half_error_line() as u64).to_le_bytes(),
@@ -266,7 +264,7 @@ impl FormatRecipe {
 pub struct FormatFixture {
     recipe: FormatRecipe,
     image: ValidatedFormatImage,
-    evidence: DetachedEvidence,
+    evidence: OracleBundle,
 }
 
 impl FormatFixture {
@@ -283,7 +281,7 @@ impl FormatFixture {
 
     /// Detached construction-only canonical semantic and geometry evidence.
     #[must_use]
-    pub fn construction_evidence(&self) -> &DetachedEvidence {
+    pub fn construction_evidence(&self) -> &OracleBundle {
         &self.evidence
     }
 
@@ -565,7 +563,7 @@ pub fn ensure_format(
     let identity = recipe.identity()?;
     let entry = cache.ensure_entry::<FormatFixtureError>(
         &identity,
-        |bytes| decode_detached_evidence(bytes).map(|_| ()),
+        |bytes| decode_oracle_bundle(bytes).map(|_| ()),
         || {
             let result = crate::format_worker::construct(Some(launcher), recipe)?;
             Ok((result.image, result.evidence))
@@ -574,7 +572,7 @@ pub fn ensure_format(
     Ok(FormatFixture {
         recipe: recipe.clone(),
         image: entry.image().clone(),
-        evidence: decode_detached_evidence(entry.evidence())
+        evidence: decode_oracle_bundle(entry.evidence())
             .map_err(FormatFixtureError::Evidence)?,
     })
 }
@@ -625,7 +623,7 @@ pub(crate) fn construct_format_in_worker(
         .stores()
         .dump_format()
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-    let evidence = encode_detached_evidence(&observer.finalize_detached_evidence())
+    let evidence = encode_oracle_bundle(&observer.finalize_detached_evidence())
         .map_err(FormatFixtureError::Evidence)?;
     Ok(ConstructionResult { image, evidence })
 }

@@ -5,6 +5,7 @@
 //! observation may not inspect either engine's storage representation.
 
 mod bootstrap;
+mod bundle;
 mod encoding;
 mod fixture;
 mod fixture_audit;
@@ -16,6 +17,12 @@ mod suite;
 mod transport;
 
 pub use bootstrap::bootstrap_tex82_fixture;
+pub use bundle::{
+    MAX_BUNDLE_BYTES, MAX_BUNDLE_EVENT_BYTES, MAX_BUNDLE_EVENTS_PER_STREAM,
+    MAX_BUNDLE_NESTING_DEPTH, MAX_BUNDLE_STRING_BYTES, ORACLE_BUNDLE_MAGIC,
+    ORACLE_BUNDLE_SCHEMA, OracleBundle, canonical_bundle_json_lines, decode_oracle_bundle,
+    encode_oracle_bundle,
+};
 pub use encoding::{EncodingError, ManifestIdentity, StreamIdentity};
 pub use fixture::{
     CanonicalCitation, CommittedFixture, FIXTURE_CONTRACT_VERSION, FIXTURE_MANIFEST_NAME,
