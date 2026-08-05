@@ -8,6 +8,7 @@
 mod align;
 mod assignments;
 mod box_runtime;
+mod canonical_step;
 mod checkpoint;
 mod diagnostics;
 mod dispatch;
@@ -41,6 +42,10 @@ pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
     register_etex_unexpandable_primitives, register_unexpandable_primitives,
+};
+pub use canonical_step::{
+    CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointIdentity,
+    OutputLedger,
 };
 pub use checkpoint::{
     CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorFork,

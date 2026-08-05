@@ -1,0 +1,276 @@
+use std::fmt;
+
+use tex_command::{CommandObserver, CommandSummaryError, FontResource, PdfImageResource};
+use tex_state::Universe;
+
+use crate::{
+    Cancellation, CheckpointSink, EngineBoundary, ExecError, ExecutionBudgetCounters, MainControl,
+    MainControlStep, ResourceFulfillment, ResourceNeed, StepResult, canonical_font_resource_path,
+};
+
+/// Checkpoint identity policy retained by one revision/output transaction.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CheckpointIdentity {
+    #[default]
+    Snapshot,
+    Exact,
+}
+
+/// Failure returned through the canonical step protocol.
+#[derive(Debug)]
+pub enum CanonicalStepFailure {
+    Execution(ExecError),
+    Checkpoint(CommandSummaryError),
+}
+
+impl fmt::Display for CanonicalStepFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Execution(error) => error.fmt(formatter),
+            Self::Checkpoint(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for CanonicalStepFailure {}
+
+/// Result of one bounded canonical operation.
+#[derive(Debug)]
+pub enum CanonicalStepResult {
+    Progress(MainControlStep),
+    ResourceNeed(ResourceNeed),
+    Committed(MainControlStep),
+    Completed(MainControlStep),
+    Failed(CanonicalStepFailure),
+}
+
+/// Publication and retry state shared by cold and incremental revisions.
+///
+/// `MainControl` owns atomic semantic rollback. This ledger owns everything
+/// that may become visible after such an operation commits: named checkpoint
+/// capture, exact resource registration, authoritative absence, and the
+/// monotonic suspension serial.
+#[derive(Debug, Default)]
+pub struct OutputLedger {
+    checkpoint_identity: CheckpointIdentity,
+    job_start_committed: bool,
+    suspension_serial: u64,
+}
+
+impl OutputLedger {
+    #[must_use]
+    pub const fn new(checkpoint_identity: CheckpointIdentity) -> Self {
+        Self {
+            checkpoint_identity,
+            job_start_committed: false,
+            suspension_serial: 0,
+        }
+    }
+
+    /// Creates a ledger resumed from an already retained `JobStart` record.
+    #[must_use]
+    pub const fn resume(checkpoint_identity: CheckpointIdentity) -> Self {
+        Self {
+            checkpoint_identity,
+            job_start_committed: true,
+            suspension_serial: 0,
+        }
+    }
+
+    #[must_use]
+    pub const fn suspension_serial(&self) -> u64 {
+        self.suspension_serial
+    }
+
+    /// Records a need that crossed the host boundary rather than being
+    /// answered synchronously inside the current drive call.
+    pub fn record_suspension(&mut self) {
+        self.suspension_serial = self.suspension_serial.saturating_add(1);
+    }
+
+    pub fn commit_job_start(
+        &mut self,
+        control: &MainControl,
+        universe: &mut Universe,
+        sink: &mut dyn CheckpointSink,
+    ) -> Result<bool, CommandSummaryError> {
+        if std::mem::replace(&mut self.job_start_committed, true) {
+            return Ok(false);
+        }
+        self.publish(control, universe, sink, &[EngineBoundary::JobStart])?;
+        Ok(true)
+    }
+
+    pub fn fulfill(
+        &mut self,
+        control: &mut MainControl,
+        need: &ResourceNeed,
+        fulfillment: ResourceFulfillment,
+    ) -> Result<(), Box<ResourceFulfillment>> {
+        match (need, fulfillment) {
+            (
+                ResourceNeed::Input { name: expected, .. },
+                ResourceFulfillment::Input { name, source },
+            ) if expected == &name => control.capabilities_mut().register_input(name, source),
+            (
+                ResourceNeed::InputProbe { request: expected },
+                ResourceFulfillment::InputProbe { request, resource },
+            ) if expected == &request => control
+                .capabilities_mut()
+                .register_input_probe(request.name, resource),
+            (
+                ResourceNeed::Font { request: expected },
+                ResourceFulfillment::Font { request, resource },
+            ) if expected == &request => control
+                .capabilities_mut()
+                .register_font(canonical_font_resource_path(&request.name), *resource),
+            (
+                ResourceNeed::PdfImage { request: expected },
+                ResourceFulfillment::PdfImage { request, resource },
+            ) if expected == &request => control
+                .capabilities_mut()
+                .register_pdf_image(request, *resource),
+            (_, fulfillment) => return Err(Box::new(fulfillment)),
+        }
+        Ok(())
+    }
+
+    pub fn mark_unavailable(
+        &mut self,
+        control: &mut MainControl,
+        need: &ResourceNeed,
+        register_texinputs_alias: bool,
+    ) {
+        match need {
+            ResourceNeed::Input { name, .. } => {
+                let capabilities = control.capabilities_mut();
+                capabilities.mark_input_unavailable(name);
+                if register_texinputs_alias && !name.contains(['/', '\\', ':']) {
+                    capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
+                }
+            }
+            ResourceNeed::InputProbe { request } => control
+                .capabilities_mut()
+                .mark_input_probe_unavailable(&request.name),
+            ResourceNeed::Font { request } => control.capabilities_mut().register_font(
+                canonical_font_resource_path(&request.name),
+                FontResource::Unavailable,
+            ),
+            ResourceNeed::PdfImage { request } => control
+                .capabilities_mut()
+                .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
+        }
+    }
+
+    fn publish(
+        &self,
+        control: &MainControl,
+        universe: &mut Universe,
+        sink: &mut dyn CheckpointSink,
+        boundaries: &[EngineBoundary],
+    ) -> Result<(), CommandSummaryError> {
+        for &boundary in boundaries {
+            if !sink.wants_checkpoint(boundary) {
+                continue;
+            }
+            let counters = ExecutionBudgetCounters::default();
+            let checkpoint = match self.checkpoint_identity {
+                CheckpointIdentity::Snapshot => {
+                    control.capture_checkpoint(boundary, universe, counters)?
+                }
+                CheckpointIdentity::Exact => {
+                    match control
+                        .capture_checkpoint_with_exact_identity(boundary, universe, counters)
+                    {
+                        Ok(checkpoint) => checkpoint,
+                        Err(CommandSummaryError::ActiveParagraphInputTransaction) => control
+                            .capture_checkpoint_projecting_paragraph(
+                                boundary, universe, counters,
+                            )?,
+                        Err(error) => return Err(error),
+                    }
+                }
+            };
+            sink.checkpoint(checkpoint);
+        }
+        Ok(())
+    }
+}
+
+/// Borrow-scoped driver for one bounded canonical engine operation.
+pub struct CanonicalStepRunner<'a> {
+    control: &'a mut MainControl,
+    universe: &'a mut Universe,
+    ledger: &'a mut OutputLedger,
+}
+
+impl<'a> CanonicalStepRunner<'a> {
+    pub fn new(
+        control: &'a mut MainControl,
+        universe: &'a mut Universe,
+        ledger: &'a mut OutputLedger,
+    ) -> Self {
+        Self {
+            control,
+            universe,
+            ledger,
+        }
+    }
+
+    pub fn step(
+        &mut self,
+        sink: &mut dyn CheckpointSink,
+        cancellation: &Cancellation,
+    ) -> CanonicalStepResult {
+        self.step_inner(sink, cancellation, None)
+    }
+
+    pub fn step_with_observer(
+        &mut self,
+        sink: &mut dyn CheckpointSink,
+        cancellation: &Cancellation,
+        observer: &mut dyn CommandObserver,
+    ) -> CanonicalStepResult {
+        self.step_inner(sink, cancellation, Some(observer))
+    }
+
+    fn step_inner(
+        &mut self,
+        sink: &mut dyn CheckpointSink,
+        cancellation: &Cancellation,
+        observer: Option<&mut dyn CommandObserver>,
+    ) -> CanonicalStepResult {
+        if cancellation.is_cancelled() {
+            return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(
+                ExecError::ExecutionCancelled,
+            ));
+        }
+        let result = match observer {
+            Some(observer) => self.control.advance_with_observer(self.universe, observer),
+            None => self.control.advance(self.universe),
+        };
+        let step = match result {
+            Ok(StepResult::Progress(step)) => step,
+            Ok(StepResult::Suspended(need)) => {
+                return CanonicalStepResult::ResourceNeed(need);
+            }
+            Err(error) => {
+                return CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error));
+            }
+        };
+        let boundaries = self.control.take_completed_boundaries().into_boxed_slice();
+        if let Err(error) = self
+            .ledger
+            .publish(self.control, self.universe, sink, &boundaries)
+        {
+            return CanonicalStepResult::Failed(CanonicalStepFailure::Checkpoint(error));
+        }
+        if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            CanonicalStepResult::Completed(step)
+        } else if boundaries.is_empty() {
+            CanonicalStepResult::Progress(step)
+        } else {
+            CanonicalStepResult::Committed(step)
+        }
+    }
+}

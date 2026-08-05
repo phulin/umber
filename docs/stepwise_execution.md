@@ -35,16 +35,17 @@ discarded or borrow-scoped between calls. `CommandStateSnapshot` captures the
 complete owned command state for private step rollback, while validated
 `CommandSummary` is the only durable named-checkpoint continuation.
 
-`ExecutionRun` now wraps every candidate operation in a private aggregate
-`StepSavepoint`. A typed resource need restores the matching `Universe`,
+`MainControl` wraps every candidate operation in a private aggregate
+step savepoint. `CanonicalStepRunner` and its `OutputLedger` are the shared
+native/incremental publication protocol above that transition. A typed resource need restores the matching `Universe`,
 command-state, mode-nest, execution, statistics, checkpoint-publisher, prepared
 page, diagnostic/effect/artifact, and lifecycle roots before returning
 `AwaitingResources`; the suspension serial remains monotonic and replay uses
 the original logical resolution index. Named checkpoints and external read
 observations are staged and delivered only after the candidate commits.
 
-`tex-incr::RevisionCandidate` and `umber::VirtualCompileSession` now provide
-the host-session retention layer. A candidate owns its `ExecutionRun`, input
+`tex-incr::RevisionCandidate` and `umber::EngineSession` now provide
+the host-session retention layer. A candidate owns its canonical control, input
 stack, mutable `Universe`, speculative checkpoint sink, paragraph-memo
 generation, editor setup, and private workspace generation across
 resource batches. Each drive installs resolvers over a fresh immutable VFS
@@ -74,40 +75,34 @@ engine's deterministic state.
 
 ## Public shape and ownership
 
-`tex-exec` owns the run as `ExecutionRun`. The intended API shape is:
+`tex-exec` exposes one borrow-scoped runner over the owned canonical control and
+revision state:
 
 ```rust
-pub struct ExecutionRun { /* private owned state */ }
+pub struct CanonicalStepRunner<'a> { /* borrowed control, state, and ledger */ }
 
-pub enum ExecutionStep {
-    JobStart,
-    MainControl,
-    FinishEnd,
-    Finalize,
-}
-
-pub enum ExecutionStepResult {
-    Progress(ExecutionProgress),
-    AwaitingResources(ResourceSuspension),
-    Complete(ExecutionStats),
-    Failed(ExecError),
-    Cancelled,
+pub enum CanonicalStepResult {
+    Progress(MainControlStep),
+    ResourceNeed(ResourceNeed),
+    Committed(MainControlStep),
+    Completed(MainControlStep),
+    Failed(CanonicalStepFailure),
 }
 ```
 
 `ExecutionStep` is the next stable operation recorded in the run, not a caller
-command. `ExecutionRun::step(&mut ExecutionServices, &Cancellation)` executes
-at most that operation and returns its result. `ExecutionServices<'_>` borrows
-input, font, image, read-recording, and checkpoint-delivery adapters for one
-call. No resolver, sink, recorder, JavaScript value, future, filesystem handle,
-or other host capability is retained in `ExecutionRun`.
+command. `CanonicalStepRunner::step` executes at most that operation and
+returns its result. Its call borrows checkpoint delivery and cancellation;
+resource resolvers remain host-owned. No resolver, sink, recorder, JavaScript
+value, future, filesystem handle, or other host capability is retained by the
+runner or ledger.
 
 `ExecutionProgress` reports the committed next step and zero or more detached
 named checkpoints. `ResourceSuspension` owns a sorted, deduplicated request
 batch, the blocked `ResourceSite`, and a monotonic suspension serial. It does
 not expose an engine snapshot. `Complete` owns the finalized statistics and
-can be returned idempotently by higher session layers; `ExecutionRun::step`
-itself rejects further driving after a terminal state.
+can be returned idempotently by higher session layers; those layers reject
+further driving after a terminal state.
 
 The existing one-shot `run*` methods become adapters which construct a run and
 call `step` until terminal. They must use the same typed service adapters and
@@ -116,8 +111,7 @@ must not retain a synchronous-only path.
 ## Complete live-state inventory
 
 Everything that currently survives only because `run_session` and its callees
-remain on the stack moves into `ExecutionRun` or an owned component reached by
-it:
+remain on the stack lives in `MainControl`, `Universe`, or the retained session:
 
 | Owned component      | Required contents                                                                                                                                                                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -302,7 +296,7 @@ The resource classes are:
 Requests additionally carry `Required` or `Probe`. A probe is optional only in
 the TeX sense that authoritative absence has normal behavior; it is blocking
 until the host supplies bytes or absence. Prefetch hints are host/session
-optimizations and never suspend `ExecutionRun`.
+optimizations and never suspend the canonical step runner.
 
 The `ResourceSite` recorded for diagnostics and failure injection is one of
 `Expansion`, `MainControl`, `ParagraphFinish`, `LineBuild`, `PageBuild`,
@@ -412,7 +406,7 @@ rolls the whole step back, and terminally returns `Cancelled`. Cancellation
 emits no TeX diagnostic and publishes no staged checkpoint or output. A
 resource response received after cancellation is not transferred into the
 run; shared host caches may retain verified immutable bytes. At the persistent
-session layer, cancelling a pending editor revision drops its `ExecutionRun`
+session layer, cancelling a pending editor revision drops its canonical control
 and private VFS/revision transaction while preserving the last accepted
 revision and immutable resource bindings.
 
@@ -433,7 +427,7 @@ by rollback.
 
 ## Native, WASM, and build composition
 
-Both hosts drive the same Rust `ExecutionRun` and typed result values. A native
+Both hosts drive the same Rust `CanonicalStepRunner` and typed result values. A native
 adapter may satisfy a request immediately and call `step` again on the same
 thread. WASM serializes `ResourceSuspension`, returns to JavaScript for
 asynchronous acquisition, registers validated responses through the shared

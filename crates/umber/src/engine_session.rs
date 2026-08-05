@@ -10,19 +10,25 @@ use std::sync::Arc;
 
 use tex_command::{
     CommandDeliveryBoundary, CommandDialect, CommandObservation, CommandObserver, CommandProfile,
-    FontResource, ObservedToken, PdfImageResource, RegisteredSourceKind, SourceRegistration,
-    SourceRegistrationError,
+    ObservedToken, RegisteredSourceKind, SourceRegistration, SourceRegistrationError,
 };
 use tex_exec::{
-    CheckpointSink, DiagnosticStep, DiagnosticStepResult, EngineBoundary, ExecutionBudgetCounters,
-    MainControl, MainControlStep, ResourceFulfillment, ResourceHost, ResourceNeed, ResourceOutcome,
-    ResourceWorld, StepResult, canonical_font_resource_path,
+    CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner, CheckpointSink, DiagnosticStep,
+    DiagnosticStepResult, MainControl, ResourceFulfillment, ResourceHost, ResourceNeed,
+    ResourceOutcome, ResourceWorld,
 };
 use tex_out::dvi::DviPagePlan;
 use tex_state::print::{Printer, Selector};
 use tex_state::{FileContent, Universe};
 
 use crate::RunResult;
+
+fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
+    match error {
+        CanonicalStepFailure::Execution(error) => SessionError::Execution(error),
+        CanonicalStepFailure::Checkpoint(error) => SessionError::CommandSummary(error),
+    }
+}
 
 /// Default bound for a host that repeatedly declines the same typed need.
 pub const DEFAULT_NO_PROGRESS_LIMIT: u8 = 8;
@@ -263,6 +269,7 @@ pub struct EngineSession<'a> {
     terminal_input_cursor: Option<tex_state::TerminalInputPosition>,
     no_progress_limit: u8,
     mode_transitions: Vec<tex_exec::Mode>,
+    output_ledger: tex_exec::OutputLedger,
 }
 
 impl<'a> EngineSession<'a> {
@@ -335,6 +342,7 @@ impl<'a> EngineSession<'a> {
             terminated: false,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            output_ledger: tex_exec::OutputLedger::default(),
         }
     }
 
@@ -364,6 +372,7 @@ impl<'a> EngineSession<'a> {
             terminated: false,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            output_ledger: tex_exec::OutputLedger::default(),
         }
     }
 
@@ -390,6 +399,7 @@ impl<'a> EngineSession<'a> {
             terminated: false,
             no_progress_limit: DEFAULT_NO_PROGRESS_LIMIT,
             mode_transitions: vec![tex_exec::Mode::Vertical],
+            output_ledger: tex_exec::OutputLedger::default(),
         }
     }
 
@@ -651,6 +661,11 @@ impl<'a> EngineSession<'a> {
         &mut self,
         checkpoints: &mut dyn CheckpointSink,
     ) -> Result<SessionState, SessionError> {
+        self.ensure_started(checkpoints)?;
+        self.advance_inner(checkpoints, None)
+    }
+
+    fn ensure_started(&mut self, checkpoints: &mut dyn CheckpointSink) -> Result<(), SessionError> {
         if !self.root_registered {
             return Err(SessionError::RootNotRegistered);
         }
@@ -673,29 +688,10 @@ impl<'a> EngineSession<'a> {
             if self.project_root_body_terminal_text && !self.root_framing_is_command_owned {
                 self.terminal_text_cursor = self.stores.world().effect_pos();
             }
-            self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
+            self.output_ledger
+                .commit_job_start(&self.control, self.stores, checkpoints)?;
         }
-        if self.terminated {
-            return self.finish();
-        }
-        loop {
-            match self.control.advance(self.stores)? {
-                StepResult::Suspended(need) => {
-                    return Ok(SessionState::NeedResource(need));
-                }
-                StepResult::Progress(step) => {
-                    self.record_current_mode();
-                    self.publish_completed_boundaries(checkpoints)?;
-                    if checkpoints.stop_requested() {
-                        return Err(SessionError::CooperativeStopRequested);
-                    }
-                    if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                        self.terminated = true;
-                        return self.finish();
-                    }
-                }
-            }
-        }
+        Ok(())
     }
 
     /// Prints TeX82 §1332's process headline before the first command.
@@ -751,56 +747,48 @@ impl<'a> EngineSession<'a> {
         checkpoints: &mut dyn CheckpointSink,
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<SessionState, SessionError> {
-        if !self.root_registered {
-            return Err(SessionError::RootNotRegistered);
-        }
-        if !self.started {
-            self.started = true;
-            if self.loaded_job_framing {
-                let input = self
-                    .startup_input_name
-                    .as_deref()
-                    .expect("a started session has a root");
-                let invocation = self
-                    .startup_invocation_line
-                    .as_deref()
-                    .expect("a started session has a startup invocation");
-                self.control
-                    .begin_job_for_input(self.stores, invocation, input);
-            }
-            self.print_startup_headline();
-            self.print_startup_input_opening();
-            self.publish_checkpoint(EngineBoundary::JobStart, checkpoints)?;
-        }
+        self.ensure_started(checkpoints)?;
+        self.advance_inner(checkpoints, Some(observer))
+    }
+
+    fn advance_inner(
+        &mut self,
+        checkpoints: &mut dyn CheckpointSink,
+        mut observer: Option<&mut dyn tex_command::CommandObserver>,
+    ) -> Result<SessionState, SessionError> {
         if self.terminated {
             return self.finish();
         }
         loop {
-            match self.control.advance_with_observer(self.stores, observer)? {
-                StepResult::Suspended(need) => {
+            let mut runner =
+                CanonicalStepRunner::new(&mut self.control, self.stores, &mut self.output_ledger);
+            let result = match observer.as_deref_mut() {
+                Some(observer) => {
+                    runner.step_with_observer(checkpoints, &tex_exec::Cancellation::new(), observer)
+                }
+                None => runner.step(checkpoints, &tex_exec::Cancellation::new()),
+            };
+            match result {
+                CanonicalStepResult::ResourceNeed(need) => {
                     return Ok(SessionState::NeedResource(need));
                 }
-                StepResult::Progress(step) => {
+                CanonicalStepResult::Progress(_) | CanonicalStepResult::Committed(_) => {
                     self.record_current_mode();
-                    self.publish_completed_boundaries(checkpoints)?;
                     if checkpoints.stop_requested() {
                         return Err(SessionError::CooperativeStopRequested);
                     }
-                    if matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                        // TeX82 §§81, 93, 1332, 1335: source exhaustion and
-                        // scanned or fatal stops all converge at the one
-                        // `close_files_and_terminate` boundary. Main control
-                        // publishes both forms of `End`; EndOfInput has no
-                        // scanned command to own the boundary, so the retained
-                        // session publishes it after the committed source
-                        // stop. Fuel and resource failures reach neither path.
-                        if matches!(step, MainControlStep::EndOfInput) {
-                            observer.committed(engine_termination_observation());
-                        }
-                        self.terminated = true;
-                        return self.finish();
-                    }
                 }
+                CanonicalStepResult::Completed(step) => {
+                    self.record_current_mode();
+                    if matches!(step, tex_exec::MainControlStep::EndOfInput)
+                        && let Some(observer) = observer.as_deref_mut()
+                    {
+                        observer.committed(engine_termination_observation());
+                    }
+                    self.terminated = true;
+                    return self.finish();
+                }
+                CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
             }
         }
     }
@@ -811,74 +799,17 @@ impl<'a> EngineSession<'a> {
         need: &ResourceNeed,
         fulfillment: ResourceFulfillment,
     ) -> Result<(), SessionError> {
-        let matches = match (&fulfillment, need) {
-            (
-                ResourceFulfillment::Input { name, .. },
-                ResourceNeed::Input { name: expected, .. },
-            ) => name == expected,
-            (
-                ResourceFulfillment::InputProbe { request, .. },
-                ResourceNeed::InputProbe { request: expected },
-            ) => request == expected,
-            (
-                ResourceFulfillment::Font { request, .. },
-                ResourceNeed::Font { request: expected },
-            ) => request == expected,
-            (
-                ResourceFulfillment::PdfImage { request, .. },
-                ResourceNeed::PdfImage { request: expected },
-            ) => request == expected,
-            _ => false,
-        };
-        if !matches {
-            return Err(SessionError::UnexpectedFulfillment {
+        self.output_ledger
+            .fulfill(&mut self.control, need, fulfillment)
+            .map_err(|fulfillment| SessionError::UnexpectedFulfillment {
                 need: need.clone(),
-                fulfillment: Box::new(fulfillment),
-            });
-        }
-        match fulfillment {
-            ResourceFulfillment::Input { name, source } => {
-                self.control.capabilities_mut().register_input(name, source)
-            }
-            ResourceFulfillment::InputProbe { request, resource } => self
-                .control
-                .capabilities_mut()
-                .register_input_probe(request.name, resource),
-            ResourceFulfillment::Font { request, resource } => self
-                .control
-                .capabilities_mut()
-                .register_font(canonical_font_resource_path(&request.name), *resource),
-            ResourceFulfillment::PdfImage { request, resource } => self
-                .control
-                .capabilities_mut()
-                .register_pdf_image(request, *resource),
-        }
-        Ok(())
+                fulfillment,
+            })
     }
 
     fn mark_unavailable(&mut self, need: &ResourceNeed) {
-        match need {
-            ResourceNeed::Input { name, .. } => {
-                let capabilities = self.control.capabilities_mut();
-                capabilities.mark_input_unavailable(name);
-                if !name.contains(['/', '\\', ':']) {
-                    capabilities.mark_input_unavailable(format!("TeXinputs:{name}"));
-                }
-            }
-            ResourceNeed::InputProbe { request } => {
-                self.control
-                    .capabilities_mut()
-                    .mark_input_probe_unavailable(&request.name);
-            }
-            ResourceNeed::Font { request } => self.control.capabilities_mut().register_font(
-                canonical_font_resource_path(&request.name),
-                FontResource::Unavailable,
-            ),
-            ResourceNeed::PdfImage { request } => self
-                .control
-                .capabilities_mut()
-                .register_pdf_image(request.clone(), PdfImageResource::Unavailable),
-        }
+        self.output_ledger
+            .mark_unavailable(&mut self.control, need, true);
     }
 
     /// Runs the engine using host policy only for typed immutable
@@ -890,47 +821,7 @@ impl<'a> EngineSession<'a> {
         host: &mut dyn ResourceHost,
         checkpoints: &mut dyn CheckpointSink,
     ) -> Result<RunResult, SessionError> {
-        let mut declined: u8 = 0;
-        loop {
-            match self.advance_until_waiting(checkpoints)? {
-                SessionState::Complete(result) => return Ok(result),
-                SessionState::NeedResource(need) => {
-                    let outcome = {
-                        let mut world = ResourceWorld::new(self.stores);
-                        host.fulfill(&mut world, &need)
-                    };
-                    match outcome {
-                        ResourceOutcome::Fulfilled(fulfillment) => {
-                            self.fulfill(&need, fulfillment)?;
-                            declined = 0;
-                        }
-                        ResourceOutcome::Unavailable => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                self.mark_unavailable(&need);
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                        ResourceOutcome::Declined => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                    }
-                    if declined >= self.no_progress_limit {
-                        return Err(SessionError::NoProgress {
-                            need,
-                            attempts: declined,
-                        });
-                    }
-                }
-            }
-        }
+        self.run_inner(host, checkpoints, None)
     }
 
     /// Runs through the same retained resource protocol while projecting
@@ -952,9 +843,24 @@ impl<'a> EngineSession<'a> {
         checkpoints: &mut dyn CheckpointSink,
         observer: &mut dyn tex_command::CommandObserver,
     ) -> Result<RunResult, SessionError> {
+        self.run_inner(host, checkpoints, Some(observer))
+    }
+
+    fn run_inner(
+        &mut self,
+        host: &mut dyn ResourceHost,
+        checkpoints: &mut dyn CheckpointSink,
+        mut observer: Option<&mut dyn tex_command::CommandObserver>,
+    ) -> Result<RunResult, SessionError> {
         let mut declined: u8 = 0;
         loop {
-            match self.advance_until_waiting_with_observer(checkpoints, observer)? {
+            let state = match observer.as_deref_mut() {
+                Some(observer) => {
+                    self.advance_until_waiting_with_observer(checkpoints, observer)?
+                }
+                None => self.advance_until_waiting(checkpoints)?,
+            };
+            match state {
                 SessionState::Complete(result) => return Ok(result),
                 SessionState::NeedResource(need) => {
                     let outcome = {
@@ -1027,37 +933,11 @@ impl<'a> EngineSession<'a> {
         })
     }
 
-    fn publish_completed_boundaries(
-        &mut self,
-        checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<(), SessionError> {
-        for boundary in self.control.take_completed_boundaries() {
-            self.publish_checkpoint(boundary, checkpoints)?;
-        }
-        Ok(())
-    }
-
     fn record_current_mode(&mut self) {
         let mode = self.control.current_mode();
         if self.mode_transitions.last() != Some(&mode) {
             self.mode_transitions.push(mode);
         }
-    }
-
-    fn publish_checkpoint(
-        &mut self,
-        boundary: EngineBoundary,
-        checkpoints: &mut dyn CheckpointSink,
-    ) -> Result<(), SessionError> {
-        if checkpoints.wants_checkpoint(boundary) {
-            let checkpoint = self.control.capture_checkpoint(
-                boundary,
-                self.stores,
-                ExecutionBudgetCounters::default(),
-            )?;
-            checkpoints.checkpoint(checkpoint);
-        }
-        Ok(())
     }
 
     fn finish(&mut self) -> Result<SessionState, SessionError> {
@@ -1174,8 +1054,8 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use tex_command::{CommandObservation, CommandObserver};
-    use tex_exec::EngineBoundary;
+    use tex_command::{CommandObservation, CommandObserver, FontResource, PdfImageResource};
+    use tex_exec::{EngineBoundary, canonical_font_resource_path};
     use tex_state::World;
 
     const CMR10: &[u8] = include_bytes!("../../tex-fonts/tests/fixtures/cm/cmr10.tfm");

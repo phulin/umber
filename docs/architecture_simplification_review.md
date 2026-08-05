@@ -207,9 +207,9 @@ Rollback retains the old translator and codec readers behind a schema/profile sw
 
 Affected crates: `tex-exec`, `tex-incr`, `umber`, `tex-state`, `tex-out`, `tex-command-stream`, and `umber-vfs`.
 
-**Current design — observed.** Execution is advanced through several local loops. `tex-incr` exposes a candidate driver at [`crates/tex-incr/src/lib.rs:585`](/home/phulin/umber/crates/tex-incr/src/lib.rs:585), `umber` has its own session lifecycle, and command-stream tooling has another replay lifecycle. Checkpoint and artifact publication are similarly repeated across engine, editor, and host layers.
+**Current design — implemented.** `tex-exec::CanonicalStepRunner` is the one bounded native and incremental step protocol. It returns `Progress`, `ResourceNeed`, `Committed`, `Completed`, or `Failed`; `OutputLedger` owns named-checkpoint capture, exact resource registration, authoritative absence, and host-visible suspension accounting. `umber::EngineSession` and `tex-incr::RevisionCandidate` retain only lifecycle and host policy. Virtual compilation delegates to the revision candidate, while command-stream observation delegates to the engine session, so neither has a replay loop or checkpoint side channel.
 
-**End state.** Introduce one canonical transaction protocol, split into two explicit responsibilities:
+**End state.** The canonical transaction protocol is split into two explicit responsibilities:
 
 - `StepRunner`: advances one bounded step and returns `Progress`, `ResourceNeed`, `Committed`, `Completed`, or `Failed`;
 - `RevisionTransaction`/`OutputLedger`: owns checkpoint capture, state publication, artifact ordering, resource fulfillment, and rollback.
@@ -227,7 +227,7 @@ Frontends retain policy—blocking versus asynchronous resource resolution, cold
 3. Move output and checkpoint ownership into the ledger while preserving current wire formats.
 4. Remove duplicated loops and local side channels.
 
-Each frontend keeps an adapter to the old loop until its differential suite passes.
+The public whole-run and advance-until-waiting methods are thin policy adapters over the shared runner; there is no alternate engine loop behind them.
 
 **Gates and risks.** Compare one-step and whole-run semantic events, DVI/PDF/effect output, checkpoints, state hashes, fulfilled and unavailable resources, cancellation, fuel exhaustion, and cold-versus-incremental results. Risks include committing a state before all effects are captured and changing the exact point at which a resource request suspends execution.
 

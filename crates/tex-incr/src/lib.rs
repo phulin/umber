@@ -16,10 +16,10 @@ use tex_command::{
     SourceRegistrationError,
 };
 use tex_exec::{
-    Cancellation, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
-    ExecutionBudgetCounters, MainControl, MainControlStep, ParagraphRegion, ResourceFulfillment,
-    ResourceHost, ResourceNeed, ResourceOutcome, ResourceWorld, StepResult,
-    canonical_font_resource_path,
+    Cancellation, CanonicalStepFailure, CanonicalStepResult, CanonicalStepRunner,
+    CheckpointIdentity, CheckpointSink, EditorRestoreError, EngineBoundary, EngineCheckpoint,
+    MainControl, MainControlStep, OutputLedger, ParagraphRegion, ResourceFulfillment, ResourceHost,
+    ResourceNeed, ResourceOutcome, ResourceWorld, canonical_font_resource_path,
 };
 use tex_out::dvi::{DviError, DviPagePlan, DviStreamWriter};
 pub use tex_out::html::RenderedOutputId;
@@ -366,10 +366,9 @@ pub struct RevisionCandidate {
     sink: CandidateSink,
     memo: tex_state::PureMemoRuntime,
     completed: Option<CandidateCompletion>,
-    suspension_serial: u64,
+    output_ledger: OutputLedger,
     delivered_commands: usize,
     effect_start: usize,
-    job_start_captured: bool,
     execution_budgets: tex_exec::ExecutionBudgets,
     kind: RevisionCandidateKind,
     carried_paragraphs: Vec<ParagraphRegion>,
@@ -695,20 +694,13 @@ impl RevisionCandidate {
         if self.completed.is_some() {
             return Ok(RevisionCandidateResult::Complete);
         }
-        if !self.job_start_captured {
+        {
             let sink: &mut dyn CheckpointSink = match &mut self.sink {
                 CandidateSink::Cold(sink) => sink,
                 CandidateSink::Advance(sink) => sink,
             };
-            if sink.wants_checkpoint(EngineBoundary::JobStart) {
-                let checkpoint = self.control.capture_checkpoint_with_exact_identity(
-                    EngineBoundary::JobStart,
-                    &mut self.universe,
-                    ExecutionBudgetCounters::default(),
-                )?;
-                sink.checkpoint(checkpoint);
-            }
-            self.job_start_captured = true;
+            self.output_ledger
+                .commit_job_start(&self.control, &mut self.universe, sink)?;
         }
         // A fulfilled or authoritatively unavailable capability must make the
         // replayed aggregate operation pass that same suspension boundary.
@@ -723,67 +715,45 @@ impl RevisionCandidate {
                 ));
             }
             self.validate_execution_budgets()?;
-            match self.control.advance(&mut self.universe)? {
-                StepResult::Progress(step) => {
+            let step_result = {
+                let sink: &mut dyn CheckpointSink = match &mut self.sink {
+                    CandidateSink::Cold(sink) => sink,
+                    CandidateSink::Advance(sink) => sink,
+                };
+                CanonicalStepRunner::new(
+                    &mut self.control,
+                    &mut self.universe,
+                    &mut self.output_ledger,
+                )
+                .step(sink, cancellation)
+            };
+            match step_result {
+                CanonicalStepResult::Progress(step) => {
                     answered_needs.clear();
                     self.delivered_commands = self.delivered_commands.saturating_add(1);
                     self.validate_execution_budgets()?;
-                    let boundaries = self.control.take_completed_boundaries();
-                    for boundary in boundaries {
-                        let sink: &mut dyn CheckpointSink = match &mut self.sink {
-                            CandidateSink::Cold(sink) => sink,
-                            CandidateSink::Advance(sink) => sink,
-                        };
-                        if sink.wants_checkpoint(boundary) {
-                            let checkpoint = match self
-                                .control
-                                .capture_checkpoint_with_exact_identity(
-                                    boundary,
-                                    &mut self.universe,
-                                    ExecutionBudgetCounters::default(),
-                                ) {
-                                Ok(checkpoint) => checkpoint,
-                                Err(tex_command::CommandSummaryError::ActiveParagraphInputTransaction) => self
-                                    .control
-                                    .capture_checkpoint_projecting_paragraph(
-                                        boundary,
-                                        &mut self.universe,
-                                        ExecutionBudgetCounters::default(),
-                                    )?,
-                                Err(error) => return Err(error.into()),
-                            };
-                            sink.checkpoint(checkpoint);
-                        }
-                    }
-                    if self.control.has_pending_paragraph_replay()
-                        && let CandidateSink::Advance(sink) = &mut self.sink
-                    {
-                        sink.defer_convergence_for_paragraph_replay();
-                    }
-                    let stop = match &self.sink {
-                        CandidateSink::Cold(sink) => sink.stop_requested(),
-                        CandidateSink::Advance(sink) => sink.stop_requested(),
-                    };
-                    // Full jobs convert root EOF into §93's fatal `End` inside
-                    // main control. Explicit fragment sessions retain
-                    // `EndOfInput` as their successful host boundary. Either
-                    // result is terminal here; replaying an exhausted source
-                    // can only duplicate diagnostics and grow state.
-                    if stop || matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
-                        self.control
-                            .finalize_page_output_receipts(&mut self.universe);
-                        let prepared_dvi_pages = self.control.take_prepared_dvi_pages();
-                        self.completed = Some(CandidateCompletion {
-                            prepared_dvi_pages,
-                            dumped_format: self.control.dumped_format(),
-                            format_dump_receipt: self.control.format_dump_receipt().cloned(),
-                            delivered_tokens: self.delivered_commands,
-                            main_control_dispatches: self.delivered_commands,
-                        });
+                    if self.finish_committed_step(step)? {
                         return Ok(RevisionCandidateResult::Complete);
                     }
                 }
-                StepResult::Suspended(need) => {
+                CanonicalStepResult::Committed(step) => {
+                    answered_needs.clear();
+                    self.delivered_commands = self.delivered_commands.saturating_add(1);
+                    self.validate_execution_budgets()?;
+                    if self.finish_committed_step(step)? {
+                        return Ok(RevisionCandidateResult::Complete);
+                    }
+                }
+                CanonicalStepResult::Completed(step) => {
+                    answered_needs.clear();
+                    self.delivered_commands = self.delivered_commands.saturating_add(1);
+                    self.validate_execution_budgets()?;
+                    if self.finish_committed_step(step)? {
+                        return Ok(RevisionCandidateResult::Complete);
+                    }
+                    unreachable!("a completed canonical step is terminal");
+                }
+                CanonicalStepResult::ResourceNeed(need) => {
                     self.validate_execution_budgets()?;
                     if answered_needs.contains(&need) {
                         return Err(SessionError::ResourceNoProgress {
@@ -797,82 +767,61 @@ impl RevisionCandidate {
                     };
                     match outcome {
                         ResourceOutcome::Fulfilled(fulfillment) => {
-                            self.fulfill_resource(&need, fulfillment)?;
+                            self.output_ledger
+                                .fulfill(&mut self.control, &need, fulfillment)
+                                .map_err(|_| SessionError::UnexpectedResource)?;
                             answered_needs.push(need);
                         }
                         ResourceOutcome::Unavailable => {
-                            self.mark_unavailable(&need);
+                            self.output_ledger
+                                .mark_unavailable(&mut self.control, &need, false);
                             answered_needs.push(need);
                         }
                         ResourceOutcome::Declined => {
-                            self.suspension_serial = self.suspension_serial.saturating_add(1);
+                            self.output_ledger.record_suspension();
                             return Ok(RevisionCandidateResult::AwaitingResources(need));
                         }
                     }
                 }
+                CanonicalStepResult::Failed(error) => return Err(map_step_failure(error)),
             }
         }
     }
 
-    fn fulfill_resource(
-        &mut self,
-        need: &ResourceNeed,
-        fulfillment: ResourceFulfillment,
-    ) -> Result<(), SessionError> {
-        match (need, fulfillment) {
-            (
-                ResourceNeed::Input { name: expected, .. },
-                ResourceFulfillment::Input { name, source },
-            ) if expected == &name => self.control.capabilities_mut().register_input(name, source),
-            (
-                ResourceNeed::InputProbe { request: expected },
-                ResourceFulfillment::InputProbe { request, resource },
-            ) if expected == &request => self
-                .control
-                .capabilities_mut()
-                .register_input_probe(request.name, resource),
-            (
-                ResourceNeed::Font { request: expected },
-                ResourceFulfillment::Font { request, resource },
-            ) if expected == &request => self
-                .control
-                .capabilities_mut()
-                .register_font(canonical_font_resource_path(&request.name), *resource),
-            (
-                ResourceNeed::PdfImage { request: expected },
-                ResourceFulfillment::PdfImage { request, resource },
-            ) if expected == &request => self
-                .control
-                .capabilities_mut()
-                .register_pdf_image(request, *resource),
-            _ => return Err(SessionError::UnexpectedResource),
+    fn finish_committed_step(&mut self, step: MainControlStep) -> Result<bool, SessionError> {
+        if self.control.has_pending_paragraph_replay()
+            && let CandidateSink::Advance(sink) = &mut self.sink
+        {
+            sink.defer_convergence_for_paragraph_replay();
         }
-        Ok(())
-    }
-
-    fn mark_unavailable(&mut self, need: &ResourceNeed) {
-        match need {
-            ResourceNeed::Input { name, .. } => {
-                self.control.capabilities_mut().mark_input_unavailable(name)
-            }
-            ResourceNeed::InputProbe { request } => self
-                .control
-                .capabilities_mut()
-                .mark_input_probe_unavailable(&request.name),
-            ResourceNeed::Font { request } => self.control.capabilities_mut().register_font(
-                canonical_font_resource_path(&request.name),
-                tex_command::FontResource::Unavailable,
-            ),
-            ResourceNeed::PdfImage { request } => self
-                .control
-                .capabilities_mut()
-                .register_pdf_image(request.clone(), tex_command::PdfImageResource::Unavailable),
+        let stop = match &self.sink {
+            CandidateSink::Cold(sink) => sink.stop_requested(),
+            CandidateSink::Advance(sink) => sink.stop_requested(),
+        };
+        // Full jobs convert root EOF into §93's fatal `End` inside
+        // main control. Explicit fragment sessions retain
+        // `EndOfInput` as their successful host boundary. Either
+        // result is terminal here; replaying an exhausted source
+        // can only duplicate diagnostics and grow state.
+        if stop || matches!(step, MainControlStep::End | MainControlStep::EndOfInput) {
+            self.control
+                .finalize_page_output_receipts(&mut self.universe);
+            let prepared_dvi_pages = self.control.take_prepared_dvi_pages();
+            self.completed = Some(CandidateCompletion {
+                prepared_dvi_pages,
+                dumped_format: self.control.dumped_format(),
+                format_dump_receipt: self.control.format_dump_receipt().cloned(),
+                delivered_tokens: self.delivered_commands,
+                main_control_dispatches: self.delivered_commands,
+            });
+            return Ok(true);
         }
+        Ok(false)
     }
 
     #[must_use]
-    pub fn suspension_serial(&self) -> u64 {
-        self.suspension_serial
+    pub const fn suspension_serial(&self) -> u64 {
+        self.output_ledger.suspension_serial()
     }
 
     pub fn set_cumulative_fuel_limit(&mut self, limit: u64) {
@@ -890,7 +839,7 @@ impl RevisionCandidate {
         tex_exec::ExecutionTelemetry {
             cold_starts: 0,
             advance_calls: self.delivered_commands as u64,
-            suspensions: self.suspension_serial,
+            suspensions: self.suspension_serial(),
             local_step_retries: 0,
             replayed_delivered_tokens: 0,
             replayed_dispatches: 0,
@@ -1435,10 +1384,9 @@ impl Session {
             sink: CandidateSink::Cold(HistorySink::default()),
             memo,
             completed: None,
-            suspension_serial: 0,
+            output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
             effect_start,
-            job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Initial {
                 source_len: self.source.len(),
@@ -1803,10 +1751,9 @@ impl Session {
             sink: CandidateSink::Advance(sink),
             memo,
             completed: None,
-            suspension_serial: 0,
+            output_ledger: OutputLedger::resume(CheckpointIdentity::Exact),
             delivered_commands: 0,
             effect_start,
-            job_start_captured: true,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Incremental {
                 setup,
@@ -1884,10 +1831,9 @@ impl Session {
             sink: CandidateSink::Cold(HistorySink::default()),
             memo,
             completed: None,
-            suspension_serial: 0,
+            output_ledger: OutputLedger::new(CheckpointIdentity::Exact),
             delivered_commands: 0,
             effect_start,
-            job_start_captured: false,
             execution_budgets: tex_exec::ExecutionBudgets::default(),
             kind: RevisionCandidateKind::Replacement { setup },
             carried_paragraphs: Vec::new(),
@@ -3598,6 +3544,13 @@ fn drive_synchronous_candidate(
             need: Box::new(need),
             site: candidate.control.pending_resource_site(),
         }),
+    }
+}
+
+fn map_step_failure(error: CanonicalStepFailure) -> SessionError {
+    match error {
+        CanonicalStepFailure::Execution(error) => SessionError::Execute(error),
+        CanonicalStepFailure::Checkpoint(error) => SessionError::CommandSummary(error),
     }
 }
 
