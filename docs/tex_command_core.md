@@ -2444,6 +2444,12 @@ character token, so a control sequence `\let` to a keyword letter -- same
 `cur_cmd`, same `cur_chr` -- still cannot spell one. The comparison itself is
 on `cur_chr` alone, so a keyword letter matches under any category code.
 
+Keyword text is traversed directly rather than copied into a temporary letter
+list. The matched prefix uses 13 inline command slots, covering the complete
+current TeX82, e-TeX 2.6, and pdfTeX 1.40.29 production vocabulary; the public
+scanner retains an explicit heap spill for longer caller-supplied keywords, so
+the storage optimization introduces no semantic keyword-length limit.
+
 Integer, dimension, glue, muglue, and expression arithmetic use shared exact
 types from `tex-arith` and `tex-state`. The integer scanner owns decimal,
 octal (`'`), and hexadecimal (`"`) digit delivery: radix introducers and every
@@ -2455,6 +2461,12 @@ also scan their register index through that same command-owned scalar path,
 then publish the nested integer, internal-value, and outer integer results in
 canonical order. Overflow, rounding, radix, unit, and recovery behavior cite
 canonical sections and compare against reference fixtures.
+
+TeX82 §452 retains at most the first 17 decimal-fraction digits for §453's
+rounding. The scanner stores those digits in a fixed byte array while still
+delivering and consuming every later decimal digit through the canonical
+terminator; a non-space terminator is backed up and a space terminator is
+absorbed.
 
 TeX82 §433-§437 declare five "restricted classes of integers" --
 `scan_eight_bit_int`, `scan_char_num`, `scan_four_bit_int`,

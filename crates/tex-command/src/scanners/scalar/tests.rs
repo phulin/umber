@@ -2763,6 +2763,51 @@ fn a_control_sequence_let_to_a_keyword_letter_does_not_match() {
     assert!(!processor.scan_keyword("pt").expect("keyword scans").value);
 }
 
+#[test]
+fn keyword_prefix_storage_spills_without_limiting_long_callers() {
+    let keyword = "abcdefghijklmnopqrst";
+    let mut universe = crate::test_harness::universe();
+    let (matched, following) = scan_with(
+        &mut universe,
+        scanner_tokens(&format!("{keyword}7")),
+        |processor| {
+            let matched = processor
+                .scan_keyword(keyword)
+                .expect("keyword scans")
+                .value;
+            let following = processor
+                .scan_integer()
+                .expect("following integer scans")
+                .value;
+            (matched, following)
+        },
+    );
+    assert!(matched);
+    assert_eq!(following, 7);
+
+    let mut universe = crate::test_harness::universe();
+    let replayed = scan_with(
+        &mut universe,
+        scanner_tokens("abcdefghijklmnX"),
+        |processor| {
+            assert!(
+                !processor
+                    .scan_keyword("abcdefghijklmnopqrst")
+                    .expect("keyword mismatch scans")
+                    .value
+            );
+            let mut replayed = String::new();
+            while let Some(command) = processor.get_x_token().expect("prefix replays") {
+                if let Meaning::CharToken { ch, .. } = command.meaning() {
+                    replayed.push(ch);
+                }
+            }
+            replayed
+        },
+    );
+    assert_eq!(replayed, "abcdefghijklmnX");
+}
+
 fn scan_internal_with(
     universe: &mut Universe,
     tokens: Vec<Token>,

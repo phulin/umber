@@ -27,6 +27,56 @@ const IMPROPER_AUXILIARY_HELP: &[&str] = &[
     "I'm forgetting what you said and using zero instead.",
 ];
 
+/// Inline capacity for TeX/e-TeX/pdfTeX's current keyword vocabulary.
+///
+/// The longest production keyword is 13 characters. `scan_keyword` remains
+/// open to callers with longer strings and moves to `spill` when necessary.
+const KEYWORD_PREFIX_INLINE_CAPACITY: usize = 13;
+
+struct MatchedKeywordPrefix {
+    inline: [Option<CurrentCommand>; KEYWORD_PREFIX_INLINE_CAPACITY],
+    len: usize,
+    spill: Option<Vec<CurrentCommand>>,
+}
+
+impl MatchedKeywordPrefix {
+    fn new() -> Self {
+        Self {
+            inline: std::array::from_fn(|_| None),
+            len: 0,
+            spill: None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn push(&mut self, command: CurrentCommand) {
+        if let Some(spill) = &mut self.spill {
+            spill.push(command);
+        } else if self.len < KEYWORD_PREFIX_INLINE_CAPACITY {
+            self.inline[self.len] = Some(command);
+        } else {
+            let mut spill = Vec::with_capacity(KEYWORD_PREFIX_INLINE_CAPACITY * 2);
+            spill.extend(self.inline.iter_mut().filter_map(Option::take));
+            spill.push(command);
+            self.spill = Some(spill);
+        }
+        self.len += 1;
+    }
+
+    fn into_vec(mut self) -> Vec<CurrentCommand> {
+        self.spill.take().unwrap_or_else(|| {
+            self.inline
+                .iter_mut()
+                .take(self.len)
+                .filter_map(Option::take)
+                .collect()
+        })
+    }
+}
+
 fn observed_glue_value(value: &GlueSpec) -> ObservationValue {
     ObservationValue::Glue {
         width: i64::from(value.width.raw()),
@@ -363,18 +413,17 @@ impl CommandProcessor<'_> {
     /// matches under any category code, and `cur_chr-"a"+"A"` accepts the
     /// uppercase form of tex.web's all-lowercase keywords.
     pub fn scan_keyword(&mut self, keyword: &str) -> Result<ScannedScalar<bool>, CommandError> {
-        let letters = keyword.chars().collect::<Vec<_>>();
         // `link(backup_head)`: the tokens matched so far, in delivery order.
-        let mut matched = Vec::new();
+        let mut matched = MatchedKeywordPrefix::new();
         let mut provenance = OriginId::UNKNOWN;
-        let mut index = 0;
-        while index < letters.len() {
+        let mut letters = keyword.chars().peekable();
+        while let Some(&letter) = letters.peek() {
             let Some(command) = self.get_x_token()? else {
                 // tex.web cannot reach this: `get_x_token` always yields, and
                 // exhausted input is `\\end`'s business. Restore the prefix
                 // the same way a mismatch would and report no keyword.
                 if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched);
+                    self.back_matched_keyword_prefix(matched.into_vec());
                 }
                 return Ok(Self::keyword_result(false, provenance));
             };
@@ -384,11 +433,11 @@ impl CommandProcessor<'_> {
             if command.control_sequence().is_none()
                 && matches!(
                     command.meaning(),
-                    Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&letters[index])
+                    Meaning::CharToken { ch, .. } if ch.eq_ignore_ascii_case(&letter)
                 )
             {
                 matched.push(command);
-                index += 1;
+                letters.next();
             } else if matched.is_empty()
                 && matches!(
                     command.meaning(),
@@ -403,7 +452,7 @@ impl CommandProcessor<'_> {
             } else {
                 self.back_input(command)?;
                 if !matched.is_empty() {
-                    self.back_matched_keyword_prefix(matched);
+                    self.back_matched_keyword_prefix(matched.into_vec());
                 }
                 return Ok(Self::keyword_result(false, provenance));
             }
@@ -1287,7 +1336,8 @@ impl CommandProcessor<'_> {
         allow_infinite: bool,
         mu: bool,
     ) -> Result<ScannedUnits, CommandError> {
-        let mut fraction = String::new();
+        let mut fraction = [0_u8; 17];
+        let mut fraction_len = 0;
         if decimal {
             loop {
                 let Some(command) = self.get_x_token()? else {
@@ -1297,7 +1347,12 @@ impl CommandProcessor<'_> {
                     Meaning::CharToken {
                         ch,
                         cat: Catcode::Other,
-                    } if ch.is_ascii_digit() => fraction.push(ch),
+                    } if ch.is_ascii_digit() => {
+                        if fraction_len < fraction.len() {
+                            fraction[fraction_len] = ch as u8 - b'0';
+                            fraction_len += 1;
+                        }
+                    }
                     // §452's closing `if cur_cmd<>spacer then back_input`: a
                     // fraction absorbs the space that ends it exactly as
                     // §444's integer constant does, so `.5 in` reaches the
@@ -1331,8 +1386,7 @@ impl CommandProcessor<'_> {
         } else {
             self.scan_dimension_unit(allow_infinite, mu)?
         };
-        let digits = fraction.bytes().map(|byte| byte - b'0').collect::<Vec<_>>();
-        let fraction = round_decimal_fraction(&digits);
+        let fraction = round_decimal_fraction(&fraction[..fraction_len]);
         // TeX82 §457's "Adjust for the magnification ratio", applied between
         // recognizing `true` and converting the physical unit: the unit scan
         // above has already run `prepare_mag`, which validates and freezes
