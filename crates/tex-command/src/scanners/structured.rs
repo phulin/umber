@@ -3129,20 +3129,18 @@ impl CommandProcessor<'_> {
         self.command
             .prepare_alignment_cell_lookahead()
             .map_err(|_| CommandError::input_invariant())?;
-        let (command, pending_expanded_delivery) = self
+        let lookahead = self
             .next_alignment_lookahead()?
             .ok_or(CommandError::input_invariant())?;
         {
             if matches!(
-                command.meaning(),
+                lookahead.command().meaning(),
                 Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit)
             ) {
-                if pending_expanded_delivery {
-                    self.commit_alignment_lookahead_delivery(&command);
-                }
+                let _ = self.commit_alignment_lookahead_delivery(lookahead);
                 return Ok(AlignmentCellOpening::Omit);
             }
-            self.back_alignment_lookahead(command, pending_expanded_delivery)?;
+            self.back_alignment_lookahead(lookahead)?;
         }
         Ok(AlignmentCellOpening::Template)
     }

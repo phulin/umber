@@ -29,6 +29,7 @@ pub use alignment::{
     AlignmentRequestResult, FinishedAlignmentCell,
 };
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
+use expand::ExpandedFetch;
 pub(crate) use expand::ExpansionState;
 pub use expand::{
     PrintCommand, append_character_command_text, append_command_token_text,
@@ -39,6 +40,91 @@ pub(crate) use expand::{
     meaning_text, print_cs_text, render_the_value, string_text, token_list_string_text,
 };
 pub(crate) use next::stored_input_reason;
+
+/// One profile-aware alignment lookahead command and the ownership of its
+/// terminal expanded-delivery observation.
+///
+/// TeX82's `get_x_token` completes that observation before §789 backs the
+/// command up.  Umber defers only the expansion-produced terminal long enough
+/// to preserve the canonical observation-before-backup order; e-TeX's
+/// `get_x_or_protected` terminal path has no expanded observation at all.
+#[derive(Debug)]
+pub enum AlignmentLookahead {
+    Committed(crate::CurrentCommand),
+    PendingExpanded(crate::CurrentCommand),
+}
+
+impl AlignmentLookahead {
+    #[must_use]
+    pub const fn command(&self) -> &crate::CurrentCommand {
+        match self {
+            Self::Committed(command) | Self::PendingExpanded(command) => command,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ReplayCompletionPolicy {
+    Consume,
+    Surface,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ControlSequenceCreation {
+    Forbid,
+    Allow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ExpandedObservationPolicy {
+    Commit,
+    RawOnly,
+    DeferIfExpanded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FirstCommandPolicy {
+    Ordinary,
+    MainLoopCharacter,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AlignmentInterceptionPolicy {
+    Scalar,
+    Surface,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ExpandedDeliveryPolicy {
+    fetch: ExpandedFetch,
+    protected_macros: expand::ProtectedMacroHandling,
+    undefined: expand::UndefinedHandling,
+    observation: ExpandedObservationPolicy,
+    first_command: FirstCommandPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeliveryMode {
+    Raw,
+    Expanded(ExpandedDeliveryPolicy),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct DeliveryPolicy {
+    mode: DeliveryMode,
+    replay_completion: ReplayCompletionPolicy,
+    control_sequence_creation: ControlSequenceCreation,
+    alignment_interception: AlignmentInterceptionPolicy,
+}
+
+#[derive(Debug)]
+pub(super) enum DeliveryEvent {
+    Command(crate::CurrentCommand),
+    PendingExpanded(crate::CurrentCommand),
+    ReplayCompleted(crate::CommandReplayEpisode),
+    Alignment(AlignmentDeliveryEvent),
+}
 #[cfg(test)]
 pub(crate) use status::{
     AbsorbingContext, AlignmentId, AlignmentScanContext, ArgumentBuilderId, ConditionId,

@@ -27,7 +27,11 @@ use crate::{
     SourceRegistration,
 };
 
-use super::CommandProcessor;
+use super::{
+    AlignmentInterceptionPolicy, AlignmentLookahead, CommandProcessor, ControlSequenceCreation,
+    DeliveryEvent, DeliveryMode, DeliveryPolicy, ExpandedDeliveryPolicy, ExpandedObservationPolicy,
+    FirstCommandPolicy, ReplayCompletionPolicy,
+};
 
 use crate::observation::{
     CommandDeliveryBoundary, CommandDeliveryRecord, CommandObservation, CommandProvenance,
@@ -138,13 +142,13 @@ pub(crate) enum ExpandedFetch {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ProtectedMacroHandling {
+pub(super) enum ProtectedMacroHandling {
     Expand,
     Preserve,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum UndefinedHandling {
+pub(super) enum UndefinedHandling {
     Diagnose,
     Preserve,
 }
@@ -152,8 +156,9 @@ enum UndefinedHandling {
 impl CommandProcessor<'_> {
     /// Delivers one ordinary expanded command through TeX.web's `get_x_token`.
     ///
-    /// This is the sole production expanded loop. Expansion mutates the
-    /// canonical command state and restarts here; it never returns a
+    /// This thin canonical entry point selects the ordinary policy of the
+    /// shared raw/expanded delivery driver. Expansion mutates canonical
+    /// command state and restarts in that one driver; it never returns a
     /// push-bearing dispatch result or enters a second interpreter.
     pub fn get_x_token(&mut self) -> Result<Option<CurrentCommand>, CommandError> {
         self.apply_error_stop_recovery()?;
@@ -166,28 +171,37 @@ impl CommandProcessor<'_> {
         &mut self,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         self.apply_error_stop_recovery()?;
-        self.command.transient.active_expansion_depth += 1;
         let preserve = self.command.profile().capabilities().supports_etex();
-        let result = self.expanded_delivery(
+        let result = self.delivery_driver(
             None,
-            ExpandedFetch::GetXToken,
-            false,
-            if preserve {
-                ProtectedMacroHandling::Preserve
-            } else {
-                ProtectedMacroHandling::Expand
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::GetXToken,
+                    protected_macros: if preserve {
+                        ProtectedMacroHandling::Preserve
+                    } else {
+                        ProtectedMacroHandling::Expand
+                    },
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: if preserve {
+                        ExpandedObservationPolicy::RawOnly
+                    } else {
+                        ExpandedObservationPolicy::Commit
+                    },
+                    first_command: FirstCommandPolicy::Ordinary,
+                }),
+                replay_completion: ReplayCompletionPolicy::Surface,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
             },
-            UndefinedHandling::Diagnose,
-        );
-        self.command.transient.active_expansion_depth -= 1;
-        if let Ok(Some(CommandReplayDelivery::Command(command))) = &result
-            && !preserve
-        {
-            // TeX82 get_x_token publishes its terminal expanded delivery.
-            // e-TeX's protected fetch is a raw terminal path instead.
-            self.observe_expanded_delivery(command);
-        }
-        result
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
+            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
+            DeliveryEvent::PendingExpanded(_) | DeliveryEvent::Alignment(_) => {
+                unreachable!("protected delivery policy cannot produce this event")
+            }
+        }))
     }
 
     /// Delivers one expanded command to a diagnostic host while preserving
@@ -196,22 +210,25 @@ impl CommandProcessor<'_> {
         &mut self,
     ) -> Result<Option<CurrentCommand>, CommandError> {
         self.apply_error_stop_recovery()?;
-        self.command.transient.active_expansion_depth += 1;
-        let result = loop {
-            match self.expanded_delivery(
-                None,
-                ExpandedFetch::GetXToken,
-                true,
-                ProtectedMacroHandling::Expand,
-                UndefinedHandling::Preserve,
-            )? {
-                Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
-                Some(CommandReplayDelivery::Completed(_)) => continue,
-                None => break Ok(None),
-            }
-        };
-        self.command.transient.active_expansion_depth -= 1;
-        result
+        let result = self.delivery_driver(
+            None,
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::GetXToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Preserve,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: FirstCommandPolicy::Ordinary,
+                }),
+                replay_completion: ReplayCompletionPolicy::Consume,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => command,
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }))
     }
 
     /// TeX.web §381's `x_token` entered with `cur_cmd`/`cur_chr` already set.
@@ -226,22 +243,25 @@ impl CommandProcessor<'_> {
         mut pending: Option<CurrentCommand>,
         fetch: ExpandedFetch,
     ) -> Result<Option<CurrentCommand>, CommandError> {
-        self.command.transient.active_expansion_depth += 1;
-        let result = loop {
-            match self.expanded_delivery(
-                pending.take(),
-                fetch,
-                true,
-                ProtectedMacroHandling::Expand,
-                UndefinedHandling::Diagnose,
-            )? {
-                Some(CommandReplayDelivery::Command(command)) => break Ok(Some(command)),
-                Some(CommandReplayDelivery::Completed(_)) => continue,
-                None => break Ok(None),
-            }
-        };
-        self.command.transient.active_expansion_depth -= 1;
-        result
+        let result = self.delivery_driver(
+            pending.take(),
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: FirstCommandPolicy::Ordinary,
+                }),
+                replay_completion: ReplayCompletionPolicy::Consume,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => command,
+            _ => unreachable!("ordinary expanded delivery returns only commands"),
+        }))
     }
 
     /// TeX82 §1152's `@<Treat |cur_chr| as an active character@>`:
@@ -358,62 +378,69 @@ impl CommandProcessor<'_> {
     /// `\noalign`, `\crcr`, `\omit`, or closing brace has an expanded
     /// delivery. A protected macro is likewise terminal and is backed up as
     /// the first command of the next cell.
-    pub fn next_alignment_lookahead(
-        &mut self,
-    ) -> Result<Option<(CurrentCommand, bool)>, CommandError> {
+    pub fn next_alignment_lookahead(&mut self) -> Result<Option<AlignmentLookahead>, CommandError> {
         loop {
-            let expansions_before = self.command.expansion.cumulative_expansions;
-            self.command.transient.active_expansion_depth += 1;
             let etex_protected_fetch = self.command.profile().capabilities().supports_etex();
-            let result = self.expanded_delivery(
+            let result = self.delivery_driver(
                 None,
-                ExpandedFetch::GetXToken,
-                false,
-                if etex_protected_fetch {
-                    ProtectedMacroHandling::Preserve
-                } else {
-                    ProtectedMacroHandling::Expand
+                DeliveryPolicy {
+                    mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                        fetch: ExpandedFetch::GetXToken,
+                        protected_macros: if etex_protected_fetch {
+                            ProtectedMacroHandling::Preserve
+                        } else {
+                            ProtectedMacroHandling::Expand
+                        },
+                        undefined: UndefinedHandling::Diagnose,
+                        observation: if etex_protected_fetch {
+                            ExpandedObservationPolicy::RawOnly
+                        } else {
+                            ExpandedObservationPolicy::DeferIfExpanded
+                        },
+                        first_command: FirstCommandPolicy::Ordinary,
+                    }),
+                    replay_completion: ReplayCompletionPolicy::Consume,
+                    control_sequence_creation: ControlSequenceCreation::Forbid,
+                    alignment_interception: AlignmentInterceptionPolicy::Scalar,
                 },
-                UndefinedHandling::Diagnose,
             );
-            self.command.transient.active_expansion_depth -= 1;
             let Some(delivery) = result? else {
                 return Ok(None);
             };
-            let CommandReplayDelivery::Command(command) = delivery else {
-                continue;
+            let lookahead = match delivery {
+                DeliveryEvent::Command(command) => AlignmentLookahead::Committed(command),
+                DeliveryEvent::PendingExpanded(command) => {
+                    AlignmentLookahead::PendingExpanded(command)
+                }
+                _ => unreachable!("alignment lookahead consumes replay completions"),
             };
             if matches!(
-                command.meaning(),
+                lookahead.command().meaning(),
                 Meaning::CharToken {
                     cat: Catcode::Space,
                     ..
                 }
             ) {
-                if !etex_protected_fetch {
-                    self.observe_expanded_delivery(&command);
-                }
+                let _ = self.commit_alignment_lookahead_delivery(lookahead);
                 continue;
             }
-            // A command that §406 fetched directly has completed the ordinary
-            // get_x_token boundary already. Only the result reached through
-            // §381's expansion loop remains pending across §789's back_input.
-            let expanded_through_call =
-                self.command.expansion.cumulative_expansions != expansions_before;
-            if !expanded_through_call && !etex_protected_fetch {
-                self.observe_expanded_delivery(&command);
-            }
-            return Ok(Some((
-                command,
-                expanded_through_call && !etex_protected_fetch,
-            )));
+            return Ok(Some(lookahead));
         }
     }
 
     /// Commits a terminal TeX82 lookahead delivery that alignment control
     /// consumes instead of passing to an ordinary `back_input` branch.
-    pub fn commit_alignment_lookahead_delivery(&mut self, command: &CurrentCommand) {
-        self.observe_expanded_delivery(command);
+    pub fn commit_alignment_lookahead_delivery(
+        &mut self,
+        lookahead: AlignmentLookahead,
+    ) -> CurrentCommand {
+        match lookahead {
+            AlignmentLookahead::Committed(command) => command,
+            AlignmentLookahead::PendingExpanded(command) => {
+                self.observe_expanded_delivery(&command);
+                command
+            }
+        }
     }
 
     /// Completes TeX82 §§785/791's ordinary `align_peek`/`init_col` branch.
@@ -424,12 +451,9 @@ impl CommandProcessor<'_> {
     /// the later replay above the u-template is a distinct delivery.
     pub fn back_alignment_lookahead(
         &mut self,
-        command: CurrentCommand,
-        pending_expanded_delivery: bool,
+        lookahead: AlignmentLookahead,
     ) -> Result<(), CommandError> {
-        if pending_expanded_delivery {
-            self.commit_alignment_lookahead_delivery(&command);
-        }
+        let command = self.commit_alignment_lookahead_delivery(lookahead);
         self.back_input(command)
     }
 
@@ -444,10 +468,26 @@ impl CommandProcessor<'_> {
         &mut self,
     ) -> Result<Option<CommandReplayDelivery>, CommandError> {
         self.apply_error_stop_recovery()?;
-        self.command.transient.active_expansion_depth += 1;
-        let result = self.get_x_token_scalar();
-        self.command.transient.active_expansion_depth -= 1;
-        result
+        let result = self.delivery_driver(
+            None,
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::GetXToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: FirstCommandPolicy::Ordinary,
+                }),
+                replay_completion: ReplayCompletionPolicy::Surface,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
+            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
+            _ => unreachable!("ordinary replay-aware delivery has no alignment event"),
+        }))
     }
 
     /// Delivers one command through TeX82 §1038's `main_loop_lookahead`.
@@ -465,71 +505,120 @@ impl CommandProcessor<'_> {
     /// after `x_token`, because `\char` can be reached by expansion.
     pub fn main_loop_lookahead(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
         self.apply_error_stop_recovery()?;
-        self.command.transient.active_expansion_depth += 1;
-        let result = self.main_loop_lookahead_scalar();
-        self.command.transient.active_expansion_depth -= 1;
-        result
-    }
-
-    fn main_loop_lookahead_scalar(
-        &mut self,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
-        let Some(delivery) = self.get_next_with_replay_completion()? else {
-            return Ok(None);
-        };
-        let CommandReplayDelivery::Command(command) = delivery else {
-            return Ok(Some(delivery));
-        };
-        if is_main_loop_character(command.meaning()) {
-            return Ok(Some(CommandReplayDelivery::Command(command)));
-        }
-        self.expanded_delivery(
-            Some(command),
-            ExpandedFetch::XToken,
-            true,
-            ProtectedMacroHandling::Expand,
-            UndefinedHandling::Diagnose,
-        )
-    }
-
-    fn get_x_token_scalar(&mut self) -> Result<Option<CommandReplayDelivery>, CommandError> {
-        self.expanded_delivery(
+        let result = self.delivery_driver(
             None,
-            ExpandedFetch::GetXToken,
-            true,
-            ProtectedMacroHandling::Expand,
-            UndefinedHandling::Diagnose,
-        )
+            DeliveryPolicy {
+                mode: DeliveryMode::Expanded(ExpandedDeliveryPolicy {
+                    fetch: ExpandedFetch::XToken,
+                    protected_macros: ProtectedMacroHandling::Expand,
+                    undefined: UndefinedHandling::Diagnose,
+                    observation: ExpandedObservationPolicy::Commit,
+                    first_command: FirstCommandPolicy::MainLoopCharacter,
+                }),
+                replay_completion: ReplayCompletionPolicy::Surface,
+                control_sequence_creation: ControlSequenceCreation::Forbid,
+                alignment_interception: AlignmentInterceptionPolicy::Scalar,
+            },
+        )?;
+        Ok(result.map(|event| match event {
+            DeliveryEvent::Command(command) => CommandReplayDelivery::Command(command),
+            DeliveryEvent::ReplayCompleted(episode) => CommandReplayDelivery::Completed(episode),
+            _ => unreachable!("main-loop lookahead has no alignment event"),
+        }))
     }
 
     /// TeX.web §380's expanded-fetch loop, in whichever of its two forms
     /// `fetch` names, optionally entered with the raw command §1038's
     /// lookahead has already fetched.
-    fn expanded_delivery(
+    pub(super) fn delivery_driver(
         &mut self,
         mut pending: Option<CurrentCommand>,
-        fetch: ExpandedFetch,
-        observe_final: bool,
-        protected_macros: ProtectedMacroHandling,
-        undefined: UndefinedHandling,
-    ) -> Result<Option<CommandReplayDelivery>, CommandError> {
+        policy: DeliveryPolicy,
+    ) -> Result<Option<DeliveryEvent>, CommandError> {
+        self.last_delivery = None;
+        match policy.mode {
+            DeliveryMode::Raw => self.delivery_driver_inner(pending, policy, None),
+            DeliveryMode::Expanded(expanded) => {
+                let depth = self.command.transient.active_expansion_depth;
+                self.command.transient.active_expansion_depth = depth
+                    .checked_add(1)
+                    .ok_or_else(CommandError::input_invariant)?;
+                let result = self.delivery_driver_inner(pending.take(), policy, Some(expanded));
+                assert_eq!(
+                    self.command.transient.active_expansion_depth,
+                    depth + 1,
+                    "nested delivery must balance expansion depth"
+                );
+                self.command.transient.active_expansion_depth = depth;
+                result
+            }
+        }
+    }
+
+    fn delivery_driver_inner(
+        &mut self,
+        mut pending: Option<CurrentCommand>,
+        policy: DeliveryPolicy,
+        expanded: Option<ExpandedDeliveryPolicy>,
+    ) -> Result<Option<DeliveryEvent>, CommandError> {
+        let expansions_before = self.command.expansion.cumulative_expansions;
+        let mut first = true;
         loop {
             let command = match pending.take() {
                 Some(command) => command,
                 None => {
-                    let Some(delivery) = self.get_next_with_replay_completion()? else {
+                    self.last_delivery = None;
+                    self.charge_command_action()?;
+                    let Some(delivery) = self.get_next_with_control_sequence_creation(matches!(
+                        policy.control_sequence_creation,
+                        ControlSequenceCreation::Allow
+                    ))?
+                    else {
                         return Ok(None);
                     };
                     let CommandReplayDelivery::Command(command) = delivery else {
-                        return Ok(Some(delivery));
+                        if policy.replay_completion == ReplayCompletionPolicy::Surface {
+                            let CommandReplayDelivery::Completed(episode) = delivery else {
+                                unreachable!()
+                            };
+                            return Ok(Some(DeliveryEvent::ReplayCompleted(episode)));
+                        }
+                        continue;
                     };
                     command
                 }
             };
+
+            let Some(expanded) = expanded else {
+                if policy.alignment_interception == AlignmentInterceptionPolicy::Scalar {
+                    match self.insert_alignment_entry_v_template(command)? {
+                        Some(command) => return Ok(Some(DeliveryEvent::Command(command))),
+                        None => continue,
+                    }
+                }
+                return Ok(Some(DeliveryEvent::Command(command)));
+            };
+
+            if std::mem::take(&mut first)
+                && expanded.first_command == FirstCommandPolicy::MainLoopCharacter
+                && is_main_loop_character(command.meaning())
+            {
+                return Ok(Some(DeliveryEvent::Command(command)));
+            }
             if matches!(
                 command.meaning(),
                 Meaning::ExpandablePrimitive(ExpandablePrimitive::EndTemplate)
             ) {
+                if policy.alignment_interception == AlignmentInterceptionPolicy::Surface
+                    && matches!(
+                        command.alignment_adjustment(),
+                        crate::processor::AlignmentDeliveryAdjustment::Delimiter(_)
+                    )
+                {
+                    return Ok(Some(DeliveryEvent::Alignment(
+                        crate::AlignmentDeliveryEvent::EndTemplate(command),
+                    )));
+                }
                 // This loop's raw fetch is `get_next_with_replay_completion`,
                 // which is §341's body without §342's tail, so §342's
                 // consequence runs here through the same single helper
@@ -540,7 +629,7 @@ impl CommandProcessor<'_> {
                 let Some(mut command) = self.insert_alignment_entry_v_template(command)? else {
                     continue;
                 };
-                if fetch == ExpandedFetch::XToken {
+                if expanded.fetch == ExpandedFetch::XToken {
                     // §366 `expand` has no `end_template` shortcut: it routes
                     // straight to §375, which backs up a `frozen_endv` token
                     // for this loop's own `get_next` to reread.
@@ -548,25 +637,29 @@ impl CommandProcessor<'_> {
                     continue;
                 }
                 command.convert_end_template_to_endv(self.state.frozen_endv_token());
-                if observe_final {
-                    self.observe_expanded_delivery(&command);
-                }
-                return Ok(Some(CommandReplayDelivery::Command(command)));
+                return Ok(Some(self.finish_expanded_delivery(
+                    command,
+                    expanded,
+                    expansions_before,
+                    policy.alignment_interception,
+                )));
             }
-            if (undefined == UndefinedHandling::Preserve
+            if (expanded.undefined == UndefinedHandling::Preserve
                 && matches!(command.meaning(), Meaning::Undefined))
                 || !is_expandable_command(&command)
-                || (protected_macros == ProtectedMacroHandling::Preserve
+                || (expanded.protected_macros == ProtectedMacroHandling::Preserve
                     && matches!(
                         command.meaning(),
                         Meaning::Macro { flags, .. }
                             if flags.contains(MeaningFlags::PROTECTED)
                     ))
             {
-                if observe_final {
-                    self.observe_expanded_delivery(&command);
-                }
-                return Ok(Some(CommandReplayDelivery::Command(command)));
+                return Ok(Some(self.finish_expanded_delivery(
+                    command,
+                    expanded,
+                    expansions_before,
+                    policy.alignment_interception,
+                )));
             }
             // TeX82 §394 aborts a non-`\long` macro call after its recovery
             // bookkeeping, then resumes the enclosing expanded-token loop.
@@ -582,6 +675,35 @@ impl CommandProcessor<'_> {
                 | Err(CommandError::OuterInMacroArgument) => {}
                 Err(error) => return Err(error),
             }
+        }
+    }
+
+    fn finish_expanded_delivery(
+        &mut self,
+        command: CurrentCommand,
+        policy: ExpandedDeliveryPolicy,
+        expansions_before: u64,
+        alignment: AlignmentInterceptionPolicy,
+    ) -> DeliveryEvent {
+        let pending = policy.observation == ExpandedObservationPolicy::DeferIfExpanded
+            && self.command.expansion.cumulative_expansions != expansions_before;
+        if policy.observation == ExpandedObservationPolicy::Commit
+            || (policy.observation == ExpandedObservationPolicy::DeferIfExpanded && !pending)
+        {
+            self.observe_expanded_delivery(&command);
+        }
+        if alignment == AlignmentInterceptionPolicy::Surface
+            && self
+                .command
+                .alignment
+                .needs_closing_brace_recovery(&command)
+        {
+            return DeliveryEvent::Alignment(crate::AlignmentDeliveryEvent::ClosingBrace(command));
+        }
+        if pending {
+            DeliveryEvent::PendingExpanded(command)
+        } else {
+            DeliveryEvent::Command(command)
         }
     }
 

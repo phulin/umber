@@ -119,17 +119,20 @@ fn macro_expanded_alignment_lookahead_is_observed_before_backup() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_observer(&mut recorder);
 
-    let (lookahead, pending) = processor
+    let lookahead = processor
         .next_alignment_lookahead()
         .expect("alignment lookahead expands")
         .expect("macro replacement produces a command");
-    assert!(pending, "the macro-produced command has a pending delivery");
+    assert!(matches!(
+        lookahead,
+        super::AlignmentLookahead::PendingExpanded(_)
+    ));
     assert_eq!(
-        lookahead.meaning(),
+        lookahead.command().meaning(),
         Meaning::IntParam(tex_state::env::banks::IntParam::FAM.raw())
     );
     processor
-        .back_alignment_lookahead(lookahead, pending)
+        .back_alignment_lookahead(lookahead)
         .expect("ordinary init_col backup succeeds");
     processor
         .get_x_token()
@@ -166,13 +169,13 @@ fn direct_alignment_lookahead_keeps_raw_expanded_backup_replay_order() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_observer(&mut recorder);
 
-    let (lookahead, pending) = processor
+    let lookahead = processor
         .next_alignment_lookahead()
         .expect("direct alignment lookahead succeeds")
         .expect("direct command exists");
-    assert!(!pending, "direct get_x_token delivery is already committed");
+    assert!(matches!(lookahead, super::AlignmentLookahead::Committed(_)));
     processor
-        .back_alignment_lookahead(lookahead, pending)
+        .back_alignment_lookahead(lookahead)
         .expect("direct command backup succeeds");
     processor
         .get_x_token()
@@ -210,16 +213,19 @@ fn consumed_macro_alignment_lookahead_commits_once_without_backup() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_observer(&mut recorder);
 
-    let (lookahead, pending) = processor
+    let lookahead = processor
         .next_alignment_lookahead()
         .expect("consumed lookahead expands")
         .expect("macro replacement produces a command");
-    assert!(pending);
+    assert!(matches!(
+        lookahead,
+        super::AlignmentLookahead::PendingExpanded(_)
+    ));
     assert_eq!(
-        lookahead.meaning(),
+        lookahead.command().meaning(),
         Meaning::UnexpandablePrimitive(tex_state::meaning::UnexpandablePrimitive::Omit)
     );
-    processor.commit_alignment_lookahead_delivery(&lookahead);
+    let _ = processor.commit_alignment_lookahead_delivery(lookahead);
 
     assert_eq!(
         delivery_and_backup_script(&recorder, "omit"),
@@ -254,12 +260,15 @@ fn etex_protected_alignment_lookahead_is_raw_and_nonpending() {
     let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities)
         .with_observer(&mut recorder);
 
-    let (lookahead, pending) = processor
+    let lookahead = processor
         .next_alignment_lookahead()
         .expect("protected lookahead succeeds")
         .expect("protected command exists");
-    assert!(matches!(lookahead.meaning(), Meaning::Macro { .. }));
-    assert!(!pending, "get_x_or_protected is a raw terminal path");
+    assert!(matches!(
+        lookahead.command().meaning(),
+        Meaning::Macro { .. }
+    ));
+    assert!(matches!(lookahead, super::AlignmentLookahead::Committed(_)));
     assert_eq!(
         recorder
             .0
@@ -317,6 +326,10 @@ fn cyclic_macro_exhausts_shared_command_fuel() {
         }
     );
     assert_eq!(fuel.burned(), 7);
+    assert_eq!(
+        command.transient.active_expansion_depth, 0,
+        "the typed delivery guard balances expansion depth on error"
+    );
 }
 
 fn install_expandable(

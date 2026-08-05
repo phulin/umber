@@ -171,6 +171,24 @@ tex-exec main control and stomach
 This document defines the intended end state. Work decomposition and status
 belong in Beads epic `umber2-johp`; this file is not a task checklist.
 
+### 1.1 Typed command delivery
+
+Raw `get_next`/`get_token`, expanded `get_x_token`/`x_token`, replay-aware
+fetches, main-loop lookahead, protected and undefined-preserving fetches, and
+alignment delivery are policies over one private command-delivery driver.
+The policy names control-sequence creation, replay-completion handling,
+expansion and its depth, terminal observation ownership, first-command
+handling, protected and undefined meanings, and alignment `end_template`
+interception independently. Canonically named methods remain as thin entry
+points; they do not own alternate fetch loops.
+
+The driver returns typed command, replay-completion, pending-observation, and
+alignment events. In particular, alignment lookahead carries either
+`Committed` or `PendingExpanded`; no boolean can silently invert who must
+commit the expanded observation before backup. Every expanded invocation
+enters and leaves the persistent expansion-depth counter through the same
+balanced boundary, including error returns.
+
 ## 2. Canonical authorities
 
 Compatibility behavior is derived in this order:

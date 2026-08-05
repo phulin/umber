@@ -62,6 +62,8 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let next = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
         .expect("read raw delivery implementation");
+    let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
+        .expect("read typed delivery driver");
     let levels = fs::read_to_string(manifest_dir.join("src/input/levels.rs"))
         .expect("read input-level representation");
 
@@ -77,8 +79,15 @@ fn raw_delivery_keeps_one_profile_shared_input_path_and_semantic_free_levels() {
     );
     assert!(next.contains("CharacterMode::EightBitExact"));
     assert!(next.contains("CharacterMode::UnicodeExtended"));
-    assert!(next.contains("self.get_next_with_control_sequence_creation(true)"));
-    assert!(next.contains("self.get_next_with_control_sequence_creation(false)"));
+    assert!(expansion.contains("ControlSequenceCreation::Allow"));
+    assert!(expansion.contains("ControlSequenceCreation::Forbid"));
+    assert_eq!(
+        expansion
+            .matches("self.get_next_with_control_sequence_creation(")
+            .count(),
+        1,
+        "the typed driver must be the only caller of scalar raw delivery"
+    );
     assert!(
         !next.contains(".trace"),
         "diagnostic replay explanations must not select raw delivery semantics"
@@ -169,15 +178,49 @@ fn scalar_macro_call_keeps_one_raw_fallback_matcher() {
 
 #[test]
 #[allow(clippy::disallowed_methods)] // host-side architecture test
-fn ordinary_expansion_has_one_loop_and_direct_input_mutation() {
+fn command_delivery_has_one_typed_loop_and_direct_input_mutation() {
     let manifest_dir = test_support::repository_root().join("crates/tex-command");
     let expansion = fs::read_to_string(manifest_dir.join("src/processor/expand.rs"))
         .expect("read ordinary expansion implementation");
+    let policies = fs::read_to_string(manifest_dir.join("src/processor/mod.rs"))
+        .expect("read delivery policy definitions");
+    let raw = fs::read_to_string(manifest_dir.join("src/processor/next.rs"))
+        .expect("read raw delivery entry points");
 
     assert_eq!(
-        expansion.matches("fn get_x_token_scalar(").count(),
+        expansion.matches("fn delivery_driver_inner(").count(),
         1,
-        "production must retain exactly one ordinary expanded-command loop"
+        "raw and expanded production delivery must share one policy loop"
+    );
+    for (policy_axis, variants) in [
+        ("ReplayCompletionPolicy", &["Consume", "Surface"][..]),
+        ("ControlSequenceCreation", &["Forbid", "Allow"][..]),
+        (
+            "ExpandedObservationPolicy",
+            &["Commit", "RawOnly", "DeferIfExpanded"][..],
+        ),
+        ("FirstCommandPolicy", &["Ordinary", "MainLoopCharacter"][..]),
+        (
+            "AlignmentInterceptionPolicy",
+            &["Scalar", "Surface", "None"][..],
+        ),
+    ] {
+        assert!(
+            policies.contains(&format!("enum {policy_axis}")),
+            "typed delivery must select the {policy_axis} axis explicitly"
+        );
+        for variant in variants {
+            assert!(
+                policies.contains(&format!("    {variant},")),
+                "{policy_axis} must retain its {variant} policy"
+            );
+        }
+    }
+    assert!(expansion.contains("ProtectedMacroHandling"));
+    assert!(expansion.contains("UndefinedHandling"));
+    assert!(
+        !format!("{expansion}\n{raw}").contains("pending_expanded_delivery"),
+        "pending observation ownership must be typed, never a boolean"
     );
     assert!(expansion.contains("match self.macro_call(command)?"));
     assert!(expansion.contains("MacroCallOutcome::Activated"));

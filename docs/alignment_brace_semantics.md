@@ -49,6 +49,12 @@ Retention itself is not a retirement observation. During §343 expansion, `cur_c
 retain the same observable `endtemplate` control-sequence identity (TeX82
 §§343, 765).
 
+The shared typed delivery driver represents lookahead observation ownership as
+`AlignmentLookahead::Committed` or `AlignmentLookahead::PendingExpanded`.
+Only the latter commits an expanded-delivery record before a consumed command
+or backup; e-TeX's raw protected terminal is always `Committed`. This is an
+event distinction, not a boolean caller convention.
+
 The sentinel values have their source meanings:
 
 - `-1000000` scans an alignment preamble;

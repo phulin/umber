@@ -7884,41 +7884,33 @@ fn scan_alignment_peek(
     processor
         .begin_alignment_peek(_after_noalign)
         .map_err(command_error)?;
-    let (command, pending_expanded_delivery) = processor
+    let lookahead = processor
         .next_alignment_lookahead()
         .map_err(command_error)?
         .ok_or(ExecError::MissingToken {
             context: "alignment lookahead",
         })?;
-    match command.meaning() {
+    match lookahead.command().meaning() {
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::NoAlign) => {
-            if pending_expanded_delivery {
-                processor.commit_alignment_lookahead_delivery(&command);
-            }
+            let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             processor
                 .scan_alignment_noalign_opening()
                 .map_err(command_error)?;
             Ok(ScannedStep::BeginNoAlign { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::CrCr) => {
-            if pending_expanded_delivery {
-                processor.commit_alignment_lookahead_delivery(&command);
-            }
+            let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ScannedStep::AlignPeekRestart { alignment })
         }
         Meaning::CharToken {
             cat: Catcode::EndGroup,
             ..
         } => {
-            if pending_expanded_delivery {
-                processor.commit_alignment_lookahead_delivery(&command);
-            }
+            let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ScannedStep::AlignmentFinish { alignment })
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::Omit) => {
-            if pending_expanded_delivery {
-                processor.commit_alignment_lookahead_delivery(&command);
-            }
+            let _ = processor.commit_alignment_lookahead_delivery(lookahead);
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,
                 omit: true,
@@ -7926,7 +7918,7 @@ fn scan_alignment_peek(
         }
         _ => {
             processor
-                .back_alignment_lookahead(command, pending_expanded_delivery)
+                .back_alignment_lookahead(lookahead)
                 .map_err(command_error)?;
             Ok(ScannedStep::AlignmentPeekCell {
                 alignment,
