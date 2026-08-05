@@ -1826,12 +1826,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "xfail: umber2-horq"]
     fn display_end_probe_mode_conditionals_share_the_restored_mode() {
+        // TeX82 §§1185/1194/1197: `fin_mlist` restores internal vertical
+        // mode before the expanded second-dollar probe evaluates these
+        // conditionals. Close the enclosing display too, so unrelated final
+        // cleanup recovery cannot print the branch markers as source context.
         let mut stores = Universe::new_with_plain_catcodes();
         crate::prepare_run_stores(&mut stores);
         crate::run_memory_with_stores(
-            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$Aa$\\ifvmode\\else\\errmessage{ifvmode stale}\\fi\\ifhmode\\errmessage{ifhmode stale}\\fi\\ifmmode\\errmessage{ifmmode stale}\\fi$}\\hss\\end",
+            "\\nonstopmode\\tracingcommands=2\\tracingonline=1\\noindent$$\\vtop{\\noindent$$$\\ifvmode\\else\\errmessage{ifvmode stale}\\fi\\ifhmode\\errmessage{ifhmode stale}\\fi\\ifmmode\\errmessage{ifmmode stale}\\fi$}\\hss$$\\end",
             &mut stores,
         )
         .expect("run completes");
@@ -1847,7 +1850,15 @@ mod tests {
                 && output.contains("{\\ifmmode}\n{false}"),
             "{output}"
         );
-        assert!(!output.contains("stale"), "{output}");
+        for rejected_diagnostic in [
+            "! ifvmode stale.",
+            "! ifhmode stale.",
+            "! ifmmode stale.",
+            "! Missing $ inserted.",
+            "! Display math should end with $$.",
+        ] {
+            assert!(!output.contains(rejected_diagnostic), "{output}");
+        }
     }
 
     #[test]
