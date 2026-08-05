@@ -218,7 +218,7 @@ impl ClassicBibOptions {
         self.cache_entries
     }
 
-    /// Bounds each immutable classic execution cache in a persistent session.
+    /// Bounds the single immutable classic execution cache in a persistent session.
     #[must_use]
     pub const fn with_cache_bytes(mut self, bytes: usize) -> Self {
         self.cache_bytes = bytes;
