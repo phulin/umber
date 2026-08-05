@@ -456,8 +456,10 @@ The shared store writes `blobs-v1` entries and compatibility-reads the former
 entry is republished through the new substrate, so upgrades warm-migrate rather
 than invalidate persistent data.
 
-**Implemented net reduction.** See issue `umber2-fjfh.13` for the measured
-production and test/support line-count receipt.
+**Implemented line-count change.** See issue `umber2-fjfh.13` for the measured
+production and test/support receipt; moved-aware counts include the new generic
+envelope and compatibility readers rather than treating moved format policy as
+deletion.
 
 **Preservation argument.** Preserve offline mode, cache corruption handling, per-key locking, quarantine, retry policy, pinned snapshot selection, local-file precedence, format identity, and exact format bytes.
 
