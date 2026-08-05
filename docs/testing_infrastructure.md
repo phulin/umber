@@ -1082,11 +1082,13 @@ cargo test -p umber --test it e2e_conformance::e2e_conformance_gentle_canonical 
 
 The Gentle oracle is the existing 263424-byte real-pdfTeX artifact, SHA-256
 `04f86e97e8264f9b8ce35dc1e9df27f2b075ca85365af71acc5fe1478399866b`.
-The canonical gate now matches that oracle byte-for-byte and therefore runs in
-the routine native suite. Gentle remains a byte-exact DVI conformance gate,
-not an automated differential-tracer fixture: the tracer's structural tests
-admit only committed microfixtures and synthetic fixtures, and do not load
-Gentle or another full document.
+The canonical Story gate runs in the routine native suite. The canonical Gentle
+gate matches its oracle byte-for-byte but is marked `#[ignore]`; it runs only
+through the explicit manual command above, not through `cargo test --tests`.
+Gentle remains a byte-exact DVI conformance gate when invoked, not an automated
+differential-tracer fixture: the tracer's structural tests admit only committed
+microfixtures and synthetic fixtures, and do not load Gentle or another full
+document.
 
 The shared runner builds the complete pinned Plain recipe, prepares it through
 `PreparedFormatProvider`, and supplies each document as a fresh explicit

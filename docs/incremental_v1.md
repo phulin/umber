@@ -4,8 +4,10 @@
 > checkpoints, retained editor-session effects/artifacts, edit mapping,
 > generation substrates, and pruning. Its canonical live boundary identity
 > drives the fast full-state suffix splice; the folded `state_hash` remains
-> schedule-relative telemetry. Changed-document paragraph reuse when full
-> state does not converge is specified in
+> schedule-relative telemetry. Changed-document work resumes ordinary command
+> execution from an accepted checkpoint's `CommandSummary`, or from `JobStart`
+> when no checkpoint is eligible. The deleted paragraph-replay design is
+> recorded only as history in
 > [`incremental_memoization.md`](incremental_memoization.md).
 
 This document fixes the v1 contract for an editor session that re-executes an
@@ -16,6 +18,11 @@ checkpoint, and hashing rules in [`core_state.md`](core_state.md) §§8–10.
 Where this document discusses retaining group roots, the representation and
 ownership rules in [`retained_group_roots.md`](retained_group_roots.md) remain
 normative.
+
+Paragraph construction and line breaking follow ordinary execution after
+restart. V1 has no paragraph recorder, paragraph memo, retained-node mount, or
+paragraph-specific validation path; reuse is only the generic checkpoint
+restore and convergence described below.
 
 The observed correctness criterion is byte-identical output to a cold execution
 of the same editor-buffer revision with the same pinned external inputs. Reuse

@@ -1647,9 +1647,9 @@ recovery and rendered-value helpers therefore accept iterators, so fixed
 insertions use array literals and dynamic renderings do not build a caller-side
 staging vector. e-TeX's optimized `\aftergroup` prepend promotes an inline
 backed-up payload to shared storage while preserving save order; snapshot
-normalization, durable continuation remapping, paragraph replay, origin
-adoption, and edited-source rehoming treat the two storage forms as the same
-semantic payload.
+normalization, durable continuation remapping, origin adoption, and
+edited-source rehoming treat the two storage forms as the same semantic
+payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they

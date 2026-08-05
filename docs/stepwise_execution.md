@@ -25,8 +25,8 @@ native and `wasm32-unknown-unknown` targets.
 `tex-exec` exposes the owned canonical control state and the explicit
 `JobStart`, `MainControl`, `FinishEnd`, and `Finalize` lifecycle. Retained
 sessions drive this state machine directly. Main control yields after at most
-256 fully dispatched tokens, paragraph-reuse operations, or fixed 256-token
-text spans, and yields immediately after a named paragraph or shipout boundary;
+256 fully dispatched tokens or fixed 256-token text spans, and yields
+immediately after a named paragraph or shipout boundary;
 it also yields whenever TeX's execution-group depth changes so the environment
 snapshot remains a valid rollback root. Named checkpoints are staged and
 delivered only after that bounded operation chunk returns successfully.
@@ -45,13 +45,15 @@ the original logical resolution index. Named checkpoints and external read
 observations are staged and delivered only after the candidate commits.
 
 `tex-incr::RevisionCandidate` and `umber::EngineSession` now provide
-the host-session retention layer. A candidate owns its canonical control, input
-stack, mutable `Universe`, speculative checkpoint sink, paragraph-memo
-generation, editor setup, and private workspace generation across
-resource batches. Each drive installs resolvers over a fresh immutable VFS
-snapshot and therefore replays only the rolled-back executor step. The host
-tracks response progress separately and rejects a retry that binds no newly
-awaited positive or authoritative-negative response.
+the host-session retention layer. A candidate begins from an accepted
+checkpoint's `CommandSummary` and aggregate execution roots, or from
+`JobStart` when no checkpoint is eligible. It owns that canonical control,
+input stack, mutable `Universe`, speculative checkpoint sink, editor setup, and
+private workspace generation across resource batches. Each drive installs
+resolvers over a fresh immutable VFS snapshot and therefore replays only the
+rolled-back executor step. The host tracks response progress separately and
+rejects a retry that binds no newly awaited positive or
+authoritative-negative response.
 
 After a candidate that explicitly requests the `Pdf` output capability reaches terminal engine execution, the incremental
 owner may borrow that completed candidate's `Universe` only for downstream
@@ -122,7 +124,6 @@ remain on the stack lives in `MainControl`, `Universe`, or the retained session:
 | checkpoint publisher | Whether `JobStart` has been emitted, the cached mode projection, boundary occurrence/schedule state, staged `EngineCheckpoint`s, and stop-after-boundary policy. The caller-owned `CheckpointSink` is not retained.                                                      |
 | run artifact state   | The artifact/effect prefixes at run entry, prepared-page queues keyed by artifact identity, and the committed prefix belonging to the current run.                                                                                                                       |
 | command runtime      | Discardable caches, scanner watchdogs, and borrow-scoped host context. None enters step snapshots or named checkpoints; replay recreates it around the restored `CommandState`.                                                                                          |
-| paragraph memo state | Session-retained cache/history owned by `MainControl` while executing, plus `Universe`'s narrow write-barrier-coupled mutation recorder; no retained memo values or acceptance policy live in aggregate state.                                                           |
 | lifecycle            | The next `ExecutionStep`, whether `\end` or `\dump` was seen, end/output cleanup progress, terminal result, and cancellation latch. Recursive output, alignment, math, and scanner frames never appear here: a step either unwinds them successfully or rolls them back. |
 | output state         | Pending page fire-up already represented in `Universe`, prepared DVI pages in stats, recoverable/terminal diagnostics in the virtual `World`, and generated output/effect prefixes in the private build stage.                                                           |
 | accounting           | Committed execution statistics, cumulative fuel, hard fuel limit, advance count, suspension serial, and optional failure-injection sequence.                                                                                                                             |
@@ -181,10 +182,10 @@ The four step kinds have these exact commit boundaries:
 
 1. `JobStart` synchronizes source ids and job clock, queues `\everyjob`, and
    stages the single `JobStart` checkpoint. It commits all of those together.
-2. `MainControl` begins immediately before paragraph-reuse probing and
-   recoverable-diagnostic draining. It processes at most 256 fully expanded
-   delivered tokens, paragraph reuses, or fixed-size text-span chunks,
-   including dispatch and all pending output work caused by each operation.
+2. `MainControl` begins immediately before recoverable-diagnostic draining and
+   ordinary expanded delivery. It processes at most 256 fully expanded
+   delivered tokens or fixed-size text-span chunks, including dispatch and all
+   pending output work caused by each operation.
    It commits early after a named paragraph or shipout boundary or any
    execution-group depth change. End-of-input flushing is also one main-control
    step.
@@ -372,9 +373,9 @@ decisions, so named checkpoints retain both; scanner and alignment watchdog
 state remains live-run-only and never becomes a continuation.
 
 Fuel is charged before each expansion loop action, delivered-token dispatch,
-text-span token, memo validation unit, builder unit, shipped node/event, and
-finalization unit. Work performed by a candidate that later rolls back remains
-charged. This prevents a document from resetting its budget by causing
+text-span token, builder unit, shipped node/event, and finalization unit. Work
+performed by a candidate that later rolls back remains charged. This prevents
+a document from resetting its budget by causing
 resource misses. Canonical execution charges the shared
 `tex_command::CommandFuel` ledger before raw delivery. Crossing a hard limit detaches
 a typed error, rolls back the current step, and terminally fails that candidate.
@@ -463,8 +464,8 @@ Unit tests inject `Need`, cancellation, and hard failure at deterministic
 `(ExecutionStep, ResourceSite, operation_ordinal)` points. Every injection
 compares a before/after aggregate projection containing input summary and
 transient replay, mode summary, `Universe` state hash, group depth, page state,
-effect/artifact positions, stats, expansion index, paragraph recorder, pending
-fire-up, prepared pages, and staged generated-output prefix.
+effect/artifact positions, stats, expansion index, pending fire-up, prepared
+pages, and staged generated-output prefix.
 
 Required focused cases are:
 
@@ -477,8 +478,8 @@ Required focused cases are:
   routine, recursively dispatching output tokens, and forced end-of-job
   shipout;
 - suspension after candidate terminal/log text, immediate/deferred stream
-  writes, generated file writes, an artifact, a prepared DVI page, a paragraph
-  memo hit, and cold paragraph dependency recording have each been produced;
+  writes, generated file writes, an artifact, and a prepared DVI page have each
+  been produced;
 - identical resource response orders and partial batches yielding identical
   request keys, expansion indices, checkpoint schedules, artifacts, generated
   files, diagnostics, statistics, and final bytes;
