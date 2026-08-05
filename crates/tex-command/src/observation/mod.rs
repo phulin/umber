@@ -21,6 +21,7 @@ mod primitive_identity;
 mod variable_identity;
 use canonical_names::character_command_name;
 use primitive_identity::{expandable_primitive_identity, unexpandable_primitive_identity};
+pub(crate) use variable_identity::LOCAL_BASE;
 pub use variable_identity::parameter_mutation_key_for_dialect;
 pub use variable_identity::{ParameterClass, parameter_mutation_key};
 

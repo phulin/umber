@@ -1048,6 +1048,8 @@ crates/tex-command/src/
 
     primitives/
         mod.rs
+        metadata.rs
+        primitive_metadata.rs
         registry.rs
         prefixed.rs
 
@@ -1059,6 +1061,12 @@ crates/tex-command/src/
 
 Files should remain organized around canonical state machines. Mechanical
 splitting is not a substitute for ownership separation.
+
+The primitive metadata declaration is the exhaustive authority for each
+enum-backed primitive's spelling, meaning, profile availability, aliases, and
+canonical observation command/operand. Fresh INITEX installation and
+format-load registry reconstruction consume the same declaration; restoration
+registers frozen meanings without replacing format-shadowed live meanings.
 
 ## 6. Engine and character profiles
 

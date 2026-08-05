@@ -51,7 +51,9 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/memory_output/tests.rs`: final-commit idempotence, output accounting, and memory-boundary tests.
 - `src/pdf_import.rs`: lightweight PDF syntax inspection and lossless selected-page resource import through `hayro-syntax`.
 - `src/pdf_import/tests.rs`: synthetic and conditional pinned-corpus PDF import regressions.
-- `src/pdftex.rs`: pinned pdfTeX 1.40.29 primitive inventory and explicit placeholder registration for pdfTeX mode.
+- `src/pdftex.rs`: pinned pdfTeX 1.40.29 layer inventory, parameter defaults,
+  and mode registration; enum-backed primitive spelling and meaning come from
+  `tex-command`'s shared metadata.
 - `src/pdf_output.rs`: deterministic committed-artifact lowering into the checkpointed PDF object graph.
 - `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.
 - `src/pdf_vf.rs`: bounded recursive virtual-font packet lowering into detached PDF-positioned operations and real-font resources.

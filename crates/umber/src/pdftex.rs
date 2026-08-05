@@ -3,7 +3,9 @@
 use tex_state::Universe;
 use tex_state::env::banks::{DimenParam, IntParam, TokParam};
 use tex_state::ids::TokenListId;
-use tex_state::meaning::{InternalInteger, Meaning, UnexpandablePrimitive};
+#[cfg(test)]
+use tex_state::meaning::UnexpandablePrimitive;
+use tex_state::meaning::{InternalInteger, Meaning};
 use tex_state::scaled::Scaled;
 
 /// The exact 158-name layer obtained from the pinned `pdftex.web` source.
@@ -316,6 +318,7 @@ const PDFTEX_TOK_PARAMETERS: &[(&str, TokParam)] = &[
 ];
 
 pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
+    tex_command::install_pdftex_unexpandable_primitives(stores);
     for &(name, parameter) in PDFTEX_INT_PARAMETER_MEANINGS {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::IntParam(parameter.raw()));
@@ -328,48 +331,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::TokParam(parameter.raw()));
     }
-    for &(name, primitive) in &[
-        ("lpcode", UnexpandablePrimitive::PdfLpCode),
-        ("rpcode", UnexpandablePrimitive::PdfRpCode),
-        ("efcode", UnexpandablePrimitive::PdfEfCode),
-        ("tagcode", UnexpandablePrimitive::PdfTagCode),
-        ("knbscode", UnexpandablePrimitive::PdfKnbsCode),
-        ("stbscode", UnexpandablePrimitive::PdfStbsCode),
-        ("shbscode", UnexpandablePrimitive::PdfShbsCode),
-        ("knbccode", UnexpandablePrimitive::PdfKnbcCode),
-        ("knaccode", UnexpandablePrimitive::PdfKnacCode),
-        ("pdfnoligatures", UnexpandablePrimitive::PdfNoLigatures),
-        ("letterspacefont", UnexpandablePrimitive::LetterspaceFont),
-        ("pdfcopyfont", UnexpandablePrimitive::PdfCopyFont),
-        ("pdffontexpand", UnexpandablePrimitive::PdfFontExpand),
-        ("pdffontattr", UnexpandablePrimitive::PdfFontAttr),
-        ("pdfincludechars", UnexpandablePrimitive::PdfIncludeChars),
-        ("pdfmapfile", UnexpandablePrimitive::PdfMapFile),
-        ("pdfmapline", UnexpandablePrimitive::PdfMapLine),
-        (
-            "pdfglyphtounicode",
-            UnexpandablePrimitive::PdfGlyphToUnicode,
-        ),
-        (
-            "pdfnobuiltintounicode",
-            UnexpandablePrimitive::PdfNoBuiltinToUnicode,
-        ),
-        ("pdfliteral", UnexpandablePrimitive::PdfLiteral),
-        ("pdfsetmatrix", UnexpandablePrimitive::PdfSetMatrix),
-        ("pdfsave", UnexpandablePrimitive::PdfSave),
-        ("pdfrestore", UnexpandablePrimitive::PdfRestore),
-        ("pdfcolorstack", UnexpandablePrimitive::PdfColorStack),
-        ("pdfsavepos", UnexpandablePrimitive::PdfSavePos),
-        ("pdfsnaprefpoint", UnexpandablePrimitive::PdfSnapRefPoint),
-        ("pdfsnapy", UnexpandablePrimitive::PdfSnapY),
-        ("pdfsnapycomp", UnexpandablePrimitive::PdfSnapYComp),
-        ("pdfxform", UnexpandablePrimitive::PdfXForm),
-        ("pdfrefxform", UnexpandablePrimitive::PdfRefXForm),
-        ("quitvmode", UnexpandablePrimitive::QuitVMode),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
-    }
+
     for (name, integer) in [
         ("pdfelapsedtime", InternalInteger::PdfElapsedTime),
         ("pdfrandomseed", InternalInteger::PdfRandomSeed),
@@ -390,45 +352,7 @@ pub(crate) fn install_pdftex_layer(stores: &mut Universe) {
         let symbol = stores.intern(name);
         stores.set_meaning(symbol, Meaning::InternalInteger(integer));
     }
-    for (name, primitive) in [
-        ("pdfresettimer", UnexpandablePrimitive::PdfResetTimer),
-        ("pdfsetrandomseed", UnexpandablePrimitive::PdfSetRandomSeed),
-        ("pdfobj", UnexpandablePrimitive::PdfObject),
-        ("pdfrefobj", UnexpandablePrimitive::PdfReferenceObject),
-        ("pdfinfo", UnexpandablePrimitive::PdfInfo),
-        ("pdfcatalog", UnexpandablePrimitive::PdfCatalog),
-        ("pdfnames", UnexpandablePrimitive::PdfNames),
-        ("pdftrailer", UnexpandablePrimitive::PdfTrailer),
-        ("pdftrailerid", UnexpandablePrimitive::PdfTrailerId),
-        (
-            "pdfinterwordspaceon",
-            UnexpandablePrimitive::PdfInterwordSpaceOn,
-        ),
-        (
-            "pdfinterwordspaceoff",
-            UnexpandablePrimitive::PdfInterwordSpaceOff,
-        ),
-        ("pdffakespace", UnexpandablePrimitive::PdfFakeSpace),
-        ("pdfspacefont", UnexpandablePrimitive::PdfSpaceFont),
-        ("pdfannot", UnexpandablePrimitive::PdfAnnot),
-        ("pdfstartlink", UnexpandablePrimitive::PdfStartLink),
-        ("pdfendlink", UnexpandablePrimitive::PdfEndLink),
-        ("pdfrunninglinkon", UnexpandablePrimitive::PdfRunningLinkOn),
-        (
-            "pdfrunninglinkoff",
-            UnexpandablePrimitive::PdfRunningLinkOff,
-        ),
-        ("pdfoutline", UnexpandablePrimitive::PdfOutline),
-        ("pdfdest", UnexpandablePrimitive::PdfDest),
-        ("pdfthread", UnexpandablePrimitive::PdfThread),
-        ("pdfstartthread", UnexpandablePrimitive::PdfStartThread),
-        ("pdfendthread", UnexpandablePrimitive::PdfEndThread),
-        ("pdfximage", UnexpandablePrimitive::PdfXImage),
-        ("pdfrefximage", UnexpandablePrimitive::PdfRefXImage),
-    ] {
-        let symbol = stores.intern(name);
-        stores.set_meaning(symbol, Meaning::UnexpandablePrimitive(primitive));
-    }
+
     tex_command::install_pdftex_expandable_primitives(stores);
     for &name in PDFTEX_PRIMITIVE_NAMES {
         let symbol = stores.intern(name);

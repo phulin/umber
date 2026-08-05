@@ -145,10 +145,11 @@ print channel of its own outside the borrowed
   single mechanism: every bounded scan in the crate selects a
   `RestrictedIntegerClass` instead of open-coding a range test, and the
   recover-to-zero belongs to the scan, never to the command consuming it.
-- `src/primitives/`: private static primitive dispatch. `registry.rs` owns the
-  TeX82, e-TeX 2.6, Umber
-  LaTeX compatibility, and pdfTeX 1.40.29 expandable primitive identity tables
-  and the fresh-INITEX versus format-restore installation policy.
+- `src/primitives/`: private static primitive dispatch. `metadata.rs` and
+  `primitive_metadata.rs` own the exhaustive TeX82, e-TeX 2.6, Umber LaTeX
+  compatibility, and pdfTeX 1.40.29 enum-backed primitive spelling, meaning,
+  profile, and canonical observation identity authority. `registry.rs`
+  consumes it for fresh-INITEX versus format-restore installation.
   `prefixed.rs` owns TeX82 §209's `max_non_prefixed_command` partition -- the
   single test §1211's `prefixed_command`, §1270's `do_assignments`, and the
   `\global` prefix all make. It is narrower than "this command assigns

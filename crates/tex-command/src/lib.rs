@@ -46,10 +46,13 @@ mod paragraph;
 mod primitives;
 pub use primitives::{
     exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
-    install_latex_expandable_primitives, install_pdftex_expandable_primitives,
-    install_tex82_expandable_primitives, register_etex_expandable_primitives,
+    install_etex_unexpandable_primitives, install_latex_expandable_primitives,
+    install_pdftex_expandable_primitives, install_pdftex_unexpandable_primitives,
+    install_tex82_expandable_primitives, install_tex82_unexpandable_primitives,
+    register_etex_expandable_primitives, register_etex_unexpandable_primitives,
     register_latex_expandable_primitives, register_pdftex_expandable_primitives,
-    register_tex82_expandable_primitives,
+    register_pdftex_unexpandable_primitives, register_tex82_expandable_primitives,
+    register_tex82_unexpandable_primitives,
 };
 mod processor;
 mod profile;
