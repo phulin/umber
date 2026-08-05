@@ -243,11 +243,17 @@ latency, RSS, allocation volume, snapshot cost, convergence, and reexecution
 counters:
 
 ```bash
+(cd benchmarks/edit-restart/workloads && sha256sum -c SHA256SUMS)
 cargo run --release -p umber --bin gentle-profile \
   --features profiling-runner -- \
   --edit-restart-workload prefix --iterations 6 --warmups 2 \
   --memo-layers none
 ```
+
+The receipt also defines the active cold-relative latency, generic suffix
+adoption, and structural retention budgets. A changed workload checksum needs
+a new attributed baseline; it must not be compared as though it were the
+frozen corpus.
 
 Measure the current default WebAssembly editor's linear-memory growth after
 building the package. Node must expose garbage collection so the post-disposal

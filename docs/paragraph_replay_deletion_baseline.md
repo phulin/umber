@@ -33,15 +33,26 @@ features. `/usr/bin/time` wrapped the already-built binary, never Cargo.
 
 ## Workloads
 
-The committed pairs live in
-[`benchmarks/edit-restart/workloads`](../benchmarks/edit-restart/workloads).
-Every measured advance alternates before to after and after to before in one
-retained session, then compares DVI bytes with a fresh execution of the target
-source. The runner generates `long` as 384 copies of its pinned paragraph text
-and changes the first `Alpha` to `Omega`. The synthetic stabilization workload
-runs 16 unchanged-root external-input-delta passes, alternating an unused
-generated macro definition. Its root contains 16 paragraphs, four of which
-also consume the unchanged generated width macro.
+The measured pre-deletion pairs are committed at source identity `13eaa9af` in
+`benchmarks/paragraph-replay/workloads`. Recover them without modifying the
+current checkout with, for example:
+
+```bash
+git show 13eaa9af:benchmarks/paragraph-replay/workloads/prefix-before.tex \
+  | sha256sum
+```
+
+Every measured advance alternated before to after and after to before in one
+retained session, then compared DVI bytes with a fresh execution of the target
+source. The historical runner generated `long` as 384 copies of its pinned
+paragraph text and changed the first `Alpha` to `Omega`. Those 100,272-byte
+sources have SHA-256 identities
+`c63d6bf329cee99d3be3bbde61a8f5e0e384ea903b63f7f8a59185c4443cca81`
+and `1418b112f3c40077db927161b42d178b8e33b2d578da95b501616049efddd1be`.
+The synthetic stabilization workload ran 16 unchanged-root
+external-input-delta passes, alternating an unused generated macro definition.
+Its root contained 16 paragraphs, four of which also consumed the unchanged
+generated width macro.
 
 Pair identities, before then after, are:
 
@@ -53,6 +64,15 @@ Pair identities, before then after, are:
 | display-math | `a13520e2a23c07f307b0808eb9d12129d18a063697b0702d4a1a8c49c2ae2750` | `e54237617a0627327ce974997f1f7692e87f80c9a631deb5cdc47c411b541b14` |
 | macro        | `b81f79c109e9ec49943c51e74f863009ff95bed08d71143a581f96c35925bff6` | `fd11e792dfa0bad98d75292c8af8635dd4f351c73d0d50e80316609c4942b5b2` |
 | conditional  | `2f4f669309a583ff0ef22b81dee7818164dee92f250d16fb978eee5eb026f554` | `676f58c40fb5cc115feba183e47ed54054f365c180163220341245ba4b426434` |
+
+The current generic workloads live in
+[`benchmarks/edit-restart/workloads`](../benchmarks/edit-restart/workloads).
+Their [`SHA256SUMS`](../benchmarks/edit-restart/workloads/SHA256SUMS) manifest
+is the byte-identity authority for new measurements. Six files and the
+generated long paragraph were intentionally renamed inside visible TeX text
+when the corpus stopped promising paragraph replay, so their current hashes
+must not be substituted into the pre-deletion table above. The two corpora
+exercise the same edit shapes but are distinct measurement identities.
 
 Run one pair with:
 
@@ -155,6 +175,11 @@ profiling features. It is 301,144,472 bytes with SHA-256
 The paired runner is now the generic `--edit-restart-workload` mode, with all
 remaining pure memo layers disabled.
 
+The current `SHA256SUMS` manifest freezes the committed pair identities for a
+new comparison. Do not compare new measurements if that verification fails;
+changing visible fixture text establishes a new workload even when the edit
+shape remains similar.
+
 All seven workload results were byte-identical to fresh cold executions.
 
 | Workload     |  Fresh before/after |    Edit mean/median |        Edit min/max | Edit mean delta |   RSS KiB | Last reexecuted paragraphs/bytes/commands |
@@ -212,3 +237,37 @@ fresh cold DVI. The prefix and long runs respectively captured 8,488 and
 detach/materialize accounting remains absent. The command allocation benchmark
 compiled without a paragraph-recording configuration, and all 25 surviving
 rows responded to its perturbation with exactly one allocation and 64 bytes.
+
+## Replacement acceptance budget
+
+Named checkpoint restart and generic suffix convergence are the supported
+replacement. Paragraph replay latency, hits, retained transactions, mounted
+line graphs, and endpoint detach/materialize counts are no longer supported
+API or performance promises.
+
+On one attributed optimized build and host, after verifying `SHA256SUMS`, run
+all six committed pairs for six measured advances after two warm-ups and
+`long` for two measured advances after one warm-up. The retirement or a later
+replacement change is acceptable only when:
+
+- every measured advance remains byte-identical to its fresh cold target;
+- the `suffix` pair adopts a generic suffix in at least one direction, and its
+  fastest measured advance is no more than 10% of the corresponding cold run;
+- each non-`suffix` small-pair edit mean is no more than 1.25 times the mean of
+  its two fresh runs, and the `long` edit mean is no more than 1.25 times its
+  fresh mean;
+- the accepted session retains no paragraph transaction, paragraph recorder,
+  mounted line graph, or paragraph endpoint, and all corresponding work and
+  retained-byte counters remain absent or zero; and
+- session retention follows [`incremental_v1.md`](incremental_v1.md): at most
+  one generation substrate at rest and two during an advance, direct
+  accepted-revision ownership without revision-map chains, and deterministic
+  pruning under the host's checkpoint-root budget.
+
+The latency ratios are comparison gates, not user-facing deadlines. They avoid
+turning the 2026 host's absolute milliseconds or RSS into a portable promise.
+If noise makes a ratio fail, repeat the complete alternating run; do not select
+individual favorable samples. A confirmed miss requires explicit owner
+disposition in Beads before changing the contract. There is deliberately no
+fixed pages-retyped threshold: missing convergence is permitted and changes
+latency, while cold-equivalent output remains mandatory.

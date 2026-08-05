@@ -32,6 +32,24 @@ identity and therefore carries the accepted rare risk of a collision-induced
 false match. Missing a checkpoint or a convergence match is allowed; no other
 false-match mechanism is accepted.
 
+## Supported replacement and performance budget
+
+Cross-revision reuse consists only of restoring an accepted named checkpoint
+and adopting an accepted suffix after the schedule and canonical-state checks
+below. The session does not promise paragraph-replay hits, paragraph-local
+retention, or unchanged latency for an edit that misses convergence. A miss
+continues ordinary execution to another eligible named boundary or job end.
+
+The fixed synthetic comparison, byte identities, historical receipt, and
+numeric acceptance ratios are normative in
+[`paragraph_replay_deletion_baseline.md`](paragraph_replay_deletion_baseline.md).
+The hard behavioral budgets are cold-equivalent artifacts and effects, at
+least one generic suffix adoption in the fixed `suffix` pair, zero retained
+paragraph-replay state or work, at most one generation substrate at rest and
+two during an advance, and deterministic pruning under the host's soft
+checkpoint-root budget. There is no pages-retyped correctness budget and no
+fallback to a paragraph-specific path.
+
 ## Scope and non-goals
 
 V1 has exactly three executor-named boundary kinds:
@@ -259,7 +277,7 @@ owner-exact and there is no general snapshot re-owner API; per-`Universe`
 cloning happens once per restart, never per checkpoint.
 
 Profiling builds split revision setup, restart forking, executor work,
-detached diagnostic/effect snapshots, accepted paragraph-history transition,
+detached diagnostic/effect snapshots, checkpoint-history transition,
 splice/history construction, accepted-substrate publication/drop, and
 acceptance/pruning into additive session timings. DVI materialization remains
 a driver-owned timer outside `Session::advance`. These measurements are

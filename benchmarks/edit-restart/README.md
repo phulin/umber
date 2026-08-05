@@ -5,6 +5,12 @@ restart comparisons. Each pair differs by one minimal edit;
 `gentle-profile --edit-restart-workload NAME` alternates both directions in one
 session and verifies every result against a fresh cold execution.
 
+Verify the committed byte identities before comparing measurements:
+
+```bash
+(cd benchmarks/edit-restart/workloads && sha256sum -c SHA256SUMS)
+```
+
 - `unchanged`: changes only a leading comment, leaving every paragraph input
   and output unchanged.
 - `prefix`: changes text in the first paragraph and leaves a long suffix.
@@ -21,3 +27,10 @@ Representative long-document cases use the pinned Gentle corpus rather than
 copied fixtures. Run them with `--incremental-path neutral`,
 `--incremental-path fast`, and `--incremental-path slow` as documented in
 [`docs/profiling.md`](../../docs/profiling.md).
+
+The generated `long` edit-restart pair is a separate fixed synthetic case. Its
+before and after sources are both 99,504 bytes and have SHA-256 identities
+`4f666b5cae4caf3443cf621103994c97aad20d534ab5fc34f7ab8c380ae8b24c`
+and `2b482038cfc1bf12112ecd8a7f36107e39f4cf5516416569f5c96bcaca022b37`.
+Changing the generator text or count changes the workload and requires a new
+baseline rather than an in-place update to these identities.
