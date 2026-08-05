@@ -985,7 +985,10 @@ impl CommandState {
         let exhausted_backed_up_endv = matches!(top,
             InputLevel::Tokens(cursor)
                 if matches!(cursor.behavior, TokenBehavior::BackedUp(_))
-                    && matches!(&cursor.payload, TokenPayload::BackedUp(tokens) if tokens.get(cursor.index).is_none())
+                    && cursor
+                        .payload
+                        .backed_up_words()
+                        .is_some_and(|tokens| tokens.get(cursor.index).is_none())
         );
         if exhausted_backed_up_endv
             && self

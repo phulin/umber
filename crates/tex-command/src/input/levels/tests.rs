@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tex_state::ids::{OriginListId, TokenListId};
+use tex_state::provenance::SyntheticOriginKind;
 use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{
@@ -94,6 +95,123 @@ fn backed_up_buffer_prepends_without_reversing_existing_tokens() {
             .map(|index| buffer.get(index).expect("token exists").spelling)
             .collect::<Vec<_>>(),
         [traced('a'), traced('b'), traced('c')]
+    );
+}
+
+#[test]
+fn single_token_payload_constructors_select_inline_storage() {
+    let transient = TokenPayload::transient([traced('a')]);
+    assert!(matches!(transient, TokenPayload::InlineTransient(word) if word == traced('a')));
+
+    let backed_up = TokenPayload::backed_up([BackedUpToken {
+        spelling: traced('b'),
+        source_provenance: None,
+    }]);
+    assert!(matches!(
+        backed_up,
+        TokenPayload::InlineBackedUp(BackedUpToken { spelling, .. }) if spelling == traced('b')
+    ));
+}
+
+#[test]
+fn multi_token_payload_constructors_select_shared_storage() {
+    let transient = TokenPayload::transient([traced('a'), traced('b')]);
+    assert!(matches!(
+        transient,
+        TokenPayload::Transient(words) if words.words() == [traced('a'), traced('b')]
+    ));
+
+    let backed_up = TokenPayload::backed_up([
+        BackedUpToken {
+            spelling: traced('a'),
+            source_provenance: None,
+        },
+        BackedUpToken {
+            spelling: traced('b'),
+            source_provenance: None,
+        },
+    ]);
+    assert!(matches!(
+        backed_up,
+        TokenPayload::BackedUp(words)
+            if words.words().iter().map(|word| word.spelling).collect::<Vec<_>>()
+                == [traced('a'), traced('b')]
+    ));
+}
+
+#[test]
+fn prepend_promotes_inline_backup_without_reordering() {
+    let mut payload = TokenPayload::backed_up([BackedUpToken {
+        spelling: traced('c'),
+        source_provenance: None,
+    }]);
+    payload
+        .prepend_backed_up([
+            BackedUpToken {
+                spelling: traced('a'),
+                source_provenance: None,
+            },
+            BackedUpToken {
+                spelling: traced('b'),
+                source_provenance: None,
+            },
+        ])
+        .expect("backed-up payload promotes");
+
+    assert!(matches!(payload, TokenPayload::BackedUp(_)));
+    assert_eq!(
+        payload
+            .backed_up_words()
+            .expect("backed-up words")
+            .iter()
+            .map(|word| word.spelling)
+            .collect::<Vec<_>>(),
+        [traced('a'), traced('b'), traced('c')]
+    );
+}
+
+#[test]
+fn inline_payload_origin_adoption_matches_shared_semantics() {
+    let mut universe = tex_state::Universe::new();
+    let recorded_origin = universe.synthetic_origin(SyntheticOriginKind::Engine);
+    let live_origin = universe.synthetic_origin(SyntheticOriginKind::Primitive);
+    let token = Token::Char {
+        ch: 'a',
+        cat: Catcode::Other,
+    };
+    let mut recorded = TokenPayload::transient([TracedTokenWord::pack(token, recorded_origin)]);
+    let live = TokenPayload::transient([TracedTokenWord::pack(token, live_origin)]);
+
+    recorded
+        .adopt_matching_origins(&live)
+        .expect("matching inline token adopts live origin");
+    assert_eq!(
+        recorded.transient_words().expect("transient words")[0].origin(),
+        live_origin
+    );
+}
+
+#[test]
+fn inline_backup_rehomes_source_provenance_in_place() {
+    let old_source = tex_state::SourceId::new(3);
+    let new_source = tex_state::SourceId::new(7);
+    let provenance =
+        crate::SourceProvenance::from_range(crate::SourceRange::new(old_source, 10, 12));
+    let mut payload = TokenPayload::backed_up([BackedUpToken {
+        spelling: traced('a'),
+        source_provenance: Some(provenance),
+    }]);
+
+    payload
+        .rehome_backed_up_source(new_source, 5)
+        .expect("inline source provenance rehomes");
+    let rehomed = payload.backed_up_words().expect("backed-up words")[0]
+        .source_provenance
+        .expect("source provenance remains present");
+    assert_eq!(rehomed.range(), crate::SourceRange::new(new_source, 15, 17));
+    assert_eq!(
+        rehomed.location(),
+        crate::SourceLocation::new(new_source, 16)
     );
 }
 

@@ -103,14 +103,135 @@ pub(crate) enum TokenPayload {
     },
     /// Tokens materialized for a bounded insertion or scanner operation.
     Transient(SharedTokenBuffer),
+    /// One transient token stored directly in its input level.
+    InlineTransient(TracedTokenWord),
     /// One command restored by TeX's `back_input`, retaining the committed
     /// physical spelling range if it originally came from registered source.
     BackedUp(SharedBackedUpBuffer),
+    /// One backed-up command stored directly in its input level.
+    InlineBackedUp(BackedUpToken),
     /// One already materialized macro argument, replayed literally by range.
     ArgumentRange {
         buffer: SharedTokenBuffer,
         range: MacroArgumentRange,
     },
+}
+
+impl TokenPayload {
+    /// Selects inline storage for one transient token and shared storage for
+    /// empty or multi-token payloads.
+    pub(crate) fn transient(tokens: impl IntoIterator<Item = TracedTokenWord>) -> Self {
+        let mut tokens = tokens.into_iter();
+        let Some(first) = tokens.next() else {
+            return Self::Transient(SharedTokenBuffer::default());
+        };
+        let Some(second) = tokens.next() else {
+            return Self::InlineTransient(first);
+        };
+        let (lower, _) = tokens.size_hint();
+        let mut shared = Vec::with_capacity(lower.saturating_add(2));
+        shared.extend([first, second]);
+        shared.extend(tokens);
+        Self::Transient(SharedTokenBuffer::new(shared))
+    }
+
+    /// Selects inline storage for one backed-up command and shared storage for
+    /// empty or multi-token payloads.
+    pub(crate) fn backed_up(tokens: impl IntoIterator<Item = BackedUpToken>) -> Self {
+        let mut tokens = tokens.into_iter();
+        let Some(first) = tokens.next() else {
+            return Self::BackedUp(SharedBackedUpBuffer::default());
+        };
+        let Some(second) = tokens.next() else {
+            return Self::InlineBackedUp(first);
+        };
+        let (lower, _) = tokens.size_hint();
+        let mut shared = Vec::with_capacity(lower.saturating_add(2));
+        shared.extend([first, second]);
+        shared.extend(tokens);
+        Self::BackedUp(SharedBackedUpBuffer::new(shared))
+    }
+
+    pub(crate) fn transient_words(&self) -> Option<&[TracedTokenWord]> {
+        match self {
+            Self::Transient(words) => Some(words.words()),
+            Self::InlineTransient(word) => Some(std::slice::from_ref(word)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn backed_up_words(&self) -> Option<&[BackedUpToken]> {
+        match self {
+            Self::BackedUp(words) => Some(words.words()),
+            Self::InlineBackedUp(word) => Some(std::slice::from_ref(word)),
+            _ => None,
+        }
+    }
+
+    /// Prepends e-TeX aftergroup tokens, promoting inline storage when the
+    /// resulting backed-up level contains multiple commands.
+    pub(crate) fn prepend_backed_up(
+        &mut self,
+        prefix: impl IntoIterator<Item = BackedUpToken>,
+    ) -> Option<()> {
+        let mut prefix = prefix.into_iter().collect::<Vec<_>>();
+        match self {
+            Self::BackedUp(words) => words.prepend(prefix),
+            Self::InlineBackedUp(word) => {
+                prefix.push(*word);
+                *self = Self::backed_up(prefix);
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    pub(crate) fn rehome_backed_up_source(
+        &mut self,
+        source: tex_state::SourceId,
+        byte_delta: i64,
+    ) -> Option<()> {
+        match self {
+            Self::BackedUp(words) => words.rehome_source(source, byte_delta),
+            Self::InlineBackedUp(word) => {
+                if let Some(provenance) = &mut word.source_provenance {
+                    provenance.rehome(source, byte_delta)?;
+                }
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn adopt_matching_origins(&mut self, live: &Self) -> Option<()> {
+        if let (Some(recorded), Some(live_words)) = (self.transient_words(), live.transient_words())
+        {
+            if recorded.len() != live_words.len()
+                || recorded
+                    .iter()
+                    .zip(live_words)
+                    .any(|(recorded, live)| recorded.token() != live.token())
+            {
+                return None;
+            }
+            *self = live.clone();
+            return Some(());
+        }
+        let (Some(recorded), Some(live_words)) = (self.backed_up_words(), live.backed_up_words())
+        else {
+            return None;
+        };
+        if recorded.len() != live_words.len()
+            || recorded.iter().zip(live_words).any(|(recorded, live)| {
+                recorded.spelling.token() != live.spelling.token()
+                    || recorded.source_provenance != live.source_provenance
+            })
+        {
+            return None;
+        }
+        *self = live.clone();
+        Some(())
+    }
 }
 
 /// Shared ownership of a contiguous traced-token allocation.

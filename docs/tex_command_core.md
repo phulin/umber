@@ -1587,6 +1587,9 @@ enum TokenPayload {
         origins: OriginListId,
     },
     Transient(SharedTokenBuffer),
+    InlineTransient(TracedTokenWord),
+    BackedUp(SharedBackedUpBuffer),
+    InlineBackedUp(BackedUpToken),
     ArgumentRange {
         buffer: SharedTokenBuffer,
         range: MacroArgumentRange,
@@ -1619,6 +1622,15 @@ letting its `MacroArguments` and any live `ArgumentRange` payloads retain the
 same reference-counted contiguous traced-token allocation. `InputLevelId` is
 typed separately from source identity and is present on both source and token
 levels. Exact-byte and Unicode source cursors use this identical enum.
+
+The centralized transient and backed-up constructors store a one-token payload
+directly in the cursor, so TeX's common insertion and `back_input` paths do not
+allocate a temporary vector or reference-counted slice. Empty and multi-token
+payloads remain shared and unbounded. e-TeX's optimized `\aftergroup` prepend
+promotes an inline backed-up payload to shared storage while preserving save
+order; snapshot normalization, durable continuation remapping, paragraph
+replay, origin adoption, and edited-source rehoming treat the two storage forms
+as the same semantic payload.
 
 `EveryPar`, `EveryHBox`, `EveryVBox`, `EveryJob`, `EveryCr`, `Mark`,
 `OutputRoutine`, and similar explanations belong in `ReplayTrace` unless they

@@ -671,12 +671,11 @@ fn macro_argument_recovery_emits_exact_extra_brace_and_runaway_reports() {
         "the brace and inserted paragraph each have one backup owner"
     );
     let recovered_par = extra.input.levels.last().and_then(|level| match level {
-        crate::input::InputLevel::Tokens(cursor) => match &cursor.payload {
-            crate::input::TokenPayload::BackedUp(tokens) => tokens
-                .get(cursor.index)
-                .map(|token| token.spelling.semantic_token()),
-            _ => None,
-        },
+        crate::input::InputLevel::Tokens(cursor) => cursor
+            .payload
+            .backed_up_words()
+            .and_then(|tokens| tokens.get(cursor.index))
+            .map(|token| token.spelling.semantic_token()),
         crate::input::InputLevel::Source(_) => None,
     });
     assert!(

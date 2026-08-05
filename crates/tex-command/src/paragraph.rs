@@ -218,8 +218,8 @@ fn rebind_root_input_with_delta(
         let crate::input::InputLevel::Tokens(tokens) = level else {
             continue;
         };
-        if let crate::input::TokenPayload::BackedUp(buffer) = &mut tokens.payload {
-            buffer.rehome_source(id, byte_delta)?;
+        if tokens.payload.backed_up_words().is_some() {
+            tokens.payload.rehome_backed_up_source(id, byte_delta)?;
         }
     }
     Some(())
@@ -354,14 +354,14 @@ fn adopt_live_front_origins(
                         origins: live_origins,
                     },
                 ) if recorded_tokens == live_tokens => *recorded_origins = *live_origins,
-                (
-                    crate::input::TokenPayload::Transient(recorded),
-                    crate::input::TokenPayload::Transient(live),
-                ) => recorded.adopt_matching_origins(live)?,
-                (
-                    crate::input::TokenPayload::BackedUp(recorded),
-                    crate::input::TokenPayload::BackedUp(live),
-                ) => recorded.adopt_matching_origins(live)?,
+                (recorded, live)
+                    if (recorded.transient_words().is_some()
+                        && live.transient_words().is_some())
+                        || (recorded.backed_up_words().is_some()
+                            && live.backed_up_words().is_some()) =>
+                {
+                    recorded.adopt_matching_origins(live)?;
+                }
                 (
                     crate::input::TokenPayload::ArgumentRange {
                         buffer: recorded_buffer,

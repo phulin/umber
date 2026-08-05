@@ -16,8 +16,8 @@ use posix_regex::{PosixRegexBuilder, compile::Error as PosixRegexError};
 
 use crate::command::DeliveryStamp;
 use crate::input::{
-    BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior,
-    SharedBackedUpBuffer, SharedTokenBuffer, TokenBehavior, TokenPayload,
+    BackedUpToken, BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, TokenBehavior,
+    TokenPayload,
 };
 use crate::macro_call::MacroArguments;
 use crate::processor::status::{ScannerStatus, ScannerStatusVisibility};
@@ -1319,10 +1319,10 @@ impl CommandProcessor<'_> {
                 .synthesized_origin(SynthesizedOriginKind::Expansion, opener_origin);
             let frozen_relax = TracedTokenWord::pack(Token::frozen_relax(), origin);
             let level = self.command.push_token_level(
-                TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+                TokenPayload::backed_up([BackedUpToken {
                     spelling: frozen_relax,
                     source_provenance: None,
-                }])),
+                }]),
                 TokenBehavior::BackedUp(BackupTreatment::Ordinary),
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -1688,10 +1688,7 @@ impl CommandProcessor<'_> {
             .into_iter()
             .map(|token| TracedTokenWord::pack(token, origin))
             .collect::<Vec<_>>();
-        self.insert_expansion_list(
-            TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
-            first,
-        );
+        self.insert_expansion_list(TokenPayload::transient(tokens), first);
     }
 
     /// Performs TeX82 §323's `ins_list` for one expansion result.
@@ -1741,10 +1738,10 @@ impl CommandProcessor<'_> {
         self.conserve_input_stack()?;
         self.undo_alignment_delivery(&command);
         let level = self.command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+            TokenPayload::backed_up([BackedUpToken {
                 spelling: command.spelling(),
                 source_provenance: command.source_provenance(),
-            }])),
+            }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

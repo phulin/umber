@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::CommandState;
 use crate::conditionals::ConditionStack;
+use crate::input::InputLevel;
 use crate::input::InputState;
-use crate::input::{InputLevel, TokenPayload};
 use crate::macro_call::ParameterState;
 use crate::processor::{AlignmentDeliveryState, ExpansionState, ScannerState, ScannerStatus};
 use crate::profile::{CommandProfileBoundary, CommandProfileFingerprint, CommandProfileMismatch};
@@ -90,9 +90,12 @@ impl CommandSummary {
         for (left, right) in normalized.input.levels.iter_mut().zip(&other.input.levels) {
             match (left, right) {
                 (InputLevel::Tokens(left), InputLevel::Tokens(right)) => {
-                    if let (TokenPayload::BackedUp(left), TokenPayload::BackedUp(right)) =
-                        (&mut left.payload, &right.payload)
-                        && left.adopt_matching_origins(right).is_none()
+                    if left.payload.backed_up_words().is_some()
+                        && right.payload.backed_up_words().is_some()
+                        && left
+                            .payload
+                            .adopt_matching_origins(&right.payload)
+                            .is_none()
                     {
                         return false;
                     }
@@ -216,8 +219,11 @@ impl CommandSummary {
             let InputLevel::Tokens(tokens) = level else {
                 continue;
             };
-            if let TokenPayload::BackedUp(buffer) = &mut tokens.payload
-                && buffer.rehome_source(id, byte_delta).is_none()
+            if tokens.payload.backed_up_words().is_some()
+                && tokens
+                    .payload
+                    .rehome_backed_up_source(id, byte_delta)
+                    .is_none()
             {
                 return false;
             }

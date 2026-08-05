@@ -18,8 +18,8 @@ use tex_state::{
 };
 
 use crate::input::{
-    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
-    StoredReplayReason, TokenBehavior, TokenPayload,
+    BackupTreatment, InputLevelId, ReplayTrace, RetirementBehavior, StoredReplayReason,
+    TokenBehavior, TokenPayload,
 };
 use crate::processor::alignment::PREAMBLE_ALIGN_STATE;
 use crate::processor::status::{
@@ -2606,12 +2606,11 @@ impl CommandProcessor<'_> {
 
     fn push_write_recovery(&mut self, tokens: Vec<Token>, observed: Token) -> InputLevelId {
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(
+            TokenPayload::transient(
                 tokens
                     .into_iter()
-                    .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                    .collect::<Vec<_>>(),
-            )),
+                    .map(|token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
+            ),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -3500,7 +3499,7 @@ impl CommandProcessor<'_> {
             // backed-up forbidden command can open a second runaway episode.
             self.conserve_input_stack()?;
             self.command.push_token_level(
-                TokenPayload::Transient(SharedTokenBuffer::new(vec![
+                TokenPayload::transient([
                     cr,
                     TracedTokenWord::pack(
                         Token::Char {
@@ -3509,7 +3508,7 @@ impl CommandProcessor<'_> {
                         },
                         OriginId::UNKNOWN,
                     ),
-                ])),
+                ]),
                 TokenBehavior::Recovery,
                 RetirementBehavior::Pop,
                 ReplayTrace::Inserted,
@@ -3584,7 +3583,7 @@ impl CommandProcessor<'_> {
             })
             .collect::<Vec<_>>();
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(shifted)),
+            TokenPayload::transient(shifted),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,

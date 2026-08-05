@@ -8,7 +8,7 @@ use tex_state::{EffectRecord, PrintSink, Universe, World};
 
 use super::*;
 use crate::conditionals::{ConditionalKind, IfLimit};
-use crate::input::{ReplayTrace, RetirementBehavior};
+use crate::input::{ReplayTrace, RetirementBehavior, SharedTokenBuffer};
 use crate::observation::{
     CommandDeliveryBoundary, CommandObservation, CommandObserver, DiagnosticArgument,
     InputTransition, ObservationValue, ObservedToken,

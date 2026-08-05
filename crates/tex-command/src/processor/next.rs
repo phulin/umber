@@ -13,8 +13,8 @@ use crate::command::{CurrentCommand, DeliveryStamp};
 use crate::error::CommandError;
 use crate::input::{
     BackedUpToken, BackupTreatment, InputLevel, InputLevelId, InputRetirementAction,
-    OutParameterReplay, ReplayTrace, RetirementBehavior, SharedBackedUpBuffer, SharedTokenBuffer,
-    StoredReplayReason, TokenBehavior, TokenCursor, TokenPayload,
+    OutParameterReplay, ReplayTrace, RetirementBehavior, StoredReplayReason, TokenBehavior,
+    TokenCursor, TokenPayload,
 };
 // tex.web §303's `name` classification only reaches an observation payload.
 use crate::input::SourceNameClass;
@@ -357,10 +357,7 @@ impl CommandProcessor<'_> {
         };
         self.observe_unbalanced_delimiter_correction(recovery_name, previous);
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                recovery,
-                OriginId::UNKNOWN,
-            )])),
+            TokenPayload::transient([TracedTokenWord::pack(recovery, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -406,10 +403,7 @@ impl CommandProcessor<'_> {
             .primitive_token("cr")
             .ok_or(CommandError::input_invariant())?;
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                frozen_cr,
-                OriginId::UNKNOWN,
-            )])),
+            TokenPayload::transient([TracedTokenWord::pack(frozen_cr, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -741,7 +735,7 @@ impl CommandProcessor<'_> {
             "TeX82 §407 guards back_list with `p<>backup_head`"
         );
         let level = self.command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(tokens)),
+            TokenPayload::backed_up(tokens),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -788,10 +782,10 @@ impl CommandProcessor<'_> {
                 spelling.semantic_token(),
             ));
         let level = self.command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+            TokenPayload::backed_up([BackedUpToken {
                 spelling,
                 source_provenance: None,
-            }])),
+            }]),
             TokenBehavior::BackedUp(BackupTreatment::Ordinary),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -842,13 +836,16 @@ impl CommandProcessor<'_> {
                 cursor.index, 0,
                 "no delivery occurs while e-TeX links aftergroup tokens"
             );
-            let TokenPayload::BackedUp(buffer) = &mut cursor.payload else {
+            if cursor
+                .payload
+                .prepend_backed_up(tokens.into_iter().map(|spelling| BackedUpToken {
+                    spelling,
+                    source_provenance: None,
+                }))
+                .is_none()
+            {
                 unreachable!("back_input above installed a backed-up payload");
-            };
-            buffer.prepend(tokens.into_iter().map(|spelling| BackedUpToken {
-                spelling,
-                source_provenance: None,
-            }));
+            }
         } else {
             for spelling in tokens.into_iter().rev() {
                 self.back_input_token(spelling)?;
@@ -879,7 +876,7 @@ impl CommandProcessor<'_> {
             OriginId::UNKNOWN,
         );
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![par])),
+            TokenPayload::transient([par]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -918,10 +915,7 @@ impl CommandProcessor<'_> {
                 .ok_or(CommandError::input_invariant())?,
         );
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                par,
-                OriginId::UNKNOWN,
-            )])),
+            TokenPayload::transient([TracedTokenWord::pack(par, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -949,7 +943,7 @@ impl CommandProcessor<'_> {
         };
         let dollar = TracedTokenWord::pack(dollar_token, OriginId::UNKNOWN);
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![dollar])),
+            TokenPayload::transient([dollar]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -971,10 +965,7 @@ impl CommandProcessor<'_> {
     /// enclosing §325 backup remains `<to be read again>`.
     pub(crate) fn push_inserted_error_token(&mut self, token: Token) {
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(vec![TracedTokenWord::pack(
-                token,
-                OriginId::UNKNOWN,
-            )])),
+            TokenPayload::transient([TracedTokenWord::pack(token, OriginId::UNKNOWN)]),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1098,15 +1089,15 @@ impl CommandProcessor<'_> {
         if !matches!(cursor.behavior, TokenBehavior::BackedUp(_))
             || self.next_stored_token(cursor).is_some()
             || !matches!(
-                &cursor.payload,
-                TokenPayload::BackedUp(buffer)
-                    if matches!(
-                        buffer.get(0).map(|token| token.spelling.semantic_token()),
-                        Some(Token::Char {
-                            cat: Catcode::EndGroup,
-                            ..
-                        })
-                    )
+                cursor
+                    .payload
+                    .backed_up_words()
+                    .and_then(|tokens| tokens.first())
+                    .map(|token| token.spelling.semantic_token()),
+                Some(Token::Char {
+                    cat: Catcode::EndGroup,
+                    ..
+                })
             )
         {
             return Ok(());
@@ -1146,12 +1137,11 @@ impl CommandProcessor<'_> {
         );
         self.back_input(command)?;
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(
+            TokenPayload::transient(
                 closing
                     .iter()
-                    .map(|&token| TracedTokenWord::pack(token, OriginId::UNKNOWN))
-                    .collect::<Vec<_>>(),
-            )),
+                    .map(|&token| TracedTokenWord::pack(token, OriginId::UNKNOWN)),
+            ),
             TokenBehavior::Recovery,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -1320,10 +1310,10 @@ impl CommandProcessor<'_> {
         self.undo_alignment_delivery(&command);
 
         let level = self.command.push_token_level(
-            TokenPayload::BackedUp(SharedBackedUpBuffer::new(vec![BackedUpToken {
+            TokenPayload::backed_up([BackedUpToken {
                 spelling: command.spelling(),
                 source_provenance: command.source_provenance(),
-            }])),
+            }]),
             TokenBehavior::BackedUp(treatment),
             RetirementBehavior::Pop,
             ReplayTrace::BackedUp,
@@ -1902,9 +1892,15 @@ impl CommandProcessor<'_> {
             TokenPayload::Transient(buffer) => {
                 buffer.get(cursor.index).map(|spelling| (spelling, None))
             }
+            TokenPayload::InlineTransient(spelling) => {
+                (cursor.index == 0).then_some((*spelling, None))
+            }
             TokenPayload::BackedUp(buffer) => buffer
                 .get(cursor.index)
                 .map(|token| (token.spelling, token.source_provenance)),
+            TokenPayload::InlineBackedUp(token) => {
+                (cursor.index == 0).then_some((token.spelling, token.source_provenance))
+            }
             TokenPayload::ArgumentRange { buffer, range } => (cursor.index
                 < range.end().saturating_sub(range.start()))
             .then(|| buffer.get(range.start() + cursor.index))
@@ -2131,7 +2127,7 @@ impl CommandProcessor<'_> {
             })
             .collect();
         let level = self.command.push_token_level(
-            TokenPayload::Transient(SharedTokenBuffer::new(tokens)),
+            TokenPayload::transient(tokens),
             TokenBehavior::Ordinary,
             RetirementBehavior::Pop,
             ReplayTrace::Inserted,
@@ -2628,7 +2624,7 @@ mod tests {
     use tex_state::token::{OriginId, Token, TracedTokenWord};
 
     use super::*;
-    use crate::input::{ReplayTrace, RetirementBehavior};
+    use crate::input::{ReplayTrace, RetirementBehavior, SharedTokenBuffer};
     use crate::observation::{
         CommandDeliveryBoundary, CommandObservation, CommandObserver, InputTransition,
     };
@@ -3789,6 +3785,42 @@ mod tests {
         assert_eq!(
             replayed.source_location(),
             Some(crate::SourceLocation::new(source, 3))
+        );
+    }
+
+    #[test]
+    fn etex_aftergroup_prepend_promotes_inline_backup_and_preserves_order() {
+        let mut command = CommandState::new(crate::CommandProfile::ETEX26);
+        let mut runtime = CommandRuntime::default();
+        let mut universe = Universe::new_with_plain_catcodes();
+        let mut capabilities = CommandHostCapabilities::default();
+        let mut processor = processor(&mut command, &mut runtime, &mut universe, &mut capabilities);
+        let words = ['a', 'b', 'c'].map(|ch| {
+            TracedTokenWord::pack(
+                Token::Char {
+                    ch,
+                    cat: Catcode::Other,
+                },
+                OriginId::UNKNOWN,
+            )
+        });
+
+        processor
+            .back_input_aftergroup_tokens(words)
+            .expect("aftergroup tokens back up");
+        let Some(InputLevel::Tokens(cursor)) = processor.command.input.levels.last() else {
+            panic!("aftergroup backup is a token level");
+        };
+        assert!(matches!(cursor.payload, TokenPayload::BackedUp(_)));
+        assert_eq!(
+            cursor
+                .payload
+                .backed_up_words()
+                .expect("aftergroup uses backed-up storage")
+                .iter()
+                .map(|token| token.spelling.semantic_token())
+                .collect::<Vec<_>>(),
+            words.map(TracedTokenWord::semantic_token)
         );
     }
 

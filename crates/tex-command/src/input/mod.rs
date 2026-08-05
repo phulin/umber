@@ -378,6 +378,17 @@ impl InputState {
                     ),
                 )
             }
+            TokenPayload::InlineTransient(word) => {
+                let (before, after) = if tokens.index == 0 {
+                    (None, Some(word.semantic_token()))
+                } else {
+                    (Some(word.semantic_token()), None)
+                };
+                (
+                    token_text(stores, before.into_iter()),
+                    token_text(stores, after.into_iter()),
+                )
+            }
             TokenPayload::BackedUp(words) => {
                 let before = (0..tokens.index)
                     .filter_map(|index| words.get(index))
@@ -386,6 +397,17 @@ impl InputState {
                     .map_while(|index| words.get(index))
                     .map(|word| word.spelling.semantic_token());
                 (token_text(stores, before), token_text(stores, after))
+            }
+            TokenPayload::InlineBackedUp(word) => {
+                let (before, after) = if tokens.index == 0 {
+                    (None, Some(word.spelling.semantic_token()))
+                } else {
+                    (Some(word.spelling.semantic_token()), None)
+                };
+                (
+                    token_text(stores, before.into_iter()),
+                    token_text(stores, after.into_iter()),
+                )
             }
             TokenPayload::ArgumentRange { buffer, range } => {
                 let start = range.start();

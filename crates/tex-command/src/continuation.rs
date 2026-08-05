@@ -225,11 +225,13 @@ impl OwnedCommandContinuation {
                     self.collect_origin_list(*origins, universe);
                 }
                 TokenPayload::Transient(words) => self.collect_words(words.words(), universe),
+                TokenPayload::InlineTransient(word) => self.collect_word(*word, universe),
                 TokenPayload::BackedUp(words) => {
                     for word in words.words() {
                         self.collect_word(word.spelling, universe);
                     }
                 }
+                TokenPayload::InlineBackedUp(word) => self.collect_word(word.spelling, universe),
                 TokenPayload::ArgumentRange { buffer, .. } => {
                     self.collect_words(buffer.words(), universe);
                 }
@@ -627,6 +629,7 @@ impl<'a> Materializer<'a> {
                                 .collect::<Vec<_>>(),
                         )
                     }
+                    TokenPayload::InlineTransient(word) => *word = self.word(*word),
                     TokenPayload::BackedUp(words) => {
                         *words = SharedBackedUpBuffer::new(
                             words
@@ -638,6 +641,9 @@ impl<'a> Materializer<'a> {
                                 })
                                 .collect::<Vec<_>>(),
                         )
+                    }
+                    TokenPayload::InlineBackedUp(word) => {
+                        word.spelling = self.word(word.spelling);
                     }
                     TokenPayload::ArgumentRange { buffer, .. } => {
                         *buffer = SharedTokenBuffer::new(

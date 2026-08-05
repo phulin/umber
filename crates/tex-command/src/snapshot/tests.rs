@@ -3,7 +3,10 @@ use std::hash::{Hash, Hasher};
 
 use crate::CommandState;
 use crate::conditionals::{ConditionFrame, ConditionalKind, IfLimit};
-use crate::input::SharedTokenBuffer;
+use crate::input::{
+    BackedUpToken, BackupTreatment, ReplayTrace, RetirementBehavior, SharedTokenBuffer,
+    TokenBehavior, TokenPayload,
+};
 use crate::macro_call::{MacroActivation, MacroActivationId, MacroArgumentRange, MacroArguments};
 use crate::processor::{
     AbsorbingContext, ActiveCellDelivery, AlignmentCellTemplates, AlignmentId, AlignmentIdentity,
@@ -15,6 +18,7 @@ use crate::state::LiveTokenBuilder;
 use crate::{RegisteredSourceKind, SourceRegistration};
 use tex_state::ids::TokenListId;
 use tex_state::input::TracedTokenList;
+use tex_state::token::{Catcode, OriginId, Token, TracedTokenWord};
 
 use super::{CommandSummary, CommandSummaryError};
 
@@ -22,6 +26,58 @@ fn semantic_hash<T: Hash>(value: &T) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
+}
+
+fn inline_word(ch: char) -> TracedTokenWord {
+    TracedTokenWord::pack(
+        Token::Char {
+            ch,
+            cat: Catcode::Other,
+        },
+        OriginId::UNKNOWN,
+    )
+}
+
+#[test]
+fn durable_continuation_roundtrip_preserves_inline_payloads() {
+    let mut state = CommandState::default();
+    state.push_token_level(
+        TokenPayload::transient([inline_word('t')]),
+        TokenBehavior::Recovery,
+        RetirementBehavior::Pop,
+        ReplayTrace::Inserted,
+    );
+    state.push_token_level(
+        TokenPayload::backed_up([BackedUpToken {
+            spelling: inline_word('b'),
+            source_provenance: None,
+        }]),
+        TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let summary = state.publish_summary().expect("inline state is quiescent");
+    let universe = tex_state::Universe::new();
+    let owned = crate::OwnedCommandContinuation::detach(&summary, &universe);
+    let mut restored_universe = tex_state::Universe::new();
+    let restored = owned.materialize(&mut restored_universe);
+
+    let mut payloads = restored
+        .input
+        .levels
+        .iter()
+        .filter_map(|level| match level {
+            crate::input::InputLevel::Tokens(cursor) => Some(&cursor.payload),
+            crate::input::InputLevel::Source(_) => None,
+        });
+    assert!(matches!(
+        payloads.next(),
+        Some(TokenPayload::InlineTransient(word)) if *word == inline_word('t')
+    ));
+    assert!(matches!(
+        payloads.next(),
+        Some(TokenPayload::InlineBackedUp(word)) if word.spelling == inline_word('b')
+    ));
 }
 
 fn templates() -> AlignmentCellTemplates {
@@ -353,6 +409,38 @@ fn paragraph_input_transaction_replays_only_from_exact_start() {
         start.replay_paragraph_input_transaction(&transaction),
         Err(crate::ParagraphInputReplayError::StartingInputMismatch)
     );
+}
+
+#[test]
+fn paragraph_input_transaction_replays_inline_backup_state() {
+    let mut start = populated_quiescent_state();
+    start.push_token_level(
+        TokenPayload::backed_up([BackedUpToken {
+            spelling: inline_word('b'),
+            source_provenance: None,
+        }]),
+        TokenBehavior::BackedUp(BackupTreatment::Ordinary),
+        RetirementBehavior::Pop,
+        ReplayTrace::BackedUp,
+    );
+    let mut recorded = start.clone();
+    recorded.begin_paragraph_input_transaction();
+    let Some(crate::input::InputLevel::Tokens(cursor)) = recorded.input.levels.last_mut() else {
+        panic!("inline backup remains the top token level");
+    };
+    cursor.index = 1;
+    let transaction = recorded
+        .finish_paragraph_input_transaction()
+        .expect("paragraph transaction finishes");
+
+    start
+        .replay_paragraph_input_transaction(&transaction)
+        .expect("inline backup starting state matches");
+    let Some(crate::input::InputLevel::Tokens(cursor)) = start.input.levels.last() else {
+        panic!("replayed inline backup remains a token level");
+    };
+    assert_eq!(cursor.index, 1);
+    assert!(matches!(cursor.payload, TokenPayload::InlineBackedUp(_)));
 }
 
 #[test]
