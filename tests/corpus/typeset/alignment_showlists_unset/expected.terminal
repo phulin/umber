@@ -20,4 +20,6 @@ prevdepth ignored
 
 ! OK.
 <recently read> \showlists
+
 l.11 ...box0=\vbox{\halign{#&#\cr a&b\cr\showlists
+                                                   c&d\cr}}

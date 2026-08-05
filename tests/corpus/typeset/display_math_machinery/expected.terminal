@@ -36,6 +36,7 @@
 
 ! OK.
 l.40 \showbox0
+
 > \box1=
 \vbox(55.30554+0.0)x100.0
 .\hbox(4.30554+0.0)x100.0, glue set 78.3333fil
@@ -74,6 +75,7 @@ l.40 \showbox0
 
 ! OK.
 l.42 \showbox1
+
 > \box2=
 \vbox(55.30554+0.0)x100.0
 .\hbox(4.30554+0.0)x100.0, glue set 0.18181

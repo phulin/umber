@@ -10,6 +10,7 @@
 
 ! OK.
 l.10 \showbox34
+
 > \box35=
 \hbox(6.94444+0.0)x15.00003
 .\tenrm a

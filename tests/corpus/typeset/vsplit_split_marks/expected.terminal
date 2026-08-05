@@ -6,6 +6,7 @@
 
 ! OK.
 l.9 \showbox11
+
 > \box10=
 \vbox(14.0+0.0)x7.0
 .\glue(\splittopskip) 6.0
@@ -16,12 +17,14 @@ l.9 \showbox11
 
 ! OK.
 l.10 \showbox10
+
 > \box13=
 \vbox(5.0+0.0)x8.0
 .\rule(4.0+0.0)x8.0
 
 ! OK.
 l.13 \showbox13
+
 > \box12=
 \vbox(10.0+0.0)x9.0
 .\glue(\splittopskip) 6.0

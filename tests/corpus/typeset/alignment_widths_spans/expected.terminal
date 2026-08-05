@@ -20,6 +20,7 @@
 
 ! OK.
 l.9 \showbox0
+
 > \box1=
 \vbox(0.0+0.0)x30.0
 .\hbox(0.0+0.0)x30.0, glue set 6.66667fil
@@ -33,6 +34,7 @@ l.9 \showbox0
 
 ! OK.
 l.11 \showbox1
+
 > \box2=
 \vbox(4.30554+0.0)x5.00002
 .\hbox(4.30554+0.0)x5.00002
@@ -43,6 +45,7 @@ l.11 \showbox1
 
 ! OK.
 l.14 \showbox2
+
 > \box3=
 \vbox(13.24998+0.0)x5.55557
 .\hbox(4.30554+0.0)x5.55557
@@ -59,6 +62,7 @@ l.14 \showbox2
 
 ! OK.
 l.16 \showbox3
+
 > \box4=
 \vbox(14.24998+0.0)x5.55557
 .\rule(1.0+0.0)x5.55557
@@ -77,6 +81,7 @@ l.16 \showbox3
 
 ! OK.
 l.18 \showbox4
+
 > \box5=
 \vbox(6.94444+0.0)x15.00003
 .\hbox(6.94444+0.0)x15.00003
@@ -93,6 +98,7 @@ l.18 \showbox4
 
 ! OK.
 l.20 \showbox5
+
 > \box6=
 \vbox(11.30554+0.0)x5.00002
 .\penalty 11

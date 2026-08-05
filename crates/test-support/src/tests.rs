@@ -11,6 +11,40 @@ fn diagnostic_normalization_retains_box_reports() {
 }
 
 #[test]
+fn diagnostic_normalization_retains_every_context_kind_and_continuation() {
+    let context_headers = [
+        "<argument>",
+        "<template>",
+        "<to be read again>",
+        "<recently read>",
+        "<inserted text>",
+        "<output>",
+        "<everypar>",
+        "<everymath>",
+        "<everydisplay>",
+        "<everyhbox>",
+        "<everyvbox>",
+        "<everyjob>",
+        "<everycr>",
+        "<mark>",
+        "<write>",
+        "\\macro #1->",
+        "l.42",
+        "<*>",
+        "<read 1>",
+    ];
+
+    for header in context_headers {
+        let report = format!("{header} before\n                  after\n");
+        assert_eq!(normalize::exec_log(&report), report, "context {header}");
+        assert_eq!(normalize::box_dump(&report), report, "context {header}");
+    }
+
+    let report = "PDF statistics:\n 1 volatile statistic\nretained diagnostic\n";
+    assert_eq!(normalize::exec_log(report), "retained diagnostic\n");
+}
+
+#[test]
 fn hello_fixture_is_committed() {
     let expected = read_fixture("hello", "hello", "log");
     assert!(

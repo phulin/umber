@@ -5,6 +5,7 @@
 
 ! OK.
 l.7 \showbox10
+
 > \box11=
 \vbox(7.0+0.0)x0.0
 .\kern 3.0
@@ -13,6 +14,7 @@ l.7 \showbox10
 
 ! OK.
 l.9 \showbox11
+
 > \box12=
 \hbox(0.0+0.0)x7.0, glue set 5.0fil
 .\glue 2.0 plus 1.0fil

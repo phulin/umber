@@ -1,5 +1,6 @@
 ! Math formula deleted: Insufficient extension fonts.
 l.21 \setbox0=\vbox{\halign{#\cr ${}$
+                                     \cr}}
 > \box0=
 \vbox(0.0+0.0)x0.0
 .\hbox(0.0+0.0)x0.0
