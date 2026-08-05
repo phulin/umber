@@ -1,8 +1,8 @@
 // Native Rust translation of the corresponding upstream Biber name test at commit 74252e6.
 
 use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
-    FileProvisioner, Name, NamePartValue, OutputFormat, OutputRequest, ProcessedBibliography,
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue, Name,
+    NamePartValue, OutputFormat, OutputRequest, ProcessedBibliography, ProjectWorkspace,
     ResolvedFile, SectionId, VfsLimits, VirtualPath,
 };
 
@@ -28,7 +28,7 @@ struct FixtureResult {
 fn process_fixture(control_name: &str, inline_bib: Option<&str>) -> FixtureResult {
     let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control = VirtualPath::user(control_name).expect("valid control path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     provisioner
         .register_user(
             control.clone(),

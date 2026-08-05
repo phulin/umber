@@ -12,7 +12,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use bib_engine::{
     BibExitStatus, BibliographyAttempt, BibliographyHistory, BibliographyJob, BibliographySession,
-    ClassicBibJob, ClassicBibOptions, FileKind, FileProvisioner, ResolvedFile,
+    ClassicBibJob, ClassicBibOptions, FileKind, ProjectWorkspace, ResolvedFile,
     VfsLimits, VirtualPath,
 };
 use tempfile::TempDir;
@@ -358,7 +358,7 @@ fn run_reference(directory: &Path, options: &Options, name: &str) -> Result<Outp
 
 fn run_umber(case: &GeneratedCase) -> Result<Output> {
     let aux = VirtualPath::user(&format!("{}.aux", case.name)).expect("generated virtual path");
-    let mut files = FileProvisioner::new(VfsLimits::default()).context("create Umber VFS")?;
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).context("create Umber VFS")?;
     files
         .register_user(aux.clone(), case.aux.clone())
         .context("register generated AUX")?;

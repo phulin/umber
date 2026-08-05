@@ -28,7 +28,7 @@ pub(super) fn project_vfs_limits(options: &SessionOptions) -> umber_vfs::VfsLimi
 }
 
 pub(super) fn accepted_generated(
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
 ) -> Result<BTreeMap<VirtualPath, Vec<u8>>, CandidateStop> {
     let snapshot = files.snapshot();
     let paths = snapshot
@@ -49,7 +49,7 @@ pub(super) fn accepted_generated(
 
 pub(super) fn add_candidate_inputs(
     session: &mut VirtualCompileSession,
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
     main_path: &str,
     root: &[u8],
     generated: &BTreeMap<VirtualPath, Vec<u8>>,
@@ -105,7 +105,7 @@ pub(super) fn generated_signature(
 }
 
 pub(super) fn candidate_snapshot(
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
     main_path: &str,
     root: &[u8],
     generated: &BTreeMap<VirtualPath, Vec<u8>>,

@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use bib_engine::{BibCommand, BibExitStatus, FileProvisioner, ResolvedFile, VfsLimits};
+use bib_engine::{BibCommand, BibExitStatus, ProjectWorkspace, ResolvedFile, VfsLimits};
 use tex_state::World;
 
 pub fn run(args: impl Iterator<Item = String>) -> Result<(), BibCliError> {
@@ -18,7 +18,7 @@ pub fn run(args: impl Iterator<Item = String>) -> Result<(), BibCliError> {
         .map_err(BibCliError::external)?
         .bytes()
         .to_vec();
-    let mut files = FileProvisioner::new(VfsLimits::default())
+    let mut files = ProjectWorkspace::new(VfsLimits::default())
         .map_err(|error| BibCliError::message(1, error.to_string()))?;
     files
         .register_user(command.input().clone(), input_bytes)

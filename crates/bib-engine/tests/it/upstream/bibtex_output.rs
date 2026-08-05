@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/bibtex-output.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath};
 
 const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/bibtex-output.bcf");
@@ -52,7 +52,7 @@ const BO1: &str = r########"@BOOK{bo1,
 
 "########;
 fn run() -> (Vec<u8>, Vec<String>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("bibtex-output.bcf").expect("valid virtual path"),

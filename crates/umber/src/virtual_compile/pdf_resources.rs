@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use tex_fonts::{TfmFont, VfProgram};
 use tex_state::Universe;
-use umber_vfs::{FileContentId, FileProvisioner};
+use umber_vfs::{FileContentId, ProjectWorkspace};
 
 use super::{FileKind, FileRequest, FileRequestKey, ResolvedPkFont, ResourceRequest};
 
@@ -36,7 +36,7 @@ pub(super) struct Discovery {
 
 pub(super) fn discover(
     stores: &mut Universe,
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
     cache: &mut PdfVirtualFontResources,
     pk_fonts: &BTreeMap<tex_fonts::PdfPkFontRequest, ResolvedPkFont>,
     unavailable_pk_fonts: &BTreeSet<tex_fonts::PdfPkFontRequest>,
@@ -287,7 +287,7 @@ pub(super) fn discover(
 
 fn acquire_parsed(
     stores: &mut Universe,
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
     required: &mut BTreeMap<FileRequestKey, FileRequest>,
     kind: FileKind,
     name: &str,

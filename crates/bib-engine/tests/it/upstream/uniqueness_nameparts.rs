@@ -1,8 +1,8 @@
 // Native Rust translation of upstream t/uniqueness-nameparts.t at commit 74252e6.
 
 use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
-    FileProvisioner, OutputFormat, OutputRequest, ResolvedFile, SectionId, VfsLimits, VirtualPath,
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue, OutputFormat,
+    OutputRequest, ProjectWorkspace, ResolvedFile, SectionId, VfsLimits, VirtualPath,
 };
 
 struct FixtureResult {
@@ -14,7 +14,7 @@ fn process_fixture() -> FixtureResult {
     let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control_name = "uniqueness-nameparts.bcf";
     let control = VirtualPath::user(control_name).expect("valid control path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     provisioner
         .register_user(
             control.clone(),

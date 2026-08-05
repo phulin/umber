@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/truncation.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath};
 
 const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/truncation.bcf");
@@ -368,7 +368,7 @@ const US9: &str = r########"    \entry{us9}{book}{}{}
     \endentry
 "########;
 fn run() -> (Vec<u8>, Vec<String>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("truncation.bcf").expect("valid virtual path"),

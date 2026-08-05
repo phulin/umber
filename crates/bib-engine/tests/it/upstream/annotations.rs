@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/annotations.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath};
 const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/annotations.bcf");
 const DATA: &[u8] =
@@ -106,7 +106,7 @@ const EXPECTED_ANN2: &str = concat!(
 "###
 );
 fn output() -> Vec<u8> {
-    let mut f = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut f = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     f.register_user(
         VirtualPath::user("annotations.bcf").expect("valid virtual path"),
         CONTROL.to_vec(),

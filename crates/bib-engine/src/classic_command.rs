@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::{
     BibExitStatus, BibliographyAttempt, BibliographyDocument, BibliographyHistory,
     BibliographyResult, BibliographySession, BibliographySourceLocation, ClassicBibJob,
-    ClassicBibOptions, FileProvisioner, ResolvedFile, VfsSnapshot, VirtualPath,
+    ClassicBibOptions, ProjectWorkspace, ResolvedFile, VfsSnapshot, VirtualPath,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -54,7 +54,7 @@ impl ClassicBibCommand {
 
     pub fn execute_provisioned(
         &self,
-        files: &mut FileProvisioner,
+        files: &mut ProjectWorkspace,
         mut resolve: impl FnMut(&crate::FileRequest) -> Option<ResolvedFile>,
     ) -> ClassicBibCommandOutput {
         let mut session = BibliographySession::classic();

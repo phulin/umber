@@ -1,6 +1,6 @@
 use bib_model::{FieldId, FieldValue, RangeEndpoint};
 use umber_vfs::{
-    FileProvisioner, FileRequest, FileRequestBatch, ResolvedFile, VfsLimits, VirtualPath,
+    FileRequest, FileRequestBatch, ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 
 use super::*;
@@ -19,7 +19,7 @@ const DATA: &[u8] = br#"@article{entry,
 
 #[test]
 fn requests_remote_resources_resumes_and_exposes_typed_values() {
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     provisioner
         .register_user(
             VirtualPath::user("main.bcf").expect("path"),
@@ -111,7 +111,7 @@ fn requests_remote_resources_resumes_and_exposes_typed_values() {
 
 #[test]
 fn unchanged_missing_batch_is_typed_no_progress() {
-    let provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     let job = BibJob::new(
         VirtualPath::user("missing.bcf").expect("path"),
         BibOptionsBuilder::new().freeze(),
@@ -130,7 +130,7 @@ fn unchanged_missing_batch_is_typed_no_progress() {
 
 #[test]
 fn cache_disabled_and_enabled_results_are_identical() {
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     provisioner
         .register_user(
             VirtualPath::user("main.bcf").expect("path"),
@@ -171,7 +171,7 @@ fn response_permutation_and_chunking_do_not_change_results() {
         .expect("schema");
     let job = BibJob::new(control_path.clone(), options.freeze());
 
-    let mut chunked = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut chunked = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     chunked
         .register_user(control_path.clone(), CONTROL.to_vec())
         .expect("control");
@@ -205,7 +205,7 @@ fn response_permutation_and_chunking_do_not_change_results() {
     chunked.provision_batch(responses).expect("remaining chunk");
     let chunked_result = complete(session.process(&job, &chunked.snapshot()));
 
-    let mut permuted = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut permuted = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     permuted
         .register_user(control_path, CONTROL.to_vec())
         .expect("control");
@@ -226,7 +226,7 @@ fn response_permutation_and_chunking_do_not_change_results() {
 
 #[test]
 fn stale_snapshot_is_a_typed_resource_conflict() {
-    let provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     let snapshot = provisioner.snapshot();
     snapshot.invalidate();
     let job = BibJob::new(

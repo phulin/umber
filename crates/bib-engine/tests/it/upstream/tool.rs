@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/tool.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath};
 const DATA: &[u8] = include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool.bib");
 const CONFIG: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/tool-testsort.conf");
@@ -142,7 +142,7 @@ fn run() -> (Vec<u8>, Vec<String>) {
         "tool.bib",
     ])
     .expect("valid command line");
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("tool.bib").expect("valid virtual path"),

@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/full-dot.t at commit 74252e6.
 
-use bib_engine::{BibCommand, BibCommandOutput, FileProvisioner, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, BibCommandOutput, ProjectWorkspace, VfsLimits, VirtualPath};
 
 const CONTROL: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/full-dot.bcf");
@@ -10,7 +10,7 @@ const EXPECTED: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/full-dot.dot");
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("full-dot.bcf").expect("valid virtual path"),

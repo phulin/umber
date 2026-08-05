@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use bib_engine::{ClassicBibCommand, FileProvisioner, ResolvedFile, VfsLimits};
+use bib_engine::{ClassicBibCommand, ProjectWorkspace, ResolvedFile, VfsLimits};
 use tex_state::World;
 
 use crate::bib::BibCliError;
@@ -16,7 +16,7 @@ pub fn run(args: impl Iterator<Item = String>) -> Result<(), BibCliError> {
     let physical_input = physical_input(&args)?;
     let base = physical_input.parent().unwrap_or_else(|| Path::new("."));
     let mut world = World::real();
-    let mut files = FileProvisioner::new(VfsLimits::default())
+    let mut files = ProjectWorkspace::new(VfsLimits::default())
         .map_err(|error| BibCliError::message(1, error.to_string()))?;
     files
         .register_user(

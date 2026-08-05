@@ -6,9 +6,8 @@ use bib_engine::{
     BibliographyDetector, BibliographyDocument, BibliographyFailure, BibliographyHistory,
     BibliographyJob, BibliographyMode, BibliographyResult, BibliographyResultError,
     BibliographySession, BibliographyStats, ClassicBibCommand, ClassicBibFailure, ClassicBibJob,
-    ClassicBibOptions, CompatibilityVersion, FileKind, FileProvisioner, GeneratedFile,
-    OutputFormat, OutputRequest, ProcessedBibliographyBuilder, ResolvedFile, VfsLimits,
-    VirtualPath,
+    ClassicBibOptions, CompatibilityVersion, FileKind, GeneratedFile, OutputFormat, OutputRequest,
+    ProcessedBibliographyBuilder, ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 
 macro_rules! classic_bytes {
@@ -72,7 +71,7 @@ fn public_options_reject_duplicate_output_bindings() {
 fn wrapped_biblatex_session_preserves_legacy_output_bytes() {
     let control = VirtualPath::user("main.bcf").expect("control path");
     let output = VirtualPath::user("main.bbl").expect("output path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     provisioner
         .register_user(
             control.clone(),
@@ -156,7 +155,7 @@ fn fatal_artifacts_remain_detached_from_publishable_files() {
 
 #[test]
 fn classic_control_resolves_aux_bst_and_datasource_resources() {
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     let aux = VirtualPath::user("main.aux").expect("AUX path");
     provisioner
         .register_user(
@@ -228,7 +227,7 @@ fn classic_control_resolves_aux_bst_and_datasource_resources() {
 
 #[test]
 fn auto_detection_waits_for_included_aux_before_reporting_ambiguity() {
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     provisioner
         .register_user(VirtualPath::user("main.bcf").expect("BCF"), b"bcf".to_vec())
         .expect("BCF");
@@ -269,7 +268,7 @@ fn classic_resource_retry_rejects_an_unchanged_missing_batch() {
         VirtualPath::user("missing.aux").expect("AUX"),
         ClassicBibOptions::default(),
     );
-    let snapshot = FileProvisioner::new(VfsLimits::default())
+    let snapshot = ProjectWorkspace::new(VfsLimits::default())
         .expect("limits")
         .snapshot();
     let mut session = BibliographySession::classic();
@@ -285,7 +284,7 @@ fn classic_resource_retry_rejects_an_unchanged_missing_batch() {
 
 #[test]
 fn classic_smoke_executes_through_the_public_session_with_cold_and_cached_bytes() {
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("limits");
     provisioner
         .register_user(
             VirtualPath::user("smoke.aux").expect("fixture path"),
@@ -464,7 +463,7 @@ fn execute_standard_style(
     expected_history: BibliographyHistory,
 ) {
     let aux = VirtualPath::user(&format!("{name}.aux")).expect("fixture path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     provisioner
         .register_user(aux.clone(), aux_bytes.to_vec())
         .expect("fixture AUX");
@@ -518,7 +517,7 @@ fn execute_real_world_command(
     expected_terminal: &[u8],
 ) {
     let command = ClassicBibCommand::parse([name]).expect("fixture command");
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(command.aux_path().clone(), aux_bytes.to_vec())
         .expect("fixture AUX");

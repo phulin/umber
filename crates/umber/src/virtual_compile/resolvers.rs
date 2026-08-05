@@ -20,7 +20,7 @@ use super::path::RequestedFile;
 use super::{
     CompileError, FileKind, FileRequest, FileRequestKey, FontResponseFingerprint, VirtualPath,
 };
-use umber_vfs::VfsSnapshot;
+use umber_vfs::{ResourceLedger, VfsSnapshot};
 pub(super) struct VirtualRunResolvers<'a> {
     input: VirtualFileResolver<'a>,
     font: VirtualFontResolver<'a>,
@@ -55,8 +55,7 @@ pub(super) struct FontResolutionPolicy<'a> {
 
 struct VirtualFileResolver<'a> {
     snapshot: &'a VfsSnapshot,
-    resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
-    unavailable: &'a BTreeSet<FileRequestKey>,
+    ledger: &'a ResourceLedger,
     misses: Vec<(u64, FileRequest)>,
     probes: Vec<(u64, FileRequest)>,
     seen: BTreeSet<FileRequestKey>,
@@ -72,24 +71,22 @@ enum FileOpenIntent {
 impl<'a> VirtualRunResolvers<'a> {
     pub(super) fn new(
         snapshot: &'a VfsSnapshot,
-        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
-        unavailable_files: &'a BTreeSet<FileRequestKey>,
+        ledger: &'a ResourceLedger,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         policy: FontResolutionPolicy<'a>,
     ) -> Self {
         Self {
-            input: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
+            input: VirtualFileResolver::from_ledger(snapshot, ledger),
             font: VirtualFontResolver::new(
                 snapshot,
-                resolved_paths,
-                unavailable_files,
+                ledger,
                 resolved_fonts,
                 unavailable_fonts,
                 policy,
             ),
             image: VirtualImageResolver {
-                files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
+                files: VirtualFileResolver::from_ledger(snapshot, ledger),
                 cache: HashMap::new(),
             },
             request_index: 0,
@@ -452,15 +449,10 @@ fn pdf_points_to_scaled(points: f64) -> Scaled {
 }
 
 impl<'a> VirtualFileResolver<'a> {
-    fn new(
-        snapshot: &'a VfsSnapshot,
-        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
-        unavailable: &'a BTreeSet<FileRequestKey>,
-    ) -> Self {
+    fn from_ledger(snapshot: &'a VfsSnapshot, ledger: &'a ResourceLedger) -> Self {
         Self {
             snapshot,
-            resolved_paths,
-            unavailable,
+            ledger,
             misses: Vec::new(),
             probes: Vec::new(),
             seen: BTreeSet::new(),
@@ -555,7 +547,7 @@ impl<'a> VirtualFileResolver<'a> {
                 } else {
                     None
                 };
-                if let Some(path) = self.resolved_paths.get(&key) {
+                if let Some(path) = self.ledger.resolved_path(&key) {
                     if let Some(path) = &missing_user_path {
                         self.record_missing(input, path, intent)?;
                     }
@@ -570,7 +562,7 @@ impl<'a> VirtualFileResolver<'a> {
                         .read_snapshot(input, file, intent)
                         .map(HostLookup::Available);
                 }
-                if self.unavailable.contains(&key) {
+                if self.ledger.is_unavailable(&key) {
                     if let Some(path) = &missing_user_path {
                         self.record_missing(input, path, intent)?;
                     }
@@ -697,14 +689,13 @@ struct VirtualFontResolver<'a> {
 impl<'a> VirtualFontResolver<'a> {
     fn new(
         snapshot: &'a VfsSnapshot,
-        resolved_paths: &'a BTreeMap<FileRequestKey, VirtualPath>,
-        unavailable_files: &'a BTreeSet<FileRequestKey>,
+        ledger: &'a ResourceLedger,
         resolved_fonts: &'a BTreeMap<FontRequestKey, OpenTypeFont>,
         unavailable_fonts: &'a BTreeSet<FontRequestKey>,
         policy: FontResolutionPolicy<'a>,
     ) -> Self {
         Self {
-            files: VirtualFileResolver::new(snapshot, resolved_paths, unavailable_files),
+            files: VirtualFileResolver::from_ledger(snapshot, ledger),
             resolved_fonts,
             unavailable_fonts,
             accepted_font_containers: policy.accepted_containers,
@@ -846,8 +837,6 @@ impl VirtualFontResolver<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
-
     use super::{
         FileOpenIntent, HostLookup, VirtualFileResolver, parse_pdf_image, pixels_to_scaled,
     };
@@ -860,7 +849,7 @@ mod tests {
     };
     use tex_exec::{PdfImagePageBox, PdfImageRequest};
     use tex_state::{InputOpenState, PdfExternalImageMetadata, Universe, World};
-    use umber_vfs::{VfsLimits, VirtualFs};
+    use umber_vfs::{ProjectWorkspace, VfsLimits};
 
     #[test]
     fn zero_image_resolution_uses_pdftexs_seventy_two_dpi_fallback() {
@@ -870,11 +859,9 @@ mod tests {
 
     #[test]
     fn required_lookup_promotes_an_earlier_probe_without_changing_its_order() {
-        let filesystem = VirtualFs::new(VfsLimits::default()).expect("empty VFS");
-        let snapshot = filesystem.snapshot();
-        let resolved = BTreeMap::new();
-        let unavailable = BTreeSet::new();
-        let mut resolver = VirtualFileResolver::new(&snapshot, &resolved, &unavailable);
+        let workspace = ProjectWorkspace::new(VfsLimits::default()).expect("empty workspace");
+        let snapshot = workspace.snapshot();
+        let mut resolver = VirtualFileResolver::from_ledger(&snapshot, workspace.resource_ledger());
         let mut stores = Universe::with_world(World::memory());
 
         assert!(matches!(

@@ -1,9 +1,9 @@
 // Native Rust translation of the corresponding upstream Biber test at commit 74252e6.
 
 use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
-    FileProvisioner, OutputFormat, OutputRequest, ProcessedBibliography, ResolvedFile, SectionId,
-    VfsLimits, VirtualPath,
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue, OutputFormat,
+    OutputRequest, ProcessedBibliography, ProjectWorkspace, ResolvedFile, SectionId, VfsLimits,
+    VirtualPath,
 };
 
 #[allow(dead_code)]
@@ -64,7 +64,7 @@ fn process_fixture(control_name: &str, option_overrides: &[(&str, &str)]) -> Fix
     for &(key, value) in option_overrides {
         override_scalar_option(&mut control_bytes, key, value);
     }
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     provisioner
         .register_user(control.clone(), control_bytes.into_bytes())
         .expect("unique control file");

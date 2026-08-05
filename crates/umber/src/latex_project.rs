@@ -10,7 +10,7 @@ use bib_engine::{
 use tex_fonts::{FontRequestKey, PdfPkFontRequest, ResolvedFont};
 use tex_state::ContentHash;
 use umber_vfs::{
-    BuildId, BuildPlan, FileProvisioner, FileRequestBatch, ProducerId, ResolvedFile, VirtualPath,
+    BuildId, BuildPlan, FileRequestBatch, ProducerId, ProjectWorkspace, ResolvedFile, VirtualPath,
 };
 
 use crate::fixed_point::{FixedPointCandidate, FixedPointCoordinator, FixedPointFailure};
@@ -201,12 +201,11 @@ enum ProjectRequestKey {
 pub struct LatexProjectSession {
     options: LatexProjectOptions,
     bibliography_enabled: bool,
-    files: FileProvisioner,
+    workspace: ProjectWorkspace,
     detector: BibliographyDetector,
     bibliography: Option<BibliographySession>,
     bibliography_backend: Option<BibliographyBackend>,
     published_bibliography_paths: BTreeSet<VirtualPath>,
-    file_responses: BTreeMap<umber_vfs::FileRequestKey, ResolvedFile>,
     font_responses: BTreeMap<FontRequestKey, ResolvedFont>,
     unavailable_fonts: BTreeSet<FontRequestKey>,
     pk_font_responses: BTreeMap<PdfPkFontRequest, ResolvedPkFont>,
@@ -263,7 +262,7 @@ impl LatexProjectSession {
         let fixed_point =
             FixedPointCoordinator::new(options.limits).map_err(project_fixed_point_error)?;
         Ok(Self {
-            files: FileProvisioner::new(project_vfs_limits(&options.tex))
+            workspace: ProjectWorkspace::new(project_vfs_limits(&options.tex))
                 .map_err(|error| LatexProjectError::Transaction(error.to_string()))?,
             detector: BibliographyDetector::new(options.bibliography.detector),
             options,
@@ -271,7 +270,6 @@ impl LatexProjectSession {
             bibliography: None,
             bibliography_backend: None,
             published_bibliography_paths: BTreeSet::new(),
-            file_responses: BTreeMap::new(),
             font_responses: BTreeMap::new(),
             unavailable_fonts: BTreeSet::new(),
             pk_font_responses: BTreeMap::new(),
@@ -299,7 +297,7 @@ impl LatexProjectSession {
             )
         })?;
         let mut session = Self::new_tex_only(provisional.session_options(), limits)?;
-        session.files = provisional.provisioner().clone();
+        session.workspace = provisional.workspace().clone();
         session.initial_revision = revision;
         Ok(session)
     }
@@ -338,7 +336,7 @@ impl LatexProjectSession {
                 message: error.to_string(),
             })
         })?;
-        self.files
+        self.workspace
             .register_user(path, bytes)
             .map(|_| ())
             .map_err(|error| LatexProjectError::Transaction(error.to_string()))
@@ -391,8 +389,7 @@ impl LatexProjectSession {
         responses: Vec<ResourceResponse>,
     ) -> Result<(), LatexProjectError> {
         let tex_responses = responses.clone();
-        let mut files = self.files.clone();
-        let mut file_responses = self.file_responses.clone();
+        let mut files = self.workspace.clone();
         let mut font_responses = self.font_responses.clone();
         let mut unavailable_fonts = self.unavailable_fonts.clone();
         let mut pk_font_responses = self.pk_font_responses.clone();
@@ -409,7 +406,6 @@ impl LatexProjectSession {
                     files
                         .provision(file.clone())
                         .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-                    file_responses.insert(file.request.clone(), file);
                 }
                 ResourceResponse::FileUnavailable(request) => {
                     let key = ProjectRequestKey::File(request.clone());
@@ -488,8 +484,7 @@ impl LatexProjectSession {
                 }
             }
         }
-        self.files = files;
-        self.file_responses = file_responses;
+        self.workspace = files;
         self.font_responses = font_responses;
         self.unavailable_fonts = unavailable_fonts;
         self.pk_font_responses = pk_font_responses;
@@ -529,8 +524,7 @@ impl LatexProjectSession {
         let made_progress = self.awaiting.is_empty()
             || self.awaiting.iter().any(|key| match key {
                 ProjectRequestKey::File(key) => {
-                    self.file_responses.contains_key(key)
-                        || self.files.unavailable_keys().any(|missing| missing == key)
+                    self.workspace.get(key).is_some() || self.workspace.is_unavailable(key)
                 }
                 ProjectRequestKey::Font(key) => {
                     self.font_responses.contains_key(key) || self.unavailable_fonts.contains(key)
@@ -593,7 +587,7 @@ impl LatexProjectSession {
             candidate
         } else {
             let (revision, root) = self.candidate_root()?;
-            let mut generated = accepted_generated(&self.files)?;
+            let mut generated = accepted_generated(&self.workspace)?;
             for path in &self.published_bibliography_paths {
                 generated.remove(path);
             }
@@ -636,7 +630,7 @@ impl LatexProjectSession {
             };
             merge_tex_files(&mut candidate.generated, &tex_output.files)?;
             let snapshot = candidate_snapshot(
-                &self.files,
+                &self.workspace,
                 &self.options.tex.main_path,
                 &candidate.root,
                 &candidate.generated,
@@ -872,17 +866,17 @@ impl LatexProjectSession {
         );
         add_candidate_inputs(
             &mut session,
-            &self.files,
+            &self.workspace,
             &self.options.tex.main_path,
             root,
             generated,
         )?;
-        for response in self.file_responses.values() {
+        for (request, response) in self.workspace.files() {
             session
                 .restore_cached_file(
-                    response.request.clone(),
-                    &response.virtual_path,
-                    response.bytes.clone(),
+                    request.clone(),
+                    response.path().as_str(),
+                    response.bytes().to_vec(),
                 )
                 .map_err(LatexProjectError::Compile)?;
         }
@@ -906,17 +900,14 @@ impl LatexProjectSession {
                     for request in needs.required {
                         match &request {
                             ResourceRequest::File(file) => {
-                                if let Some(response) = self.file_responses.get(file.key()) {
-                                    supplied.push(ResourceResponse::File(response.clone()));
-                                } else if let Some(response) = self.files.get(file.key()) {
+                                if let Some(response) = self.workspace.get(file.key()) {
                                     supplied.push(ResourceResponse::File(ResolvedFile {
                                         request: file.key().clone(),
                                         virtual_path: response.path().to_string(),
                                         bytes: response.bytes().to_vec(),
                                         expected_digest: None,
                                     }));
-                                } else if self.files.unavailable_keys().any(|key| key == file.key())
-                                {
+                                } else if self.workspace.is_unavailable(file.key()) {
                                     supplied.push(ResourceResponse::FileUnavailable(
                                         file.key().clone(),
                                     ));
@@ -950,16 +941,14 @@ impl LatexProjectSession {
                             missing.push(request);
                             continue;
                         };
-                        if let Some(response) = self.file_responses.get(file.key()) {
-                            supplied.push(ResourceResponse::File(response.clone()));
-                        } else if let Some(response) = self.files.get(file.key()) {
+                        if let Some(response) = self.workspace.get(file.key()) {
                             supplied.push(ResourceResponse::File(ResolvedFile {
                                 request: file.key().clone(),
                                 virtual_path: response.path().to_string(),
                                 bytes: response.bytes().to_vec(),
                                 expected_digest: None,
                             }));
-                        } else if self.files.unavailable_keys().any(|key| key == file.key()) {
+                        } else if self.workspace.is_unavailable(file.key()) {
                             supplied.push(ResourceResponse::FileUnavailable(file.key().clone()));
                         } else {
                             missing_probes.push(request);
@@ -992,7 +981,7 @@ impl LatexProjectSession {
         tex_session: Box<VirtualCompileSession>,
         observations: Vec<crate::AcceptedInputObservation>,
     ) -> Result<LatexProjectOutput, CandidateStop> {
-        let mut pending = self.files.clone();
+        let mut pending = self.workspace.clone();
         pending
             .register_user(
                 VirtualPath::user(&self.options.tex.main_path)
@@ -1036,7 +1025,7 @@ impl LatexProjectSession {
                 .collect(),
             fingerprint,
         };
-        self.files = pending;
+        self.workspace = pending;
         self.accepted_revision = Some(revision);
         self.accepted_root = Some(root);
         self.pending_root = None;
@@ -1057,7 +1046,7 @@ impl LatexProjectSession {
         }
         let main = VirtualPath::user(&self.options.tex.main_path)
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?;
-        let snapshot = self.files.snapshot();
+        let snapshot = self.workspace.snapshot();
         let file = snapshot
             .get(&main)
             .map_err(|e| LatexProjectError::Transaction(e.to_string()))?
@@ -1078,7 +1067,7 @@ impl LatexProjectSession {
                 ResourceRequest::PkFont(pk) => ProjectRequestKey::PkFont(pk.clone()),
             })
             .collect();
-        self.files.expect(&FileRequestBatch::with_probes(
+        self.workspace.expect(&FileRequestBatch::with_probes(
             needs.required.iter().filter_map(|request| match request {
                 ResourceRequest::File(file) => Some(file.clone()),
                 ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,

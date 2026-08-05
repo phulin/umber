@@ -1,5 +1,5 @@
 use super::*;
-use crate::{FileProvisioner, VfsLimits};
+use crate::{ProjectWorkspace, VfsLimits};
 
 const CONTROL: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <bcf:controlfile xmlns:bcf="https://sourceforge.net/projects/biblatex" version="3.11" bltxversion="3.21">
@@ -81,7 +81,7 @@ fn exact_invocation_defaults_and_validation() {
 
 #[test]
 fn exact_success_status_terminal_log_and_output_bytes() {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(
             VirtualPath::user("paper.bcf").expect("path"),
@@ -115,7 +115,7 @@ fn exact_success_status_terminal_log_and_output_bytes() {
 
 #[test]
 fn exact_missing_resource_failure() {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(
             VirtualPath::user("paper.bcf").expect("path"),

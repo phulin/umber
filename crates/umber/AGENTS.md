@@ -38,7 +38,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/fixed_point.rs`: shared deterministic pass/attempt bounds and non-adjacent fixed-point oscillation policy.
 - `src/editor_session.rs`: native provisional/stabilizing/stable editor coordinator over one-pass incremental and TeX fixed-point sessions.
 - `src/editor_session/tests.rs`: editor stabilization state, revision identity, generated-file selection, no-op pass counts, cancellation, and rollback coverage.
-- `src/latex_project.rs`: host-neutral transactional TeX and optional bibliography multipass orchestration, convergence, and atomic project acceptance.
+- `src/latex_project.rs`: shared-workspace transactional TeX and optional bibliography multipass orchestration, convergence, and atomic project acceptance.
 - `src/latex_project/support.rs`: project candidate VFS assembly, generated-file identity, and shared resource conversion helpers.
 - `src/latex_project/tests.rs`: project convergence, bibliography publication, and rollback coverage.
 - `src/tex_fixed_point.rs`: public bibliography-free TeX fixed-point adapter over the shared project candidate machinery.
@@ -56,7 +56,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 - `src/pdf_font_resources_tests.rs`: post-acceptance real-font fallback and virtual-root exclusion tests.
 - `src/pdf_vf.rs`: bounded recursive virtual-font packet lowering into detached PDF-positioned operations and real-font resources.
 - `src/pdf_vf/tests.rs`: synthetic packet execution, recursion, resource-selection, and lowering-limit tests.
-- `src/virtual_compile.rs`: host-neutral persistent compile session, versioned mapped-TFM layout policy, revision-checked root patches, shared-VFS file/OpenType resource retries, atomic response registration, retained immutable resources, and configurable execution/resource accounting.
+- `src/virtual_compile.rs`: host-neutral persistent compile session over one `ProjectWorkspace`, versioned mapped-TFM layout policy, revision-checked root patches, file/OpenType resource retries, atomic response registration, retained immutable resources, and configurable execution/resource accounting.
 - `src/virtual_compile/path.rs`: logical TeX/TFM request normalization over `umber-vfs` canonical paths.
 - `src/virtual_compile/output_resources.rs`: versioned output-neutral engine/DVI/PDF/HTML resource-closure planning, placement validation, reason attribution, and bounded union deduplication.
 - `src/virtual_compile/output_resources/tests.rs`: exact capability-combination, placement, union, and budget planner coverage.

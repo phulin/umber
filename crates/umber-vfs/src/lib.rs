@@ -15,8 +15,8 @@ pub use file::{
 };
 pub use limits::{VfsLimitError, VfsLimitKind, VfsLimits};
 pub use resource::{
-    FileKind, FileProvisioner, FileRequest, FileRequestBatch, FileRequestKey, ProvisionError,
-    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, RetryError,
+    FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace, ProvisionError,
+    ProvisionOutcome, RequestKeyError, ResolvedFile, ResourceDomain, ResourceLedger, RetryError,
     UserRegistrationError,
 };
 pub use snapshot::{SnapshotError, SnapshotRetention, VfsSnapshot, VirtualRoot};

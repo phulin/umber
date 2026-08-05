@@ -17,7 +17,7 @@ fn accepts_a_job_name_and_uses_the_classic_aux_suffix() {
 #[test]
 fn warning_and_recoverable_error_histories_publish_and_fatal_history_is_partial() {
     let command = ClassicBibCommand::parse(["paper"]).expect("command");
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(
             command.aux_path().clone(),
@@ -108,7 +108,7 @@ fn warning_and_recoverable_error_histories_publish_and_fatal_history_is_partial(
 #[test]
 fn large_style_reallocation_precedes_style_warning_in_the_log_and_not_the_terminal() {
     let command = ClassicBibCommand::parse(["large-style"]).expect("command");
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(
             command.aux_path().clone(),
@@ -164,8 +164,8 @@ fn large_style_reallocation_precedes_style_warning_in_the_log_and_not_the_termin
     );
 }
 
-fn fixture_files(stem: &str) -> FileProvisioner {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("VFS");
+fn fixture_files(stem: &str) -> ProjectWorkspace {
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("VFS");
     files
         .register_user(
             VirtualPath::user(&format!("{stem}.aux")).expect("AUX path"),

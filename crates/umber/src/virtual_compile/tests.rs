@@ -974,7 +974,7 @@ struct AcceptedSessionState {
 }
 
 fn accepted_session_state(session: &VirtualCompileSession) -> AcceptedSessionState {
-    let snapshot = session.files.snapshot();
+    let snapshot = session.workspace.snapshot();
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     AcceptedSessionState {
         revision: session.revision().expect("accepted revision"),
@@ -1147,7 +1147,7 @@ fn generated_probe_missing_to_present_restarts_from_job_start_and_matches_cold()
     ));
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     let generated = incremental
-        .files
+        .workspace
         .snapshot()
         .get(&generated_path)
         .expect("live accepted snapshot")
@@ -1201,7 +1201,7 @@ fn changed_required_generated_input_retries_one_job_start_candidate_and_matches_
     ));
     let generated_path = VirtualPath::user("state.aux").expect("generated path");
     let generated = incremental
-        .files
+        .workspace
         .snapshot()
         .get(&generated_path)
         .expect("live accepted snapshot")
@@ -1370,7 +1370,7 @@ fn resumed_job_start_fallback_publishes_root_stage_and_revision_together() {
     assert_eq!(session.revision(), Some(RevisionId::new(2)));
     assert_eq!(
         session
-            .files
+            .workspace
             .snapshot()
             .get(&session.main_path)
             .expect("root lookup")
@@ -1457,7 +1457,7 @@ fn resumed_job_start_fallback_preserves_legacy_root_byte_representation() {
     ));
     assert_eq!(
         session
-            .files
+            .workspace
             .snapshot()
             .get(&session.main_path)
             .expect("root lookup")
@@ -1498,7 +1498,7 @@ fn generated_probe_present_to_missing_restarts_from_job_start_and_matches_cold()
     ));
     assert!(
         incremental
-            .files
+            .workspace
             .snapshot()
             .get(&VirtualPath::user("state.aux").expect("generated path"))
             .expect("live accepted snapshot")
@@ -2652,13 +2652,13 @@ fn preloaded_and_partitioned_positive_negative_resources_are_exactly_equivalent(
     let mut preloaded = session(source);
     register_equivalence_resources(&mut preloaded);
     let optional = FileRequestKey::new(FileKind::TexInput, "optional.cfg").expect("probe key");
-    preloaded.files.expect(&FileRequestBatch::with_probes(
+    preloaded.workspace.expect(&FileRequestBatch::with_probes(
         std::iter::empty(),
         [FileRequest::new(optional.clone(), "optional.cfg")],
         std::iter::empty(),
     ));
     preloaded
-        .files
+        .workspace
         .provision_unavailable(optional.clone())
         .expect("preloaded authoritative absence");
     let CompileAttemptResult::Complete(preloaded_output) = preloaded.compile_attempt() else {
@@ -3087,7 +3087,7 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
     let output_path = VirtualPath::user("attempt.aux").expect("output path");
     assert!(
         session
-            .files
+            .workspace
             .snapshot()
             .get(&output_path)
             .expect("live snapshot")
@@ -3106,7 +3106,7 @@ fn missing_resource_attempt_discards_auxiliary_stage_writes() {
         panic!("retry should complete");
     };
     assert_eq!(output.files.len(), 1);
-    let snapshot = session.files.snapshot();
+    let snapshot = session.workspace.snapshot();
     let accepted = snapshot
         .get(&output_path)
         .expect("live snapshot")
@@ -3182,7 +3182,7 @@ fn auxiliary_stage_limit_fails_without_publishing_generated_files() {
     ));
     assert!(
         session
-            .files
+            .workspace
             .snapshot()
             .get(&VirtualPath::user("large.aux").expect("path"))
             .expect("live snapshot")
@@ -3201,7 +3201,7 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
     let CompileAttemptResult::Complete(old_output) = session.compile_attempt() else {
         panic!("initial revision should complete");
     };
-    let old_generation = session.files.snapshot().generation_identity();
+    let old_generation = session.workspace.snapshot().generation_identity();
     let start = source.find("old").expect("old payload");
     let mut next_source = source.to_owned();
     next_source.replace_range(start..start + 3, "new");
@@ -3220,7 +3220,7 @@ fn accepted_patch_publishes_root_generated_files_and_output_together() {
         panic!("patched revision should complete");
     };
 
-    let snapshot = session.files.snapshot();
+    let snapshot = session.workspace.snapshot();
     assert_ne!(snapshot.generation_identity(), old_generation);
     assert_eq!(
         snapshot
@@ -3275,7 +3275,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
         panic!("initial revision should fit");
     };
     let old_hash = session.content_hash().expect("accepted hash");
-    let old_snapshot = session.files.snapshot();
+    let old_snapshot = session.workspace.snapshot();
     let old_generation = old_snapshot.generation_identity();
     let old_root = old_snapshot
         .get(&session.main_path)
@@ -3306,7 +3306,7 @@ fn failed_patch_restores_the_complete_accepted_build() {
         CompileAttemptResult::Error(CompileError::LimitExceeded { .. })
     ));
 
-    let snapshot = session.files.snapshot();
+    let snapshot = session.workspace.snapshot();
     assert_eq!(snapshot.generation_identity(), old_generation);
     assert_eq!(
         snapshot

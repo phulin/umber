@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/encoding.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath};
 use bib_unicode::{LegacyEncoding, encode_legacy};
 const ENCODE1: &str = concat!(
     r###"% $ biblatex auxiliary file $
@@ -413,7 +413,7 @@ fn run(stem: &str, encoding: &str) -> Vec<u8> {
     } else {
         format!("{stem}.bib")
     };
-    let mut f = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut f = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     f.register_user(
         VirtualPath::user(&control).expect("valid virtual path"),
         fixture(&control).to_vec(),

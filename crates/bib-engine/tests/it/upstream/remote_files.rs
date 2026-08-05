@@ -1,8 +1,8 @@
 // Native Rust translation of upstream t/remote-files.t at commit 74252e6.
 
 use bib_engine::{
-    BibAttempt, BibJob, BibOptionsBuilder, BibSession, FileProvisioner, GeneratedFile,
-    OutputFormat, OutputRequest, VfsLimits, VirtualPath,
+    BibAttempt, BibJob, BibOptionsBuilder, BibSession, GeneratedFile, OutputFormat, OutputRequest,
+    ProjectWorkspace, VfsLimits, VirtualPath,
 };
 
 const CONTROL: &[u8] =
@@ -63,7 +63,7 @@ const DL1: &str = r########"    \entry{SchillerCND2010}{article}{}{}
 "########;
 
 fn run() -> (String, Vec<u8>) {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("remote-files.bcf").expect("valid virtual path"),

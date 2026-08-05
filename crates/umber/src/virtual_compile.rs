@@ -44,7 +44,7 @@ pub use resource_resolver::{
 use path::user_path_for_key;
 use resolvers::{FontResolutionPolicy, VirtualRunResolvers};
 use umber_vfs::{
-    BuildId, BuildPlan, FileOrigin, FileProvisioner, FileRequestBatch, ProducerId, ProvisionError,
+    BuildId, BuildPlan, FileOrigin, FileRequestBatch, ProducerId, ProjectWorkspace, ProvisionError,
     ProvisionOutcome, TransactionError, UserRegistrationError, VirtualRoot,
 };
 pub use umber_vfs::{
@@ -720,7 +720,7 @@ pub struct VirtualCompileSession {
     engine: EngineMode,
     clock: JobClock,
     limits: SessionLimits,
-    files: FileProvisioner,
+    workspace: ProjectWorkspace,
     font_cached_bytes: usize,
     attempts: u32,
     attempts_without_progress: u32,
@@ -799,7 +799,7 @@ enum RetainedExecution {
 }
 
 struct RetainedCandidate {
-    files: FileProvisioner,
+    workspace: ProjectWorkspace,
     execution: RetainedExecution,
     response_generation: u64,
     suspension_serial: u64,
@@ -994,7 +994,7 @@ impl VirtualCompileSession {
             engine: options.engine,
             clock: options.clock,
             limits,
-            files: FileProvisioner::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
+            workspace: ProjectWorkspace::new(limits.vfs_limits()).map_err(map_vfs_limit)?,
             font_cached_bytes: 0,
             attempts: 0,
             attempts_without_progress: 0,
@@ -1054,8 +1054,8 @@ impl VirtualCompileSession {
         }
     }
 
-    pub(crate) fn provisioner(&self) -> &FileProvisioner {
-        &self.files
+    pub(crate) fn workspace(&self) -> &ProjectWorkspace {
+        &self.workspace
     }
 
     /// Consumes a completed session and transfers its accepted engine state
@@ -1100,7 +1100,7 @@ impl VirtualCompileSession {
             path: path.to_owned(),
             message: error.to_string(),
         })?;
-        self.files
+        self.workspace
             .register_user(path.clone(), bytes.clone())
             .map_err(map_user_registration)?;
         if let Some(session) = &mut self.incremental {
@@ -1278,7 +1278,7 @@ impl VirtualCompileSession {
     pub(crate) fn accepted_generated_fingerprint(
         &self,
     ) -> Result<Vec<(VirtualPath, ContentHash)>, CompileError> {
-        generated_fingerprint(&self.files)
+        generated_fingerprint(&self.workspace)
     }
 
     #[must_use]
@@ -1300,8 +1300,8 @@ impl VirtualCompileSession {
             .candidate
             .as_ref()
             .map_or_else(
-                || self.files.snapshot(),
-                |candidate| candidate.files.snapshot(),
+                || self.workspace.snapshot(),
+                |candidate| candidate.workspace.snapshot(),
             )
             .retention();
         let returned_output = self
@@ -1344,7 +1344,7 @@ impl VirtualCompileSession {
         let dependencies = self.accepted_input_dependency_values();
         let observations = crate::input_observation::tex_observations(
             dependencies.into_iter(),
-            &self.files.snapshot(),
+            &self.workspace.snapshot(),
             revision,
             None,
         );
@@ -1369,7 +1369,7 @@ impl VirtualCompileSession {
             })
             .collect::<BTreeMap<_, _>>();
         if self.accepted_output.is_some()
-            && let Ok(Some(root)) = self.files.snapshot().get(&self.main_path)
+            && let Ok(Some(root)) = self.workspace.snapshot().get(&self.main_path)
         {
             dependencies.insert(
                 self.main_path.clone(),
@@ -1438,13 +1438,13 @@ impl VirtualCompileSession {
                 .filter(|key| self.resource_is_bound(key))
                 .count()
         });
-        let mut staged_files = self.files.clone();
+        let mut staged_workspace = self.workspace.clone();
         let mut staged_fonts = self.resolved_fonts.clone();
         let mut staged_unavailable_fonts = self.unavailable_fonts.clone();
         let mut staged_font_responses = self.font_responses.clone();
         let mut staged_pk_fonts = self.resolved_pk_fonts.clone();
         let mut staged_unavailable_pk_fonts = self.unavailable_pk_fonts.clone();
-        let original_files = std::mem::replace(&mut self.files, staged_files);
+        let original_workspace = std::mem::replace(&mut self.workspace, staged_workspace);
         let original_fonts = std::mem::replace(&mut self.resolved_fonts, staged_fonts);
         let original_unavailable_fonts =
             std::mem::replace(&mut self.unavailable_fonts, staged_unavailable_fonts);
@@ -1459,7 +1459,7 @@ impl VirtualCompileSession {
             .try_for_each(|response| match response {
                 ResourceResponse::File(file) => self.provide_file_inner(file, true, false),
                 ResourceResponse::FileUnavailable(request) => self
-                    .files
+                    .workspace
                     .provision_unavailable(request)
                     .map(|_| ())
                     .map_err(map_provision),
@@ -1473,7 +1473,7 @@ impl VirtualCompileSession {
                 }
             });
         if result.is_err() {
-            staged_files = std::mem::replace(&mut self.files, original_files);
+            staged_workspace = std::mem::replace(&mut self.workspace, original_workspace);
             staged_fonts = std::mem::replace(&mut self.resolved_fonts, original_fonts);
             staged_unavailable_fonts =
                 std::mem::replace(&mut self.unavailable_fonts, original_unavailable_fonts);
@@ -1485,7 +1485,7 @@ impl VirtualCompileSession {
                 original_unavailable_pk_fonts,
             );
             drop((
-                staged_files,
+                staged_workspace,
                 staged_fonts,
                 staged_unavailable_fonts,
                 staged_font_responses,
@@ -1495,8 +1495,8 @@ impl VirtualCompileSession {
             self.font_cached_bytes = original_font_cached_bytes;
         } else {
             if let Some(session) = &mut self.incremental {
-                for (request, file) in self.files.files() {
-                    if original_files.get(request).is_none() {
+                for (request, file) in self.workspace.files() {
+                    if original_workspace.get(request).is_none() {
                         session
                             .register_input_file(file.path().as_path(), file.bytes().to_vec())
                             .map_err(|error| CompileError::Incremental(error.to_string()))?;
@@ -1531,7 +1531,7 @@ impl VirtualCompileSession {
         if self.candidate.is_none() {
             return Ok(());
         }
-        let mut refreshed = self.files.clone();
+        let mut refreshed = self.workspace.clone();
         if let (Some((_, edit)), Some(session)) = (&self.pending_patch, self.incremental.as_ref()) {
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
@@ -1543,7 +1543,7 @@ impl VirtualCompileSession {
         self.candidate
             .as_mut()
             .expect("candidate presence was checked")
-            .files = refreshed;
+            .workspace = refreshed;
         Ok(())
     }
 
@@ -1790,7 +1790,7 @@ impl VirtualCompileSession {
         register_incremental: bool,
     ) -> Result<(), CompileError> {
         let request = response.request.clone();
-        let mut staged = self.files.clone();
+        let mut staged = self.workspace.clone();
         let outcome = if require_expected {
             staged.provision(response)
         } else {
@@ -1810,10 +1810,11 @@ impl VirtualCompileSession {
             attempted,
             self.limits.cached_file_bytes,
         )?;
-        self.files = staged;
+        self.workspace = staged;
         if register_incremental
             && outcome == ProvisionOutcome::Inserted
-            && let (Some(session), Some(file)) = (&mut self.incremental, self.files.get(&request))
+            && let (Some(session), Some(file)) =
+                (&mut self.incremental, self.workspace.get(&request))
         {
             session
                 .register_input_file(file.path().as_path(), file.bytes().to_vec())
@@ -1871,30 +1872,23 @@ impl VirtualCompileSession {
         #[cfg(not(target_arch = "wasm32"))]
         let candidate_restore_started = Instant::now();
         let existing_candidate = self.candidate.take();
-        let mut pending_files = existing_candidate
-            .as_ref()
-            .map_or_else(|| self.files.clone(), |candidate| candidate.files.clone());
+        let mut pending_workspace = existing_candidate.as_ref().map_or_else(
+            || self.workspace.clone(),
+            |candidate| candidate.workspace.clone(),
+        );
         if existing_candidate.is_none()
             && let (Some(session), Some((_, edit))) =
                 (self.incremental.as_ref(), self.pending_patch.as_ref())
         {
             let mut source = session.source().to_owned();
             source.replace_range(edit.range.clone(), &edit.replacement);
-            pending_files
+            pending_workspace
                 .register_user(self.main_path.clone(), session.source_file_bytes(&source))
                 .map_err(map_user_registration)?;
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         let resolver_index_started = Instant::now();
-        let resolved_paths = pending_files
-            .resolved_paths()
-            .map(|(key, path)| (key.clone(), path.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let unavailable_files = pending_files
-            .unavailable_keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.resolver_index_time = self
@@ -1903,9 +1897,9 @@ impl VirtualCompileSession {
         }
         #[cfg(not(target_arch = "wasm32"))]
         let vfs_stage_started = Instant::now();
-        let candidate_files = pending_files.clone();
-        let mut build =
-            pending_files.begin_build(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
+        let candidate_workspace = pending_workspace.clone();
+        let (resource_ledger, mut build) = pending_workspace
+            .begin_build_with_ledger(BuildPlan::new(BuildId::new(u64::from(self.attempts))));
         let mut stage = build
             .begin_stage(ProducerId::new(1))
             .map_err(map_transaction)?;
@@ -1976,7 +1970,7 @@ impl VirtualCompileSession {
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
             RetainedCandidate {
-                files: candidate_files.clone(),
+                workspace: candidate_workspace.clone(),
                 execution: RetainedExecution::Initial { session, candidate },
                 response_generation: self.response_generation,
                 suspension_serial: 0,
@@ -2000,7 +1994,7 @@ impl VirtualCompileSession {
             candidate.set_cumulative_fuel_limit(self.limits.engine_fuel);
             candidate.set_execution_budgets(self.execution_budgets());
             RetainedCandidate {
-                files: candidate_files,
+                workspace: candidate_workspace,
                 execution: RetainedExecution::Pending(candidate),
                 response_generation: self.response_generation,
                 suspension_serial: 0,
@@ -2016,8 +2010,7 @@ impl VirtualCompileSession {
         }
         let mut resolvers = VirtualRunResolvers::new(
             &snapshot,
-            &resolved_paths,
-            &unavailable_files,
+            resource_ledger,
             &self.resolved_fonts,
             &self.unavailable_fonts,
             FontResolutionPolicy {
@@ -2116,10 +2109,10 @@ impl VirtualCompileSession {
                     .filter(|request| {
                         let key = match request {
                             ResourceRequest::File(request) => {
-                                if self.files.get(request.key()).is_some()
-                                    || self.files.is_unavailable(request.key())
+                                if self.workspace.get(request.key()).is_some()
+                                    || self.workspace.is_unavailable(request.key())
                                     || user_path_for_key(request.key())
-                                        .is_ok_and(|path| self.files.contains_user(&path))
+                                        .is_ok_and(|path| self.workspace.contains_user(&path))
                                 {
                                     return false;
                                 }
@@ -2210,7 +2203,7 @@ impl VirtualCompileSession {
             self.last_resource_plan = planner
                 .finish()
                 .map_err(|error| CompileError::Output(error.to_string()))?;
-            self.files.expect(&FileRequestBatch::with_probes(
+            self.workspace.expect(&FileRequestBatch::with_probes(
                 required.iter().filter_map(|request| match request {
                     ResourceRequest::File(request) => Some(request.clone()),
                     ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
@@ -2224,7 +2217,7 @@ impl VirtualCompileSession {
                     ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
                 }),
             ));
-            retained.files = pending_files;
+            retained.workspace = pending_workspace;
             retained.response_generation = self.response_generation;
             retained.suspension_serial = match &retained.execution {
                 RetainedExecution::Initial { candidate, .. }
@@ -2286,7 +2279,7 @@ impl VirtualCompileSession {
             };
             let discovery = pdf_resources::discover(
                 stores,
-                &self.files,
+                &self.workspace,
                 &mut self.virtual_font_resources,
                 &self.resolved_pk_fonts,
                 &self.unavailable_pk_fonts,
@@ -2347,7 +2340,7 @@ impl VirtualCompileSession {
                     return Err(CompileError::NoProgress);
                 }
                 self.awaiting = Some(awaiting);
-                self.files.expect(&FileRequestBatch::with_probes(
+                self.workspace.expect(&FileRequestBatch::with_probes(
                     required.iter().filter_map(|request| match request {
                         ResourceRequest::File(request) => Some(request.clone()),
                         ResourceRequest::Font(_) | ResourceRequest::PkFont(_) => None,
@@ -2358,7 +2351,7 @@ impl VirtualCompileSession {
                     }),
                     std::iter::empty(),
                 ));
-                retained.files = pending_files;
+                retained.workspace = pending_workspace;
                 retained.response_generation = self.response_generation;
                 retained.suspension_serial = retained.suspension_serial.saturating_add(1);
                 self.candidate = Some(retained);
@@ -2436,7 +2429,7 @@ impl VirtualCompileSession {
                             message: error.to_string(),
                         })?;
                 self.awaiting = Some(required.iter().map(resource_request_key).collect());
-                retained.files = pending_files;
+                retained.workspace = pending_workspace;
                 retained.response_generation = self.response_generation;
                 retained.suspension_serial = retained.suspension_serial.saturating_add(1);
                 self.candidate = Some(retained);
@@ -2610,8 +2603,8 @@ impl VirtualCompileSession {
         check_limit("returned output bytes", existing, self.limits.output_bytes)?;
         stage.finish().map_err(map_transaction)?;
         build.accept().map_err(map_transaction)?;
-        let previous_generated = generated_fingerprint(&self.files)?;
-        let next_generated = generated_fingerprint(&pending_files)?;
+        let previous_generated = generated_fingerprint(&self.workspace)?;
+        let next_generated = generated_fingerprint(&pending_workspace)?;
         let reuse = execution.reuse();
         match execution {
             PreparedExecution::Initial { session, .. } => self.incremental = Some(*session),
@@ -2623,7 +2616,7 @@ impl VirtualCompileSession {
                     .map_err(|error| CompileError::Incremental(error.to_string()))?;
             }
         }
-        self.files = pending_files;
+        self.workspace = pending_workspace;
         self.pending_patch = None;
         self.last_reuse = Some(reuse);
         self.last_stabilization_required = previous_generated != next_generated;
@@ -2653,9 +2646,9 @@ impl VirtualCompileSession {
     fn resource_is_bound(&self, key: &ResourceRequestKey) -> bool {
         match key {
             ResourceRequestKey::File(key) => {
-                self.files.get(key).is_some()
-                    || self.files.is_unavailable(key)
-                    || user_path_for_key(key).is_ok_and(|path| self.files.contains_user(&path))
+                self.workspace.get(key).is_some()
+                    || self.workspace.is_unavailable(key)
+                    || user_path_for_key(key).is_ok_and(|path| self.workspace.contains_user(&path))
             }
             ResourceRequestKey::Font(key) => {
                 self.resolved_fonts.contains_key(key) || self.unavailable_fonts.contains(key)
@@ -2669,12 +2662,12 @@ impl VirtualCompileSession {
     pub fn clear_distribution_cache(&mut self) -> Result<(), CompileError> {
         if let Some(session) = &self.incremental {
             let latest = session.source().as_bytes().to_vec();
-            self.files
+            self.workspace
                 .register_user(self.main_path.clone(), latest)
                 .map_err(map_user_registration)?;
         }
-        self.files.clear();
-        self.files.clear_generated_outputs();
+        self.workspace.clear();
+        self.workspace.clear_generated_outputs();
         self.resolved_fonts.clear();
         self.unavailable_fonts.clear();
         self.resolved_pk_fonts.clear();
@@ -2732,12 +2725,12 @@ impl VirtualCompileSession {
 
     #[must_use]
     pub fn resolved_file_count(&self) -> usize {
-        self.files.len()
+        self.workspace.len()
     }
 
     #[must_use]
     pub fn cached_file_bytes(&self) -> usize {
-        self.files
+        self.workspace
             .resolved_bytes()
             .saturating_add(self.font_cached_bytes)
     }
@@ -3069,7 +3062,7 @@ fn accepted_dependencies_match_snapshot<'a>(
 }
 
 fn generated_fingerprint(
-    files: &FileProvisioner,
+    files: &ProjectWorkspace,
 ) -> Result<Vec<(VirtualPath, ContentHash)>, CompileError> {
     let snapshot = files.snapshot();
     let path_limit = VfsLimits::HARD_MAX

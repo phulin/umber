@@ -56,7 +56,7 @@ pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput,
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};
 pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};
 pub use umber_vfs::{
-    FileKind, FileProvisioner, FileRequest, FileRequestBatch, FileRequestKey, ResolvedFile,
+    FileKind, FileRequest, FileRequestBatch, FileRequestKey, ProjectWorkspace, ResolvedFile,
     VfsLimits, VfsSnapshot,
 };
 

@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use bib_engine::{
     BibliographyAttempt, ClassicBibJob, ClassicBibOptions, ClassicBibSession, FileKind,
-    FileProvisioner, ResolvedFile, VfsLimits, VirtualPath,
+    ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 
 fn plain_payload(name: &str) -> Vec<u8> {
@@ -22,7 +22,7 @@ fn classic_native_session_performance_budget() {
     const SESSION_BUDGET: Duration = Duration::from_secs(5);
     const CACHE_BYTES: usize = 8 * 1024 * 1024;
 
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("VFS limits");
     provisioner
         .register_user(
             VirtualPath::user("plain.aux").expect("AUX path"),

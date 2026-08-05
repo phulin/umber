@@ -1,7 +1,7 @@
 // Native Rust translation of upstream t/biblatexml.t at commit 74252e6.
 
 use bib_engine::{
-    BibCommand, BibCommandOutput, FileProvisioner, GeneratedFile, VfsLimits, VirtualPath,
+    BibCommand, BibCommandOutput, GeneratedFile, ProjectWorkspace, VfsLimits, VirtualPath,
 };
 use bib_input::{XmlLimits, parse_biblatexml_bytes};
 
@@ -131,7 +131,7 @@ const EXPECTED_LOOP: &str = r###"    \entry{loopkey:a}{book}{}{}
 const EXPECTED_SORT: &str = r###"mm,,,vonБулгаков   Павел Георгиевич  РРозенфельдБорис-ZZ AбрамовичvonAхмедов    Ашраф Ахмедович   ,1980,0,Мухаммад ибн муса ал-Хорезми. Около 783 – около 850"###;
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("biblatexml.bcf").expect("valid virtual path"),

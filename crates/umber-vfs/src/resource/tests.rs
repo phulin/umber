@@ -18,7 +18,7 @@ fn response(kind: FileKind, name: &str, path: &str, bytes: &[u8]) -> ResolvedFil
     }
 }
 
-fn state(registry: &FileProvisioner) -> Vec<(FileRequestKey, String, Vec<u8>)> {
+fn state(registry: &ProjectWorkspace) -> Vec<(FileRequestKey, String, Vec<u8>)> {
     registry
         .files()
         .map(|(key, file)| (key.clone(), file.path().to_string(), file.bytes().to_vec()))
@@ -33,7 +33,7 @@ fn user_registration_is_atomic_and_snapshots_retain_exact_generations() {
         one_file_bytes: 4,
         ..VfsLimits::default()
     };
-    let mut registry = FileProvisioner::new(limits).expect("registry");
+    let mut registry = ProjectWorkspace::new(limits).expect("registry");
     let main = VirtualPath::user("main.tex").expect("main path");
     assert_eq!(
         registry
@@ -79,7 +79,7 @@ fn user_registration_is_atomic_and_snapshots_retain_exact_generations() {
 
 #[test]
 fn resolved_registration_and_clear_are_reflected_in_vfs_snapshots() {
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     let user = VirtualPath::user("main.tex").expect("user path");
     registry
         .register_user(user.clone(), b"main".to_vec())
@@ -206,13 +206,13 @@ fn partial_permuted_and_chunked_responses_are_equivalent() {
         b"refs",
     );
 
-    let mut together = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut together = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     together.expect(&requests);
     together
         .provision_batch([refs.clone(), one.clone()])
         .expect("permuted batch");
 
-    let mut chunked = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut chunked = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     chunked.expect(&requests);
     chunked.provision(one).expect("first chunk");
     chunked.retry().expect("required progress");
@@ -252,7 +252,7 @@ proptest! {
             })
             .collect::<Vec<_>>();
 
-        let mut together = FileProvisioner::new(VfsLimits::default()).expect("registry");
+        let mut together = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
         together.expect(&requests);
         together
             .provision_batch(responses.iter().map(|(_, response)| response.clone()))
@@ -261,7 +261,7 @@ proptest! {
         let mut permuted = responses;
         permuted.sort_by_key(|(order, response)| (*order, response.request.clone()));
         let chunk_count = permuted.len().div_ceil(chunk_size);
-        let mut chunked = FileProvisioner::new(VfsLimits::default()).expect("registry");
+        let mut chunked = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
         chunked.expect(&requests);
         for (index, chunk) in permuted.chunks(chunk_size).enumerate() {
             chunked
@@ -285,7 +285,7 @@ fn exact_duplicate_is_idempotent_but_request_and_path_conflicts_are_typed() {
         "/texlive/tex/one.tex",
         b"one",
     );
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
     assert_eq!(
         registry.provision(exact.clone()),
@@ -294,6 +294,12 @@ fn exact_duplicate_is_idempotent_but_request_and_path_conflicts_are_typed() {
     assert_eq!(
         registry.provision(exact),
         Ok(ProvisionOutcome::AlreadyPresent)
+    );
+    assert_eq!(
+        registry
+            .resource_ledger()
+            .resolved_path(&key(FileKind::TexInput, "one.tex")),
+        Some(&VirtualPath::distribution("/texlive/tex/one.tex").expect("canonical path"))
     );
     assert!(matches!(
         registry.preload(response(
@@ -325,7 +331,7 @@ fn digest_path_kind_unexpected_and_limit_failures_are_typed_and_atomic() {
         resolved_bytes: 3,
         ..VfsLimits::default()
     };
-    let mut registry = FileProvisioner::new(limits).expect("registry");
+    let mut registry = ProjectWorkspace::new(limits).expect("registry");
     registry.expect(&batch);
 
     let mut corrupt = response(
@@ -384,7 +390,7 @@ fn retry_requires_progress_on_required_requests_not_hints() {
         [request(FileKind::TexInput, "required.tex")],
         [request(FileKind::BibData, "hint.bib")],
     );
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
     assert_eq!(registry.retry(), Err(RetryError::NoProgress));
     registry
@@ -413,7 +419,7 @@ fn retry_requires_progress_on_required_requests_not_hints() {
         ],
         [],
     );
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&two_required);
     registry
         .provision(response(
@@ -435,7 +441,7 @@ fn prefetch_hints_accept_positive_files_but_reject_unavailable_bindings() {
         [FileRequest::new(required, "required.tex")],
         [FileRequest::new(hint.clone(), "hint.tex")],
     );
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
 
     assert!(matches!(
@@ -457,7 +463,7 @@ fn prefetch_hints_accept_positive_files_but_reject_unavailable_bindings() {
 fn unavailable_bindings_are_progress_idempotent_and_immutable() {
     let required = key(FileKind::TexInput, "optional.cfg");
     let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "optional.cfg")], []);
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
 
     assert_eq!(
@@ -491,7 +497,7 @@ fn blocking_probe_authorizes_positive_or_negative_progress() {
     let probe = key(FileKind::TexInput, "optional.cfg");
     let batch =
         FileRequestBatch::with_probes([], [FileRequest::new(probe.clone(), "optional.cfg")], []);
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
 
     assert_eq!(
@@ -508,7 +514,7 @@ fn blocking_probe_authorizes_positive_or_negative_progress() {
 fn available_binding_rejects_later_unavailable_answer() {
     let required = key(FileKind::TexInput, "present.tex");
     let batch = FileRequestBatch::new([FileRequest::new(required.clone(), "present.tex")], []);
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
     registry
         .provision(response(
@@ -533,7 +539,7 @@ fn an_invalid_batch_publishes_nothing() {
         ],
         [],
     );
-    let mut registry = FileProvisioner::new(VfsLimits::default()).expect("registry");
+    let mut registry = ProjectWorkspace::new(VfsLimits::default()).expect("registry");
     registry.expect(&batch);
     let result = registry.provision_batch([
         response(FileKind::TexInput, "one.tex", "/texlive/one.tex", b"one"),

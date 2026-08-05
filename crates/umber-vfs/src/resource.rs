@@ -472,14 +472,11 @@ impl fmt::Display for RetryError {
 
 impl std::error::Error for RetryError {}
 
-/// Generic typed request registration and immutable provisioning state.
-#[derive(Clone, Debug)]
-pub struct FileProvisioner {
-    limits: VfsLimits,
-    storage: LayeredFileStorage,
+/// Immutable typed resource bindings and their deterministic accounting.
+#[derive(Clone, Debug, Default)]
+pub struct ResourceLedger {
     files: BTreeMap<FileRequestKey, VirtualPath>,
     unavailable: BTreeSet<FileRequestKey>,
-    paths: BTreeMap<VirtualPath, FileRequestKey>,
     user_bytes: usize,
     resolved_bytes: usize,
     expected: BTreeSet<FileRequestKey>,
@@ -487,20 +484,44 @@ pub struct FileProvisioner {
     required_at_batch_start: usize,
 }
 
-impl FileProvisioner {
+impl ResourceLedger {
+    /// Returns the canonical path immutably selected for a typed request.
+    #[must_use]
+    pub fn resolved_path(&self, request: &FileRequestKey) -> Option<&VirtualPath> {
+        self.files.get(request)
+    }
+
+    /// Reports an authoritative immutable negative binding.
+    #[must_use]
+    pub fn is_unavailable(&self, request: &FileRequestKey) -> bool {
+        self.unavailable.contains(request)
+    }
+}
+
+/// One project-owned virtual filesystem, resource ledger, and build overlay.
+///
+/// Domain sessions receive snapshots or transaction views from this owner;
+/// they never reconstruct storage or resource-binding indexes themselves.
+#[derive(Clone, Debug)]
+pub struct ProjectWorkspace {
+    limits: VfsLimits,
+    storage: LayeredFileStorage,
+    ledger: ResourceLedger,
+}
+
+impl ProjectWorkspace {
     pub fn new(limits: VfsLimits) -> Result<Self, VfsLimitError> {
         Ok(Self {
             limits: limits.validate()?,
             storage: LayeredFileStorage::new(),
-            files: BTreeMap::new(),
-            unavailable: BTreeSet::new(),
-            paths: BTreeMap::new(),
-            user_bytes: 0,
-            resolved_bytes: 0,
-            expected: BTreeSet::new(),
-            required: BTreeSet::new(),
-            required_at_batch_start: 0,
+            ledger: ResourceLedger::default(),
         })
+    }
+
+    /// Returns the immutable typed binding and accounting view.
+    #[must_use]
+    pub const fn resource_ledger(&self) -> &ResourceLedger {
+        &self.ledger
     }
 
     /// Registers or replaces an application-owned `/job` input atomically.
@@ -517,7 +538,7 @@ impl FileProvisioner {
         let replaced = existing.map_or(0, |file| file.bytes().len());
         let next_bytes = self.limits.checked_replacement_total(
             VfsLimitKind::UserBytes,
-            self.user_bytes,
+            self.ledger.user_bytes,
             replaced,
             bytes.len(),
         )?;
@@ -528,7 +549,7 @@ impl FileProvisioner {
             ProvisionOutcome::Inserted
         };
         self.storage.replace_user(incoming)?;
-        self.user_bytes = next_bytes;
+        self.ledger.user_bytes = next_bytes;
         Ok(outcome)
     }
 
@@ -544,14 +565,17 @@ impl FileProvisioner {
         BuildTransaction::new(&mut self.storage, self.limits, plan)
     }
 
-    /// Enumerates typed resolved-resource path bindings in request order.
-    pub fn resolved_paths(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualPath)> {
-        self.files.iter()
-    }
-
-    /// Enumerates request keys authoritatively bound as absent.
-    pub fn unavailable_keys(&self) -> impl Iterator<Item = &FileRequestKey> {
-        self.unavailable.iter()
+    /// Borrows the resource ledger alongside the disjoint generated overlay.
+    ///
+    /// Compile resolvers use this narrow view instead of reconstructing
+    /// request-to-path and unavailable indexes for every attempt.
+    pub fn begin_build_with_ledger(
+        &mut self,
+        plan: BuildPlan,
+    ) -> (&ResourceLedger, BuildTransaction<'_>) {
+        let ledger = &self.ledger;
+        let build = BuildTransaction::new(&mut self.storage, self.limits, plan);
+        (ledger, build)
     }
 
     #[must_use]
@@ -566,17 +590,18 @@ impl FileProvisioner {
 
     #[must_use]
     pub const fn user_bytes(&self) -> usize {
-        self.user_bytes
+        self.ledger.user_bytes
     }
 
     pub fn expect(&mut self, batch: &FileRequestBatch) {
-        self.expected = batch.all_keys();
-        self.required = batch.blocking_keys();
-        self.required_at_batch_start = self
+        self.ledger.expected = batch.all_keys();
+        self.ledger.required = batch.blocking_keys();
+        self.ledger.required_at_batch_start = self
+            .ledger
             .required
             .iter()
-            .filter(|key| !self.files.contains_key(*key))
-            .filter(|key| !self.unavailable.contains(*key))
+            .filter(|key| !self.ledger.files.contains_key(*key))
+            .filter(|key| !self.ledger.unavailable.contains(*key))
             .count();
     }
 
@@ -593,23 +618,24 @@ impl FileProvisioner {
         &mut self,
         request: FileRequestKey,
     ) -> Result<ProvisionOutcome, ProvisionError> {
-        if self.unavailable.contains(&request) {
+        if self.ledger.unavailable.contains(&request) {
             return Ok(ProvisionOutcome::AlreadyPresent);
         }
-        if self.files.contains_key(&request) {
+        if self.ledger.files.contains_key(&request) {
             return Err(ProvisionError::AvailabilityConflict { request });
         }
-        if !self.required.contains(&request) {
+        if !self.ledger.required.contains(&request) {
             return Err(ProvisionError::UnexpectedRequest(request));
         }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
-            self.files
+            self.ledger
+                .files
                 .len()
-                .saturating_add(self.unavailable.len())
+                .saturating_add(self.ledger.unavailable.len())
                 .saturating_add(1),
         )?;
-        self.unavailable.insert(request);
+        self.ledger.unavailable.insert(request);
         Ok(ProvisionOutcome::Inserted)
     }
 
@@ -656,7 +682,7 @@ impl FileProvisioner {
                 actual: content_id,
             });
         }
-        if let Some(existing_path) = self.files.get(&response.request) {
+        if let Some(existing_path) = self.ledger.files.get(&response.request) {
             let existing = self
                 .storage
                 .layer(LayerKind::ResolvedResource)
@@ -673,7 +699,7 @@ impl FileProvisioner {
                 incoming: content_id,
             });
         }
-        if self.unavailable.contains(&response.request) {
+        if self.ledger.unavailable.contains(&response.request) {
             return Err(ProvisionError::AvailabilityConflict {
                 request: response.request,
             });
@@ -683,42 +709,48 @@ impl FileProvisioner {
         }
         self.limits.check(
             VfsLimitKind::ResolvedFiles,
-            self.files
+            self.ledger
+                .files
                 .len()
-                .saturating_add(self.unavailable.len())
+                .saturating_add(self.ledger.unavailable.len())
                 .saturating_add(1),
         )?;
-        let shared = if let Some(existing_request) = self.paths.get(&path) {
-            let existing = self
-                .storage
-                .layer(LayerKind::ResolvedResource)
-                .get(&path)
-                .expect("provisioned paths remain registered");
-            let existing_id = existing.content_id();
-            if existing_id != content_id {
-                return Err(ProvisionError::PathConflict {
-                    path: Box::new(path),
-                    existing_request: Box::new(existing_request.clone()),
-                    incoming_request: Box::new(response.request),
-                    existing: existing_id,
-                    incoming: content_id,
-                });
-            }
-            existing.shared_bytes()
-        } else {
-            let attempted = self
-                .resolved_bytes
-                .checked_add(response.bytes.len())
-                .ok_or(VfsLimitError::LimitExceeded {
-                    kind: VfsLimitKind::ResolvedBytes,
-                    limit: self.limits.resolved_bytes,
-                    attempted: usize::MAX,
-                })?;
-            self.limits.check(VfsLimitKind::ResolvedBytes, attempted)?;
-            self.resolved_bytes = attempted;
-            Arc::from(response.bytes)
-        };
-        if !self.paths.contains_key(&path) {
+        let shared =
+            if let Some(existing) = self.storage.layer(LayerKind::ResolvedResource).get(&path) {
+                let FileOrigin::Resolved(existing_request) = existing.origin() else {
+                    unreachable!("resolved layer contains only resolved resources")
+                };
+                let existing_id = existing.content_id();
+                if existing_id != content_id {
+                    return Err(ProvisionError::PathConflict {
+                        path: Box::new(path),
+                        existing_request: Box::new(existing_request.clone()),
+                        incoming_request: Box::new(response.request),
+                        existing: existing_id,
+                        incoming: content_id,
+                    });
+                }
+                existing.shared_bytes()
+            } else {
+                let attempted = self
+                    .ledger
+                    .resolved_bytes
+                    .checked_add(response.bytes.len())
+                    .ok_or(VfsLimitError::LimitExceeded {
+                        kind: VfsLimitKind::ResolvedBytes,
+                        limit: self.limits.resolved_bytes,
+                        attempted: usize::MAX,
+                    })?;
+                self.limits.check(VfsLimitKind::ResolvedBytes, attempted)?;
+                self.ledger.resolved_bytes = attempted;
+                Arc::from(response.bytes)
+            };
+        if self
+            .storage
+            .layer(LayerKind::ResolvedResource)
+            .get(&path)
+            .is_none()
+        {
             self.storage
                 .insert(
                     LayerKind::ResolvedResource,
@@ -729,39 +761,39 @@ impl FileProvisioner {
                     ),
                 )
                 .expect("new resolved paths satisfy layer ownership");
-            self.paths.insert(path.clone(), response.request.clone());
         }
-        self.files.insert(response.request, path);
+        self.ledger.files.insert(response.request, path);
         Ok(ProvisionOutcome::Inserted)
     }
 
     pub fn retry(&mut self) -> Result<(), RetryError> {
         let remaining = self
+            .ledger
             .required
             .iter()
-            .filter(|key| !self.files.contains_key(*key))
-            .filter(|key| !self.unavailable.contains(*key))
+            .filter(|key| !self.ledger.files.contains_key(*key))
+            .filter(|key| !self.ledger.unavailable.contains(*key))
             .count();
-        if remaining == self.required_at_batch_start && remaining != 0 {
+        if remaining == self.ledger.required_at_batch_start && remaining != 0 {
             return Err(RetryError::NoProgress);
         }
-        self.required_at_batch_start = remaining;
+        self.ledger.required_at_batch_start = remaining;
         Ok(())
     }
 
     #[must_use]
     pub fn get(&self, key: &FileRequestKey) -> Option<&VirtualFile> {
-        let path = self.files.get(key)?;
+        let path = self.ledger.files.get(key)?;
         self.storage.layer(LayerKind::ResolvedResource).get(path)
     }
 
     #[must_use]
     pub fn is_unavailable(&self, key: &FileRequestKey) -> bool {
-        self.unavailable.contains(key)
+        self.ledger.unavailable.contains(key)
     }
 
     pub fn files(&self) -> impl Iterator<Item = (&FileRequestKey, &VirtualFile)> {
-        self.files.iter().map(|(key, path)| {
+        self.ledger.files.iter().map(|(key, path)| {
             let file = self
                 .storage
                 .layer(LayerKind::ResolvedResource)
@@ -773,28 +805,27 @@ impl FileProvisioner {
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.files.len() + self.unavailable.len()
+        self.ledger.files.len() + self.ledger.unavailable.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.unavailable.is_empty()
+        self.ledger.files.is_empty() && self.ledger.unavailable.is_empty()
     }
 
     #[must_use]
     pub const fn resolved_bytes(&self) -> usize {
-        self.resolved_bytes
+        self.ledger.resolved_bytes
     }
 
     pub fn clear(&mut self) {
-        self.files.clear();
-        self.unavailable.clear();
-        self.paths.clear();
+        self.ledger.files.clear();
+        self.ledger.unavailable.clear();
         self.storage.clear_layer(LayerKind::ResolvedResource);
-        self.resolved_bytes = 0;
-        self.expected.clear();
-        self.required.clear();
-        self.required_at_batch_start = 0;
+        self.ledger.resolved_bytes = 0;
+        self.ledger.expected.clear();
+        self.ledger.required.clear();
+        self.ledger.required_at_batch_start = 0;
     }
 
     /// Drops accepted generated files while preserving immutable user and
@@ -805,10 +836,10 @@ impl FileProvisioner {
     }
 
     fn require_expected(&self, request: &FileRequestKey) -> Result<(), ProvisionError> {
-        if self.expected.contains(request) {
+        if self.ledger.expected.contains(request) {
             return Ok(());
         }
-        if let Some(expected) = self.expected.iter().find(|expected| {
+        if let Some(expected) = self.ledger.expected.iter().find(|expected| {
             expected.domain == request.domain && expected.normalized_name == request.normalized_name
         }) {
             return Err(ProvisionError::KindMismatch {

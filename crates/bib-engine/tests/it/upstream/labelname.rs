@@ -2,13 +2,13 @@
 
 use bib_engine::{
     BibAttempt, BibJob, BibOptionsBuilder, BibSession, EntryId, FieldId, FieldValue,
-    FileProvisioner, ResolvedFile, SectionId, VfsLimits, VirtualPath,
+    ProjectWorkspace, ResolvedFile, SectionId, VfsLimits, VirtualPath,
 };
 
 fn process_fixture(control_name: &str) -> bib_engine::ProcessedBibliography {
     let fixture_dir = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control = VirtualPath::user(control_name).expect("valid control path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     provisioner
         .register_user(
             control.clone(),

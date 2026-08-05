@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use bib_engine::{
     BibAttempt, BibFailure, BibJob, BibOptionsBuilder, BibResult, BibSession, Entry, EntryId,
-    FieldId, FieldValue, FileProvisioner, OutputFormat, OutputRequest, ResolvedFile, SectionId,
+    FieldId, FieldValue, OutputFormat, OutputRequest, ProjectWorkspace, ResolvedFile, SectionId,
     VfsLimits, VirtualPath,
 };
 
@@ -17,7 +17,7 @@ pub(super) fn try_run_fixture(stem: &str) -> Result<BibResult, BibFailure> {
     let corpus = test_support::repository_root().join("tests/corpus/bib/upstream-2.22/tdata");
     let control_name = format!("{stem}.bcf");
     let control_path = VirtualPath::user(&control_name).expect("valid fixture control path");
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("fixture limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("fixture limits");
     provisioner
         .register_user(
             control_path.clone(),

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::{
     BibAttempt, BibDiagnostic, BibFailureKind, BibJob, BibOptionsBuilder, BibResult, BibSession,
-    BibSeverity, BibtexOptions, DotInclude, DotOptions, FileProvisioner, LegacyEncoding,
-    OutputFormat, OutputNewline, OutputOptions, OutputRequest, ResolvedFile, VfsSnapshot,
+    BibSeverity, BibtexOptions, DotInclude, DotOptions, LegacyEncoding, OutputFormat,
+    OutputNewline, OutputOptions, OutputRequest, ProjectWorkspace, ResolvedFile, VfsSnapshot,
     VirtualPath, process_once,
 };
 
@@ -200,7 +200,7 @@ impl BibCommand {
 
     pub fn execute_provisioned(
         &self,
-        files: &mut FileProvisioner,
+        files: &mut ProjectWorkspace,
         mut resolve: impl FnMut(&crate::FileRequest) -> Option<ResolvedFile>,
     ) -> BibCommandOutput {
         let mut session = BibSession::default();

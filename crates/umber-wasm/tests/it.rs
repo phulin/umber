@@ -2,7 +2,7 @@
 
 use bib_engine::{
     BibliographyAttempt, ClassicBibJob, ClassicBibOptions, ClassicBibSession, FileKind,
-    FileProvisioner, FileRequestKey, ResolvedFile, VfsLimits, VirtualPath,
+    FileRequestKey, ProjectWorkspace, ResolvedFile, VfsLimits, VirtualPath,
 };
 use js_sys::{Array, Date, Object, Reflect, Uint8Array};
 use tex_state::{Universe, World};
@@ -356,7 +356,7 @@ fn project_binding_accepts_classic_bibliography_options() {
 fn persistent_wasm_classic_caches_evict_maximum_charge_jobs() {
     const SESSION_BUDGET_MS: f64 = 10_000.0;
     let started = Date::now();
-    let mut provisioner = FileProvisioner::new(VfsLimits::default()).expect("VFS limits");
+    let mut provisioner = ProjectWorkspace::new(VfsLimits::default()).expect("VFS limits");
     for index in 0..16 {
         provisioner
             .register_user(

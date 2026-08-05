@@ -1,7 +1,7 @@
 // Native Rust translation of upstream t/bibtex-aliases.t at commit 74252e6.
 
 use bib_engine::{
-    BibCommand, BibCommandOutput, Entry, EntryId, FieldId, FieldValue, FileProvisioner, VfsLimits,
+    BibCommand, BibCommandOutput, Entry, EntryId, FieldId, FieldValue, ProjectWorkspace, VfsLimits,
     VirtualPath,
 };
 
@@ -20,7 +20,7 @@ const WARNINGS_ALIAS4: &[&str] = &[
 ];
 
 fn run() -> BibCommandOutput {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("bibtex-aliases.bcf").expect("valid virtual path"),

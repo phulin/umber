@@ -1,6 +1,6 @@
 // Native Rust translation of upstream t/translit.t at commit 74252e6.
 
-use bib_engine::{BibCommand, FileProvisioner, VfsLimits, VirtualPath};
+use bib_engine::{BibCommand, ProjectWorkspace, VfsLimits, VirtualPath};
 use bib_unicode::normalise_nfc;
 
 const CONTROL: &[u8] =
@@ -9,7 +9,7 @@ const DATA: &[u8] =
     include_bytes!("../../../../../tests/corpus/bib/upstream-2.22/tdata/translit.bib");
 
 fn sorted_keys() -> Vec<String> {
-    let mut files = FileProvisioner::new(VfsLimits::default()).expect("valid VFS limits");
+    let mut files = ProjectWorkspace::new(VfsLimits::default()).expect("valid VFS limits");
     files
         .register_user(
             VirtualPath::user("translit.bcf").expect("valid virtual path"),
