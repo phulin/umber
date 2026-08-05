@@ -30,7 +30,9 @@ are independent of the full snapshot.
 ## File map
 
 - `src/lib.rs`: publication orchestration and public configuration.
-- `src/sharded.rs`: canonical root/shard schema, partitioning, writing, and staged verification.
+- `src/sharded.rs`: filesystem writing, object hashing, and staged byte
+  verification around canonical `umber-distribution` root/shard/catalog
+  values; it owns no parallel wire schema or graph validator.
 - `src/scan.rs`: deterministic root scanning, pin verification, and precedence.
 - `src/tlpdb.rs`: TeX Live runfile ownership and bounded package dependency-hint derivation.
 - `src/tests.rs`: fixture publication, collision, path, and precedence tests.

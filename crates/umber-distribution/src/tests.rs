@@ -457,6 +457,17 @@ fn parses_sharded_root_and_full_inline_dependency_metadata() {
     let dependency = &shard.files["tex:plain.tex"].dependencies[0];
     assert_eq!(dependency.key, "tfm:cmr10.tfm");
     assert_eq!(dependency.object_entry().bytes, 20);
+    let request = ManifestRequest::File(
+        FileRequestKey::from_manifest_key("tex:plain.tex").expect("request key"),
+    );
+    let selection = select_shard(&shard, &[request]);
+    assert_eq!(selection.jobs.len(), 2);
+    assert_eq!(selection.jobs[0].requirement, JobRequirement::Required);
+    assert_eq!(
+        selection.jobs[1].requirement,
+        JobRequirement::DependencyHint
+    );
+    assert_eq!(selection.jobs[1].manifest_key.as_str(), "tfm:cmr10.tfm");
 }
 
 #[test]

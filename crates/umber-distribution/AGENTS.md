@@ -15,6 +15,9 @@ strict, host-neutral contract for immutable distribution manifests.
   in `src/manifest.rs` and the focused HTML record module below.
 - `src/html.rs` owns the schema-4/schema-2 HTML font and exact legacy-mapping
   records; `src/sha256.rs` is the dependency-free canonical shard-index hash.
+- `src/catalog.rs` owns canonical publication partitioning and complete
+  root/shard graph assembly. Publisher and host adapters must not reconstruct
+  these invariants.
 
 ## Validation
 

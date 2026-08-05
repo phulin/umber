@@ -4,12 +4,22 @@ import { HttpManifestResolver } from "/package/manifest-resolver.js";
 import { renderedSourceLocationFromPoint } from "/package/source-map.js";
 import initWasm, {
 	CompilerSession,
+	catalogSelectShard,
+	catalogShardIndex,
+	catalogValidateRoot,
+	catalogValidateShard,
 	contentHash,
 	formatSchemaVersion,
 } from "/package/umber_wasm.js";
 import { compileInWorker } from "/package/worker-controller.js";
 
 const encode = (value) => new TextEncoder().encode(value);
+const catalog = {
+	catalogSelectShard,
+	catalogShardIndex,
+	catalogValidateRoot,
+	catalogValidateShard,
+};
 
 function assert(condition, message) {
 	if (!condition) throw new Error(message);
@@ -242,6 +252,7 @@ async function integration() {
 	const direct = await HttpManifestResolver.create({
 		manifestUrl,
 		manifestSha256,
+		catalog,
 	});
 	assert(
 		formatSchemaVersion() === 11,
@@ -343,7 +354,7 @@ async function integration() {
 	assert(
 		(() => {
 			try {
-				new HttpManifestResolver(manifest);
+				new HttpManifestResolver(manifest, { catalog });
 				return false;
 			} catch (error) {
 				return error.code === "invalid-manifest";

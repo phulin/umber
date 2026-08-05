@@ -12,9 +12,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 bib-engine = { path = "../bib-engine" }
 js-sys = "0.3"
+serde_json.workspace = true
 tex-arith = { path = "../tex-arith" }
 tex-state = { path = "../tex-state" }
 umber = { path = "../umber" }
+umber-distribution = { path = "../umber-distribution" }
 wasm-bindgen = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

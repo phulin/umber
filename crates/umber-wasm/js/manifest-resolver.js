@@ -7,9 +7,6 @@ import {
 	ManifestResolverError,
 	parseManifestJson,
 	resourceDomain,
-	shardIndex,
-	validateIndexShard,
-	validateRootManifest,
 } from "./manifest-schema.js";
 import { IndexedDbObjectCache } from "./persistent-cache.js";
 
@@ -120,11 +117,38 @@ export class HttpManifestResolver {
 			offline: options.offline,
 			maxFiles: options.maxFiles,
 			maxBytes: options.maxBytes,
+			catalog: options.catalog,
 		});
 	}
 
 	constructor(manifest, options = {}) {
-		this.manifest = validateRootManifest(manifest);
+		this.catalog = options.catalog;
+		if (
+			![
+				"catalogValidateRoot",
+				"catalogValidateShard",
+				"catalogShardIndex",
+				"catalogSelectShard",
+			].every((name) => typeof this.catalog?.[name] === "function")
+		) {
+			throw new ManifestResolverError(
+				"invalid-options",
+				"the umber-wasm catalog bindings are required",
+			);
+		}
+		try {
+			this.rootCanonical = this.catalog.catalogValidateRoot(
+				JSON.stringify(manifest),
+			);
+			this.manifest = JSON.parse(this.rootCanonical);
+			this.manifest.formats ??= {};
+		} catch (error) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`root manifest failed canonical catalog validation: ${error?.message ?? error}`,
+				{ cause: error },
+			);
+		}
 		this.fetch = options.fetch ?? platformFetch();
 		this.crypto = options.crypto ?? globalThis.crypto;
 		this.concurrency = validateConcurrency(
@@ -156,6 +180,19 @@ export class HttpManifestResolver {
 		}
 		this.objectCache = new Map();
 		this.shardCache = new Map();
+		this.shardCanonical = new Map();
+	}
+
+	async #shardIndex(key) {
+		try {
+			return await this.catalog.catalogShardIndex(key, this.manifest.shardBits);
+		} catch (error) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`invalid canonical catalog key ${key}`,
+				{ cause: error },
+			);
+		}
 	}
 
 	async resolve(requests, options) {
@@ -308,13 +345,9 @@ export class HttpManifestResolver {
 			selections.push(
 				(async () => {
 					try {
-						const index = await shardIndex(
-							key,
-							this.manifest.shardBits,
-							this.crypto,
-						);
+						const index = await this.#shardIndex(key);
 						const shard = await this.#shard(index, signal);
-						return { type: "file", request, key, entry: shard.files[key] };
+						return this.#catalogSelection("file", request, key, shard, index);
 					} catch (error) {
 						if (blocking) throw actionableError(key, error);
 						throw error;
@@ -327,6 +360,43 @@ export class HttpManifestResolver {
 		const misses = [];
 		const hintedKeys = new Set();
 		for (const item of resolved) {
+			if (item.plan !== undefined) {
+				if (item.plan.misses.includes(item.key)) {
+					misses.push({
+						type: item.type,
+						request: item.request,
+						manifestKey: item.key,
+					});
+					continue;
+				}
+				for (const planned of item.plan.jobs) {
+					if (planned.requirement === "required") {
+						jobs.push({
+							key: planned.manifestKey,
+							manifestKey: planned.manifestKey,
+							entry: item.entry,
+							request: item.request,
+							requested: true,
+							type: item.type,
+						});
+					} else if (!seen.has(planned.manifestKey)) {
+						seen.add(planned.manifestKey);
+						jobs.push({
+							key: planned.manifestKey,
+							manifestKey: planned.manifestKey,
+							entry: {
+								virtualPath: planned.virtualPath,
+								object: planned.object,
+								sha256: planned.sha256,
+								bytes: planned.bytes,
+							},
+							requested: false,
+							type: "file",
+						});
+					}
+				}
+				continue;
+			}
 			if (item.missing || item.entry === undefined) {
 				misses.push({
 					type: item.type,
@@ -361,18 +431,33 @@ export class HttpManifestResolver {
 
 	async #typedSelection(type, request, key, signal, blocking) {
 		try {
-			const index = await shardIndex(
-				key,
-				this.manifest.shardBits,
-				this.crypto,
-				true,
-			);
+			const index = await this.#shardIndex(key);
 			const shard = await this.#shard(index, signal);
-			const entries = type === "font" ? shard.fonts : shard.legacyMappings;
-			return { type, request, key, entry: entries[key] };
+			return this.#catalogSelection(type, request, key, shard, index);
 		} catch (error) {
 			if (blocking) throw actionableError(key, error);
 			throw error;
+		}
+	}
+
+	#catalogSelection(type, request, key, shard, index) {
+		const entries =
+			type === "font"
+				? shard.fonts
+				: type === "legacy-font-mapping"
+					? shard.legacyMappings
+					: shard.files;
+		try {
+			const plan = JSON.parse(
+				this.catalog.catalogSelectShard(this.shardCanonical.get(index), [key]),
+			);
+			return { type, request, key, entry: entries[key], plan };
+		} catch (error) {
+			throw new ManifestResolverError(
+				"invalid-manifest",
+				`catalog selection failed for ${key}`,
+				{ cause: error },
+			);
 		}
 	}
 
@@ -396,25 +481,23 @@ export class HttpManifestResolver {
 						{ cause: error },
 					);
 				}
-				const shard = validateIndexShard(parsed, this.manifest, index);
-				for (const key of [
-					...Object.keys(shard.files),
-					...Object.keys(shard.fonts),
-					...Object.keys(shard.legacyMappings),
-				]) {
-					if (
-						(await shardIndex(
-							key,
-							this.manifest.shardBits,
-							this.crypto,
-							true,
-						)) !== index
-					) {
-						throw new ManifestResolverError(
-							"invalid-manifest",
-							`lookup key ${key} is not in canonical shard ${index}`,
-						);
-					}
+				let shard;
+				try {
+					const canonical = await this.catalog.catalogValidateShard(
+						this.rootCanonical,
+						JSON.stringify(parsed),
+						index,
+					);
+					this.shardCanonical.set(index, canonical);
+					shard = JSON.parse(canonical);
+					shard.fonts ??= {};
+					shard.legacyMappings ??= {};
+				} catch (error) {
+					throw new ManifestResolverError(
+						"invalid-manifest",
+						`index shard ${index} failed canonical catalog validation: ${error?.message ?? error}`,
+						{ cause: error },
+					);
 				}
 				return shard;
 			})();

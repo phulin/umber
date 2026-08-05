@@ -15,8 +15,8 @@ use tex_fonts::AcceptedFontContainers;
 use tex_state::{Universe, World};
 use umber_distribution::{
     DependencyHint, FileKind as DistributionFileKind, FileRequestKey as DistributionFileRequestKey,
-    ManifestMiss, ManifestRequest, ManifestShard, ShardFile, ShardedManifestRoot, select_shard,
-    shard_index_for_key,
+    JobRequirement, ManifestMiss, ManifestRequest, ManifestShard, ShardFile, ShardedManifestRoot,
+    select_shard, shard_index_for_key,
 };
 use umber_fetch::{
     FetchCancellation, FetchClient, FetchClientConfig, FetchFailure, FetchRequest,
@@ -984,15 +984,25 @@ impl DistributionResolver {
             }
             for job in selection.jobs {
                 let key = job.manifest_key.to_string();
-                let entry = shard
-                    .files
-                    .get(&key)
-                    .expect("shared shard selection returns the selected file");
-                required.insert(key, entry.clone());
-                for dependency in &entry.dependencies {
-                    hints
-                        .entry(dependency.key.clone())
-                        .or_insert_with(|| dependency.clone());
+                match job.requirement {
+                    JobRequirement::Required => {
+                        let entry = shard
+                            .files
+                            .get(&key)
+                            .expect("shared shard selection returns the selected file");
+                        required.insert(key, entry.clone());
+                    }
+                    JobRequirement::DependencyHint => {
+                        hints.entry(key.clone()).or_insert_with(|| DependencyHint {
+                            key,
+                            virtual_path: job
+                                .virtual_path
+                                .expect("file dependency hints carry a virtual path"),
+                            object: job.object.object,
+                            sha256: job.object.sha256,
+                            bytes: job.object.bytes,
+                        });
+                    }
                 }
             }
             if let Some(keys) = hinted_keys.remove(&index) {

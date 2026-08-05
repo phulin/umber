@@ -14,6 +14,9 @@ the manifest's validated content-addressed object name.
 ## Directory map
 
 - `src/lib.rs`: exported persistent `CompilerSession`, low-level `advance`/`provideResources`/`applyPatch` boundary, revision metrics, and TypeScript surface.
+- `src/catalog_boundary.rs`: synchronous WebAssembly exports for canonical
+  distribution root/shard validation, request partitioning, and ordered
+  selection plans owned by `umber-distribution`.
 - `src/options.rs`: strict conversion of JavaScript options (including engine mode) plus shared-VFS typed resource responses, domain/kind wire values, and request keys.
 - `src/result.rs`: completed-attempt and diagnostic conversion facade.
 - `src/result/`: focused binary-safe resource-request, metrics, and incremental-render conversion modules.

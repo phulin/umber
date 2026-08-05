@@ -1,5 +1,6 @@
 //! Binary-safe WebAssembly representation adapter for Umber.
 
+mod catalog_boundary;
 mod options;
 mod result;
 

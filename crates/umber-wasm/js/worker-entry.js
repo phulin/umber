@@ -23,6 +23,7 @@ export async function runCompileMessage(message, dependencies = {}) {
 		dependencies.resolver ??
 		(await (dependencies.createResolver ?? HttpManifestResolver.create)({
 			...message.resolver,
+			catalog: bindings,
 			maxFiles: message.options?.limits?.resolvedFiles,
 			maxBytes: message.options?.limits?.cachedFileBytes,
 		}));
@@ -88,6 +89,7 @@ export async function createEditorFromMessage(message, dependencies = {}) {
 		dependencies.resolver ??
 		(await (dependencies.createResolver ?? HttpManifestResolver.create)({
 			...message.resolver,
+			catalog: bindings,
 			maxFiles: message.options?.limits?.resolvedFiles,
 			maxBytes: message.options?.limits?.cachedFileBytes,
 		}));

@@ -10,6 +10,75 @@ import { shardIndex } from "./manifest-schema.js";
 import { MemoryObjectCache } from "./persistent-cache.js";
 
 const encoder = new TextEncoder();
+const catalog = {
+	catalogValidateRoot(text) {
+		const root = JSON.parse(text);
+		if (
+			![2, 3, 4].includes(root.schema) ||
+			!Number.isInteger(root.shardBits) ||
+			root.shardBits < 0 ||
+			root.shardBits > 16 ||
+			root.shardCount !== 2 ** root.shardBits ||
+			root.shards?.length !== root.shardCount
+		)
+			throw new Error("shardBits or shard table is invalid");
+		return `${JSON.stringify(root)}\n`;
+	},
+	async catalogValidateShard(rootText, shardText, index) {
+		const root = JSON.parse(rootText);
+		const shard = JSON.parse(shardText);
+		if (
+			shard.distribution !== root.distribution ||
+			shard.index !== index ||
+			shard.schema !== (root.schema === 4 ? 2 : 1)
+		)
+			throw new Error(`index shard ${index} identity mismatch`);
+		for (const key of [
+			...Object.keys(shard.files ?? {}),
+			...Object.keys(shard.fonts ?? {}),
+			...Object.keys(shard.legacyMappings ?? {}),
+		])
+			if ((await shardIndex(key, root.shardBits, webcrypto, true)) !== index)
+				throw new Error(`lookup key ${key} is not in canonical shard ${index}`);
+		return `${JSON.stringify(shard)}\n`;
+	},
+	catalogShardIndex(key, bits) {
+		return shardIndex(key, bits, webcrypto, true);
+	},
+	catalogSelectShard(shardText, keys) {
+		const shard = JSON.parse(shardText);
+		const jobs = [];
+		const misses = [];
+		const seen = new Set(keys);
+		for (const key of keys) {
+			const entries = key.startsWith("font:")
+				? (shard.fonts ?? {})
+				: key.startsWith("legacy-mapping:")
+					? (shard.legacyMappings ?? {})
+					: shard.files;
+			const entry = entries[key];
+			if (entry === undefined) {
+				misses.push(key);
+				continue;
+			}
+			jobs.push({
+				manifestKey: key,
+				requirement: "required",
+				...entry,
+			});
+			for (const dependency of entry.dependencies ?? []) {
+				if (seen.has(dependency.key)) continue;
+				seen.add(dependency.key);
+				jobs.push({
+					manifestKey: dependency.key,
+					requirement: "hint",
+					...dependency,
+				});
+			}
+		}
+		return JSON.stringify({ jobs, misses });
+	},
+};
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const jsonBytes = (value) => encoder.encode(`${JSON.stringify(value)}\n`);
 
@@ -184,6 +253,7 @@ function resolverFor(data, options = {}) {
 		resolver: new HttpManifestResolver(data.root, {
 			fetch,
 			crypto: webcrypto,
+			catalog,
 			...options,
 		}),
 		calls,
@@ -197,6 +267,7 @@ test("create verifies the pinned root before accepting its selection metadata", 
 		manifestSha256: data.rootDigest,
 		fetch: async () => response(data.rootBytes),
 		crypto: webcrypto,
+		catalog,
 	});
 	assert.equal(resolver.manifest.schema, 2);
 	await assert.rejects(
@@ -205,6 +276,7 @@ test("create verifies the pinned root before accepting its selection metadata", 
 			manifestSha256: "0".repeat(64),
 			fetch: async () => response(data.rootBytes),
 			crypto: webcrypto,
+			catalog,
 		}),
 		(error) => error.code === "manifest-digest",
 	);
@@ -229,6 +301,7 @@ test("pinned root and objects support zero-network warm and offline resolvers", 
 		cacheStore,
 		fetch,
 		crypto: webcrypto,
+		catalog,
 	};
 	const cold = await HttpManifestResolver.create(options);
 	const coldDownloads = await cold.resolve([
@@ -446,6 +519,7 @@ test("immutable shards and payloads persist across resolver instances", async ()
 	const options = {
 		fetch,
 		crypto: webcrypto,
+		catalog,
 		persistentCache: "indexeddb",
 		cacheStore,
 	};
@@ -671,13 +745,15 @@ test("invalid root pin and malformed shard options are typed", async () => {
 			manifestSha256: "bad",
 			fetch: async () => response(data.rootBytes),
 			crypto: webcrypto,
+			catalog,
 		}),
 		(error) =>
 			error instanceof ManifestResolverError &&
 			error.code === "invalid-options",
 	);
 	assert.throws(
-		() => new HttpManifestResolver({ ...data.root, shardBits: 17 }),
+		() =>
+			new HttpManifestResolver({ ...data.root, shardBits: 17 }, { catalog }),
 		/shardBits/,
 	);
 });

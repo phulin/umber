@@ -511,6 +511,7 @@ pub struct AcquisitionJob {
     pub manifest_key: ManifestLogicalKey,
     pub requirement: JobRequirement,
     pub object: ObjectEntry,
+    pub virtual_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -577,6 +578,7 @@ pub fn select(manifest: &Manifest, requests: &[ManifestRequest]) -> Selection {
                     manifest_key,
                     requirement: JobRequirement::Required,
                     object: entry.object_entry(),
+                    virtual_path: Some(entry.virtual_path.clone()),
                 });
             }
             ManifestRequest::Font(key) => {
@@ -595,6 +597,7 @@ pub fn select(manifest: &Manifest, requests: &[ManifestRequest]) -> Selection {
                     manifest_key,
                     requirement: JobRequirement::Required,
                     object: entry.object_entry(),
+                    virtual_path: None,
                 });
             }
             ManifestRequest::LegacyMapping(key) => {
@@ -629,6 +632,7 @@ pub fn select(manifest: &Manifest, requests: &[ManifestRequest]) -> Selection {
                 manifest_key: ManifestLogicalKey(dependency.clone()),
                 requirement: JobRequirement::DependencyHint,
                 object: dependency_entry.object_entry(),
+                virtual_path: Some(dependency_entry.virtual_path.clone()),
             });
         }
     }
@@ -640,6 +644,7 @@ pub fn select(manifest: &Manifest, requests: &[ManifestRequest]) -> Selection {
 pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Selection {
     let mut selection = Selection::default();
     let mut seen = BTreeSet::new();
+    let mut dependencies = Vec::new();
     for request in requests {
         let key = request.manifest_key();
         if !seen.insert(key.0.clone()) {
@@ -649,42 +654,50 @@ pub fn select_shard(shard: &ManifestShard, requests: &[ManifestRequest]) -> Sele
             ManifestRequest::File(request_key) => shard
                 .files
                 .get(key.as_str())
-                .map(ShardObject::File)
-                .map(|entry| entry.object_entry())
+                .map(|entry| {
+                    dependencies.extend(entry.dependencies.iter().cloned());
+                    (entry.object_entry(), Some(entry.virtual_path.clone()))
+                })
                 .ok_or_else(|| ManifestMiss::File(request_key.clone())),
             ManifestRequest::Font(request_key) => shard
                 .fonts
                 .get(key.as_str())
-                .map(|entry| entry.object.clone())
+                .map(|entry| (entry.object.clone(), None))
                 .ok_or_else(|| ManifestMiss::Font(request_key.clone())),
             ManifestRequest::LegacyMapping(request_key) => shard
                 .legacy_mappings
                 .get(key.as_str())
-                .map(|entry| entry.object.clone())
+                .map(|entry| (entry.object.clone(), None))
                 .ok_or_else(|| ManifestMiss::LegacyMapping(request_key.clone())),
         };
         match object {
-            Ok(object) => selection.jobs.push(AcquisitionJob {
+            Ok((object, virtual_path)) => selection.jobs.push(AcquisitionJob {
                 request: request.clone(),
                 manifest_key: key,
                 requirement: JobRequirement::Required,
                 object,
+                virtual_path,
             }),
             Err(miss) => selection.misses.push(miss),
         }
     }
-    selection
-}
-
-enum ShardObject<'a> {
-    File(&'a crate::manifest::ShardFile),
-}
-impl ShardObject<'_> {
-    fn object_entry(&self) -> ObjectEntry {
-        match self {
-            Self::File(value) => value.object_entry(),
+    for dependency in dependencies {
+        if !seen.insert(dependency.key.clone()) {
+            continue;
         }
+        let Ok(key) = FileRequestKey::from_manifest_key(&dependency.key) else {
+            continue;
+        };
+        let object = dependency.object_entry();
+        selection.jobs.push(AcquisitionJob {
+            request: ManifestRequest::File(key),
+            manifest_key: ManifestLogicalKey(dependency.key),
+            requirement: JobRequirement::DependencyHint,
+            object,
+            virtual_path: Some(dependency.virtual_path),
+        });
     }
+    selection
 }
 
 fn validate_logical_name(value: &str) -> Result<(), SelectionError> {

@@ -154,7 +154,11 @@ Thus the root digest transitively pins every shard and every fetchable object.
 
 ## Publisher and release workflow
 
-`tools/texlive-wasm-publish` emits schema-3 roots directly. The production
+`tools/texlive-wasm-publish` emits schema-3 roots directly. Root values, shard
+values, canonical JSON serialization, partitioning, omission rules, and
+complete cross-shard graph validation are constructed by
+`umber-distribution`; the publisher owns only source scanning, dependency-hint
+derivation, object hashing, and filesystem publication. The production
 builder accepts `--shard-bits` (default 8), performs two clean builds, and
 requires byte-identical directory trees. `--shard-existing STAGING
 --shard-bits BITS` converts a verified schema-1 staging bundle without
@@ -367,10 +371,12 @@ digest, so a successful resolution supplies identical authenticated bytes to
 the shared compile session and preserves engine-output parity.
 
 The authored JavaScript resolver requires both the root URL and its lowercase
-SHA-256 pin. It verifies the bounded root bytes before parsing selection
-metadata, hashes each canonical lookup key to its shard, and fetches the
+SHA-256 pin. It verifies the bounded root bytes before passing catalog bytes to
+the synchronous `umber-wasm` adapter over `umber-distribution`, then fetches the
 digest-addressed shard through the same HTTP or IndexedDB verified-object cache
-as content payloads. A verified shard miss becomes a typed unavailable answer;
+as content payloads. Rust returns the canonical shard partition and ordered
+required/hint/miss selection plan; JavaScript retains only HTTP, cache,
+concurrency, cancellation, and resource-budget policy. A verified shard miss becomes a typed unavailable answer;
 HTTP, CORS, cancellation, size, and integrity failures remain errors.
 
 Dependency hints are consumed directly from their full inline fetch metadata,
@@ -385,8 +391,9 @@ misses and transport failures are non-blocking; only the current required
 selection can produce unavailable responses or actionable acquisition errors.
 
 `umber-distribution` strictly parses the pinned root and individual index
-shards without performing I/O. The native CLI verifies the root pin, hashes
-each unresolved canonical lookup key to its one shard, and verifies that shard
+shards without performing I/O. The native CLI verifies the root pin, maps TeX
+requests to canonical distribution keys, consumes the shared partition and
+selection plan, and verifies the selected shard
 through the digest-keyed manifest cache before treating absence as
 authoritative. It fetches inline dependency records directly, so dependency
 hints never require another index lookup. Root, shard, and ordinary object
