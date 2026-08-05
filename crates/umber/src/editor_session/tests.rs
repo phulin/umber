@@ -123,7 +123,6 @@ fn no_op_stabilization_skips_reruns_but_changed_unused_output_is_selected() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 fn one_pass_is_provisional_and_stabilization_keeps_revision() {
     let source = br#"\openin0=state.aux
 \ifeof0 \def\value{first}\else \read0 to \value \closein0 \fi

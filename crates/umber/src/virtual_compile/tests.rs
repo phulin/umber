@@ -748,7 +748,6 @@ fn retry_retargets_exact_cross_page_open_occurrence_atomically() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 #[allow(clippy::disallowed_methods)] // Exercises a real finalization failure after reuse.
 fn incremental_effect_prefix_shift_rebases_reused_openout_identity() {
     let temp = tempfile::Builder::new()
@@ -4894,7 +4893,6 @@ fn patch_can_request_and_pin_a_new_resource_before_acceptance() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 fn pdfximage_uses_typed_image_retry_and_accepts_png_metadata() {
     let source = "\\pdfoutput=1 \\
         \\message{INITIAL=\\the\\pdflastximagepages/\\the\\pdflastximagecolordepth} \\
