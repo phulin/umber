@@ -1540,10 +1540,14 @@ impl VirtualCompileSession {
                 .register_user(self.main_path.clone(), source)
                 .map_err(map_user_registration)?;
         }
-        self.candidate
+        let candidate = self
+            .candidate
             .as_mut()
-            .expect("candidate presence was checked")
-            .workspace = refreshed;
+            .expect("candidate presence was checked");
+        if let RetainedExecution::Initial { session, .. } = &mut candidate.execution {
+            register_incremental_inputs(session, &refreshed, &self.main_path)?;
+        }
+        candidate.workspace = refreshed;
         Ok(())
     }
 
@@ -1964,6 +1968,8 @@ impl VirtualCompileSession {
                 }
                 session
             });
+            let mut session = session;
+            register_incremental_inputs(&mut session, &candidate_workspace, &self.main_path)?;
             let mut candidate = session
                 .start_cold_candidate()
                 .map_err(|error| CompileError::Incremental(error.to_string()))?;
@@ -2734,6 +2740,23 @@ impl VirtualCompileSession {
             .resolved_bytes()
             .saturating_add(self.font_cached_bytes)
     }
+}
+
+fn register_incremental_inputs(
+    session: &mut tex_incr::Session,
+    workspace: &ProjectWorkspace,
+    main_path: &VirtualPath,
+) -> Result<(), CompileError> {
+    for file in workspace
+        .user_files()
+        .filter(|file| file.path() != main_path)
+        .chain(workspace.files().map(|(_, file)| file))
+    {
+        session
+            .register_input_file(file.path().as_path(), file.bytes().to_vec())
+            .map_err(|error| CompileError::Incremental(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn resource_request_key(request: &ResourceRequest) -> ResourceRequestKey {

@@ -4472,7 +4472,6 @@ fn requested_html_and_dvi_share_one_committed_compile() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 fn accepted_user_tfm_remains_available_across_incremental_patch() {
     let source =
         "\\font\\tenrm=cmr10\\relax\\tenrm %a\n\\shipout\\hbox{\\char65}\\shipout\\hbox{B}\\end";
@@ -4499,6 +4498,10 @@ fn accepted_user_tfm_remains_available_across_incremental_patch() {
     assert!(matches!(
         session.compile_attempt(),
         CompileAttemptResult::Complete(_)
+    ));
+    assert!(matches!(
+        session.add_user_file("cmr10.tfm", CMSY10.to_vec()),
+        Err(CompileError::SessionAlreadyStarted)
     ));
 
     let comment = source.find("%a").expect("comment") + 1;

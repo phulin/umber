@@ -588,6 +588,17 @@ impl ProjectWorkspace {
         self.storage.layer(LayerKind::User).get(path).is_some()
     }
 
+    /// Enumerates application-owned inputs in canonical path order.
+    ///
+    /// Session orchestrators use this view to retain the immutable user-input
+    /// overlay independently from the separately edited root buffer.
+    pub fn user_files(&self) -> impl Iterator<Item = &VirtualFile> {
+        self.storage
+            .layer(LayerKind::User)
+            .files()
+            .map(|(_, file)| file)
+    }
+
     #[must_use]
     pub const fn user_bytes(&self) -> usize {
         self.ledger.user_bytes

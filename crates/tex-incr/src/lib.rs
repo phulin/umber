@@ -1916,6 +1916,13 @@ impl Session {
                 let mut joined_artifacts = setup.old_artifacts[..anchor.artifact_prefix].to_vec();
                 joined_artifacts.extend_from_slice(&artifacts[..scratch_artifact_count]);
                 joined_artifacts.extend_from_slice(&setup.old_artifacts[old_prefix..]);
+                let mut joined_artifact_publications =
+                    setup.old_artifact_publications[..anchor.artifact_prefix].to_vec();
+                joined_artifact_publications
+                    .extend_from_slice(&live_artifact_publications[..scratch_artifact_count]);
+                joined_artifact_publications
+                    .extend_from_slice(&setup.old_artifact_publications[old_prefix..]);
+                live_artifact_publications = joined_artifact_publications;
                 rebase_and_validate_adopted_artifacts(
                     &mut joined_artifacts[anchor.artifact_prefix + scratch_artifact_count..],
                     old_effect_prefix,

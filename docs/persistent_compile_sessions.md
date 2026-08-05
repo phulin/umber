@@ -86,6 +86,17 @@ suspension serial identifies the active wait, and only the rolled-back step is
 replayed. Earlier committed steps and their generated/effect state are neither
 published nor recomputed.
 
+The initial candidate also transfers the workspace's immutable user and
+resolved-resource files into the incremental session's registered-input
+overlay. The edited root buffer remains separately owned. This transfer is
+refreshed when an initial candidate accepts another resource batch, so every
+later checkpoint fork sees the exact accepted bindings without permitting a
+path to be rebound to different bytes.
+When an edited candidate converges and adopts an accepted artifact suffix, the
+artifact-publication sidecar is spliced at the identical prefix and suffix
+boundaries; retained artifacts and their publication identities therefore
+remain one aligned ownership unit.
+
 Reconstructing a suspended candidate's synthetic root uses the incremental
 session's source-file encoder, including its legacy 8-bit byte projection. The
 internal Unicode editor representation is never encoded directly into the VFS.
