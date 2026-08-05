@@ -217,7 +217,7 @@ pub struct SortedEntry {
 }
 
 pub struct DataListBuilder<'a> {
-    section: &'a ProcessedSection,
+    entries: EntrySource<'a>,
     id: DataListId,
     filter: DataListFilter,
     template: SortTemplate,
@@ -225,11 +225,40 @@ pub struct DataListBuilder<'a> {
     include_skipped: bool,
 }
 
+enum EntrySource<'a> {
+    Section(&'a ProcessedSection),
+    Entries(&'a [Entry]),
+}
+
+impl EntrySource<'_> {
+    fn iter(&self) -> Box<dyn Iterator<Item = &Entry> + '_> {
+        match self {
+            Self::Section(section) => Box::new(section.entries()),
+            Self::Entries(entries) => Box::new(entries.iter()),
+        }
+    }
+}
+
 impl<'a> DataListBuilder<'a> {
     #[must_use]
     pub fn new(section: &'a ProcessedSection, id: DataListId, template: SortTemplate) -> Self {
         Self {
-            section,
+            entries: EntrySource::Section(section),
+            id,
+            filter: DataListFilter::All,
+            template,
+            limits: DataListLimits::default(),
+            include_skipped: false,
+        }
+    }
+
+    pub(crate) fn from_entries(
+        entries: &'a [Entry],
+        id: DataListId,
+        template: SortTemplate,
+    ) -> Self {
+        Self {
+            entries: EntrySource::Entries(entries),
             id,
             filter: DataListFilter::All,
             template,
@@ -268,8 +297,8 @@ impl<'a> DataListBuilder<'a> {
             return Err(SortError::TooManyComponents);
         }
         let entries = self
-            .section
-            .entries()
+            .entries
+            .iter()
             .filter(|entry| {
                 self.filter.matches(entry)
                     && (self.include_skipped

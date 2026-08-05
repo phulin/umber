@@ -6,12 +6,9 @@ description = "Public facade for Umber's in-process bibliography engine"
 
 [dependencies]
 bib-bst = { path = "../bib-bst" }
-bib-graph = { path = "../bib-graph" }
 bib-input = { path = "../bib-input" }
-bib-label = { path = "../bib-label" }
 bib-model = { path = "../bib-model" }
 bib-output = { path = "../bib-output" }
-bib-sort = { path = "../bib-sort" }
 bib-unicode = { path = "../bib-unicode" }
 umber-vfs = { path = "../umber-vfs" }
 

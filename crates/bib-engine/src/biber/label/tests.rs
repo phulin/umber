@@ -37,37 +37,6 @@ fn labels_select_first_present_candidate_at_each_boundary() {
 }
 
 #[test]
-fn labelalpha_respects_name_and_field_widths() {
-    let names = NameList::new([name("García", "Ana"), name("Miller", "Bob")], false);
-    let entry = LabelEntry {
-        names: BTreeMap::new(),
-        fields: BTreeMap::from([("year", "2025")]),
-    };
-    let template = LabelAlphaTemplate(vec![
-        LabelAlphaComponent::Names(AlphaNameOptions {
-            names: 2,
-            name_chars: 1,
-            final_name_chars: 2,
-            others: "+",
-        }),
-        LabelAlphaComponent::Field {
-            name: "year".into(),
-            width: 2,
-        },
-    ]);
-    assert_eq!(template.render(&entry, Some(&names)), "GMi20");
-}
-
-#[test]
-fn hashes_are_repeatable_and_distinguish_visible_from_full_names() {
-    let names = NameList::new([name("Doe", "Jane"), name("Roe", "Richard")], false);
-    let first = hash_name_list(&names, 1);
-    assert_eq!(first, hash_name_list(&names, 1));
-    assert_ne!(first.name_hash, first.full_hash);
-    assert_eq!(first.per_name.len(), 2);
-}
-
-#[test]
 fn extras_follow_list_order_and_reset_between_processing_calls() {
     let fields = [
         ExtraField {

@@ -1,4 +1,6 @@
-use bib_model::{Entry, EntryType, FieldId, FieldValue};
+use bib_model::{EntryType, FieldId, FieldValue};
+
+use crate::biber::EntryEditor;
 
 /// A declared sourcemap. Maps and their steps are evaluated in declaration order.
 #[derive(Clone, Debug, Default)]
@@ -31,13 +33,12 @@ pub enum MapAction {
     CloneAs(String),
 }
 
-pub(crate) fn matches(entry: &Entry, predicates: &[MapMatch]) -> bool {
+pub(crate) fn matches(entry: &EntryEditor, predicates: &[MapMatch]) -> bool {
     predicates.iter().all(|predicate| match predicate {
         MapMatch::EntryType(kind) => entry.entry_type() == kind,
-        MapMatch::FieldExists(field) => entry.fields().get(field).is_some(),
+        MapMatch::FieldExists(field) => entry.field(field).is_some(),
         MapMatch::FieldEquals(field, expected) => entry
-            .fields()
-            .get(field)
+            .field(field)
             .and_then(text)
             .is_some_and(|actual| actual == expected),
     })

@@ -10,8 +10,7 @@ The reviewed architecture and phase exit criteria remain those in
 replace or revise that design. Classic BibTeX and the existing
 Biber-compatible implementation remain separate semantic backends behind one
 resource, result, and project-orchestration facade. Classic `.bst` execution
-must not be routed through `bib-graph`, `bib-sort`, `bib-label`, or
-`bib-output`.
+must not be routed through the engine-private Biber worker or `bib-output`.
 
 The machine-audited source of this census is
 `tests/corpus/bibtex/inventory.json`. It names every AUX command, BST command,

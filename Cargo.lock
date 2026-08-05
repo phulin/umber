@@ -86,26 +86,15 @@ name = "bib-engine"
 version = "0.1.0"
 dependencies = [
  "bib-bst",
- "bib-graph",
  "bib-input",
- "bib-label",
  "bib-model",
  "bib-output",
- "bib-sort",
  "bib-unicode",
  "serde",
  "serde_json",
  "sha2",
  "test-support",
  "umber-vfs",
-]
-
-[[package]]
-name = "bib-graph"
-version = "0.1.0"
-dependencies = [
- "bib-model",
- "bib-unicode",
 ]
 
 [[package]]
@@ -120,14 +109,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bib-label"
-version = "0.1.0"
-dependencies = [
- "bib-model",
- "bib-unicode",
-]
-
-[[package]]
 name = "bib-model"
 version = "0.1.0"
 dependencies = [
@@ -137,14 +118,6 @@ dependencies = [
 
 [[package]]
 name = "bib-output"
-version = "0.1.0"
-dependencies = [
- "bib-model",
- "bib-unicode",
-]
-
-[[package]]
-name = "bib-sort"
 version = "0.1.0"
 dependencies = [
  "bib-model",

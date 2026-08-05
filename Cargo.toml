@@ -15,12 +15,9 @@ members = [
 default-members = [
   "crates/bib-bst",
   "crates/bib-engine",
-  "crates/bib-graph",
   "crates/bib-input",
-  "crates/bib-label",
   "crates/bib-model",
   "crates/bib-output",
-  "crates/bib-sort",
   "crates/bib-unicode",
   "crates/corpus-manifest",
   "crates/test-support",

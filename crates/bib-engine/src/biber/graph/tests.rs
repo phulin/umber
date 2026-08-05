@@ -1,11 +1,24 @@
 use bib_model::{
-    BibConfigurationBuilder, BibSourceLocation, COMPATIBILITY_VERSION, EntryBuilder, EntryId,
-    EntryType, FieldId, FieldProvenance, FieldValue, FieldValueStage, Literal, SectionId,
-    SourceSpan, VirtualPath,
+    BibDiagnostic, BibSourceLocation, Entry, EntryBuilder, EntryId, EntryType, FieldId,
+    FieldProvenance, FieldValue, FieldValueStage, Literal, SectionId, SourceSpan, VirtualPath,
 };
-use bib_unicode::UnicodeData;
 
 use super::*;
+use crate::biber::EntryEditor;
+
+#[derive(Default)]
+struct PassFixture {
+    entries: Vec<Entry>,
+    aliases: Vec<(EntryId, EntryId)>,
+    sections: Vec<SectionSpec>,
+    maps: Vec<SourceMap>,
+    data_model: DataModel,
+}
+
+struct PassResult {
+    sections: Vec<GraphSection>,
+    diagnostics: Vec<BibDiagnostic>,
+}
 
 fn id(value: &str) -> EntryId {
     EntryId::new(value).expect("valid graph test fixture")
@@ -49,12 +62,20 @@ fn literal(value: &str) -> FieldValue {
 fn keys(values: &[&str]) -> FieldValue {
     FieldValue::KeyList(values.iter().map(|value| id(value)).collect())
 }
-fn process(input: GraphInput, options: GraphOptions) -> GraphOutput {
-    let configuration = BibConfigurationBuilder::new(COMPATIBILITY_VERSION).freeze();
-    let unicode = UnicodeData::pinned();
-    GraphProcessor::new(GraphContext::new(&configuration, &unicode), options)
-        .process(input)
-        .expect("valid graph test fixture")
+fn process(input: PassFixture, options: GraphOptions) -> PassResult {
+    let (sections, diagnostics) = RelationshipPass::new(options)
+        .process(
+            input.entries.iter().map(EntryEditor::from_entry).collect(),
+            input.aliases,
+            input.sections,
+            &input.maps,
+            &input.data_model,
+        )
+        .expect("valid graph test fixture");
+    PassResult {
+        sections,
+        diagnostics,
+    }
 }
 
 #[test]
@@ -68,7 +89,7 @@ fn closure_resolves_aliases_sets_related_and_crossref_thresholds_in_source_order
         entry("root", &[("related", keys(&["related"]))]),
     ];
     let output = process(
-        GraphInput {
+        PassFixture {
             entries,
             aliases: vec![(id("p-alias"), id("parent"))],
             sections: vec![SectionSpec {
@@ -77,7 +98,7 @@ fn closure_resolves_aliases_sets_related_and_crossref_thresholds_in_source_order
                 include_all: false,
                 min_crossrefs: Some(2),
             }],
-            ..GraphInput::default()
+            ..PassFixture::default()
         },
         GraphOptions::default(),
     );
@@ -96,7 +117,7 @@ fn closure_resolves_aliases_sets_related_and_crossref_thresholds_in_source_order
 #[test]
 fn xdata_and_crossref_inherit_in_declared_order_with_provenance_then_validate() {
     let output = process(
-        GraphInput {
+        PassFixture {
             entries: vec![
                 entry(
                     "x",
@@ -133,7 +154,7 @@ fn xdata_and_crossref_inherit_in_declared_order_with_provenance_then_validate() 
                     constraint: DataConstraint::Mandatory(field("year")),
                 }],
             },
-            ..GraphInput::default()
+            ..PassFixture::default()
         },
         GraphOptions::default(),
     );
@@ -142,11 +163,8 @@ fn xdata_and_crossref_inherit_in_declared_order_with_provenance_then_validate() 
         .iter()
         .find(|entry| entry.id() == &id("c"))
         .expect("valid graph test fixture");
-    assert_eq!(
-        child.fields().get(&field("publisher")),
-        Some(&literal("X Press"))
-    );
-    assert_eq!(child.fields().get(&field("year")), Some(&literal("2026")));
+    assert_eq!(child.field(&field("publisher")), Some(&literal("X Press")));
+    assert_eq!(child.field(&field("year")), Some(&literal("2026")));
     let inherited = child
         .fields()
         .iter()
@@ -164,7 +182,7 @@ fn xdata_and_crossref_inherit_in_declared_order_with_provenance_then_validate() 
 #[test]
 fn sourcemaps_transform_alias_and_clone_without_mutating_the_source() {
     let output = process(
-        GraphInput {
+        PassFixture {
             entries: vec![entry("a", &[("title", literal("Old"))])],
             sections: vec![SectionSpec {
                 id: SectionId::new(0),
@@ -183,7 +201,7 @@ fn sourcemaps_transform_alias_and_clone_without_mutating_the_source() {
                     final_step: true,
                 }],
             }],
-            ..GraphInput::default()
+            ..PassFixture::default()
         },
         GraphOptions::default(),
     );
@@ -192,14 +210,14 @@ fn sourcemaps_transform_alias_and_clone_without_mutating_the_source() {
         output.sections[0]
             .entries
             .iter()
-            .all(|entry| entry.fields().get(&field("title")) == Some(&literal("New")))
+            .all(|entry| entry.field(&field("title")) == Some(&literal("New")))
     );
 }
 
 #[test]
 fn cycles_are_diagnosed_deterministically_and_processing_terminates() {
     let output = process(
-        GraphInput {
+        PassFixture {
             entries: vec![
                 entry("a", &[("crossref", keys(&["b"]))]),
                 entry("b", &[("crossref", keys(&["a"]))]),
@@ -210,7 +228,7 @@ fn cycles_are_diagnosed_deterministically_and_processing_terminates() {
                 include_all: false,
                 min_crossrefs: None,
             }],
-            ..GraphInput::default()
+            ..PassFixture::default()
         },
         GraphOptions::default(),
     );
@@ -226,23 +244,26 @@ fn cycles_are_diagnosed_deterministically_and_processing_terminates() {
 #[test]
 fn graph_work_limits_fail_closed() {
     let error = {
-        let configuration = BibConfigurationBuilder::new(COMPATIBILITY_VERSION).freeze();
-        let unicode = UnicodeData::pinned();
-        GraphProcessor::new(
-            GraphContext::new(&configuration, &unicode),
-            GraphOptions {
-                limits: GraphLimits {
-                    max_entries: 1,
-                    ..GraphLimits::default()
-                },
-                ..GraphOptions::default()
+        match RelationshipPass::new(GraphOptions {
+            limits: GraphLimits {
+                max_entries: 1,
+                ..GraphLimits::default()
             },
-        )
-        .process(GraphInput {
-            entries: vec![entry("a", &[]), entry("b", &[])],
-            ..GraphInput::default()
+            ..GraphOptions::default()
         })
-        .expect_err("graph processing must fail")
+        .process(
+            [&entry("a", &[]), &entry("b", &[])]
+                .into_iter()
+                .map(EntryEditor::from_entry)
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+            &[],
+            &DataModel::default(),
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("graph processing must fail"),
+        }
     };
     assert_eq!(error, GraphError::Limit("entry limit exceeded"));
 }

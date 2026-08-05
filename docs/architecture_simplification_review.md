@@ -87,9 +87,7 @@ The completed cutover also deleted `tex-lex` and `tex-expand`; their required be
 
 Affected crates: `bib-input`, `bib-model`, `bib-graph`, `bib-sort`, `bib-label`, and `bib-engine`.
 
-**Current design — observed.** The normal bibliography session parses raw entries, converts them into typed `Entry` values, sends them through a public `GraphProcessor`, rebuilds processed sections, adds label sources, constructs a temporary initial section, creates a `DataList`, and freezes another section. The sequence is visible at [`crates/bib-engine/src/session.rs:350`](/home/phulin/umber/crates/bib-engine/src/session.rs:350), [`crates/bib-engine/src/session.rs:375`](/home/phulin/umber/crates/bib-engine/src/session.rs:375), and [`crates/bib-engine/src/session.rs:389`](/home/phulin/umber/crates/bib-engine/src/session.rs:389). Conversion itself is a separate adapter at [`crates/bib-engine/src/session/convert.rs:14`](/home/phulin/umber/crates/bib-engine/src/session/convert.rs:14), while graph processing copies each entry into an `Editable` structure at [`crates/bib-graph/src/processor.rs:339`](/home/phulin/umber/crates/bib-graph/src/processor.rs:339).
-
-`bib-label` and `bib-sort` each have one meaningful production caller. `bib-graph` is also only consumed by `bib-engine`.
+**Prior design — observed.** The normal bibliography session parsed raw entries, converted them into typed `Entry` values, sent them through a public `GraphProcessor`, rebuilt processed sections, added label sources, constructed a temporary initial section, created a `DataList`, and froze another section. `bib-label`, `bib-sort`, and `bib-graph` each had only one production caller: `bib-engine`.
 
 **End state.** The Biber path becomes one engine-private worker:
 
@@ -113,7 +111,9 @@ Affected crates: `bib-input`, `bib-model`, `bib-graph`, `bib-sort`, `bib-label`,
 4. Keep the old public crates as delegating compatibility modules until all local consumers disappear.
 5. Remove the `bib-graph`, `bib-sort`, and `bib-label` package boundaries only after upstream corpus tests and downstream API checks pass.
 
-Rollback is a session-level switch back to the current graph/sort/label sequence; old stage types remain readable during migration.
+Rollback now means reverting the cutover commits; no session selector or old stage transport remains.
+
+**Migration status.** `bib-engine/src/biber` now owns the sole `EntryEditor`, indexed relationship/inheritance pass, label and sort plan, and final document builder. `GraphInput`, `GraphOutput`, all three empty stage contexts, the temporary processed section, and the `bib-graph`, `bib-sort`, and `bib-label` packages have been deleted. The session API and pinned Unicode boundary are unchanged; configuration semantics that were inactive before the migration remain inactive.
 
 **Gates and risks.** Run the full BibTeX/Biber compatibility corpus, including the 51 upstream modules and 1,275 assertion identifiers, BBL/XML/DOT output, crossref and xdata cases, duplicate entries, malformed values, name handling, labels, and diagnostics. The main risks are external consumers of currently public crates, accidental option activation, Unicode collation changes, and losing provenance during entry editing.
 

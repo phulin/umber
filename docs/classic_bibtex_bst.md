@@ -36,7 +36,7 @@ entry fields and variables, defines functions, chooses when the database is
 read, iterates or reverses entries, assigns sort keys, sorts, and writes output
 through observable `write$` and `newline$` operations. Consequently, `.bst`
 support is not an output format for `bib-output` and is not an alternate style
-configuration for `bib-sort` or `bib-label`.
+configuration for the engine-private Biber worker.
 
 This document uses:
 
@@ -598,8 +598,8 @@ entries. It must implement:
 - entry order before style sorting; and
 - missing versus empty field behavior.
 
-These rules belong to the classic backend, not `bib-graph`, because their order
-and observability are tied to `READ` and the VM. The implementation may reuse
+These rules belong to the classic backend, not the Biber relationship pass,
+because their order and observability are tied to `READ` and the VM. The implementation may reuse
 pure helpers where equivalence is proven by fixtures.
 
 ## 11. Output and diagnostics

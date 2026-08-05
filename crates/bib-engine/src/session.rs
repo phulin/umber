@@ -2,30 +2,28 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
-use bib_graph::{DataModel, GraphContext, GraphInput, GraphOptions, GraphProcessor, SectionSpec};
 use bib_input::{
     BibTexOptions, BibTexSource, ConfigError, ControlError, ControlFile, XmlError, XmlLimits,
     parse_bibtex_bytes, parse_config_bytes, parse_config_with_paths, parse_control_bytes,
     parse_control_with_paths,
 };
 use bib_model::{
-    BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, DataListId,
-    DiagnosticBuilder, EntryId, ProcessedBibliographyBuilder, ProcessedSectionBuilder, SectionId,
+    BibConfigurationBuilder, BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder,
+    EntryId, SectionId,
 };
 use bib_output::{OutputContext, OutputRouter};
-use bib_sort::{DataListBuilder, SortComponent, SortField, SortTemplate};
 use bib_unicode::{CompatibilityVersion, UnicodeData};
 use umber_vfs::{
     FileContentId, FileKind, FileOrigin, FileRequest, FileRequestBatch, FileRequestKey,
     SnapshotError, VfsSnapshot, VirtualFile, VirtualPath, VirtualRoot,
 };
 
+use crate::biber::BiberWorker;
+use crate::biber::graph::SectionSpec;
 use crate::{BibAttempt, BibFailure, BibFailureKind, BibJob, BibResultBuilder};
 
 mod convert;
-use convert::{add_label_sources, convert_entry};
-
-const DEFAULT_LIST: &str = "nty/global//global/global/global";
+use convert::convert_entry;
 
 /// Bounds and deterministic cache policy retained by one bibliography session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -372,49 +370,18 @@ impl BibSession {
                 })
             })
             .collect::<Result<Vec<_>, ProcessFailure>>()?;
-        let graph = GraphProcessor::new(
-            GraphContext::new(&configuration, &self.unicode),
-            GraphOptions::default(),
-        )
-        .process(GraphInput {
-            entries,
-            aliases: Vec::new(),
-            sections,
-            maps: Vec::new(),
-            data_model: DataModel::default(),
-        })
-        .map_err(|error| terminal(BibFailureKind::Semantic, "GRAPH", format!("{error:?}")))?;
-        diagnostics.extend(graph.diagnostics);
-
-        let mut document = ProcessedBibliographyBuilder::new(configuration);
-        for section in graph.sections {
-            let prepared = section
-                .entries
-                .into_iter()
-                .map(add_label_sources)
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut initial = ProcessedSectionBuilder::new(section.id);
-            for entry in &prepared {
-                initial.entry(entry.clone()).map_err(build_failure)?;
-            }
-            let initial = initial.freeze();
-            let template = SortTemplate::new([SortComponent::ascending(SortField::CiteOrder)])
-                .map_err(|error| terminal(BibFailureKind::Semantic, "SORT", error.to_string()))?;
-            let list = DataListBuilder::new(
-                &initial,
-                DataListId::new(DEFAULT_LIST).expect("fixed list id is valid"),
-                template,
-            )
-            .build()
-            .map_err(|error| terminal(BibFailureKind::Semantic, "SORT", error.to_string()))?;
-            let mut builder = ProcessedSectionBuilder::new(section.id);
-            for entry in prepared {
-                builder.entry(entry).map_err(build_failure)?;
-            }
-            builder.list(list).map_err(build_failure)?;
-            document.section(builder.freeze()).map_err(build_failure)?;
-        }
-        let document = Arc::new(document.freeze());
+        let (document, worker_diagnostics) = BiberWorker::new(configuration)
+            .process(entries, sections)
+            .map_err(|error| {
+                let kind = if error.is_build() {
+                    BibFailureKind::InternalInvariant
+                } else {
+                    BibFailureKind::Semantic
+                };
+                terminal(kind, error.code(), error.message())
+            })?;
+        diagnostics.extend(worker_diagnostics);
+        let document = Arc::new(document);
         let router = OutputRouter::new(job.options().output_options().clone());
         let mut result = BibResultBuilder::new(Arc::clone(&document));
         let mut generated_bytes = 0usize;

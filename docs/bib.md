@@ -100,8 +100,8 @@ The subsystem must:
 - keep all filesystem and network policy in the host/project layers;
 - expose an immutable processed bibliography for callers that need structured
   data rather than serialized output;
-- isolate independently implementable parsing, graph, sorting, labeling, and
-  output work behind stable typed contracts;
+- keep parsing and output behind stable typed contracts while the engine owns
+  one private typed semantic worker;
 - preserve input order explicitly whenever it is semantically observable;
 - make all Unicode, schema, encoding, identifier-validation, and compatibility
   tables versioned immutable resources;
@@ -126,20 +126,17 @@ The initial implementation does not:
 
 ## Crate architecture
 
-The implementation is split at semantic ownership boundaries:
+The implementation keeps external contracts only at durable ownership boundaries:
 
 ```text
-                          bib-engine
-               public session, pipeline, result API
-                                |
-     +----------+----------+----------+----------+
-     |          |          |          |          |
-bib-input   bib-graph   bib-sort   bib-label  bib-output
-     |          |          |          |          |
-     +----------+----------+----------+----------+
-                             bib-model
-                                |
-                            bib-unicode
+               bib-engine
+public session/result API + private Biber worker
+                /    \
+         bib-input  bib-output
+                \    /
+                bib-model
+                    |
+                bib-unicode
 ```
 
 The workspace now contains these packages and dependency boundaries:
@@ -151,27 +148,17 @@ The workspace now contains these packages and dependency boundaries:
   transliteration, legacy encodings, and TeX recoding data;
 - `bib-input`: control/config parsing and validation plus BibTeX and
   BibLaTeXML datasource parsing;
-- `bib-graph`: sourcemaps, aliases, dynamic entries, xdata, crossrefs, related
-  entries, sets, dependency closure, inheritance, and data-model validation;
-- `bib-sort`: list construction, filters, sort templates, sort-key generation,
-  presort, sort initials, and stable ordering;
-- `bib-label`: static and context-dependent entry processing, name visibility,
-  hashes, label fields, extradate/title values, and uniqueness;
 - `bib-output`: detached deterministic BBL 3.3, BibTeX, BibLaTeXML, BBLXML,
   and DOT serialization, deterministic Relax NG companion generation, and a
   single typed router across every alternate output format; and
-- `bib-engine`: the only ordinary dependency of `umber`, composing the stages
-  and exposing resource-session and one-shot APIs.
+- `bib-engine`: the only ordinary dependency of `umber`, owning the private
+  typed Biber worker plus resource-session and one-shot APIs.
 
-All dependencies point toward `bib-model` and `bib-unicode`; semantic worker
-crates do not depend on `bib-engine` or `umber`. `bib-output` consumes a frozen
-processed document and cannot mutate processing state.
-
-The implemented foundation gives each worker crate an immutable stage context.
-`bib-input` additionally receives an `umber-vfs::VfsSnapshot`; the other
-semantic workers receive only frozen configuration/model values and pinned
-Unicode resources. Actual stage algorithms land in their owning issues without
-changing the dependency direction fixed here.
+`bib-input` receives an `umber-vfs::VfsSnapshot`. Inside `bib-engine`, raw
+Biber records lower once to an `EntryEditor`; relationship, inheritance,
+validation, label, and sort logic use that representation until entries are
+frozen once for final section and document publication. `bib-output` consumes
+only that frozen processed document and cannot mutate processing state.
 
 `bib-unicode` supplies the host-independent compatibility substrate. Its
 public values cover BCP-47 tags, extended dates and times, ordered annotations,
@@ -185,7 +172,7 @@ mutable process state. The ten directly owned upstream cohorts
 `bcfvalidation`, `biblatexml`, `configfile`, and `options`) contribute 254
 ordinary assertion-level tests.
 
-`bib-label` now supplies immutable label-source selection, template-driven
+The private Biber label plan supplies immutable label-source selection, template-driven
 labelalpha construction, normalized full and per-name compatibility hashes,
 and context-specific visible-name inputs. Its collision passes assign
 extraalpha, extradate, extratitle, and extratitleyear in explicit data-list
@@ -354,7 +341,7 @@ name records use bounded quote-aware CSV fields with configurable key/value
 separators and key aliases. They preserve source assignment order while
 resolving explicit parts and initial overrides, custom hash ids, per-name
 `useprefix` visibility, and sorting-name-template attributes into the same
-immutable normalized model. The sorting-stage boundary resolves independent
+immutable normalized model. The private sort plan resolves independent
 cite, bibliography, and alpha name limits after option precedence. It keeps
 short lists intact, truncates over-limit or explicit-`others` lists to the
 configured minimum capped by the concrete name count, preserves source order,
@@ -448,12 +435,7 @@ typed. Macro, comment, case, recoding, and DOT inclusion policy enter through
 immutable `OutputOptions`; no tool-mode step reads the host filesystem or
 spawns a process.
 
-Each stage accepts an explicit context and mutable private builder, then
-returns a validated next-stage value or ordered diagnostics. No stage reads a
-global configuration object, current directory, process locale, or argument
-vector.
-
-The implemented `bib-graph` boundary applies declared sourcemaps before graph
+The engine-private relationship pass applies declared sourcemaps before graph
 construction, resolves case-insensitive citation aliases, and builds each
 section independently from its original citekeys. Set members and related
 entries form deterministic dependency closure; crossref/xref parent inclusion
@@ -905,10 +887,8 @@ Test ownership follows semantic boundaries:
 
 - `bib-input`: control validation, config, aliases at parse time, encodings,
   BibTeX, and BibLaTeXML;
-- `bib-graph`: crossrefs, xdata, related entries, maps, sections, and sets;
-- `bib-sort`: data lists, skips, truncation, sort order/case/locale, and complex
-  sorting;
-- `bib-label`: names, label families, extra fields, and uniqueness;
+- `bib-engine/src/biber`: crossrefs, xdata, related entries, maps, sections,
+  data lists, stable sorting, names, labels, extra fields, and uniqueness;
 - `bib-output`: whole BBL/BibTeX/DOT files and tool output; and
 - `bib-model`/`bib-unicode`: utilities, dates, language tags,
   transliteration, annotations, and value invariants.
@@ -1014,8 +994,8 @@ The completed dependency-ordered implementation has three stable layers:
 
 1. `bib-model` and `bib-unicode` own immutable values, compatibility identity,
    diagnostics, encodings, normalization, collation, and bounded utilities.
-2. `bib-input`, `bib-graph`, `bib-sort`, `bib-label`, and `bib-output` own the
-   staged semantic transformation and detached serializers.
+2. `bib-input` and `bib-output` own parsing and detached serialization;
+   `bib-engine/src/biber` owns one private typed semantic transformation.
 3. `bib-engine`, `umber::LatexProjectSession`, and the `umber-wasm` project
    bindings own resumable resource acquisition, cache-transparent execution,
    command compatibility, and transactional TeX-bibliography convergence.

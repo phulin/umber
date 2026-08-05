@@ -1,7 +1,7 @@
 //! Native translations of upstream `t/sorting.t` at commit 74252e6.
 
 use bib_engine::{BibResult, DataListId, FieldId};
-use bib_sort::{
+use bib_engine::{
     DataListBuilder, PadDirection, SortComponent, SortDirection, SortField, SortOptions,
     SortTemplate,
 };

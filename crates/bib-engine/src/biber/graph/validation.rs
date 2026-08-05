@@ -1,4 +1,6 @@
-use bib_model::{Entry, EntryType, FieldId, FieldValue};
+use bib_model::{EntryType, FieldId, FieldValue};
+
+use crate::biber::EntryEditor;
 
 #[derive(Clone, Debug, Default)]
 pub struct DataModel {
@@ -27,7 +29,7 @@ pub enum DataConstraint {
 }
 
 impl ValidationRule {
-    pub(crate) fn violation(&self, entry: &Entry) -> Option<String> {
+    pub(crate) fn violation(&self, entry: &EntryEditor) -> Option<String> {
         if self
             .entry_type
             .as_ref()
@@ -35,7 +37,7 @@ impl ValidationRule {
         {
             return None;
         }
-        let has = |field: &FieldId| entry.fields().get(field).is_some();
+        let has = |field: &FieldId| entry.field(field).is_some();
         match &self.constraint {
             DataConstraint::Mandatory(field) if !has(field) => {
                 Some(format!("missing mandatory field `{field}`"))
@@ -58,8 +60,7 @@ impl ValidationRule {
                 ))
             }
             DataConstraint::AllowedType { field, value_kind } => entry
-                .fields()
-                .get(field)
+                .field(field)
                 .filter(|value| kind(value) != *value_kind)
                 .map(|_| format!("field `{field}` must have type `{value_kind}`")),
             _ => None,

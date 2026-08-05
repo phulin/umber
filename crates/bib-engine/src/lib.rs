@@ -1,13 +1,12 @@
 //! Public facade for Umber's in-process bibliography engine.
 //!
-//! This crate exposes detached jobs and results while semantic worker crates
-//! remain implementation boundaries. Resource-session execution is added by a
-//! later bibliography issue; these values already contain no host policy or
-//! mutable global state.
+//! This crate exposes detached jobs and results while its Biber semantic worker
+//! remains private. These values contain no host policy or mutable global state.
 
 use std::fmt;
 use std::sync::Arc;
 
+mod biber;
 mod bibliography;
 mod classic;
 mod classic_command;
@@ -35,6 +34,11 @@ pub use bib_output::{
     OutputFailureKind, OutputOptions, OutputRouter, Serializer,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
+#[doc(hidden)]
+pub use biber::sort::{
+    DataListBuilder, PadDirection, SortComponent, SortDirection, SortField, SortOptions,
+    SortTemplate,
+};
 pub use bibliography::{
     BibliographyAttempt, BibliographyBackend, BibliographyDiagnostic, BibliographyDiagnosticCode,
     BibliographyDocument, BibliographyFailure, BibliographyHistory, BibliographyInput,

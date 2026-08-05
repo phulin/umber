@@ -1,25 +1,24 @@
 use std::collections::BTreeSet;
 
 use bib_input::ClassicNameOptions;
-use bib_label::{LabelEntry, select_labels};
 use bib_model::{
-    BibSourceLocation, Entry, EntryBuilder, EntryId, EntryType, FieldId, FieldProvenance,
-    FieldValue, FieldValueStage, Literal, Range, RangeEndpoint, SourceSpan, TransformationId, Uri,
-    Verbatim,
+    BibSourceLocation, EntryId, EntryType, FieldId, FieldProvenance, FieldValue, FieldValueStage,
+    Literal, Range, RangeEndpoint, SourceSpan, Uri, Verbatim,
 };
 use umber_vfs::VirtualPath;
 
-use super::{ProcessFailure, build_failure, invalid};
+use super::{ProcessFailure, invalid};
+use crate::biber::EntryEditor;
 
 pub(super) fn convert_entry(
     raw: &bib_input::BibTexEntry,
     path: &VirtualPath,
-) -> Result<Entry, ProcessFailure> {
+) -> Result<EntryEditor, ProcessFailure> {
     let source = source(path);
     let id = EntryId::new(raw.key()).map_err(|error| invalid(error.to_string()))?;
     let entry_type = EntryType::new(raw.entry_type().to_ascii_lowercase())
         .map_err(|error| invalid(error.to_string()))?;
-    let mut builder = EntryBuilder::new(id, entry_type, source.clone());
+    let mut editor = EntryEditor::new(id, entry_type, source.clone());
     let raw_names = raw
         .fields()
         .iter()
@@ -33,19 +32,17 @@ pub(super) fn convert_entry(
         }
         let field = FieldId::new(name.clone()).map_err(|error| invalid(error.to_string()))?;
         let value = typed_field(&name, raw_field.value())?;
-        builder
-            .field(
-                field,
-                value,
-                FieldValueStage::Normalized,
-                FieldProvenance::Datasource(source.clone()),
-            )
-            .map_err(build_failure)?;
+        editor.set_field(
+            field,
+            value,
+            FieldValueStage::Normalized,
+            FieldProvenance::Datasource(source.clone()),
+        );
         if name == "date" {
-            add_date_parts(&mut builder, raw_field.value(), &source, &raw_names)?;
+            add_date_parts(&mut editor, raw_field.value(), &source, &raw_names)?;
         }
     }
-    Ok(builder.freeze())
+    Ok(editor)
 }
 
 fn typed_field(name: &str, value: &str) -> Result<FieldValue, ProcessFailure> {
@@ -92,7 +89,7 @@ fn typed_field(name: &str, value: &str) -> Result<FieldValue, ProcessFailure> {
 }
 
 fn add_date_parts(
-    builder: &mut EntryBuilder,
+    editor: &mut EntryEditor,
     value: &str,
     source: &BibSourceLocation,
     existing: &BTreeSet<String>,
@@ -109,14 +106,12 @@ fn add_date_parts(
         let Some(Ok(value)) = part.map(str::parse::<i64>) else {
             continue;
         };
-        builder
-            .field(
-                FieldId::new(name).expect("fixed field id is valid"),
-                FieldValue::Integer(value),
-                FieldValueStage::Derived,
-                FieldProvenance::Datasource(source.clone()),
-            )
-            .map_err(build_failure)?;
+        editor.set_field(
+            FieldId::new(name).expect("fixed field id is valid"),
+            FieldValue::Integer(value),
+            FieldValueStage::Derived,
+            FieldProvenance::Datasource(source.clone()),
+        );
     }
     Ok(())
 }
@@ -147,67 +142,6 @@ fn endpoint(value: &str) -> RangeEndpoint {
         |_| RangeEndpoint::Literal(Literal::new(value)),
         RangeEndpoint::Integer,
     )
-}
-
-pub(super) fn add_label_sources(entry: Entry) -> Result<Entry, ProcessFailure> {
-    let mut label = LabelEntry::default();
-    for field in entry.fields().iter() {
-        match field.value() {
-            FieldValue::NameList(names) => {
-                label.names.insert(field.id().as_str(), names);
-            }
-            FieldValue::Literal(value) => {
-                label.fields.insert(field.id().as_str(), value.as_str());
-            }
-            _ => {}
-        }
-    }
-    let selection = select_labels(
-        &label,
-        &["author", "editor", "translator"],
-        &["labelyear", "year", "date"],
-        &["labeltitle", "title", "maintitle"],
-    );
-    let mut builder = EntryBuilder::new(
-        entry.id().clone(),
-        entry.entry_type().clone(),
-        entry.source().clone(),
-    );
-    for field in entry.fields().iter() {
-        builder
-            .field(
-                field.id().clone(),
-                field.value().clone(),
-                field.stage(),
-                field.provenance().clone(),
-            )
-            .map_err(build_failure)?;
-    }
-    let transformation = TransformationId::new("label-source").expect("fixed id is valid");
-    for (name, value) in [
-        ("labelnamesource", selection.name_source),
-        ("labeldatesource", selection.date_source),
-        ("labeltitlesource", selection.title_source),
-    ] {
-        if entry
-            .fields()
-            .get(&FieldId::new(name).expect("fixed field id is valid"))
-            .is_none()
-        {
-            builder
-                .field(
-                    FieldId::new(name).expect("fixed field id is valid"),
-                    FieldValue::Literal(Literal::new(value.unwrap_or_default())),
-                    FieldValueStage::Computed,
-                    FieldProvenance::Computed {
-                        transformation: transformation.clone(),
-                        inputs: Vec::new(),
-                    },
-                )
-                .map_err(build_failure)?;
-        }
-    }
-    Ok(builder.freeze())
 }
 
 fn source(path: &VirtualPath) -> BibSourceLocation {

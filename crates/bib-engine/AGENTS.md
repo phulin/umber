@@ -15,8 +15,9 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `src/classic_vm.rs`: bounded classic BST command execution, mutable VM state, and detached BBL/BLG effects.
 - `src/command.rs`: pinned in-process command invocation, output naming, status, terminal, and log-byte adapter.
 - `src/command/tests.rs`: exact invocation validation and command-result fixtures.
-- `src/session.rs`: resumable VFS resource loop, bounded caches, accepted-input selection, stage composition, and detached output routing.
-- `src/session/convert.rs`: raw BibTeX-to-model conversion, typed values, and label-source preparation.
+- `src/session.rs`: resumable VFS resource loop, bounded caches, accepted-input selection, and detached output routing.
+- `src/session/convert.rs`: raw BibTeX-to-worker lowering and typed value conversion.
+- `src/biber/`: the engine-private typed entry lifecycle, indexed relationship and inheritance pass, sort/label planning, and single frozen-document publication point.
 - `src/session/tests.rs`: retry, no-progress, typed-query, and cold/cache parity tests.
 - `src/tool.rs`: synthetic-section tool mode and in-process alternate-output routing.
 - `tests/it.rs`: the crate's sole Cargo integration-test binary.

@@ -1,38 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use bib_model::{
-    BibConfiguration, BibDiagnostic, BibDiagnosticCode, BibSeverity, DerivedFrom,
-    DiagnosticBuilder, Entry, EntryBuilder, EntryId, EntryType, Field, FieldId, FieldProvenance,
-    FieldValue, FieldValueStage, SectionId, TransformationId,
+    BibDiagnostic, BibDiagnosticCode, BibSeverity, DerivedFrom, DiagnosticBuilder, EntryId, Field,
+    FieldId, FieldProvenance, FieldValue, FieldValueStage, SectionId, TransformationId,
 };
-use bib_unicode::UnicodeData;
 
-use crate::maps::{MapAction, SourceMap, matches};
-use crate::validation::DataModel;
-
-#[derive(Clone, Copy, Debug)]
-pub struct GraphContext<'a> {
-    configuration: &'a BibConfiguration,
-    unicode: &'a UnicodeData,
-}
-
-impl<'a> GraphContext<'a> {
-    #[must_use]
-    pub const fn new(configuration: &'a BibConfiguration, unicode: &'a UnicodeData) -> Self {
-        Self {
-            configuration,
-            unicode,
-        }
-    }
-    #[must_use]
-    pub const fn configuration(self) -> &'a BibConfiguration {
-        self.configuration
-    }
-    #[must_use]
-    pub const fn unicode(self) -> &'a UnicodeData {
-        self.unicode
-    }
-}
+use super::maps::{MapAction, SourceMap, matches};
+use super::validation::DataModel;
+use crate::biber::EntryEditor;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GraphLimits {
@@ -80,26 +55,11 @@ pub struct SectionSpec {
     pub min_crossrefs: Option<usize>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct GraphInput {
-    pub entries: Vec<Entry>,
-    pub aliases: Vec<(EntryId, EntryId)>,
-    pub sections: Vec<SectionSpec>,
-    pub maps: Vec<SourceMap>,
-    pub data_model: DataModel,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GraphSection {
+#[derive(Clone)]
+pub(crate) struct GraphSection {
     pub id: SectionId,
-    pub entries: Vec<Entry>,
+    pub entries: Vec<EntryEditor>,
     pub original_citekeys: Vec<EntryId>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GraphOutput {
-    pub sections: Vec<GraphSection>,
-    pub diagnostics: Vec<BibDiagnostic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,24 +70,28 @@ pub enum GraphError {
     Limit(&'static str),
 }
 
-pub struct GraphProcessor<'a> {
-    #[allow(dead_code)]
-    context: GraphContext<'a>,
+pub(crate) struct RelationshipPass {
     options: GraphOptions,
 }
 
-impl<'a> GraphProcessor<'a> {
+impl RelationshipPass {
     #[must_use]
-    pub const fn new(context: GraphContext<'a>, options: GraphOptions) -> Self {
-        Self { context, options }
+    pub const fn new(options: GraphOptions) -> Self {
+        Self { options }
     }
 
-    pub fn process(&self, input: GraphInput) -> Result<GraphOutput, GraphError> {
-        if input.entries.len() > self.options.limits.max_entries {
+    pub fn process(
+        &self,
+        entries: Vec<EntryEditor>,
+        input_aliases: Vec<(EntryId, EntryId)>,
+        input_sections: Vec<SectionSpec>,
+        maps: &[SourceMap],
+        data_model: &DataModel,
+    ) -> Result<(Vec<GraphSection>, Vec<BibDiagnostic>), GraphError> {
+        if entries.len() > self.options.limits.max_entries {
             return Err(GraphError::Limit("entry limit exceeded"));
         }
-        let (entries, mapped_aliases) =
-            apply_maps(input.entries, &input.maps, self.options.limits.max_entries)?;
+        let (entries, mapped_aliases) = apply_maps(entries, maps, self.options.limits.max_entries)?;
         let mut index = BTreeMap::new();
         for (position, entry) in entries.iter().enumerate() {
             if index.insert(key(entry.id()), position).is_some() {
@@ -135,12 +99,12 @@ impl<'a> GraphProcessor<'a> {
             }
         }
         let mut aliases = BTreeMap::new();
-        for (alias, target) in input.aliases.into_iter().chain(mapped_aliases) {
+        for (alias, target) in input_aliases.into_iter().chain(mapped_aliases) {
             if aliases.insert(key(&alias), target).is_some() {
                 return Err(GraphError::DuplicateAlias(alias));
             }
         }
-        let specs = if input.sections.is_empty() {
+        let specs = if input_sections.is_empty() {
             vec![SectionSpec {
                 id: SectionId::new(0),
                 cited: Vec::new(),
@@ -148,7 +112,7 @@ impl<'a> GraphProcessor<'a> {
                 min_crossrefs: None,
             }]
         } else {
-            input.sections
+            input_sections
         };
         let mut diagnostics = Vec::new();
         let mut sections = Vec::with_capacity(specs.len());
@@ -157,20 +121,17 @@ impl<'a> GraphProcessor<'a> {
                 &entries,
                 &index,
                 &aliases,
-                &input.data_model,
+                data_model,
                 spec,
                 &mut diagnostics,
             )?);
         }
-        Ok(GraphOutput {
-            sections,
-            diagnostics,
-        })
+        Ok((sections, diagnostics))
     }
 
     fn process_section(
         &self,
-        entries: &[Entry],
+        entries: &[EntryEditor],
         index: &BTreeMap<String, usize>,
         aliases: &BTreeMap<String, EntryId>,
         model: &DataModel,
@@ -290,21 +251,20 @@ impl<'a> GraphProcessor<'a> {
     }
 }
 
-type MappedEntries = (Vec<Entry>, Vec<(EntryId, EntryId)>);
+type MappedEntries = (Vec<EntryEditor>, Vec<(EntryId, EntryId)>);
 
 fn apply_maps(
-    entries: Vec<Entry>,
+    entries: Vec<EntryEditor>,
     maps: &[SourceMap],
     max_entries: usize,
 ) -> Result<MappedEntries, GraphError> {
     let mut output = Vec::new();
     let mut aliases = Vec::new();
     for entry in entries {
-        let mut editable = Editable::from(entry);
+        let mut editable = entry;
         for map in maps {
             for step in &map.steps {
-                let snapshot = editable.freeze()?;
-                if !matches(&snapshot, &step.matches) {
+                if !matches(&editable, &step.matches) {
                     continue;
                 }
                 for action in &step.actions {
@@ -315,16 +275,10 @@ fn apply_maps(
                 }
             }
         }
-        let clones = std::mem::take(&mut editable.clones);
-        output.push(editable.freeze()?);
+        let clones = editable.take_clones();
+        output.push(editable);
         for id in clones {
-            let mut clone = output.last().expect("entry was just inserted").clone();
-            clone = rebuild(
-                &clone,
-                id,
-                clone.entry_type().clone(),
-                clone.fields().iter().cloned().collect(),
-            )?;
+            let clone = output.last().expect("entry was just inserted").clone_as(id);
             output.push(clone);
         }
         if output.len() > max_entries {
@@ -336,39 +290,7 @@ fn apply_maps(
     Ok((output, aliases))
 }
 
-#[derive(Clone)]
-struct Editable {
-    id: EntryId,
-    kind: EntryType,
-    fields: Vec<Field>,
-    options: bib_model::ScopedOptions,
-    annotations: Vec<bib_model::Annotation>,
-    source: bib_model::BibSourceLocation,
-    clones: Vec<EntryId>,
-}
-
-impl Editable {
-    fn from(entry: Entry) -> Self {
-        Self {
-            id: entry.id().clone(),
-            kind: entry.entry_type().clone(),
-            fields: entry.fields().iter().cloned().collect(),
-            options: entry.options().clone(),
-            annotations: entry.annotations().cloned().collect(),
-            source: entry.source().clone(),
-            clones: Vec::new(),
-        }
-    }
-    fn freeze(&self) -> Result<Entry, GraphError> {
-        rebuild_parts(
-            &self.id,
-            &self.kind,
-            &self.fields,
-            &self.options,
-            &self.annotations,
-            &self.source,
-        )
-    }
+impl EntryEditor {
     fn apply(
         &mut self,
         action: &MapAction,
@@ -376,59 +298,59 @@ impl Editable {
     ) -> Result<(), GraphError> {
         match action {
             MapAction::Set(id, value) => {
-                self.fields.retain(|field| field.id() != id);
-                self.fields.push(mapped_field(
+                self.set_field(
                     id.clone(),
                     value.clone(),
-                    self.source.clone(),
-                )?);
+                    FieldValueStage::Derived,
+                    mapped_provenance(self.source().clone())?,
+                );
             }
-            MapAction::SetIfMissing(id, value)
-                if !self.fields.iter().any(|field| field.id() == id) =>
-            {
-                self.fields.push(mapped_field(
+            MapAction::SetIfMissing(id, value) if self.field(id).is_none() => {
+                self.set_field(
                     id.clone(),
                     value.clone(),
-                    self.source.clone(),
-                )?)
+                    FieldValueStage::Derived,
+                    mapped_provenance(self.source().clone())?,
+                );
             }
             MapAction::SetIfMissing(_, _) => {}
-            MapAction::Remove(id) => self.fields.retain(|field| field.id() != id),
+            MapAction::Remove(id) => {
+                self.remove_field(id);
+            }
             MapAction::Rename(from, to) => {
-                if let Some(position) = self.fields.iter().position(|field| field.id() == from) {
-                    let old = self.fields.remove(position);
-                    self.fields.push(Field::new(
+                if let Some(old) = self.remove_field(from) {
+                    self.push_field(Field::new(
                         to.clone(),
                         old.value().clone(),
                         FieldValueStage::Derived,
                         FieldProvenance::Transformed {
-                            source: self.source.clone(),
+                            source: self.source().clone(),
                             transformation: transformation("sourcemap-rename")?,
                         },
                     ));
                 }
             }
-            MapAction::ChangeType(kind) => self.kind = kind.clone(),
-            MapAction::AddAlias(alias) => aliases.push((entry(alias)?, self.id.clone())),
-            MapAction::CloneAs(id) => self.clones.push(entry(id)?),
+            MapAction::ChangeType(kind) => self.change_type(kind.clone()),
+            MapAction::AddAlias(alias) => aliases.push((entry(alias)?, self.id().clone())),
+            MapAction::CloneAs(id) => self.queue_clone(entry(id)?),
         }
         Ok(())
     }
 }
 
 struct Inheritance<'a> {
-    entries: &'a [Entry],
+    entries: &'a [EntryEditor],
     index: &'a BTreeMap<String, usize>,
     aliases: &'a BTreeMap<String, EntryId>,
     inherit_xref: bool,
     limits: GraphLimits,
-    memo: BTreeMap<usize, Entry>,
+    memo: BTreeMap<usize, EntryEditor>,
     stack: Vec<usize>,
     diagnostics: &'a mut Vec<BibDiagnostic>,
 }
 
 impl Inheritance<'_> {
-    fn resolve(&mut self, position: usize) -> Result<Entry, GraphError> {
+    fn resolve(&mut self, position: usize) -> Result<EntryEditor, GraphError> {
         if let Some(entry) = self.memo.get(&position) {
             return Ok(entry.clone());
         }
@@ -459,7 +381,7 @@ impl Inheritance<'_> {
         }
         self.stack.push(position);
         let child = self.entries[position].clone();
-        let mut fields: Vec<Field> = child.fields().iter().cloned().collect();
+        let mut result = child.clone();
         let relationship_order: &[&str] = if self.inherit_xref {
             &["xdata", "crossref", "xref"]
         } else {
@@ -480,13 +402,11 @@ impl Inheritance<'_> {
                     continue;
                 };
                 let parent = self.resolve(parent_position)?;
-                for inherited in parent.fields().iter() {
-                    if is_relationship(inherited.id())
-                        || fields.iter().any(|own| own.id() == inherited.id())
-                    {
+                for inherited in parent.fields() {
+                    if is_relationship(inherited.id()) || result.field(inherited.id()).is_some() {
                         continue;
                     }
-                    fields.push(Field::new(
+                    result.push_field(Field::new(
                         inherited.id().clone(),
                         inherited.value().clone(),
                         FieldValueStage::Derived,
@@ -499,75 +419,15 @@ impl Inheritance<'_> {
             }
         }
         self.stack.pop();
-        let result = rebuild(
-            &child,
-            child.id().clone(),
-            child.entry_type().clone(),
-            fields,
-        )?;
         self.memo.insert(position, result.clone());
         Ok(result)
     }
 }
-
-fn rebuild(
-    original: &Entry,
-    id: EntryId,
-    kind: EntryType,
-    fields: Vec<Field>,
-) -> Result<Entry, GraphError> {
-    let annotations = original.annotations().cloned().collect::<Vec<_>>();
-    rebuild_parts(
-        &id,
-        &kind,
-        &fields,
-        original.options(),
-        &annotations,
-        original.source(),
-    )
-}
-fn rebuild_parts(
-    id: &EntryId,
-    kind: &EntryType,
-    fields: &[Field],
-    options: &bib_model::ScopedOptions,
-    annotations: &[bib_model::Annotation],
-    source: &bib_model::BibSourceLocation,
-) -> Result<Entry, GraphError> {
-    let mut builder = EntryBuilder::new(id.clone(), kind.clone(), source.clone());
-    builder.options(options.clone());
-    for field in fields {
-        builder
-            .field(
-                field.id().clone(),
-                field.value().clone(),
-                field.stage(),
-                field.provenance().clone(),
-            )
-            .map_err(|error| GraphError::InvalidMap(error.to_string()))?;
-    }
-    for annotation in annotations {
-        builder
-            .annotation(annotation.clone())
-            .map_err(|error| GraphError::InvalidMap(error.to_string()))?;
-    }
-    Ok(builder.freeze())
-}
-
-fn mapped_field(
-    id: FieldId,
-    value: FieldValue,
-    source: bib_model::BibSourceLocation,
-) -> Result<Field, GraphError> {
-    Ok(Field::new(
-        id,
-        value,
-        FieldValueStage::Derived,
-        FieldProvenance::Transformed {
-            source,
-            transformation: transformation("sourcemap-set")?,
-        },
-    ))
+fn mapped_provenance(source: bib_model::BibSourceLocation) -> Result<FieldProvenance, GraphError> {
+    Ok(FieldProvenance::Transformed {
+        source,
+        transformation: transformation("sourcemap-set")?,
+    })
 }
 fn transformation(value: &str) -> Result<TransformationId, GraphError> {
     TransformationId::new(value).map_err(|error| GraphError::InvalidMap(error.to_string()))
@@ -593,11 +453,11 @@ fn resolve(
             .and_then(|target| index.get(&key(target)).copied())
     })
 }
-fn keys<'a>(entry: &'a Entry, name: &str) -> Vec<&'a EntryId> {
+fn keys<'a>(entry: &'a EntryEditor, name: &str) -> Vec<&'a EntryId> {
     let Ok(id) = field(name) else {
         return Vec::new();
     };
-    match entry.fields().get(&id) {
+    match entry.field(&id) {
         Some(FieldValue::KeyList(keys)) => keys.iter().collect(),
         _ => Vec::new(),
     }
@@ -608,7 +468,7 @@ fn is_relationship(id: &FieldId) -> bool {
         "xdata" | "crossref" | "xref" | "related" | "entryset"
     )
 }
-fn provenance_source(field: &Field, parent: &Entry) -> bib_model::BibSourceLocation {
+fn provenance_source(field: &Field, parent: &EntryEditor) -> bib_model::BibSourceLocation {
     match field.provenance() {
         FieldProvenance::Datasource(source)
         | FieldProvenance::Transformed { source, .. }
