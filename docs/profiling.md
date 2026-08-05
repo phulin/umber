@@ -233,6 +233,12 @@ cargo run --profile profiling -p umber --bin gentle-profile \
 
 ## Stabilization replay gate
 
+The paragraph replay deletion baseline and its reusable post-deletion workload
+identities are recorded in
+[`paragraph_replay_deletion_baseline.md`](paragraph_replay_deletion_baseline.md).
+Use `--paragraph-workload` for its paired synthetic edit cases and
+`--synthetic-stabilization-replay` for its compact generated-input case.
+
 Use `--stabilization-replay` for the generated-input slow path. The runner
 alternates sixteen generations of one externally supplied reference width over
 an unchanged Gentle root. Disabled and paragraph-recording sessions run in

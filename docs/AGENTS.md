@@ -91,6 +91,10 @@ mounts, lazy output provenance, cold-equivalent boundary publication, and
 path-separated verification. It deliberately does not use a reverse suffix
 hash, hierarchical execution trace, or prepared-hlist fallback tier.
 
+`paragraph_replay_deletion_baseline.md` records the reproducible pre-deletion
+paragraph replay measurements and workload identities used for the fixed
+post-deletion comparison.
+
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,
 including store ownership, reclamation, hashing, rollout, and validation.
