@@ -11,7 +11,7 @@
 .\tenrm d
 .\glue(\thickmuskip) 3.33325
 .\tenrm e
-.\glue(\mskip) 1.66663mu
+.\glue 1.66663
 .\glue(\thickmuskip) 3.33325
 .\tenrm f
 .\kern0.77779

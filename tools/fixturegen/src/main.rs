@@ -279,7 +279,14 @@ fn regenerate_lexer_dynamic_case(case: &str) -> Result<()> {
 }
 
 fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Result<()> {
-    let output = RefTex::locate()?.run(&source_path(area, case), &RunOpts::default())?;
+    let source = initex_source(area, case)?;
+    let output = RefTex::locate()?.run(
+        &source.path,
+        &RunOpts {
+            ini: true,
+            ..RunOpts::default()
+        },
+    )?;
     let actual = if box_dump {
         normalize::box_dump(&output.log)
     } else {
@@ -290,19 +297,79 @@ fn regenerate_reference_log_case(area: &str, case: &str, box_dump: bool) -> Resu
 
 fn regenerate_etex_reference_log_case(case: &str) -> Result<()> {
     let area = "etex_exec";
+    let source = initex_source(area, case)?;
     let support = corpus_root()
         .join(area)
         .join(case)
         .join(format!("{case}.txt"));
-    let mut opts = RunOpts::default();
+    let mut opts = RunOpts {
+        ini: true,
+        etex: true,
+        ..RunOpts::default()
+    };
     if support.exists() {
         opts.extra_inputs.push(support);
     }
-    let output = RefTex::locate()?.run(&source_path(area, case), &opts)?;
+    let output = RefTex::locate()?.run(&source.path, &opts)?;
     if !output.success {
         bail!("reference e-TeX failed for {area}/{case}:\n{}", output.log);
     }
     write_text_fixture(area, case, "log", &normalize::exec_log(&output.log))
+}
+
+/// A reference INITEX run needs the seven printable catcode assignments that
+/// `umber run` installs without loading Plain; tex.web §232 itself leaves
+/// these characters as `other_char`.
+struct InitexSource {
+    _directory: TempDir,
+    path: PathBuf,
+}
+
+fn initex_source(area: &str, case: &str) -> Result<InitexSource> {
+    const PLAIN_CATCODES: &[u8] =
+        br"\catcode123=1 \catcode125=2 \catcode36=3 \catcode38=4 \catcode35=6 \catcode94=7 \catcode95=8 ";
+    const CORPUS_FONT_PREFIX: &[u8] = b"../../crates/tex-fonts/tests/fixtures/cm/";
+
+    let original = source_path(area, case);
+    let file_name = original
+        .file_name()
+        .context("INITEX corpus source has no file name")?;
+    let directory = TempDir::new().context("create INITEX corpus source directory")?;
+    let path = directory.path().join(file_name);
+    let source = fs::read(&original)
+        .with_context(|| format!("failed to read INITEX corpus source {}", original.display()))?;
+    let font_root = repo_root().join("crates/tex-fonts/tests/fixtures/cm");
+    let mut absolute_font_prefix = font_root
+        .to_str()
+        .context("repository font fixture path is not UTF-8")?
+        .as_bytes()
+        .to_vec();
+    absolute_font_prefix.push(b'/');
+    let source = replace_bytes(&source, CORPUS_FONT_PREFIX, &absolute_font_prefix);
+    let mut staged = Vec::with_capacity(PLAIN_CATCODES.len() + source.len());
+    staged.extend_from_slice(PLAIN_CATCODES);
+    staged.extend_from_slice(&source);
+    fs::write(&path, staged).context("write INITEX corpus source")?;
+
+    Ok(InitexSource {
+        _directory: directory,
+        path,
+    })
+}
+
+fn replace_bytes(input: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(input.len());
+    let mut remaining = input;
+    while let Some(index) = remaining
+        .windows(needle.len())
+        .position(|window| window == needle)
+    {
+        output.extend_from_slice(&remaining[..index]);
+        output.extend_from_slice(replacement);
+        remaining = &remaining[index + needle.len()..];
+    }
+    output.extend_from_slice(remaining);
+    output
 }
 
 fn regenerate_tex_exec_case(case: &str) -> Result<()> {

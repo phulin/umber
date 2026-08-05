@@ -3,6 +3,13 @@
 `tools/refexec` is an opt-in host-side regeneration utility: it runs the machine reference TeX (`pdftex`, falling back to `tex`) in a fresh temporary directory, captures stdout/log/DVI outputs, and leaves repository inputs untouched. By default the tool locates `pdftex` or `tex` on `PATH`; set `UMBER_REF_TEX=/absolute/path/to/pdftex` to point fixture regeneration at a different reference binary, such as a specific TeX Live installation. Exact DVI normalization/comparison is owned by `test-support`; `refexec` re-exports and uses that shared contract for its CLI comparison paths.
 
 `tools/fixturegen` is the sole host-side fixture publication owner used by `scripts/regen-fixtures.sh` and primary-checkout provisioning. Its `CasePlan`, `ArtifactSpec`, and `AtomicCaseTransaction` cover ordinary text/native updates, layout and PDF migration, externally staged cohorts, command-semantic batches, end-to-end reference DVI publication, and corpus acquisition. It is intentionally not a root workspace member; build it via `cargo build --manifest-path tools/fixturegen/Cargo.toml`. It may invoke `refexec`, `umber`, `pdftex`, `pdftoppm`, and `tftopl`, but cargo tests must not build or run it.
+The `exec`, `typeset`, and `etex_exec` log generators run the reference in
+INITEX mode (extended for `etex_exec`) and stage the seven printable catcode
+assignments that `umber run` installs without loading a format. This matches
+parameters and lexical conventions without inheriting Plain's assignments.
+Their staged sources resolve repository-owned Computer Modern requests to the
+owning worktree's absolute TFM paths, so regeneration never substitutes an
+ambient TeX installation's font metrics.
 
 `fixturegen --migrate-layout --plan` deterministically inventories the
 single declarative registry of execution/output, lexical/session, and native

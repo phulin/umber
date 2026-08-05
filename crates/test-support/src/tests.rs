@@ -1,4 +1,14 @@
-use crate::read_fixture;
+use crate::{normalize, read_fixture};
+
+#[test]
+fn diagnostic_normalization_retains_box_reports() {
+    let report = "Overfull \\hbox (5.2778pt too wide) in paragraph at lines 4--4\n\
+                  []\\tenrm x\n\n\
+                  \\hbox(4.30554+0.0)x0.0 []\n";
+
+    assert_eq!(normalize::exec_log(report), report);
+    assert_eq!(normalize::box_dump(report), report);
+}
 
 #[test]
 fn hello_fixture_is_committed() {
