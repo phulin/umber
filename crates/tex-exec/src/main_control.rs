@@ -8958,9 +8958,11 @@ fn scan_command(
             Ok(ScannedStep::EndSemiSimpleGroup)
         }
         Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup) => {
-            if !processor.has_control_sequence_spelling(&command, "endgroup") {
-                return Ok(ScannedStep::Continue);
-            }
+            // TeX82 §1215's `\let` copies `cur_cmd`/`cur_chr`, so every
+            // user control sequence with `end_group` meaning takes §1063's
+            // dispatch irrespective of its spelling. Inaccessible alignment
+            // sentinels have the distinct `EndV`/`EndTemplate` meanings and
+            // remain owned by their dedicated paths.
             scan_off_save(processor, command, innermost_group)
         }
         // TeX82 §1094's `hmode+stop,...: head_for_vmode`. §1095's

@@ -3,7 +3,10 @@ use std::sync::Arc;
 use test_support::{CompileFailDependency, assert_compile_fail};
 use tex_command::{RegisteredSourceKind, SourceRegistration};
 use tex_exec::{MainControl, MainControlStep};
-use tex_state::{EffectRecord, InteractionMode, PrintSink, Universe};
+use tex_state::{
+    EffectRecord, InteractionMode, PrintSink, Universe,
+    meaning::{Meaning, UnexpandablePrimitive},
+};
 
 fn run_tex82(source: &[u8], tracing_online: bool) -> String {
     let mut stores = Universe::new_with_plain_catcodes();
@@ -44,6 +47,58 @@ fn run_tex82(source: &[u8], tracing_online: bool) -> String {
         })
         .collect();
     committed + &pending
+}
+
+#[test]
+fn let_endgroup_alias_runs_off_save_and_restores_the_primitive() {
+    // TeX82 §§1215/1063--1066: `\let` copies the `end_group` command,
+    // so the alias must take `off_save` inside a `simple_group`, regardless
+    // of its spelling. The inserted right brace then runs §283 `unsave`
+    // before the alias is replayed, restoring the locally redefined
+    // `\endgroup`. Frozen alignment sentinels have distinct `EndV`/
+    // `EndTemplate` meanings and continue through the alignment dispatch
+    // covered by the tests below.
+    let mut stores = Universe::new_with_plain_catcodes();
+    let alias = stores.intern("alias");
+    let restored = stores.intern("restored");
+    stores.set_interaction_mode(InteractionMode::Nonstop);
+    let mut control = MainControl::tex82_initex(&mut stores);
+    control.set_fuel_limit(128).expect("bounded command fuel");
+    control
+        .register_root_source(SourceRegistration::new(
+            RegisteredSourceKind::Generated,
+            Arc::<[u8]>::from(
+                br"\let\alias=\endgroup{\def\endgroup{\alias\alias}\alias\let\restored=\endgroup\count0=17"
+                    .as_slice(),
+            ),
+        ))
+        .expect("test source registers");
+
+    loop {
+        match control.step(&mut stores).expect("alias recovery executes") {
+            MainControlStep::End | MainControlStep::EndOfInput => break,
+            MainControlStep::Continue => {}
+        }
+    }
+
+    assert_eq!(
+        stores.meaning(alias),
+        Meaning::UnexpandablePrimitive(UnexpandablePrimitive::EndGroup)
+    );
+    assert_eq!(stores.meaning(restored), stores.meaning(alias));
+    assert_eq!(stores.count(0), 17);
+    assert!(control.fuel_burned() < 128);
+    let transcript = stores
+        .world()
+        .effect_records()
+        .iter()
+        .filter_map(|effect| match effect {
+            EffectRecord::StreamWrite { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(transcript.matches("! Missing } inserted.").count(), 1);
+    assert_eq!(transcript.matches("! Extra \\endgroup.").count(), 1);
 }
 
 #[test]

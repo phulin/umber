@@ -1212,18 +1212,6 @@ impl CommandProcessor<'_> {
         self.observe_command_diagnostic("off_save_bottom_drop", command);
     }
 
-    /// Whether this delivery has the exact control-sequence spelling `name`.
-    ///
-    /// Meaning identity is deliberately insufficient here: frozen alignment
-    /// aliases can share `end_group` semantics without being ordinary
-    /// `\\endgroup` main-control recovery commands.
-    #[must_use]
-    pub fn has_control_sequence_spelling(&self, command: &CurrentCommand, name: &str) -> bool {
-        command
-            .control_sequence()
-            .is_some_and(|symbol| self.state.resolve(symbol) == name)
-    }
-
     /// Performs TeX82 §1131's end-v instance of [`Self::recover_off_save`].
     pub fn recover_endv_off_save(
         &mut self,

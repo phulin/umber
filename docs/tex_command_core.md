@@ -289,6 +289,12 @@ overtake the diagnostic; at bottom level it reports the drop before the backup
 retires. This applies equally to ordinary `\endgroup` recovery and alignment
 `endv` replay.
 
+TeX82 §1215 aliases of `\endgroup` retain its `end_group` command and take
+the same §§1063--1066 dispatch regardless of their user spelling. Main control
+dispatches on that meaning, while inaccessible frozen alignment tokens retain
+their distinct `end_template`/`endv` meanings and continue through the
+alignment-owned paths above.
+
 `CommandProcessor::recover_off_save` takes the closer as a token slice rather
 than a single token, because §1065's four cases are not all one token: a
 `math_left_group` needs the two-token `\right.` (frozen `\right` followed by
