@@ -3,14 +3,10 @@
 //! Promotion copies an epoch-rooted node graph into one contiguous allocation
 //! and rewrites child spans to be relative to the survivor root.
 
-use crate::font::RetainedFont;
-use crate::glue::GlueSpec;
-use crate::ids::{ArenaRef, GlueId, NodeListId, SurvivorRootId};
+use crate::ids::{ArenaRef, NodeListId, SurvivorRootId};
 #[cfg(debug_assertions)]
 use crate::node::Node;
-use crate::node_arena::{
-    ChildPatch, NodeArena, NodeList, NodeOriginOverlay, NodeSemanticId, NodeStorage,
-};
+use crate::node_arena::{ChildPatch, NodeArena, NodeList, NodeSemanticId, NodeStorage};
 use ahash::AHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
@@ -135,105 +131,7 @@ pub struct SurvivorArena {
 #[derive(Clone, Debug)]
 struct SurvivorRoot {
     payload: Arc<SurvivorPayload>,
-    origin_overlay: Option<NodeOriginOverlay>,
-    deferred_origins: Vec<DeferredParagraphOrigins>,
     refcount: u32,
-}
-
-#[derive(Clone, Debug)]
-enum DeferredParagraphOrigins {
-    Stable(crate::ParagraphProvenanceRecipe),
-    Lazy {
-        start: u32,
-        end: u32,
-        resolver: Arc<crate::ParagraphOriginResolver>,
-    },
-}
-
-/// Diagnostic provenance selected for one raw character or ligature node.
-#[doc(hidden)]
-pub enum DeferredNodeOrigins<'a> {
-    Stable(&'a crate::ParagraphProvenanceRecipe, std::ops::Range<usize>),
-    Lazy(&'a Arc<crate::ParagraphOriginResolver>),
-}
-
-/// Monotonic diagnostic-provenance lookup for one emitted survivor list.
-///
-/// Ordinary shipout visits list words in order. Resolving the survivor root
-/// and locating its first sparse provenance entry once keeps the per-glyph
-/// path to a single cursor comparison. Direction permutations use the random
-/// lookup below because they are deliberately rare.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct DeferredNodeOriginCursor<'a> {
-    entries: &'a [DeferredParagraphOrigins],
-    entry: usize,
-    node: usize,
-    list_start: u32,
-    list_end: u32,
-}
-
-impl<'a> DeferredNodeOriginCursor<'a> {
-    fn empty() -> Self {
-        Self {
-            entries: &[],
-            entry: 0,
-            node: 0,
-            list_start: 0,
-            list_end: 0,
-        }
-    }
-
-    /// Returns the stable recipe slots for the next provenance-bearing word.
-    #[doc(hidden)]
-    pub fn node_origins(&mut self, index: usize, len: usize) -> Option<DeferredNodeOrigins<'a>> {
-        let word = self.list_start.checked_add(u32::try_from(index).ok()?)?;
-        if word >= self.list_end {
-            return None;
-        }
-        while let Some(deferred) = self.entries.get(self.entry) {
-            match deferred {
-                DeferredParagraphOrigins::Lazy {
-                    start,
-                    end,
-                    resolver,
-                } => {
-                    if *end <= word {
-                        self.entry += 1;
-                        self.node = 0;
-                        continue;
-                    }
-                    if *start > word {
-                        return None;
-                    }
-                    return Some(DeferredNodeOrigins::Lazy(resolver));
-                }
-                DeferredParagraphOrigins::Stable(recipe) => {
-                    let slots = &recipe.node_slots;
-                    while let Some(slot) = slots.get(self.node) {
-                        if slot.word >= self.list_end {
-                            return None;
-                        }
-                        if slot.word < word {
-                            self.node += 1;
-                            continue;
-                        }
-                        if slot.word > word {
-                            return None;
-                        }
-                        self.node += 1;
-                        let start = slot.slot as usize;
-                        let end = start.checked_add(len)?;
-                        return (end <= recipe.origin_slots.len())
-                            .then_some(DeferredNodeOrigins::Stable(recipe, start..end));
-                    }
-                }
-            }
-            self.entry += 1;
-            self.node = 0;
-        }
-        None
-    }
 }
 
 #[derive(Debug)]
@@ -241,50 +139,6 @@ struct SurvivorPayload {
     storage: NodeStorage,
     semantic_spans: Vec<SurvivorSemanticSpan>,
 }
-
-/// Accepted-history ownership of one immutable survivor list and the
-/// store-local resources needed to mount it in a related Universe.
-///
-/// The semantic payload is shared directly. Cloning or dropping this handle
-/// never walks the node graph; a live Universe installs a local root slot and
-/// ordinary rollback pin only when it actually consumes the mount. Retention
-/// also summarizes the immutable graph's supported shape and external resource
-/// closure so replay validation never has to decode the graph again.
-#[derive(Clone, Debug)]
-pub struct RetainedNodeList {
-    id: NodeListId,
-    payload: Arc<SurvivorPayload>,
-    glues: Arc<[(GlueId, GlueSpec)]>,
-    fonts: Arc<[RetainedFont]>,
-    mountable: bool,
-}
-
-impl RetainedNodeList {
-    #[must_use]
-    pub const fn id(&self) -> NodeListId {
-        self.id
-    }
-
-    pub(crate) fn glues(&self) -> &[(GlueId, GlueSpec)] {
-        &self.glues
-    }
-
-    pub(crate) fn fonts(&self) -> &[RetainedFont] {
-        &self.fonts
-    }
-
-    pub(crate) const fn is_mountable(&self) -> bool {
-        self.mountable
-    }
-}
-
-impl PartialEq for RetainedNodeList {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for RetainedNodeList {}
 
 #[derive(Clone, Copy, Debug)]
 struct SurvivorSemanticSpan {
@@ -318,7 +172,7 @@ impl SurvivorArena {
                 semantic_id,
             })
             .collect();
-        self.allocate_root(root, storage, spans, Vec::new());
+        self.allocate_root(root, storage, spans);
     }
 
     pub(crate) fn retained_payload_bytes(&self) -> usize {
@@ -396,12 +250,7 @@ impl SurvivorArena {
         }
         self.promotion_remap = copied.remapped;
         self.promotion_pending = copied.pending;
-        self.allocate_root(
-            root,
-            copied.storage,
-            copied.semantic_spans,
-            copied.deferred_origins,
-        );
+        self.allocate_root(root, copied.storage, copied.semantic_spans);
         self.debug_assert_no_epoch_ids(copied.promoted);
         #[cfg(feature = "profiling")]
         {
@@ -430,9 +279,7 @@ impl SurvivorArena {
             end <= root.payload.storage.len(),
             "survivor node-list id is not live"
         );
-        root.payload
-            .storage
-            .view_with_origins(id.start(), id.len(), root.origin_overlay.as_ref())
+        root.payload.storage.view(id.start(), id.len())
     }
 
     #[must_use]
@@ -471,52 +318,6 @@ impl SurvivorArena {
         let span = &mut payload.semantic_spans[index];
         assert_eq!(span.len, id.len(), "frozen semantic span length mismatch");
         span.semantic_id = semantic_id;
-    }
-
-    /// Captures accepted-history ownership of an already promoted list.
-    pub(crate) fn retain(
-        &self,
-        id: NodeListId,
-        glues: Vec<(GlueId, GlueSpec)>,
-        fonts: Vec<RetainedFont>,
-        mountable: bool,
-    ) -> RetainedNodeList {
-        let ArenaRef::Survivor(_) = id.arena() else {
-            panic!("only survivor node-list ids can be retained");
-        };
-        let root = self.root_for_retained(id);
-        RetainedNodeList {
-            id,
-            payload: Arc::clone(&root.payload),
-            glues: glues.into(),
-            fonts: fonts.into(),
-            mountable,
-        }
-    }
-
-    /// Installs one accepted-history payload as a local root. The returned
-    /// flag says whether the new slot's initial refcount must be adopted by
-    /// the caller's ordinary rollback pin log.
-    pub(crate) fn mount(&mut self, retained: &RetainedNodeList) -> Option<bool> {
-        let ArenaRef::Survivor(root_id) = retained.id.arena() else {
-            return None;
-        };
-        if let Some(index) = self.root_slots.get(&root_id).copied() {
-            let root = self.slots.get(index)?.as_ref()?;
-            return Arc::ptr_eq(&root.payload, &retained.payload).then_some(false);
-        }
-        let index = self.slots.len();
-        self.slots.push(Some(SurvivorRoot {
-            payload: Arc::clone(&retained.payload),
-            origin_overlay: None,
-            deferred_origins: Vec::new(),
-            refcount: 1,
-        }));
-        assert!(
-            self.root_slots.insert(root_id, index).is_none(),
-            "retained survivor root was published concurrently"
-        );
-        Some(true)
     }
 
     /// Increments the root refcount for a survivor list.
@@ -586,187 +387,6 @@ impl SurvivorArena {
         (id.start() as usize)
             .checked_add(id.len() as usize)
             .is_some_and(|end| end <= slot.payload.storage.len())
-    }
-
-    /// Mounts current-revision diagnostic provenance over one immutable
-    /// survivor payload. The semantic graph remains shared across arena clones.
-    pub(crate) fn mount_paragraph_origins(
-        &mut self,
-        id: NodeListId,
-        root_origins: &[crate::token::OriginId],
-        origin_slots: &[u32],
-    ) -> bool {
-        let ArenaRef::Survivor(root_id) = id.arena() else {
-            return false;
-        };
-        let Some(index) = self.root_slots.get(&root_id).copied() else {
-            return false;
-        };
-        let Some(Some(root)) = self.slots.get(index) else {
-            return false;
-        };
-        let Some(overlay) =
-            root.payload
-                .storage
-                .paragraph_origin_overlay(id, root_origins, origin_slots)
-        else {
-            return false;
-        };
-        self.slots[index]
-            .as_mut()
-            .expect("survivor root is live")
-            .origin_overlay = Some(overlay);
-        self.slots[index]
-            .as_mut()
-            .expect("survivor root is live")
-            .deferred_origins
-            .clear();
-        true
-    }
-
-    /// Attaches an allocation-free diagnostic recipe to one mounted root.
-    pub(crate) fn mount_deferred_paragraph_origins(
-        &mut self,
-        id: NodeListId,
-        recipe: crate::ParagraphProvenanceRecipe,
-    ) -> bool {
-        let ArenaRef::Survivor(root_id) = id.arena() else {
-            return false;
-        };
-        let Some(index) = self.root_slots.get(&root_id).copied() else {
-            return false;
-        };
-        let Some(Some(root)) = self.slots.get_mut(index) else {
-            return false;
-        };
-        root.origin_overlay = None;
-        root.deferred_origins.clear();
-        root.deferred_origins
-            .push(DeferredParagraphOrigins::Stable(recipe));
-        true
-    }
-
-    /// Attaches one accepted-generation resolver to the raw origins already
-    /// embedded throughout a retained paragraph graph.
-    pub(crate) fn mount_lazy_paragraph_origins(
-        &mut self,
-        id: NodeListId,
-        resolver: Arc<crate::ParagraphOriginResolver>,
-    ) -> bool {
-        let ArenaRef::Survivor(root_id) = id.arena() else {
-            return false;
-        };
-        let Some(index) = self.root_slots.get(&root_id).copied() else {
-            return false;
-        };
-        let Some(Some(root)) = self.slots.get_mut(index) else {
-            return false;
-        };
-        root.origin_overlay = None;
-        root.deferred_origins.clear();
-        root.deferred_origins.push(DeferredParagraphOrigins::Lazy {
-            start: 0,
-            end: u32::try_from(root.payload.storage.len()).unwrap_or(u32::MAX),
-            resolver,
-        });
-        true
-    }
-
-    fn deferred_paragraph_origins_ref(&self, id: NodeListId) -> &[DeferredParagraphOrigins] {
-        let ArenaRef::Survivor(root_id) = id.arena() else {
-            return &[];
-        };
-        let Some(index) = self.root_slots.get(&root_id).copied() else {
-            return &[];
-        };
-        self.slots
-            .get(index)
-            .and_then(Option::as_ref)
-            .map_or(&[], |root| root.deferred_origins.as_slice())
-    }
-
-    pub(crate) fn deferred_node_origin_cursor(
-        &self,
-        list: NodeListId,
-    ) -> DeferredNodeOriginCursor<'_> {
-        if !matches!(list.arena(), ArenaRef::Survivor(_)) {
-            return DeferredNodeOriginCursor::empty();
-        }
-        let Some(list_end) = list.start().checked_add(list.len()) else {
-            return DeferredNodeOriginCursor::empty();
-        };
-        let entries = self.deferred_paragraph_origins_ref(list);
-        let entry = entries.partition_point(|deferred| match deferred {
-            DeferredParagraphOrigins::Stable(recipe) => recipe
-                .node_slots
-                .last()
-                .is_none_or(|slot| slot.word < list.start()),
-            DeferredParagraphOrigins::Lazy { end, .. } => *end <= list.start(),
-        });
-        let node = entries.get(entry).map_or(0, |deferred| match deferred {
-            DeferredParagraphOrigins::Stable(recipe) => recipe
-                .node_slots
-                .partition_point(|slot| slot.word < list.start()),
-            DeferredParagraphOrigins::Lazy { .. } => 0,
-        });
-        DeferredNodeOriginCursor {
-            entries,
-            entry,
-            node,
-            list_start: list.start(),
-            list_end,
-        }
-    }
-
-    pub(crate) fn deferred_node_origins(
-        &self,
-        list: NodeListId,
-        index: usize,
-        len: usize,
-    ) -> Option<DeferredNodeOrigins<'_>> {
-        let ArenaRef::Survivor(root_id) = list.arena() else {
-            return None;
-        };
-        let slot = self.root_slots.get(&root_id).copied()?;
-        let deferred = self
-            .slots
-            .get(slot)?
-            .as_ref()?
-            .deferred_origins
-            .iter()
-            .find(|deferred| {
-                let Some(word) = list
-                    .start()
-                    .checked_add(u32::try_from(index).ok().unwrap_or(u32::MAX))
-                else {
-                    return false;
-                };
-                match deferred {
-                    DeferredParagraphOrigins::Stable(recipe) => recipe
-                        .node_slots
-                        .binary_search_by_key(&word, |node| node.word)
-                        .is_ok(),
-                    DeferredParagraphOrigins::Lazy { start, end, .. } => {
-                        (*start..*end).contains(&word)
-                    }
-                }
-            })?;
-        let word = list.start().checked_add(u32::try_from(index).ok()?)?;
-        match deferred {
-            DeferredParagraphOrigins::Stable(recipe) => {
-                let range = recipe.node_origin_slots(word, len)?;
-                Some(DeferredNodeOrigins::Stable(recipe, range))
-            }
-            DeferredParagraphOrigins::Lazy { resolver, .. } => {
-                Some(DeferredNodeOrigins::Lazy(resolver))
-            }
-        }
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn testing_payload_strong_count(retained: &RetainedNodeList) -> usize {
-        Arc::strong_count(&retained.payload)
     }
 
     #[cfg(any(test, feature = "testing"))]
@@ -884,15 +504,12 @@ impl SurvivorArena {
         root: SurvivorRootId,
         storage: NodeStorage,
         semantic_spans: Vec<SurvivorSemanticSpan>,
-        deferred_origins: Vec<DeferredParagraphOrigins>,
     ) {
         let slot = SurvivorRoot {
             payload: Arc::new(SurvivorPayload {
                 storage,
                 semantic_spans,
             }),
-            origin_overlay: None,
-            deferred_origins,
             refcount: 1,
         };
         let index = self.slots.len();
@@ -913,21 +530,6 @@ impl SurvivorArena {
             .get(index)
             .and_then(Option::as_ref)
             .expect("survivor root is not live")
-    }
-
-    fn root_for_retained(&self, id: NodeListId) -> &SurvivorRoot {
-        let ArenaRef::Survivor(root) = id.arena() else {
-            panic!("expected survivor id");
-        };
-        let root = self.root(root);
-        let end = (id.start() as usize)
-            .checked_add(id.len() as usize)
-            .expect("survivor node-list span overflow");
-        assert!(
-            end <= root.payload.storage.len(),
-            "survivor node-list id is not live"
-        );
-        root
     }
 
     fn root_mut(&mut self, root: SurvivorRootId) -> &mut SurvivorRoot {
@@ -972,7 +574,6 @@ struct PromotionResult {
     semantic_spans: Vec<SurvivorSemanticSpan>,
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
-    deferred_origins: Vec<DeferredParagraphOrigins>,
     #[cfg(feature = "profiling")]
     peak_scratch_logical: usize,
     #[cfg(feature = "profiling")]
@@ -1008,7 +609,6 @@ fn copy_list_iterative(
         semantic_spans: copy.semantic_spans,
         remapped: copy.remapped,
         pending: copy.pending,
-        deferred_origins: copy.deferred_origins,
         #[cfg(feature = "profiling")]
         peak_scratch_logical: copy.peak_scratch_logical,
         #[cfg(feature = "profiling")]
@@ -1027,7 +627,6 @@ struct PromotionCopy<'a> {
     remapped: AHashMap<NodeListId, NodeListId>,
     pending: Vec<ChildPatch>,
     semantic_spans: Vec<SurvivorSemanticSpan>,
-    deferred_origins: Vec<DeferredParagraphOrigins>,
     #[cfg(feature = "profiling")]
     peak_scratch_logical: usize,
     #[cfg(feature = "profiling")]
@@ -1054,7 +653,6 @@ impl<'a> PromotionCopy<'a> {
             remapped,
             pending,
             semantic_spans: Vec::new(),
-            deferred_origins: Vec::new(),
             #[cfg(feature = "profiling")]
             peak_scratch_logical: 0,
             #[cfg(feature = "profiling")]
@@ -1097,47 +695,6 @@ impl<'a> PromotionCopy<'a> {
         let start = u32_len(self.storage.len(), "promoted node root exceeds u32 entries");
         let remapped = NodeListId::new_survivor(self.root, start, len);
         self.remapped.insert(id, remapped);
-        if matches!(id.arena(), ArenaRef::Survivor(_)) {
-            let source_start = id.start();
-            let source_end = source_start
-                .checked_add(id.len())
-                .expect("source survivor span fits u32");
-            for deferred in self.survivor.deferred_paragraph_origins_ref(id) {
-                match deferred {
-                    DeferredParagraphOrigins::Stable(recipe) => {
-                        let node_slots = recipe
-                            .node_slots
-                            .iter()
-                            .filter(|node| (source_start..source_end).contains(&node.word))
-                            .map(|node| crate::ParagraphProvenanceNode {
-                                word: start
-                                    .checked_add(node.word - source_start)
-                                    .expect("promoted provenance word fits u32"),
-                                slot: node.slot,
-                            })
-                            .collect::<Vec<_>>();
-                        if !node_slots.is_empty() {
-                            let mut recipe = recipe.clone();
-                            recipe.node_slots = node_slots.into();
-                            self.deferred_origins
-                                .push(DeferredParagraphOrigins::Stable(recipe));
-                        }
-                    }
-                    DeferredParagraphOrigins::Lazy {
-                        start: lazy_start,
-                        end: lazy_end,
-                        resolver,
-                    } if *lazy_start < source_end && *lazy_end > source_start => {
-                        self.deferred_origins.push(DeferredParagraphOrigins::Lazy {
-                            start,
-                            end: start.checked_add(len).expect("promoted list span fits u32"),
-                            resolver: Arc::clone(resolver),
-                        });
-                    }
-                    DeferredParagraphOrigins::Lazy { .. } => {}
-                }
-            }
-        }
         if len != 0 {
             self.semantic_spans.push(SurvivorSemanticSpan {
                 start,

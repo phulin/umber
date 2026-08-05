@@ -406,8 +406,7 @@ impl<'a> CommandProcessor<'a> {
     /// Installs a non-fallible external semantic observer for this bounded
     /// processor episode.
     ///
-    /// When paragraph input recording is also inactive, an episode without an
-    /// external observer builds no records: every site goes through the
+    /// An episode without an external observer builds no records: every site goes through the
     /// `observe!` macro, which does not evaluate its payload unless the shared
     /// runtime predicate returns true.
     #[must_use]
@@ -416,26 +415,18 @@ impl<'a> CommandProcessor<'a> {
         self
     }
 
-    /// Whether this episode has either observation consumer active.
-    ///
-    /// Construction is active when an external observer is attached or the
-    /// command state is recording paragraph input. Each constructed record is
-    /// offered to the paragraph transaction before optional external delivery.
+    /// Whether this episode has an observation consumer active.
     ///
     /// Observation-only: no delivery, expansion, scanner, conditional, or
     /// alignment decision may branch on this, and no committed artifact may
     /// differ by it.
     #[must_use]
     pub(crate) fn is_observed(&self) -> bool {
-        self.observer.is_some() || self.command.paragraph_input_is_recording()
+        self.observer.is_some()
     }
 
-    /// Offers a constructed record to both consumers in canonical order.
-    ///
-    /// Paragraph recording always sees the record first; an attached external
-    /// observer receives the owned record afterwards.
+    /// Offers a constructed record to the attached external observer.
     pub(crate) fn observe(&mut self, observation: crate::observation::CommandObservation) {
-        self.command.record_paragraph_observation(&observation);
         if let Some(observer) = self.observer.as_deref_mut() {
             observer.committed(observation);
         }

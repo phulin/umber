@@ -4,16 +4,14 @@
 //! executor integration requires stable, end-state operations.
 
 /// Publishes one semantic observation, evaluating its payload only when the
-/// episode has an external observer or active paragraph input recording.
+/// episode has an external observer.
 ///
 /// The payload is a textual argument rather than a closure, so it may borrow
 /// the processor immutably before `observe` takes it mutably, and it costs
 /// nothing beyond the runtime predicate in an unobserved episode. Every
 /// observation site in this crate goes through here, which is what lets the
 /// observation vocabulary compile unconditionally without building records
-/// when neither consumer is active. Every constructed record is first offered
-/// to the paragraph transaction, then optionally delivered to the external
-/// observer.
+/// when no observer is active.
 ///
 /// This replaced `#[cfg(any(test, feature = "observe"))]` on roughly 250
 /// sites. Those attributes compiled the engine three different ways -- the
@@ -42,7 +40,6 @@ mod host;
 mod input;
 mod macro_call;
 mod observation;
-mod paragraph;
 mod primitives;
 pub use primitives::{
     exceeds_max_non_prefixed_command, install_etex_expandable_primitives,
@@ -97,10 +94,6 @@ pub use observation::{
     ObservedToken, OpenedSourceSnapshot, ParameterClass, RecoveryKind, RecoveryRecord,
     ScannerRecord, ScannerStatusRecord, TokenListRecord, parameter_mutation_key,
     parameter_mutation_key_for_dialect,
-};
-pub use paragraph::{
-    ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction,
-    ParagraphMathShift,
 };
 pub use processor::{
     AlignmentCellDelimiter, AlignmentCellTemplates, AlignmentDelivery, AlignmentDeliveryEvent,

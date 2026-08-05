@@ -142,12 +142,6 @@ pub(crate) struct FontStore {
     identities: IdentityAllocator,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct RetainedFont {
-    id: FontId,
-    font: LoadedFont,
-}
-
 impl Clone for FontStore {
     fn clone(&self) -> Self {
         Self {
@@ -168,50 +162,6 @@ impl Clone for FontStore {
 }
 
 impl FontStore {
-    pub(crate) fn retain_prefix_for(&self, roots: &[FontId]) -> Vec<RetainedFont> {
-        let Some(max_raw) = roots.iter().map(|font| font.raw()).max() else {
-            return Vec::new();
-        };
-        (1..=max_raw)
-            .map(|raw| RetainedFont {
-                id: FontId::new(raw),
-                font: self.fonts[raw as usize].clone(),
-            })
-            .collect()
-    }
-
-    pub(crate) fn can_restore_retained(&self, retained: &[RetainedFont]) -> bool {
-        let mut next_raw = self.fonts.len();
-        for retained in retained {
-            match self.resolve_stored(retained.id) {
-                Some(current) if self.fonts[current.raw() as usize] == retained.font => {}
-                Some(_) => return false,
-                None if retained.id.raw() as usize == next_raw => next_raw += 1,
-                None => return false,
-            }
-        }
-        true
-    }
-
-    pub(crate) fn restore_retained(&mut self, retained: &[RetainedFont]) -> bool {
-        if !self.can_restore_retained(retained) {
-            return false;
-        }
-        for retained in retained {
-            if self.resolve_stored(retained.id).is_none() {
-                let Ok(restored) = self.intern(retained.font.clone()) else {
-                    return false;
-                };
-                assert_eq!(
-                    restored.raw(),
-                    retained.id.raw(),
-                    "retained font slot changed"
-                );
-            }
-        }
-        true
-    }
-
     pub(crate) fn retains_mark(&self, mark: FontStoreMark) -> bool {
         self.identities.retains(mark.identities) && mark.len as usize <= self.fonts.len()
     }

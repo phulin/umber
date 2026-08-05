@@ -6,11 +6,8 @@ pub(crate) use execution::{FinishedAlignment, append_finished_alignment};
 pub(crate) mod packaging;
 pub(crate) mod widths;
 
-use tex_state::Universe;
-#[cfg(feature = "profiling")]
-use tex_state::token::Token;
-
 use crate::{Mode, ModeNest};
+use tex_state::Universe;
 
 /// TeX82 §787 `init_span`'s aux initialization for a freshly pushed span
 /// level.
@@ -55,10 +52,6 @@ pub struct AlignmentTemplateMeasurement {
 mod template_measurement {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use tex_state::Universe;
-    use tex_state::meaning::Meaning;
-    use tex_state::token::Token;
-
     use super::AlignmentTemplateMeasurement;
 
     static INVOCATIONS: AtomicU64 = AtomicU64::new(0);
@@ -70,44 +63,6 @@ mod template_measurement {
     static UNEXPANDABLE: AtomicU64 = AtomicU64::new(0);
     static INERT_GLUE: AtomicU64 = AtomicU64::new(0);
     static OTHER: AtomicU64 = AtomicU64::new(0);
-
-    pub(super) fn record_invocation() {
-        INVOCATIONS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(super) fn record_token(token: Token, stores: &Universe) {
-        DELIVERED.fetch_add(1, Ordering::Relaxed);
-        match token {
-            Token::Char { .. } => {
-                CHARACTERS.fetch_add(1, Ordering::Relaxed);
-            }
-            Token::Cs(symbol) => {
-                CONTROL_SEQUENCES.fetch_add(1, Ordering::Relaxed);
-                let meaning = stores.meaning(symbol);
-                if matches!(
-                    meaning,
-                    Meaning::UnexpandablePrimitive(
-                        tex_state::meaning::UnexpandablePrimitive::HFil
-                            | tex_state::meaning::UnexpandablePrimitive::HFill
-                            | tex_state::meaning::UnexpandablePrimitive::HSs
-                            | tex_state::meaning::UnexpandablePrimitive::HFilNeg
-                    )
-                ) {
-                    INERT_GLUE.fetch_add(1, Ordering::Relaxed);
-                }
-                let counter = match meaning {
-                    Meaning::Relax => &RELAX,
-                    Meaning::Font(_) => &FONTS,
-                    Meaning::UnexpandablePrimitive(_) => &UNEXPANDABLE,
-                    _ => &OTHER,
-                };
-                counter.fetch_add(1, Ordering::Relaxed);
-            }
-            Token::Param(_) | Token::Frozen(_) => {
-                OTHER.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
 
     pub(super) fn snapshot() -> AlignmentTemplateMeasurement {
         AlignmentTemplateMeasurement {
@@ -127,14 +82,4 @@ mod template_measurement {
 #[cfg(feature = "profiling")]
 pub fn alignment_template_measurement() -> AlignmentTemplateMeasurement {
     template_measurement::snapshot()
-}
-
-#[cfg(feature = "profiling")]
-fn record_template_invocation() {
-    template_measurement::record_invocation();
-}
-
-#[cfg(feature = "profiling")]
-fn record_template_token(token: Token, stores: &Universe) {
-    template_measurement::record_token(token, stores);
 }

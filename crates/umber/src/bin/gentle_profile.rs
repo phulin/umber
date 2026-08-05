@@ -8,32 +8,27 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use tex_command::{RegisteredSourceKind, SourceRegistration};
+use tex_command::SourceRegistration;
 #[cfg(feature = "profiling")]
 use tex_exec::{
-    AlignmentTemplateMeasurement, ParagraphReplayMeasurement, alignment_template_measurement,
-    paragraph_replay_measurement,
+    AlignmentTemplateMeasurement, StepSnapshotMeasurement, alignment_template_measurement,
+    step_snapshot_measurement,
 };
-use tex_exec::{
-    Cancellation, CheckpointSink, EngineCheckpoint, ResourceFulfillment, ResourceHost,
-    ResourceNeed, ResourceOutcome, ResourceWorld,
-};
+use tex_exec::{CheckpointSink, EngineCheckpoint};
 use tex_incr::{
-    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionCandidateResult, RevisionId,
-    SameHistoryStop, Session,
+    AcceptedOutput, BoundaryKey, Edit, ReuseMetrics, RevisionId, SameHistoryStop, Session,
 };
 #[cfg(feature = "profiling")]
 use tex_state::measurement::{
-    ExactIdentityMeasurement, NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement,
-    StateHashMeasurement, exact_identity_measurement, node_append_measurement,
-    state_hash_measurement,
+    NODE_APPEND_CAPACITY_COLUMNS, NodeAppendMeasurement, StateHashMeasurement,
+    node_append_measurement, state_hash_measurement,
 };
 #[cfg(feature = "profiling")]
 use tex_state::survivor::{SurvivorMeasurement, survivor_measurement};
 use tex_state::{
     ContentHash, JobClock, PureMemoConfig, PureMemoRecordingPolicy, PureMemoStats, Universe, World,
 };
-use tex_state::{MemoLayerStats, ParagraphValidationFailure, PureMemoLayer};
+use tex_state::{MemoLayerStats, PureMemoLayer};
 #[cfg(feature = "profiling")]
 use umber::ExpansionStats;
 use umber::{EngineSession, FileSessionResolvers, dvi_from_page_plans};
@@ -50,8 +45,6 @@ const GENTLE_EQUAL_WIDTH_OLD: &str = "words";
 const GENTLE_EQUAL_WIDTH_NEW: &str = "sword";
 const GENTLE_REBREAK_ASSIGNMENT: &str = "\\tolerance=201 ";
 const GENTLE_FAST_PATH_RETYPED_PAGES: usize = 3;
-const STABILIZATION_PASSES: usize = 16;
-const STABILIZATION_INPUT: &str = "stabilization-ref.tex";
 
 #[derive(Debug)]
 struct Options {
@@ -60,10 +53,8 @@ struct Options {
     warmups: usize,
     checkpoints: bool,
     incremental_edit: bool,
-    stabilization_replay: bool,
-    synthetic_stabilization_replay: bool,
     incremental_path: Option<IncrementalPath>,
-    paragraph_workload: Option<ParagraphWorkload>,
+    edit_restart_workload: Option<EditRestartWorkload>,
     cold_memo_policy: Option<ColdMemoPolicy>,
     baseline_memo_recording: Option<PureMemoRecordingPolicy>,
     memo_recording: PureMemoRecordingPolicy,
@@ -76,10 +67,8 @@ impl Options {
         let mut warmups = DEFAULT_WARMUPS;
         let mut checkpoints = false;
         let mut incremental_edit = false;
-        let mut stabilization_replay = false;
-        let mut synthetic_stabilization_replay = false;
         let mut incremental_path = None;
-        let mut paragraph_workload = None;
+        let mut edit_restart_workload = None;
         let mut cold_memo_policy = None;
         let mut baseline_memo_recording = None;
         let mut memo_recording = PureMemoRecordingPolicy::default();
@@ -101,18 +90,16 @@ impl Options {
                 }
                 "--checkpoints" => checkpoints = true,
                 "--incremental-edit" => incremental_edit = true,
-                "--stabilization-replay" => stabilization_replay = true,
-                "--synthetic-stabilization-replay" => synthetic_stabilization_replay = true,
                 "--incremental-path" => {
                     incremental_path = Some(parse_incremental_path(&next_value(
                         &mut args,
                         "--incremental-path",
                     )?)?);
                 }
-                "--paragraph-workload" => {
-                    paragraph_workload = Some(parse_paragraph_workload(&next_value(
+                "--edit-restart-workload" => {
+                    edit_restart_workload = Some(parse_edit_restart_workload(&next_value(
                         &mut args,
-                        "--paragraph-workload",
+                        "--edit-restart-workload",
                     )?)?);
                 }
                 "--cold-memo-layers" => {
@@ -160,10 +147,8 @@ impl Options {
             warmups,
             checkpoints,
             incremental_edit,
-            stabilization_replay,
-            synthetic_stabilization_replay,
             incremental_path,
-            paragraph_workload,
+            edit_restart_workload,
             cold_memo_policy,
             baseline_memo_recording,
             memo_recording,
@@ -216,19 +201,12 @@ fn run() -> Result<(), String> {
     if let Some(path) = options.incremental_path {
         return run_incremental_path(&options, &template, path);
     }
-    if let Some(workload) = options.paragraph_workload {
-        return run_paragraph_workload(&options, &template, workload);
+    if let Some(workload) = options.edit_restart_workload {
+        return run_edit_restart_workload(&options, &template, workload);
     }
     if options.incremental_edit {
         return run_incremental_edit(&options, &template);
     }
-    if options.stabilization_replay {
-        return run_stabilization_replay(&options, &template, false);
-    }
-    if options.synthetic_stabilization_replay {
-        return run_stabilization_replay(&options, &template, true);
-    }
-
     let reference = execute_once(&template, options.checkpoints)?;
     for _ in 1..options.warmups {
         let output = execute_once(&template, options.checkpoints)?;
@@ -390,7 +368,6 @@ struct IncrementalFixture {
     edit_names: Vec<&'static str>,
     edit_paths: Vec<IncrementalPath>,
     suffix_adoption_edit: usize,
-    break_dependency_edit: usize,
     body_offset: usize,
     body_len: usize,
     inserted_bytes: usize,
@@ -407,7 +384,7 @@ enum IncrementalPath {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ParagraphWorkload {
+enum EditRestartWorkload {
     Unchanged,
     Prefix,
     Suffix,
@@ -417,7 +394,7 @@ enum ParagraphWorkload {
     Long,
 }
 
-impl ParagraphWorkload {
+impl EditRestartWorkload {
     const fn name(self) -> &'static str {
         match self {
             Self::Unchanged => "unchanged",
@@ -447,7 +424,6 @@ impl IncrementalPath {
 
 struct IncrementalSample {
     priming_elapsed: Duration,
-    priming_memo: PureMemoStats,
     #[cfg(feature = "profiling")]
     priming_state_hash: StateHashMeasurement,
     steps: Vec<IncrementalStep>,
@@ -462,12 +438,6 @@ struct IncrementalStep {
     history: Vec<(BoundaryKey, usize, usize)>,
     memo: PureMemoStats,
     previous_memo: PureMemoStats,
-    #[cfg(feature = "profiling")]
-    exact_identity: ExactIdentityMeasurement,
-    #[cfg(feature = "profiling")]
-    state_hash: StateHashMeasurement,
-    #[cfg(feature = "profiling")]
-    survivor: SurvivorMeasurement,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -477,7 +447,6 @@ struct IncrementalStages {
     executor: Duration,
     executor_shell: Duration,
     output_snapshot: Duration,
-    paragraph_history_transition: Duration,
     splice: Duration,
     substrate_transition: Duration,
     acceptance: Duration,
@@ -499,7 +468,6 @@ impl IncrementalStages {
             .saturating_add(reuse.restart_fork_latency)
             .saturating_add(reuse.reexecution_latency)
             .saturating_add(reuse.output_snapshot_latency)
-            .saturating_add(reuse.paragraph_history_transition_latency)
             .saturating_add(reuse.splice_latency)
             .saturating_add(reuse.substrate_transition_latency)
             .saturating_add(reuse.acceptance_latency);
@@ -509,7 +477,6 @@ impl IncrementalStages {
             executor: reuse.executor_latency,
             executor_shell,
             output_snapshot: reuse.output_snapshot_latency,
-            paragraph_history_transition: reuse.paragraph_history_transition_latency,
             splice: reuse.splice_latency,
             substrate_transition: reuse.substrate_transition_latency,
             acceptance: reuse.acceptance_latency,
@@ -527,10 +494,8 @@ fn run_cold_memo_policy(
 ) -> Result<(), String> {
     if options.checkpoints
         || options.incremental_edit
-        || options.stabilization_replay
-        || options.synthetic_stabilization_replay
         || options.incremental_path.is_some()
-        || options.paragraph_workload.is_some()
+        || options.edit_restart_workload.is_some()
     {
         return Err("--cold-memo-layers cannot be combined with another workload".to_owned());
     }
@@ -550,7 +515,7 @@ fn run_cold_memo_policy(
     #[cfg(feature = "profiling")]
     let mut last_survivor = SurvivorMeasurement::default();
     #[cfg(feature = "profiling")]
-    let replay_measurement_before = paragraph_replay_measurement();
+    let replay_measurement_before = step_snapshot_measurement();
 
     for run in 0..total_runs {
         let mut session = incremental_session(
@@ -601,20 +566,10 @@ fn run_cold_memo_policy(
     );
     print_duration_stats("isolated cold", duration_stats(&durations));
     println!(
-        "gentle-profile isolated cold output: pages={} dvi_bytes={} paragraph_history_metadata_bytes={}",
+        "gentle-profile isolated cold output: pages={} dvi_bytes={} memo_bytes={}",
         last_pages,
         reference_dvi.len(),
-        last_memo.paragraph_history_metadata_bytes,
-    );
-    let phases = last_memo.paragraph_recording;
-    println!(
-        "gentle-profile isolated cold paragraph phases: front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} line_provenance_ns={} line_retention_ns={}",
-        phases.front_end_dependency_nanos,
-        phases.input_transition_nanos,
-        phases.region_publication_nanos,
-        phases.break_dependency_nanos,
-        phases.line_provenance_nanos,
-        phases.line_retention_nanos,
+        last_memo.retained_bytes,
     );
     #[cfg(feature = "profiling")]
     {
@@ -639,314 +594,20 @@ fn run_cold_memo_policy(
             last_survivor.epoch_source_lists,
             last_survivor.survivor_source_lists,
         );
-        print_paragraph_replay_measurement(
+        print_step_snapshot_measurement(
             "isolated cold",
-            paragraph_replay_delta(paragraph_replay_measurement(), replay_measurement_before),
+            step_snapshot_delta(step_snapshot_measurement(), replay_measurement_before),
         );
     }
     Ok(())
 }
 
-struct OverlayInputResolver<'a> {
-    fallback: &'a mut FileSessionResolvers,
-    generated: &'a str,
-}
-
-impl ResourceHost for OverlayInputResolver<'_> {
-    fn fulfill(&mut self, world: &mut ResourceWorld<'_>, need: &ResourceNeed) -> ResourceOutcome {
-        match need {
-            ResourceNeed::Input { name, .. } if name == STABILIZATION_INPUT => {
-                ResourceOutcome::Fulfilled(ResourceFulfillment::input(
-                    name,
-                    RegisteredSourceKind::Generated,
-                    self.generated.as_bytes().into(),
-                ))
-            }
-            ResourceNeed::InputProbe { request } if request.name == STABILIZATION_INPUT => {
-                ResourceOutcome::Fulfilled(ResourceFulfillment::InputProbe {
-                    request: request.clone(),
-                    resource: tex_command::FileEnquiryResource::new(
-                        SourceRegistration::new(
-                            RegisteredSourceKind::Generated,
-                            self.generated.as_bytes(),
-                        ),
-                        None,
-                    ),
-                })
-            }
-            _ => self.fallback.fulfill(world, need),
-        }
-    }
-}
-
-struct StabilizationSample {
-    initial: Duration,
-    passes: Vec<Duration>,
-    dvis: Vec<Vec<u8>>,
-    lookups: u64,
-    hits: u64,
-    misses: u64,
-    reexecuted_bytes: usize,
-    retained_bytes: usize,
-}
-
-fn stabilization_source(fixture: &IncrementalFixture) -> String {
-    let prefix = format!("\\input plain.tex\n\\input {STABILIZATION_INPUT}\n");
-    let mut body = fixture.original["\\input plain.tex\n".len()..].to_owned();
-    let offset = fixture.body_offset;
-    body.insert_str(offset, "\\hskip\\stabilizationrefwidth ");
-    prefix + &body
-}
-
-fn synthetic_stabilization_source() -> String {
-    const PARAGRAPH: &str = "The generated input controls a measured horizontal skip in this paragraph while ordinary words provide stable line-breaking material for unchanged-root replay.\n\n";
-    let mut source =
-        format!("\\input plain.tex\n\\input {STABILIZATION_INPUT}\n\\hsize=220pt \\vsize=240pt\n");
-    for index in 0_usize..16 {
-        if index.is_multiple_of(4) {
-            source.push_str("\\hskip\\stabilizationrefwidth ");
-        }
-        source.push_str(PARAGRAPH);
-    }
-    source.push_str("\\bye\n");
-    source
-}
-
-#[allow(clippy::disallowed_methods)] // Host-side stabilization profiling timer.
-fn execute_stabilization_sample(
-    template: &World,
-    source: &str,
-    memo: bool,
-    recording: PureMemoRecordingPolicy,
-    unused_change: bool,
-) -> Result<StabilizationSample, String> {
-    let path = Path::new(JOB_DIR).join(JOB_FILE);
-    let mut session = incremental_session(template, source, RevisionId::new(1), memo, recording)?;
-    let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-    let mut input = OverlayInputResolver {
-        fallback: &mut resolvers,
-        generated: if unused_change {
-            "\\def\\stabilizationrefwidth{0pt}\\def\\stabilizationunused{a}"
-        } else {
-            "\\def\\stabilizationrefwidth{0pt}"
-        },
-    };
-    let started = Instant::now();
-    session
-        .cold_with_resolvers(&mut input)
-        .map_err(|error| format!("construct stabilization history: {error}"))?;
-    let initial = started.elapsed();
-
-    let mut passes = Vec::with_capacity(STABILIZATION_PASSES);
-    let mut dvis = Vec::with_capacity(STABILIZATION_PASSES);
-    let mut lookups = 0_u64;
-    let mut hits = 0_u64;
-    let mut misses = 0_u64;
-    let mut reexecuted_bytes = 0_usize;
-    for pass in 0..STABILIZATION_PASSES {
-        let generated = if unused_change && pass.is_multiple_of(2) {
-            "\\def\\stabilizationrefwidth{0pt}\\def\\stabilizationunused{b}"
-        } else if unused_change {
-            "\\def\\stabilizationrefwidth{0pt}\\def\\stabilizationunused{a}"
-        } else if pass.is_multiple_of(2) {
-            "\\def\\stabilizationrefwidth{10pt}"
-        } else {
-            "\\def\\stabilizationrefwidth{0pt}"
-        };
-        let mut candidate = session
-            .start_external_input_delta_candidate()
-            .map_err(|error| format!("start stabilization pass {}: {error}", pass + 1))?;
-        let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
-        let mut input = OverlayInputResolver {
-            fallback: &mut resolvers,
-            generated,
-        };
-        let started = Instant::now();
-        let outcome = candidate
-            .drive_with_resource_resolvers(&mut input, &Cancellation::new())
-            .map_err(|error| format!("drive stabilization pass {}: {error}", pass + 1))?;
-        if !matches!(outcome, RevisionCandidateResult::Complete) {
-            return Err(format!(
-                "stabilization pass {} unexpectedly requested a resource",
-                pass + 1
-            ));
-        }
-        let pending = session
-            .finish_advance_candidate(candidate)
-            .map_err(|error| format!("finish stabilization pass {}: {error}", pass + 1))?;
-        let reuse = pending.reuse();
-        lookups = lookups.saturating_add(reuse.paragraph_replay_lookups);
-        hits = hits.saturating_add(reuse.paragraph_replay_hits);
-        misses = misses.saturating_add(reuse.paragraph_replay_validation_misses);
-        reexecuted_bytes = reexecuted_bytes.saturating_add(reuse.reexecuted_bytes);
-        let accepted = session
-            .accept_pending(pending)
-            .map_err(|error| format!("accept stabilization pass {}: {error}", pass + 1))?;
-        passes.push(started.elapsed());
-        dvis.push(accepted.dvi_bytes().map_err(|error| error.to_string())?);
-    }
-    Ok(StabilizationSample {
-        initial,
-        passes,
-        dvis,
-        lookups,
-        hits,
-        misses,
-        reexecuted_bytes,
-        retained_bytes: session.pure_memo_stats().paragraph_history_metadata_bytes,
-    })
-}
-
-fn run_stabilization_replay(
-    options: &Options,
-    template: &World,
-    synthetic: bool,
-) -> Result<(), String> {
-    if options.checkpoints
-        || options.incremental_edit
-        || options.incremental_path.is_some()
-        || (options.synthetic_stabilization_replay && !synthetic)
-        || (options.stabilization_replay && synthetic)
-        || options.cold_memo_policy.is_some()
-        || options.baseline_memo_recording.is_some()
-    {
-        return Err("--stabilization-replay cannot be combined with another workload".to_owned());
-    }
-    if !options.iterations.is_multiple_of(2) {
-        return Err(
-            "--stabilization-replay requires an even --iterations count for AB/BA pairing"
-                .to_owned(),
-        );
-    }
-    let source = if synthetic {
-        synthetic_stabilization_source()
-    } else {
-        let fixture = incremental_fixture(&options.repo_root)?;
-        stabilization_source(&fixture)
-    };
-    #[cfg(feature = "profiling")]
-    let measurement_before = paragraph_replay_measurement();
-    for _ in 0..options.warmups {
-        let _ = execute_stabilization_sample(
-            template,
-            &source,
-            false,
-            PureMemoRecordingPolicy::default(),
-            synthetic,
-        )?;
-        let _ = execute_stabilization_sample(
-            template,
-            &source,
-            true,
-            options.memo_recording,
-            synthetic,
-        )?;
-    }
-    let mut cold_initial = Vec::with_capacity(options.iterations);
-    let mut replay_initial = Vec::with_capacity(options.iterations);
-    let mut cold_passes = Vec::with_capacity(options.iterations * STABILIZATION_PASSES);
-    let mut replay_passes = Vec::with_capacity(options.iterations * STABILIZATION_PASSES);
-    let mut paired_total = Vec::with_capacity(options.iterations);
-    let mut last_cold = None;
-    let mut last_replay = None;
-    for iteration in 0..options.iterations {
-        let order = if iteration.is_multiple_of(2) {
-            [false, true]
-        } else {
-            [true, false]
-        };
-        let mut pair: [Option<StabilizationSample>; 2] = [None, None];
-        for memo in order {
-            pair[usize::from(memo)] = Some(execute_stabilization_sample(
-                template,
-                &source,
-                memo,
-                options.memo_recording,
-                synthetic,
-            )?);
-        }
-        let cold = pair[0].take().expect("cold sample");
-        let replay = pair[1].take().expect("replay sample");
-        if cold.dvis != replay.dvis {
-            return Err(format!(
-                "AB/BA stabilization outputs differ in iteration {}",
-                iteration + 1
-            ));
-        }
-        cold_initial.push(cold.initial);
-        replay_initial.push(replay.initial);
-        cold_passes.extend(cold.passes.iter().copied());
-        replay_passes.extend(replay.passes.iter().copied());
-        let cold_total = cold.initial + cold.passes.iter().copied().sum::<Duration>();
-        let replay_total = replay.initial + replay.passes.iter().copied().sum::<Duration>();
-        paired_total.push((replay_total.as_secs_f64() - cold_total.as_secs_f64()) * 1_000.0);
-        last_cold = Some(cold);
-        last_replay = Some(replay);
-    }
-    let cold = last_cold.expect("measured cold sample");
-    let replay = last_replay.expect("measured replay sample");
-    println!(
-        "gentle-profile stabilization replay: source={} passes_per_session={STABILIZATION_PASSES} measured_sessions={} warmup_sessions={} order=AB/BA",
-        if synthetic { "synthetic" } else { "gentle" },
-        options.iterations,
-        options.warmups,
-    );
-    print_duration_stats("stabilization cold initial", duration_stats(&cold_initial));
-    print_duration_stats(
-        "stabilization replay initial",
-        duration_stats(&replay_initial),
-    );
-    print_duration_stats("stabilization cold passes", duration_stats(&cold_passes));
-    print_duration_stats(
-        "stabilization replay passes",
-        duration_stats(&replay_passes),
-    );
-    let delta = scalar_stats(&paired_total);
-    println!(
-        "gentle-profile stabilization paired total delta: replay-cold mean={:+.3}ms median={:+.3}ms min={:+.3}ms max={:+.3}ms",
-        delta.mean, delta.median, delta.min, delta.max,
-    );
-    println!(
-        "gentle-profile stabilization work: policy=cold passes={} lookups={} hits={} misses={} reexecuted_bytes={} retained_bytes={}",
-        STABILIZATION_PASSES,
-        cold.lookups,
-        cold.hits,
-        cold.misses,
-        cold.reexecuted_bytes,
-        cold.retained_bytes,
-    );
-    println!(
-        "gentle-profile stabilization work: policy=replay passes={} lookups={} hits={} misses={} reexecuted_bytes={} retained_bytes={}",
-        STABILIZATION_PASSES,
-        replay.lookups,
-        replay.hits,
-        replay.misses,
-        replay.reexecuted_bytes,
-        replay.retained_bytes,
-    );
-    #[cfg(feature = "profiling")]
-    print_paragraph_replay_measurement(
-        if synthetic {
-            "synthetic stabilization"
-        } else {
-            "gentle stabilization"
-        },
-        paragraph_replay_delta(paragraph_replay_measurement(), measurement_before),
-    );
-    Ok(())
-}
-
-#[allow(clippy::disallowed_methods)] // Host-side path-isolated profiling timer.
 fn run_incremental_path(
     options: &Options,
     template: &World,
     path_kind: IncrementalPath,
 ) -> Result<(), String> {
-    if options.checkpoints
-        || options.incremental_edit
-        || options.stabilization_replay
-        || options.synthetic_stabilization_replay
-    {
+    if options.checkpoints || options.incremental_edit {
         return Err("--incremental-path cannot be combined with another workload".to_owned());
     }
     let fixture = incremental_fixture(&options.repo_root)?;
@@ -983,11 +644,9 @@ fn run_incremental_path(
     let total_steps = options.warmups + options.iterations;
     let mut durations = Vec::with_capacity(options.iterations);
     let mut stages = Vec::with_capacity(options.iterations);
-    let mut line_hits = 0_u64;
-    let mut commands_skipped = 0_u64;
     let mut last_reuse = ReuseMetrics::default();
     #[cfg(feature = "profiling")]
-    let replay_measurement_before = paragraph_replay_measurement();
+    let replay_measurement_before = step_snapshot_measurement();
     for step_index in 0..total_steps {
         let (from, to, expected_dvi) = if on_left {
             (left, right, right_dvi.as_slice())
@@ -997,7 +656,6 @@ fn run_incremental_path(
         debug_assert_eq!(session.source(), from);
         revision += 1;
         let edit = replacement_edit(from, to, session.revision(), session.content_hash());
-        let previous_memo = session.pure_memo_stats();
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
         let started = Instant::now();
         let accepted = session
@@ -1020,7 +678,6 @@ fn run_incremental_path(
                 step_index + 1,
             ));
         }
-        let current_memo = session.pure_memo_stats();
         if step_index >= options.warmups {
             durations.push(elapsed);
             stages.push(IncrementalStages::from_reuse(
@@ -1028,16 +685,6 @@ fn run_incremental_path(
                 dvi_latency,
                 accepted.reuse,
             ));
-            line_hits = line_hits.saturating_add(
-                current_memo
-                    .paragraph_line_hits
-                    .saturating_sub(previous_memo.paragraph_line_hits),
-            );
-            commands_skipped = commands_skipped.saturating_add(
-                current_memo
-                    .paragraph_commands_skipped
-                    .saturating_sub(previous_memo.paragraph_commands_skipped),
-            );
         }
         last_reuse = accepted.reuse;
         on_left = !on_left;
@@ -1056,7 +703,7 @@ fn run_incremental_path(
     );
     print_isolated_stage_attribution(path_kind, &stages);
     println!(
-        "gentle-profile isolated incremental work: path={} last_pages_retained_prefix={} last_pages_retyped={} last_pages_reused={} last_paragraphs_reexecuted={} last_bytes_reexecuted={} last_tokens_reexecuted={} last_commands_reexecuted={} last_trace_nodes_walked={} last_trace_leaf_hits={} last_trace_subtree_hits={} last_suffixes_adopted={} paragraph_line_hits={} paragraph_commands_skipped={}",
+        "gentle-profile isolated incremental work: path={} last_pages_retained_prefix={} last_pages_retyped={} last_pages_reused={} last_paragraphs_reexecuted={} last_bytes_reexecuted={} last_tokens_reexecuted={} last_commands_reexecuted={} last_trace_nodes_walked={} last_trace_leaf_hits={} last_trace_subtree_hits={} last_suffixes_adopted={}",
         path_kind.name(),
         last_reuse.pages_retained_prefix,
         last_reuse.pages_retyped,
@@ -1069,37 +716,28 @@ fn run_incremental_path(
         last_reuse.trace_leaf_hits,
         last_reuse.trace_subtree_hits,
         last_reuse.suffixes_adopted,
-        line_hits,
-        commands_skipped,
     );
     #[cfg(feature = "profiling")]
-    print_paragraph_replay_measurement(
+    print_step_snapshot_measurement(
         &format!("isolated {}", path_kind.name()),
-        paragraph_replay_delta(paragraph_replay_measurement(), replay_measurement_before),
+        step_snapshot_delta(step_snapshot_measurement(), replay_measurement_before),
     );
     Ok(())
 }
 
 #[allow(clippy::disallowed_methods)] // Host-side deletion-baseline timer.
-fn run_paragraph_workload(
+fn run_edit_restart_workload(
     options: &Options,
     template: &World,
-    workload: ParagraphWorkload,
+    workload: EditRestartWorkload,
 ) -> Result<(), String> {
-    if options.checkpoints
-        || options.incremental_edit
-        || options.stabilization_replay
-        || options.synthetic_stabilization_replay
-        || options.incremental_path.is_some()
-    {
-        return Err("--paragraph-workload cannot be combined with another workload".to_owned());
+    if options.checkpoints || options.incremental_edit || options.incremental_path.is_some() {
+        return Err("--edit-restart-workload cannot be combined with another workload".to_owned());
     }
-    let (before, after) = if workload == ParagraphWorkload::Long {
-        long_paragraph_workload()
+    let (before, after) = if workload == EditRestartWorkload::Long {
+        long_edit_restart_workload()
     } else {
-        let directory = options
-            .repo_root
-            .join("benchmarks/paragraph-replay/workloads");
+        let directory = options.repo_root.join("benchmarks/edit-restart/workloads");
         let before_path = directory.join(format!("{}-before.tex", workload.name()));
         let after_path = directory.join(format!("{}-after.tex", workload.name()));
         (
@@ -1119,7 +757,7 @@ fn run_paragraph_workload(
     )?;
     let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
     #[cfg(feature = "profiling")]
-    let measurement_before = paragraph_replay_measurement();
+    let measurement_before = step_snapshot_measurement();
     let initial_started = Instant::now();
     let initial = session
         .cold_with_resolvers(&mut resolvers)
@@ -1133,8 +771,6 @@ fn run_paragraph_workload(
     let mut on_before = true;
     let mut durations = Vec::with_capacity(options.iterations);
     let mut stages = Vec::with_capacity(options.iterations);
-    let mut line_hits = 0_u64;
-    let mut commands_skipped = 0_u64;
     let mut last_reuse = ReuseMetrics::default();
     for step in 0..options.warmups.saturating_add(options.iterations) {
         let (from, to, expected) = if on_before {
@@ -1144,7 +780,6 @@ fn run_paragraph_workload(
         };
         revision += 1;
         let edit = replacement_edit(from, to, session.revision(), session.content_hash());
-        let previous_memo = session.pure_memo_stats();
         let mut resolvers = FileSessionResolvers::new(&source_path, Vec::new(), Vec::new());
         let started = Instant::now();
         let accepted = session
@@ -1161,7 +796,6 @@ fn run_paragraph_workload(
                 step + 1,
             ));
         }
-        let current_memo = session.pure_memo_stats();
         if step >= options.warmups {
             durations.push(elapsed);
             stages.push(IncrementalStages::from_reuse(
@@ -1169,22 +803,12 @@ fn run_paragraph_workload(
                 dvi_latency,
                 accepted.reuse,
             ));
-            line_hits = line_hits.saturating_add(
-                current_memo
-                    .paragraph_line_hits
-                    .saturating_sub(previous_memo.paragraph_line_hits),
-            );
-            commands_skipped = commands_skipped.saturating_add(
-                current_memo
-                    .paragraph_commands_skipped
-                    .saturating_sub(previous_memo.paragraph_commands_skipped),
-            );
         }
         last_reuse = accepted.reuse;
         on_before = !on_before;
     }
     println!(
-        "gentle-profile paragraph workload: name={} measured_advances={} warmup_advances={} before_content_hash={:?} after_content_hash={:?} memo_layers={:?}",
+        "gentle-profile edit-restart workload: name={} measured_advances={} warmup_advances={} before_content_hash={:?} after_content_hash={:?} memo_layers={:?}",
         workload.name(),
         options.iterations,
         options.warmups,
@@ -1193,17 +817,17 @@ fn run_paragraph_workload(
         options.memo_recording,
     );
     print_duration_stats(
-        &format!("paragraph workload {}", workload.name()),
+        &format!("edit-restart workload {}", workload.name()),
         duration_stats(&durations),
     );
     println!(
-        "gentle-profile paragraph workload fresh: name={} before_ms={:.3} after_ms={:.3}",
+        "gentle-profile edit-restart workload fresh: name={} before_ms={:.3} after_ms={:.3}",
         workload.name(),
         initial_duration.as_secs_f64() * 1_000.0,
         after_cold_duration.as_secs_f64() * 1_000.0,
     );
     println!(
-        "gentle-profile paragraph workload reuse: name={} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} suffixes_adopted={} paragraph_replay_lookups={} paragraph_replay_hits={} paragraph_replay_validation_misses={} paragraph_line_hits={} paragraph_commands_skipped={}",
+        "gentle-profile edit workload reuse: name={} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} suffixes_adopted={}",
         workload.name(),
         last_reuse.pages_retained_prefix,
         last_reuse.pages_retyped,
@@ -1213,15 +837,10 @@ fn run_paragraph_workload(
         last_reuse.reexecuted_tokens,
         last_reuse.reexecuted_commands,
         last_reuse.suffixes_adopted,
-        last_reuse.paragraph_replay_lookups,
-        last_reuse.paragraph_replay_hits,
-        last_reuse.paragraph_replay_validation_misses,
-        line_hits,
-        commands_skipped,
     );
     let mean_stages = mean_incremental_stages(&stages);
     println!(
-        "gentle-profile paragraph workload stages: name={} snapshot_us={} detach_materialize_fork_us={} executor_us={} dvi_materialization_us={}",
+        "gentle-profile edit-restart workload stages: name={} snapshot_us={} detach_materialize_fork_us={} executor_us={} dvi_materialization_us={}",
         workload.name(),
         mean_stages.output_snapshot.as_micros(),
         mean_stages.restart_fork.as_micros(),
@@ -1229,16 +848,16 @@ fn run_paragraph_workload(
         mean_stages.dvi_materialization.as_micros(),
     );
     #[cfg(feature = "profiling")]
-    print_paragraph_replay_measurement(
+    print_step_snapshot_measurement(
         workload.name(),
-        paragraph_replay_delta(paragraph_replay_measurement(), measurement_before),
+        step_snapshot_delta(step_snapshot_measurement(), measurement_before),
     );
     Ok(())
 }
 
-fn long_paragraph_workload() -> (String, String) {
+fn long_edit_restart_workload() -> (String, String) {
     const PARAGRAPHS: usize = 384;
-    const PARAGRAPH: &str = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega. Ordinary repeated prose gives the line breaker and page builder stable multi-line material for the paragraph replay deletion baseline.\n\n";
+    const PARAGRAPH: &str = "Alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega. Ordinary repeated prose gives the line breaker and page builder stable multi-line material for the edit-restart deletion comparison.\n\n";
     let header = "\\input plain.tex\n\\hsize=220pt \\vsize=500pt\n";
     let mut before = String::with_capacity(header.len() + PARAGRAPHS * PARAGRAPH.len() + 6);
     before.push_str(header);
@@ -1275,7 +894,6 @@ fn mean_incremental_stages(samples: &[IncrementalStages]) -> IncrementalStages {
         executor: mean(samples, |sample| sample.executor),
         executor_shell: mean(samples, |sample| sample.executor_shell),
         output_snapshot: mean(samples, |sample| sample.output_snapshot),
-        paragraph_history_transition: mean(samples, |sample| sample.paragraph_history_transition),
         splice: mean(samples, |sample| sample.splice),
         substrate_transition: mean(samples, |sample| sample.substrate_transition),
         acceptance: mean(samples, |sample| sample.acceptance),
@@ -1285,62 +903,21 @@ fn mean_incremental_stages(samples: &[IncrementalStages]) -> IncrementalStages {
 }
 
 #[cfg(feature = "profiling")]
-fn paragraph_replay_delta(
-    after: ParagraphReplayMeasurement,
-    before: ParagraphReplayMeasurement,
-) -> ParagraphReplayMeasurement {
-    ParagraphReplayMeasurement {
-        step_snapshot_calls: after
-            .step_snapshot_calls
-            .saturating_sub(before.step_snapshot_calls),
-        step_snapshot_nanos: after
-            .step_snapshot_nanos
-            .saturating_sub(before.step_snapshot_nanos),
-        step_snapshot_logical_bytes: after
-            .step_snapshot_logical_bytes
-            .saturating_sub(before.step_snapshot_logical_bytes),
-        active_paragraph_step_snapshot_calls: after
-            .active_paragraph_step_snapshot_calls
-            .saturating_sub(before.active_paragraph_step_snapshot_calls),
-        active_paragraph_recorder_logical_bytes: after
-            .active_paragraph_recorder_logical_bytes
-            .saturating_sub(before.active_paragraph_recorder_logical_bytes),
-        continuation_detach_calls: after
-            .continuation_detach_calls
-            .saturating_sub(before.continuation_detach_calls),
-        continuation_detach_nanos: after
-            .continuation_detach_nanos
-            .saturating_sub(before.continuation_detach_nanos),
-        continuation_detach_paragraphs: after
-            .continuation_detach_paragraphs
-            .saturating_sub(before.continuation_detach_paragraphs),
-        continuation_materialize_calls: after
-            .continuation_materialize_calls
-            .saturating_sub(before.continuation_materialize_calls),
-        continuation_materialize_nanos: after
-            .continuation_materialize_nanos
-            .saturating_sub(before.continuation_materialize_nanos),
-        continuation_materialize_paragraphs: after
-            .continuation_materialize_paragraphs
-            .saturating_sub(before.continuation_materialize_paragraphs),
+fn step_snapshot_delta(
+    after: StepSnapshotMeasurement,
+    before: StepSnapshotMeasurement,
+) -> StepSnapshotMeasurement {
+    StepSnapshotMeasurement {
+        calls: after.calls.saturating_sub(before.calls),
+        nanos: after.nanos.saturating_sub(before.nanos),
+        logical_bytes: after.logical_bytes.saturating_sub(before.logical_bytes),
     }
 }
 
-#[cfg(feature = "profiling")]
-fn print_paragraph_replay_measurement(name: &str, measurement: ParagraphReplayMeasurement) {
-    println!(
-        "gentle-profile paragraph replay ownership: workload={name:?} step_snapshot_calls={} step_snapshot_ns={} step_snapshot_logical_bytes={} active_paragraph_step_snapshot_calls={} active_paragraph_recorder_logical_bytes={} continuation_detach_calls={} continuation_detach_ns={} continuation_detach_paragraphs={} continuation_materialize_calls={} continuation_materialize_ns={} continuation_materialize_paragraphs={}",
-        measurement.step_snapshot_calls,
-        measurement.step_snapshot_nanos,
-        measurement.step_snapshot_logical_bytes,
-        measurement.active_paragraph_step_snapshot_calls,
-        measurement.active_paragraph_recorder_logical_bytes,
-        measurement.continuation_detach_calls,
-        measurement.continuation_detach_nanos,
-        measurement.continuation_detach_paragraphs,
-        measurement.continuation_materialize_calls,
-        measurement.continuation_materialize_nanos,
-        measurement.continuation_materialize_paragraphs,
+fn print_step_snapshot_measurement(name: &str, measurement: StepSnapshotMeasurement) {
+    eprintln!(
+        "gentle-profile step snapshots: workload={name:?} calls={} nanos={} logical_bytes={}",
+        measurement.calls, measurement.nanos, measurement.logical_bytes,
     );
 }
 
@@ -1684,16 +1261,6 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             );
         }
     }
-    print_paragraph_opportunities(
-        baseline_name,
-        "priming",
-        disabled_sample.priming_memo.paragraph_opportunities,
-    );
-    print_paragraph_opportunities(
-        candidate_name,
-        "priming",
-        enabled_sample.priming_memo.paragraph_opportunities,
-    );
     #[cfg(feature = "profiling")]
     for (name, sample) in [
         (baseline_name, &disabled_sample),
@@ -1705,16 +1272,6 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
             sample.priming_state_hash.journal_entries,
             sample.priming_state_hash.changed_cells,
             sample.priming_state_hash.peak_changed_cell_scratch_bytes,
-        );
-        let phases = sample.priming_memo.paragraph_recording;
-        println!(
-            "gentle-profile priming paragraph phases: {name}: front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} line_provenance_ns={} line_retention_ns={}",
-            phases.front_end_dependency_nanos,
-            phases.input_transition_nanos,
-            phases.region_publication_nanos,
-            phases.break_dependency_nanos,
-            phases.line_provenance_nanos,
-            phases.line_retention_nanos,
         );
     }
     for index in 0..edit_count {
@@ -1790,30 +1347,6 @@ fn run_incremental_edit(options: &Options, template: &World) -> Result<(), Strin
         work.trace_subtree_hits,
         disabled_fast.mean / cold_fast.mean,
         enabled_fast.mean / cold_fast.mean,
-    );
-    let rebreak = fixture.break_dependency_edit;
-    let rebreak_step = &enabled_sample.steps[rebreak];
-    let line_hits = rebreak_step
-        .memo
-        .paragraph_line_hits
-        .saturating_sub(rebreak_step.previous_memo.paragraph_line_hits);
-    let break_index = tex_state::ParagraphValidationFailure::BreakDependency as usize;
-    let break_misses = rebreak_step.memo.paragraph_validation_failure_reasons[break_index]
-        .saturating_sub(
-            rebreak_step
-                .previous_memo
-                .paragraph_validation_failure_reasons[break_index],
-        );
-    if line_hits != 0 || break_misses != 1 {
-        return Err(format!(
-            "line-breaking dependency edit must take one cold-fallback miss: line_hits={line_hits} break_misses={break_misses}"
-        ));
-    }
-    println!(
-        "gentle-profile break-dependency cold fallback verified: edit={} ({}) misses={}",
-        rebreak + 1,
-        fixture.edit_names[rebreak],
-        break_misses,
     );
     Ok(())
 }
@@ -1911,13 +1444,12 @@ fn print_stage_attribution(
         }};
     }
     println!(
-        "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} executor_shell={} diagnostics_effects_snapshot={} paragraph_history_publish_drop={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
+        "gentle-profile stage attribution (baseline/candidate/delta ms): edit={edit} baseline={baseline_name:?} candidate={candidate_name:?} delta={delta_name:?} revision_setup={} restart_fork={} executor={} executor_shell={} diagnostics_effects_snapshot={} splice={} substrate_publish_drop={} acceptance={} unaccounted_system_noise={} dvi_materialization={}",
         stage!(revision_setup),
         stage!(restart_fork),
         stage!(executor),
         stage!(executor_shell),
         stage!(output_snapshot),
-        stage!(paragraph_history_transition),
         stage!(splice),
         stage!(substrate_transition),
         stage!(acceptance),
@@ -1933,14 +1465,13 @@ fn print_isolated_stage_attribution(path: IncrementalPath, samples: &[Incrementa
         };
     }
     println!(
-        "gentle-profile isolated stage means (ms): path={} revision_setup={:.3} restart_fork={:.3} executor={:.3} executor_shell={:.3} diagnostics_effects_snapshot={:.3} paragraph_history_publish_drop={:.3} splice={:.3} substrate_publish_drop={:.3} acceptance={:.3} unaccounted_system_noise={:.3} dvi_materialization={:.3}",
+        "gentle-profile isolated stage means (ms): path={} revision_setup={:.3} restart_fork={:.3} executor={:.3} executor_shell={:.3} diagnostics_effects_snapshot={:.3} splice={:.3} substrate_publish_drop={:.3} acceptance={:.3} unaccounted_system_noise={:.3} dvi_materialization={:.3}",
         path.name(),
         stage!(revision_setup),
         stage!(restart_fork),
         stage!(executor),
         stage!(executor_shell),
         stage!(output_snapshot),
-        stage!(paragraph_history_transition),
         stage!(splice),
         stage!(substrate_transition),
         stage!(acceptance),
@@ -1968,16 +1499,8 @@ fn print_incremental_work(
     _timer_pair_floor_ns: u64,
 ) {
     let reuse = sample.reuse;
-    macro_rules! memo_delta {
-        ($field:ident) => {
-            sample
-                .memo
-                .$field
-                .saturating_sub(sample.previous_memo.$field)
-        };
-    }
     println!(
-        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} macro_text_span_tokens={} source_text_span_tokens={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} trace_bytes={} exact_checks={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} reexecute_us={} diagnostics_effects_snapshot_us={} paragraph_history_publish_drop_us={} trace_validation_us={} trace_replay_us={} splice_us={} substrate_publish_drop_us={} acceptance_us={} dvi_materialization_us={}",
+        "gentle-profile incremental work: {name}: edit={edit} pages_retained_prefix={} pages_retyped={} pages_reused={} paragraphs_reexecuted={} bytes_reexecuted={} tokens_reexecuted={} commands_reexecuted={} trace_nodes_walked={} trace_leaf_hits={} trace_subtree_hits={} suffixes_adopted={} same_history_stop={:?} revision_setup_us={} fork_us={} executor_us={} reexecute_us={} snapshot_us={} trace_validation_us={} splice_us={} substrate_us={} acceptance_us={} dvi_us={}",
         reuse.pages_retained_prefix,
         reuse.pages_retyped,
         reuse.pages_reused,
@@ -1985,13 +1508,9 @@ fn print_incremental_work(
         reuse.reexecuted_bytes,
         reuse.reexecuted_tokens,
         reuse.reexecuted_commands,
-        reuse.reexecuted_macro_text_span_tokens,
-        reuse.reexecuted_source_text_span_tokens,
         reuse.trace_nodes_walked,
         reuse.trace_leaf_hits,
         reuse.trace_subtree_hits,
-        reuse.trace_retained_bytes,
-        reuse.same_history_attempts,
         reuse.suffixes_adopted,
         reuse.same_history_stop,
         reuse.revision_setup_latency.as_micros(),
@@ -1999,61 +1518,14 @@ fn print_incremental_work(
         reuse.executor_latency.as_micros(),
         reuse.reexecution_latency.as_micros(),
         reuse.output_snapshot_latency.as_micros(),
-        reuse.paragraph_history_transition_latency.as_micros(),
         reuse.trace_validation_latency.as_micros(),
-        reuse.trace_replay_latency.as_micros(),
         reuse.splice_latency.as_micros(),
         reuse.substrate_transition_latency.as_micros(),
         reuse.acceptance_latency.as_micros(),
         sample.dvi_latency.as_micros(),
     );
-    print_paragraph_opportunities(
-        name,
-        &format!("edit-{edit}"),
-        sample
-            .memo
-            .paragraph_opportunities
-            .saturating_since(sample.previous_memo.paragraph_opportunities),
-    );
-    #[cfg(feature = "profiling")]
-    println!(
-        "gentle-profile exact identity: {name}: edit={edit} calls={} nanos={} projection_calls={} projection_visits={} projection_nanos={} root_cache_hits={} root_cache_misses={} dirty_leaves={}",
-        sample.exact_identity.calls,
-        sample.exact_identity.nanos,
-        sample.exact_identity.projection_calls,
-        sample.exact_identity.projection_visits,
-        sample.exact_identity.projection_nanos,
-        sample.exact_identity.root_cache_hits,
-        sample.exact_identity.root_cache_misses,
-        sample.exact_identity.dirty_leaves,
-    );
-    #[cfg(feature = "profiling")]
-    println!(
-        "gentle-profile state hash journal: {name}: edit={edit} calls={} journal_entries={} changed_cells={} peak_changed_scratch_bytes={}",
-        sample.state_hash.calls,
-        sample.state_hash.journal_entries,
-        sample.state_hash.changed_cells,
-        sample.state_hash.peak_changed_cell_scratch_bytes,
-    );
-    #[cfg(feature = "profiling")]
-    println!(
-        "gentle-profile survivor work: {name}: edit={edit} fresh_promotions={} recycled_promotions={} releases={} shared_payload_drops={} promotion_nanos={} release_nanos={} shared_payload_drop_nanos={} source_words={} child_bearing_nodes={}",
-        sample.survivor.fresh_promotions,
-        sample.survivor.recycled_promotions,
-        sample.survivor.releases_to_recycling,
-        sample.survivor.shared_payload_drops,
-        sample
-            .survivor
-            .fresh_promotion_nanos
-            .saturating_add(sample.survivor.recycled_promotion_nanos),
-        sample.survivor.release_nanos,
-        sample.survivor.shared_payload_drop_nanos,
-        sample.survivor.source_words,
-        sample.survivor.child_bearing_nodes,
-    );
     for (layer_name, layer) in [
         ("pretolerance", PureMemoLayer::Pretolerance),
-        ("paragraph", PureMemoLayer::Paragraph),
         ("page", PureMemoLayer::Page),
         ("shipout", PureMemoLayer::Shipout),
     ] {
@@ -2062,66 +1534,8 @@ fn print_incremental_work(
         print_memo_layer(name, edit, layer_name, current.saturating_since(previous));
     }
     println!(
-        "gentle-profile paragraph detail: {name}: edit={edit} eligible={} barriers={} validation_misses={} line_hits={} commands_skipped={} cold_starts_anchored={} cold_starts_unanchored={} cold_starts_blocked={} barrier_display_math={} barrier_scantokens={} barrier_input_open={} barrier_endinput={} barrier_world={} barrier_output={} barrier_unsupported_write={} barrier_unsupported_input_transition={} barrier_unsupported_group_transition={} validation_reasons={}",
-        memo_delta!(paragraph_eligible_regions),
-        memo_delta!(paragraph_barriers),
-        memo_delta!(paragraph_validation_misses),
-        memo_delta!(paragraph_line_hits),
-        memo_delta!(paragraph_commands_skipped),
-        memo_delta!(paragraph_anchored_cold_starts),
-        memo_delta!(paragraph_unanchored_cold_starts),
-        memo_delta!(paragraph_blocked_cold_starts),
-        memo_delta!(paragraph_display_math_barriers),
-        memo_delta!(paragraph_scantokens_barriers),
-        memo_delta!(paragraph_input_open_barriers),
-        memo_delta!(paragraph_endinput_barriers),
-        memo_delta!(paragraph_untracked_world_barriers),
-        memo_delta!(paragraph_output_routine_barriers),
-        memo_delta!(paragraph_unsupported_write_barriers),
-        memo_delta!(paragraph_unsupported_input_transition_barriers),
-        memo_delta!(paragraph_unsupported_group_transition_barriers),
-        paragraph_validation_reasons(&sample.memo, &sample.previous_memo),
-    );
-    println!(
-        "gentle-profile memo retention: {name}: edit={edit} detached_cache_bytes={} paragraph_history_metadata_bytes={}",
-        sample.memo.retained_bytes, sample.memo.paragraph_history_metadata_bytes,
-    );
-    #[cfg(feature = "profiling")]
-    {
-        let phases = sample
-            .memo
-            .paragraph_recording
-            .saturating_since(sample.previous_memo.paragraph_recording);
-        println!(
-            "gentle-profile paragraph recording phases: {name}: edit={edit} timer_samples={} calibrated_timer_pair_floor_ns={} estimated_measurement_floor_ns={} front_end_dependency_ns={} input_transition_ns={} region_publication_ns={} break_dependency_ns={} break_key_discovery_ns={} break_stamp_registration_ns={} break_value_projection_ns={} line_provenance_ns={} line_retention_ns={}",
-            phases.timer_samples,
-            _timer_pair_floor_ns,
-            phases.timer_samples.saturating_mul(_timer_pair_floor_ns),
-            phases.front_end_dependency_nanos,
-            phases.input_transition_nanos,
-            phases.region_publication_nanos,
-            phases.break_dependency_nanos,
-            phases.break_key_discovery_nanos,
-            phases.break_stamp_registration_nanos,
-            phases.break_value_projection_nanos,
-            phases.line_provenance_nanos,
-            phases.line_retention_nanos,
-        );
-    }
-}
-
-fn print_paragraph_opportunities(
-    name: &str,
-    stage: &str,
-    stats: tex_state::ParagraphOpportunityStats,
-) {
-    let metric = |metric: tex_state::ParagraphOpportunityMetric| {
-        format!("{}/{}/{}", metric.regions, metric.bytes, metric.nanos)
-    };
-    println!(
-        "gentle-profile paragraph history: {name}: stage={stage} metric=regions/bytes/nanos carried_forward={} published={}",
-        metric(stats.carried_forward),
-        metric(stats.published),
+        "gentle-profile memo retention: {name}: edit={edit} detached_cache_bytes={}",
+        sample.memo.retained_bytes,
     );
 }
 
@@ -2144,37 +1558,6 @@ fn print_memo_layer(name: &str, edit: usize, layer: &str, stats: MemoLayerStats)
         stats.validation_nanos,
         stats.import_nanos,
     );
-}
-
-fn paragraph_validation_reasons(current: &PureMemoStats, previous: &PureMemoStats) -> String {
-    let reasons = [
-        ParagraphValidationFailure::Meaning,
-        ParagraphValidationFailure::Cell,
-        ParagraphValidationFailure::Code,
-        ParagraphValidationFailure::Font,
-        ParagraphValidationFailure::Hyphenation,
-        ParagraphValidationFailure::Input,
-        ParagraphValidationFailure::Engine,
-        ParagraphValidationFailure::Page,
-        ParagraphValidationFailure::World,
-        ParagraphValidationFailure::Query,
-        ParagraphValidationFailure::Mutation,
-        ParagraphValidationFailure::Effect,
-        ParagraphValidationFailure::InputTransition,
-        ParagraphValidationFailure::RetainedResult,
-        ParagraphValidationFailure::BreakDependency,
-        ParagraphValidationFailure::ParagraphStart,
-    ];
-    reasons
-        .into_iter()
-        .map(|reason| {
-            let count = current
-                .paragraph_validation_failure_count(reason)
-                .saturating_sub(previous.paragraph_validation_failure_count(reason));
-            format!("{reason:?}:{count}")
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[allow(clippy::disallowed_methods)] // Profiling setup reads the pinned corpus once.
@@ -2274,7 +1657,6 @@ fn incremental_fixture(repo_root: &Path) -> Result<IncrementalFixture, String> {
             IncrementalPath::Rebreak,
         ],
         suffix_adoption_edit: 3,
-        break_dependency_edit: 4,
         body_offset,
         body_len: body.len(),
         inserted_bytes: insertion.len() + 1,
@@ -2332,16 +1714,9 @@ fn execute_incremental_sample(
     let priming_elapsed = priming_started.elapsed();
     #[cfg(feature = "profiling")]
     let priming_state_hash = state_hash_delta(state_hash_measurement(), priming_state_hash_before);
-    let priming_memo = session.pure_memo_stats();
     let mut steps = Vec::with_capacity(fixture.edits.len());
     for (index, edit) in fixture.edits.iter().enumerate() {
         let previous_memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling")]
-        let exact_before = exact_identity_measurement();
-        #[cfg(feature = "profiling")]
-        let state_hash_before = state_hash_measurement();
-        #[cfg(feature = "profiling")]
-        let survivor_before = survivor_measurement();
         let mut resolvers = FileSessionResolvers::new(&path, Vec::new(), Vec::new());
         let started = Instant::now();
         let accepted = session
@@ -2353,12 +1728,6 @@ fn execute_incremental_sample(
             .map_err(|error| format!("advance incremental edit {}: {error}", index + 1))?;
         let elapsed = started.elapsed();
         let memo = session.pure_memo_stats();
-        #[cfg(feature = "profiling")]
-        let exact_after = exact_identity_measurement();
-        #[cfg(feature = "profiling")]
-        let state_hash_after = state_hash_measurement();
-        #[cfg(feature = "profiling")]
-        let survivor_after = survivor_measurement();
         let dvi_started = Instant::now();
         let dvi = accepted.dvi_bytes().map_err(|error| error.to_string())?;
         let dvi_latency = dvi_started.elapsed();
@@ -2382,38 +1751,10 @@ fn execute_incremental_sample(
                 .collect(),
             memo,
             previous_memo,
-            #[cfg(feature = "profiling")]
-            exact_identity: ExactIdentityMeasurement {
-                calls: exact_after.calls.saturating_sub(exact_before.calls),
-                nanos: exact_after.nanos.saturating_sub(exact_before.nanos),
-                projection_calls: exact_after
-                    .projection_calls
-                    .saturating_sub(exact_before.projection_calls),
-                projection_visits: exact_after
-                    .projection_visits
-                    .saturating_sub(exact_before.projection_visits),
-                projection_nanos: exact_after
-                    .projection_nanos
-                    .saturating_sub(exact_before.projection_nanos),
-                root_cache_hits: exact_after
-                    .root_cache_hits
-                    .saturating_sub(exact_before.root_cache_hits),
-                root_cache_misses: exact_after
-                    .root_cache_misses
-                    .saturating_sub(exact_before.root_cache_misses),
-                dirty_leaves: exact_after
-                    .dirty_leaves
-                    .saturating_sub(exact_before.dirty_leaves),
-            },
-            #[cfg(feature = "profiling")]
-            state_hash: state_hash_delta(state_hash_after, state_hash_before),
-            #[cfg(feature = "profiling")]
-            survivor: survivor_delta(survivor_after, survivor_before),
         });
     }
     Ok(IncrementalSample {
         priming_elapsed,
-        priming_memo,
         #[cfg(feature = "profiling")]
         priming_state_hash,
         steps,
@@ -2721,17 +2062,17 @@ fn parse_incremental_path(value: &str) -> Result<IncrementalPath, String> {
     }
 }
 
-fn parse_paragraph_workload(value: &str) -> Result<ParagraphWorkload, String> {
+fn parse_edit_restart_workload(value: &str) -> Result<EditRestartWorkload, String> {
     match value {
-        "unchanged" => Ok(ParagraphWorkload::Unchanged),
-        "prefix" => Ok(ParagraphWorkload::Prefix),
-        "suffix" => Ok(ParagraphWorkload::Suffix),
-        "display-math" => Ok(ParagraphWorkload::DisplayMath),
-        "macro" => Ok(ParagraphWorkload::Macro),
-        "conditional" => Ok(ParagraphWorkload::Conditional),
-        "long" => Ok(ParagraphWorkload::Long),
+        "unchanged" => Ok(EditRestartWorkload::Unchanged),
+        "prefix" => Ok(EditRestartWorkload::Prefix),
+        "suffix" => Ok(EditRestartWorkload::Suffix),
+        "display-math" => Ok(EditRestartWorkload::DisplayMath),
+        "macro" => Ok(EditRestartWorkload::Macro),
+        "conditional" => Ok(EditRestartWorkload::Conditional),
+        "long" => Ok(EditRestartWorkload::Long),
         _ => Err(format!(
-            "--paragraph-workload expects unchanged, prefix, suffix, display-math, macro, conditional, or long, got {value:?}"
+            "--edit-restart-workload expects unchanged, prefix, suffix, display-math, macro, conditional, or long, got {value:?}"
         )),
     }
 }
@@ -2755,20 +2096,18 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
     }
     let mut policy = PureMemoRecordingPolicy {
         pretolerance: false,
-        paragraphs: false,
         pages: false,
         shipouts: false,
     };
     for layer in value.split(',') {
         match layer {
             "pretolerance" => policy.pretolerance = true,
-            "paragraph" => policy.paragraphs = true,
             "page" => policy.pages = true,
             "shipout" => policy.shipouts = true,
             "none" if value == "none" => {}
             _ => {
                 return Err(format!(
-                    "--memo-layers expects comma-separated pretolerance,paragraph,page,shipout, got {value:?}"
+                    "--memo-layers expects comma-separated pretolerance,page,shipout, got {value:?}"
                 ));
             }
         }
@@ -2778,7 +2117,7 @@ fn parse_memo_layers(value: &str) -> Result<PureMemoRecordingPolicy, String> {
 
 fn print_help() {
     println!(
-        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow|neutral] [--paragraph-workload NAME] [--stabilization-replay] [--synthetic-stabilization-replay] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
+        "Usage: gentle-profile [--iterations N] [--warmups N] [--repo-root PATH] [--checkpoints] [--cold-memo-layers disabled|LIST] [--incremental-edit] [--incremental-path fast|slow|neutral] [--edit-restart-workload NAME] [--baseline-memo-layers LIST] [--memo-layers LIST]\n\n\
          Loads Gentle and its support files once, then executes fresh deterministic\n\
          in-memory Umber sessions for profiling. Defaults: {DEFAULT_ITERATIONS} measured\n\
          iterations and {DEFAULT_WARMUPS} warm-up. --checkpoints captures and hashes every\n\
@@ -2787,15 +2126,11 @@ fn print_help() {
          five accepted edits/session using balanced AB/BA pairs and DVI parity verification;\n\
          the fifth changes a line-breaking dependency to verify one-shot cold fallback.\n\
          --incremental-path repeatedly ping-pongs one fast, slow, or output-neutral edit after cold setup,\n\
-         --paragraph-workload repeatedly ping-pongs one committed paragraph deletion-baseline pair,\n\
+         --edit-restart-workload repeatedly ping-pongs one committed edit pair,\n\
          verifies each direction against cold output, and isolates its sampled stacks.\n\
-         --stabilization-replay compares sixteen unchanged-root generated-input passes\n\
-         with paragraph recording disabled/enabled in balanced AB/BA session order.\n\
-         --synthetic-stabilization-replay runs the same comparison over the compact\n\
-         paragraph deletion-baseline source.\n\
          --cold-memo-layers repeats fresh incremental-session cold compiles with memoization\n\
          disabled or enabled for the selected layers, isolating recording overhead.\n\
-         --memo-layers configures enabled recording layers; the default is paragraph.\n\
+         --memo-layers configures the remaining pure-query recording layers.\n\
          --baseline-memo-layers replaces the disabled control with an explicit recording\n\
          policy for direct marginal layer comparisons."
     );

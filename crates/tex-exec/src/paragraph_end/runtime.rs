@@ -1,7 +1,6 @@
 pub(crate) struct ParagraphBreakResult {
     pub(crate) last_line: Option<BoxNode>,
     pub(crate) active_directions: Vec<Direction>,
-    pub(crate) finished_nodes: Vec<Node>,
 }
 
 impl ParagraphBreakResult {
@@ -9,7 +8,6 @@ impl ParagraphBreakResult {
         Self {
             last_line: None,
             active_directions: Vec::new(),
-            finished_nodes: Vec::new(),
         }
     }
 }
@@ -139,12 +137,6 @@ pub(crate) fn break_current_paragraph(
     let mut migrated = Vec::new();
     let mut pre_migrated = Vec::new();
     let mut retained_migrated = Vec::new();
-    let outer_vertical = crate::vertical::is_outer_vertical(nest);
-    let contribution_start = if outer_vertical {
-        stores.page_contributions().len()
-    } else {
-        nest.current_list().nodes().len()
-    };
     while let Some(mut broken) = materializer.materialize_next(stores, line_nodes) {
         crate::box_runtime::hmode::reshape_open_type_runs(stores, &mut broken.nodes);
         materialize_pdf_line(
@@ -216,21 +208,10 @@ pub(crate) fn break_current_paragraph(
     if reset_paragraph {
         reset_after_par(nest, stores);
     }
-    let finished_nodes = if outer_vertical {
-        stores
-            .page_contributions()
-            .iter()
-            .skip(contribution_start)
-            .cloned()
-            .collect()
-    } else {
-        nest.current_list().nodes()[contribution_start..].to_vec()
-    };
     build_page_if_outer_vertical(nest, stores)?;
     Ok(ParagraphBreakResult {
         last_line,
         active_directions,
-        finished_nodes,
     })
 }
 
@@ -291,14 +272,6 @@ fn materialize_pdf_line(
     adjusts_spacing: bool,
     protrudes_chars: bool,
 ) -> Result<(), ExecError> {
-    if adjusts_spacing || protrudes_chars {
-        // Expansion and protrusion consult mutable, per-glyph PDF font-code
-        // tables. `DependencyFontField::PdfCode` intentionally has no
-        // detached semantic value yet, so retaining this paragraph would be
-        // a false validation after an ef/lp/rp-code edit. Keep the barrier at
-        // the actual read boundary until those tables gain typed projections.
-        stores.mark_pure_paragraph_barrier(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
-    }
     if adjusts_spacing {
         apply_line_expansion(stores, nodes, target)?;
     }

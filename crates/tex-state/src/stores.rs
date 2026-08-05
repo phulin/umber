@@ -70,7 +70,7 @@ use crate::source_map::{
     GeneratedSource, SourceBacking, SourceDescriptor, SourceMap, SourceMapError, SourceMapMark,
     SourcePos, SourceRegion, SourceSpan,
 };
-use crate::survivor::{RetainedNodeList, SurvivorArena};
+use crate::survivor::SurvivorArena;
 use crate::token::{Catcode, OriginId, Token, TracedTokenWord};
 use crate::token_store::{
     TokenListBuilder, TokenSemanticId, TokenSemanticIdBuilder, TokenStore, TokenStoreMark,
@@ -470,15 +470,6 @@ impl Stores {
 
     pub(crate) fn install_source_fragments(&mut self, fragments: FragmentStore) {
         self.source_fragments = fragments;
-    }
-
-    pub(crate) fn paragraph_origin_resolver(
-        &self,
-    ) -> Arc<crate::provenance::ParagraphOriginResolver> {
-        Arc::new(crate::provenance::ParagraphOriginResolver::new(
-            self.provenance.record_snapshot(),
-            self.source_fragments.metadata_snapshot(),
-        ))
     }
 
     pub(crate) fn direct_root_span_id(
@@ -2337,219 +2328,6 @@ impl Stores {
         self.timeline_node_pins.push(id);
     }
 
-    /// Captures accepted-history ownership of one paragraph graph. The local
-    /// survivor slot is held by the ordinary rollback pin log; the returned
-    /// mount shares its immutable payload and precomputed mount summary.
-    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> RetainedNodeList {
-        let mut glues = Vec::new();
-        let mut fonts = Vec::new();
-        let mountable = self.collect_paragraph_mount_resources(id, &mut glues, &mut fonts);
-        glues.sort_unstable_by_key(|id| id.raw());
-        glues.dedup_by_key(|id| id.raw());
-        let glues = glues.into_iter().map(|id| (id, self.glue(id))).collect();
-        let fonts = self.fonts.retain_prefix_for(&fonts);
-        let retained = self.prepare_box_value(id);
-        self.survivor_pins.push(retained);
-        self.survivors.retain(retained, glues, fonts, mountable)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn testing_survivor_payload_strong_count(
-        &self,
-        retained: &RetainedNodeList,
-    ) -> usize {
-        SurvivorArena::testing_payload_strong_count(retained)
-    }
-
-    /// Proves that an accepted-history survivor graph and its resource closure
-    /// can be read directly by this Universe. Unsupported handle-bearing forms
-    /// conservatively miss before replay mutates live state.
-    pub fn can_mount_retained_paragraph_result(&self, retained: &RetainedNodeList) -> bool {
-        retained.is_mountable()
-            && self.glue.can_restore_retained(retained.glues())
-            && self.fonts.can_restore_retained(retained.fonts())
-    }
-
-    /// Mounts current-revision provenance over an already validated immutable
-    /// paragraph graph and returns the same ordinary node-list handle.
-    pub fn mount_retained_paragraph_result(
-        &mut self,
-        retained: &RetainedNodeList,
-        root_origins: &[OriginId],
-        origin_slots: &[u32],
-    ) -> Option<NodeListId> {
-        if !self.can_mount_retained_paragraph_result(retained) {
-            return None;
-        }
-        self.mount_prevalidated_paragraph_result(retained, root_origins, origin_slots)
-    }
-
-    /// Mounts a retained paragraph graph whose complete closure was validated
-    /// earlier in the same fail-before-mutation transaction.
-    pub fn mount_prevalidated_paragraph_result(
-        &mut self,
-        retained: &RetainedNodeList,
-        root_origins: &[OriginId],
-        origin_slots: &[u32],
-    ) -> Option<NodeListId> {
-        if !self.glue.restore_retained(retained.glues()) {
-            return None;
-        }
-        if !self.fonts.restore_retained(retained.fonts()) {
-            return None;
-        }
-        let id = retained.id();
-        let newly_mounted = self.survivors.mount(retained)?;
-        if newly_mounted {
-            self.survivor_pins.push(id);
-        } else {
-            self.pin_survivor(id);
-        }
-        self.survivors
-            .mount_paragraph_origins(id, root_origins, origin_slots)
-            .then_some(id)
-    }
-
-    /// Mounts semantic paragraph output and attaches only its stable
-    /// diagnostic recipe. No origin record or overlay is built here.
-    pub fn mount_prevalidated_paragraph_result_deferred(
-        &mut self,
-        retained: &RetainedNodeList,
-        provenance: crate::ParagraphProvenanceRecipe,
-    ) -> Option<NodeListId> {
-        if !self.glue.restore_retained(retained.glues()) {
-            return None;
-        }
-        if !self.fonts.restore_retained(retained.fonts()) {
-            return None;
-        }
-        let id = retained.id();
-        let newly_mounted = self.survivors.mount(retained)?;
-        if newly_mounted {
-            self.survivor_pins.push(id);
-        } else {
-            self.pin_survivor(id);
-        }
-        self.survivors
-            .mount_deferred_paragraph_origins(id, provenance)
-            .then_some(id)
-    }
-
-    /// Mounts semantic paragraph output and attaches one shared lazy resolver
-    /// for the raw origins already present in the immutable graph.
-    pub fn mount_prevalidated_paragraph_result_lazy(
-        &mut self,
-        retained: &RetainedNodeList,
-        resolver: Arc<crate::ParagraphOriginResolver>,
-    ) -> Option<NodeListId> {
-        if !self.glue.restore_retained(retained.glues()) {
-            return None;
-        }
-        if !self.fonts.restore_retained(retained.fonts()) {
-            return None;
-        }
-        let id = retained.id();
-        let newly_mounted = self.survivors.mount(retained)?;
-        if newly_mounted {
-            self.survivor_pins.push(id);
-        } else {
-            self.pin_survivor(id);
-        }
-        self.survivors
-            .mount_lazy_paragraph_origins(id, resolver)
-            .then_some(id)
-    }
-
-    pub(crate) fn deferred_node_origins(
-        &self,
-        list: NodeListId,
-        index: usize,
-        len: usize,
-    ) -> Option<crate::survivor::DeferredNodeOrigins<'_>> {
-        self.survivors.deferred_node_origins(list, index, len)
-    }
-
-    pub(crate) fn deferred_node_origin_cursor(
-        &self,
-        list: NodeListId,
-    ) -> crate::survivor::DeferredNodeOriginCursor<'_> {
-        self.survivors.deferred_node_origin_cursor(list)
-    }
-
-    fn collect_paragraph_mount_resources(
-        &self,
-        id: NodeListId,
-        glues: &mut Vec<GlueId>,
-        fonts: &mut Vec<FontId>,
-    ) -> bool {
-        for node in self.nodes(id) {
-            match node {
-                crate::node_arena::NodeRef::Char { font, .. }
-                | crate::node_arena::NodeRef::Lig { font, .. }
-                | crate::node_arena::NodeRef::MarginKern { font, .. } => {
-                    if !fonts.contains(&font) {
-                        fonts.push(font);
-                    }
-                }
-                crate::node_arena::NodeRef::Glue {
-                    spec, leader: None, ..
-                } => {
-                    glues.push(spec);
-                }
-                crate::node_arena::NodeRef::HList(box_node)
-                | crate::node_arena::NodeRef::VList(box_node) => {
-                    if !self.collect_paragraph_mount_resources(box_node.children, glues, fonts) {
-                        return false;
-                    }
-                }
-                crate::node_arena::NodeRef::Disc {
-                    pre, post, replace, ..
-                } => {
-                    for child in [pre, post, replace] {
-                        if !self.collect_paragraph_mount_resources(child, glues, fonts) {
-                            return false;
-                        }
-                    }
-                }
-                crate::node_arena::NodeRef::Ins {
-                    split_top_skip,
-                    content,
-                    ..
-                } => {
-                    glues.push(split_top_skip);
-                    if !self.collect_paragraph_mount_resources(content, glues, fonts) {
-                        return false;
-                    }
-                }
-                crate::node_arena::NodeRef::Adjust(adjust) => {
-                    if !self.collect_paragraph_mount_resources(adjust.content, glues, fonts) {
-                        return false;
-                    }
-                }
-                crate::node_arena::NodeRef::Kern { .. }
-                | crate::node_arena::NodeRef::Penalty(_)
-                | crate::node_arena::NodeRef::Rule { .. }
-                | crate::node_arena::NodeRef::MathOn(_)
-                | crate::node_arena::NodeRef::MathOff(_)
-                | crate::node_arena::NodeRef::Direction(_)
-                | crate::node_arena::NodeRef::Nonscript
-                | crate::node_arena::NodeRef::Whatsit(crate::node::Whatsit::Language { .. }) => {}
-                crate::node_arena::NodeRef::Glue {
-                    leader: Some(_), ..
-                }
-                | crate::node_arena::NodeRef::Unset(_)
-                | crate::node_arena::NodeRef::Mark { .. }
-                | crate::node_arena::NodeRef::Whatsit(_)
-                | crate::node_arena::NodeRef::MathNoad(_)
-                | crate::node_arena::NodeRef::FractionNoad(_)
-                | crate::node_arena::NodeRef::MathStyle(_)
-                | crate::node_arena::NodeRef::MathChoice(_)
-                | crate::node_arena::NodeRef::MathList(_) => return false,
-            }
-        }
-        true
-    }
-
     /// Enters a TeX group.
     pub fn enter_group(&mut self) {
         self.code_tables.enter_group();
@@ -2673,26 +2451,6 @@ impl Stores {
 
     pub fn set_count_global(&mut self, index: u16, value: i32) {
         self.env.set_count_global(index, value);
-    }
-
-    pub(crate) fn begin_paragraph_mutations(
-        &mut self,
-    ) -> crate::env::paragraph::ParagraphMutationCheckpoint {
-        self.env.begin_paragraph_mutations()
-    }
-
-    pub(crate) fn finish_paragraph_mutations(
-        &mut self,
-        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
-    ) -> crate::PureParagraphMutationSummary {
-        self.env.finish_paragraph_mutations(checkpoint)
-    }
-
-    pub(crate) fn abandon_paragraph_mutations(
-        &mut self,
-        checkpoint: crate::env::paragraph::ParagraphMutationCheckpoint,
-    ) {
-        self.env.abandon_paragraph_mutations(checkpoint);
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {

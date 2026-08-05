@@ -179,36 +179,12 @@ fn disabled_runtime_does_not_retain_reads_or_allocate_a_region() {
     assert!(runtime.tracker.changed.is_empty());
     assert!(!runtime.is_recording());
 
-    runtime.begin_paragraph_break_region();
-    assert!(
-        !runtime.is_recording(),
-        "an absent optional paragraph region must remain absent"
-    );
-
     runtime.begin_region();
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     runtime.record(DependencyKey::Meaning(1), DependencyValue::Integer(2));
     assert_eq!(runtime.finish_region().len(), 1);
     assert!(runtime.mark_changed(DependencyKey::Meaning(1)) > ChangedAt::NEVER);
     assert_eq!(runtime.tracker.changed.len(), 1);
-    assert!(!runtime.is_recording());
-}
-
-#[test]
-fn paragraph_dependency_phases_remain_exact_and_separate() {
-    let mut runtime = DependencyRuntime::default();
-    let front_key = DependencyKey::Meaning(1);
-    let break_key = DependencyKey::Meaning(2);
-    runtime.begin_region();
-    runtime.record(front_key, DependencyValue::Integer(11));
-    runtime.begin_paragraph_break_region();
-    runtime.record(break_key, DependencyValue::Integer(22));
-
-    let (front, breaking) = runtime.finish_paragraph_region();
-    assert_eq!(front.len(), 1);
-    assert_eq!(front[0].key, front_key);
-    assert_eq!(breaking.len(), 1);
-    assert_eq!(breaking[0].key, break_key);
     assert!(!runtime.is_recording());
 }
 

@@ -190,8 +190,6 @@ print channel of its own outside the borrowed
   closing brace. §486 does not balance a runaway `\read` by inventing
   braces; its whole recovery is `align_state:=1000000; limit:=0` plus the
   error, so the stored list keeps exactly the tokens the file supplied.
-- `src/paragraph.rs`: typed command-owned paragraph input recording, exact
-  replay transactions, source coverage, and rollback-coupled transition state.
 - `src/observation/`: private aggregate read observation. `mod.rs` owns the
   record union, engine-owned source identity and alignment nesting, and the
   exhaustive `Meaning`-level command classification;

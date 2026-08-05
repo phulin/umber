@@ -79,7 +79,6 @@ pub struct CommittedArtifact {
 }
 
 const LIVE_RENDER_REF: u64 = 1 << 63;
-const SNAPSHOT_RENDER_REF: u64 = 1 << 62;
 const UNKNOWN_RENDER_REF: u64 = u64::MAX;
 
 #[derive(Clone, Debug)]
@@ -91,12 +90,11 @@ pub(crate) struct ArtifactRenderProvenance {
 #[derive(Clone, Debug)]
 enum ArtifactRenderSources {
     Live(Arc<[OriginId]>),
-    Deferred(crate::ParagraphProvenanceRecipe),
+    Deferred(crate::OutputProvenanceRecipe),
     Mixed {
         live: Arc<[OriginId]>,
         refs: Arc<[u64]>,
-        recipes: Arc<[crate::ParagraphProvenanceRecipe]>,
-        resolvers: Arc<[Arc<crate::ParagraphOriginResolver>]>,
+        recipes: Arc<[crate::OutputProvenanceRecipe]>,
     },
 }
 
@@ -109,7 +107,7 @@ impl ArtifactRenderProvenance {
         }
     }
 
-    fn deferred(ends: Vec<u32>, recipe: crate::ParagraphProvenanceRecipe) -> Self {
+    fn deferred(ends: Vec<u32>, recipe: crate::OutputProvenanceRecipe) -> Self {
         assert_valid_render_origins(&ends, recipe.origin_slots.len());
         Self {
             ends: ends.into(),
@@ -118,7 +116,7 @@ impl ArtifactRenderProvenance {
     }
 
     fn built(ends: Vec<u32>, builder: RenderProvenanceBuilder) -> Self {
-        let (live, refs, recipes, resolvers) = builder.into_parts();
+        let (live, refs, recipes) = builder.into_parts();
         let flat_len = ends.last().copied().unwrap_or(0) as usize;
         let sources = if refs.is_empty() {
             assert_eq!(flat_len, live.len());
@@ -129,7 +127,6 @@ impl ArtifactRenderProvenance {
                 live: live.into(),
                 refs: refs.into(),
                 recipes: recipes.into(),
-                resolvers: resolvers.into(),
             }
         };
         Self {
@@ -152,16 +149,14 @@ impl ArtifactRenderProvenance {
 }
 
 /// Cheap artifact-provenance construction used by direct shipout. It stays in
-/// the old flat-OriginId mode until the first deferred paragraph source.
+/// the old flat-OriginId mode until the first deferred source.
 #[doc(hidden)]
 #[derive(Debug, Default)]
 pub struct RenderProvenanceBuilder {
     live: Vec<OriginId>,
     refs: Vec<u64>,
-    recipes: Vec<crate::ParagraphProvenanceRecipe>,
+    recipes: Vec<crate::OutputProvenanceRecipe>,
     recipe_ids: ahash::AHashMap<usize, u32>,
-    resolvers: Vec<Arc<crate::ParagraphOriginResolver>>,
-    resolver_ids: ahash::AHashMap<usize, u32>,
     mixed: bool,
 }
 
@@ -179,7 +174,7 @@ impl RenderProvenanceBuilder {
 
     pub fn push_deferred(
         &mut self,
-        recipe: &crate::ParagraphProvenanceRecipe,
+        recipe: &crate::OutputProvenanceRecipe,
         slots: std::ops::Range<usize>,
     ) {
         if !self.mixed {
@@ -209,53 +204,11 @@ impl RenderProvenanceBuilder {
         }
     }
 
-    pub fn push_lazy(
-        &mut self,
-        resolver: &Arc<crate::ParagraphOriginResolver>,
-        origins: impl IntoIterator<Item = OriginId>,
-    ) -> u32 {
-        if !self.mixed {
-            self.refs.extend((0..self.live.len()).map(|index| {
-                LIVE_RENDER_REF
-                    | u64::try_from(index).expect("artifact live provenance exceeds u63")
-            }));
-            self.mixed = true;
-        }
-        let identity = Arc::as_ptr(resolver).addr();
-        let resolver_index = if let Some(&index) = self.resolver_ids.get(&identity) {
-            index
-        } else {
-            let index = u32::try_from(self.resolvers.len())
-                .expect("artifact lazy resolver count exceeds u32");
-            self.resolvers.push(Arc::clone(resolver));
-            self.resolver_ids.insert(identity, index);
-            index
-        };
-        let mut len = 0_u32;
-        for origin in origins {
-            assert!(resolver_index < (1 << 30));
-            self.refs.push(
-                SNAPSHOT_RENDER_REF | (u64::from(resolver_index) << 32) | u64::from(origin.raw()),
-            );
-            len = len
-                .checked_add(1)
-                .expect("artifact render provenance exceeds u32");
-        }
-        len
-    }
-
-    fn into_parts(
-        self,
-    ) -> (
-        Vec<OriginId>,
-        Vec<u64>,
-        Vec<crate::ParagraphProvenanceRecipe>,
-        Vec<Arc<crate::ParagraphOriginResolver>>,
-    ) {
+    fn into_parts(self) -> (Vec<OriginId>, Vec<u64>, Vec<crate::OutputProvenanceRecipe>) {
         if self.mixed {
-            (self.live, self.refs, self.recipes, self.resolvers)
+            (self.live, self.refs, self.recipes)
         } else {
-            (self.live, Vec::new(), Vec::new(), Vec::new())
+            (self.live, Vec::new(), Vec::new())
         }
     }
 }
@@ -402,7 +355,7 @@ impl VerifiedArtifact {
     pub fn with_deferred_render_origins(
         mut self,
         render_origin_ends: Vec<u32>,
-        provenance: crate::ParagraphProvenanceRecipe,
+        provenance: crate::OutputProvenanceRecipe,
     ) -> Self {
         self.render_provenance = ArtifactRenderProvenance::deferred(render_origin_ends, provenance);
         self
@@ -553,7 +506,7 @@ impl CommittedArtifact {
 
     /// Eager diagnostic origins aligned with artifact nodes in preorder.
     ///
-    /// Replayed paragraphs retain stable recipes instead. Call
+    /// Deferred artifacts retain stable recipes instead. Call
     /// [`Self::render_origin`] to query those sources without materializing
     /// the complete sidecar.
     #[must_use]
@@ -615,7 +568,6 @@ impl CommittedArtifact {
                 live,
                 refs,
                 recipes,
-                resolvers,
             } => {
                 let Some(&reference) = refs.get(flat) else {
                     return ArtifactOrigin::Unknown;
@@ -628,14 +580,6 @@ impl CommittedArtifact {
                         .get((reference & !LIVE_RENDER_REF) as usize)
                         .copied()
                         .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Live);
-                }
-                if reference & SNAPSHOT_RENDER_REF != 0 {
-                    let resolver = ((reference & !SNAPSHOT_RENDER_REF) >> 32) as usize;
-                    let origin = OriginId::from_raw(reference as u32);
-                    return resolvers
-                        .get(resolver)
-                        .and_then(|resolver| resolver.stable_span(origin))
-                        .map_or(ArtifactOrigin::Unknown, ArtifactOrigin::Stable);
                 }
                 let recipe = (reference >> 32) as usize;
                 let slot = reference as u32 as usize;
@@ -663,16 +607,11 @@ impl CommittedArtifact {
                     live,
                     refs,
                     recipes,
-                    resolvers,
-                } => {
-                    live.len()
-                        .saturating_mul(std::mem::size_of::<OriginId>())
-                        .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
-                        .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>())
-                        .saturating_add(resolvers.len().saturating_mul(std::mem::size_of::<
-                            Arc<crate::ParagraphOriginResolver>,
-                        >()))
-                }
+                } => live
+                    .len()
+                    .saturating_mul(std::mem::size_of::<OriginId>())
+                    .saturating_add(refs.len().saturating_mul(std::mem::size_of::<u64>()))
+                    .saturating_add(recipes.iter().map(provenance_recipe_bytes).sum::<usize>()),
             })
     }
 
@@ -703,7 +642,7 @@ fn assert_valid_render_origins(ends: &[u32], origin_len: usize) {
     );
 }
 
-fn provenance_recipe_bytes(recipe: &crate::ParagraphProvenanceRecipe) -> usize {
+fn provenance_recipe_bytes(recipe: &crate::OutputProvenanceRecipe) -> usize {
     recipe
         .piece_anchors
         .len()
@@ -712,19 +651,13 @@ fn provenance_recipe_bytes(recipe: &crate::ParagraphProvenanceRecipe) -> usize {
             recipe
                 .root_spans
                 .len()
-                .saturating_mul(std::mem::size_of::<crate::ParagraphProvenanceSpan>()),
+                .saturating_mul(std::mem::size_of::<crate::OutputProvenanceSpan>()),
         )
         .saturating_add(
             recipe
                 .origin_slots
                 .len()
                 .saturating_mul(std::mem::size_of::<u32>()),
-        )
-        .saturating_add(
-            recipe
-                .node_slots
-                .len()
-                .saturating_mul(std::mem::size_of::<crate::ParagraphProvenanceNode>()),
         )
 }
 
@@ -1621,7 +1554,6 @@ pub struct WorldSnapshot {
     /// checkpoint retains the old root.
     effect_base: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
-    effect_episode_owners: Arc<Vec<Option<crate::PageOutputEpisodeId>>>,
     effect_sequences: Arc<Vec<EffectSequence>>,
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
     effect_publication_record_ordinals: Arc<Vec<Option<EffectPublicationRecordOrdinal>>>,
@@ -1635,12 +1567,8 @@ pub struct WorldSnapshot {
     next_effect_publication_record_ordinals: BTreeMap<EffectPublicationId, u64>,
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
-    effect_output_attempt_owners:
-        BTreeMap<EffectOutputAttemptId, (Arc<[crate::ParagraphRegionOwner]>, u64)>,
-    next_effect_output_owner_ordinals: BTreeMap<Arc<[crate::ParagraphRegionOwner]>, u64>,
     next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
     next_effect_placement_intra_order: u64,
-    next_output_episode_identity: u64,
     next_terminal_publication_identity: u64,
     effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
     effect_pos: EffectPos,
@@ -1734,7 +1662,6 @@ pub struct World {
     /// Accepted effects detached from publication but still preceding every
     /// page produced by a retained generation fork.
     page_effect_prefix: Arc<Vec<EffectRecord>>,
-    page_effect_prefix_owners: Arc<Vec<Option<crate::PageOutputEpisodeId>>>,
     page_effect_prefix_sequences: Arc<Vec<EffectSequence>>,
     page_effect_prefix_publications: Arc<Vec<Option<EffectPublicationId>>>,
     page_effect_prefix_publication_record_ordinals:
@@ -1744,7 +1671,6 @@ pub struct World {
     page_effect_prefix_placement_intra_orders: Arc<Vec<EffectPlacementIntraOrder>>,
     effect_base: EffectPos,
     effects: Arc<Vec<EffectRecord>>,
-    effect_episode_owners: Arc<Vec<Option<crate::PageOutputEpisodeId>>>,
     effect_sequences: Arc<Vec<EffectSequence>>,
     effect_publications: Arc<Vec<Option<EffectPublicationId>>>,
     effect_publication_record_ordinals: Arc<Vec<Option<EffectPublicationRecordOrdinal>>>,
@@ -1758,18 +1684,12 @@ pub struct World {
     next_effect_publication_record_ordinals: BTreeMap<EffectPublicationId, u64>,
     next_effect_domain: u64,
     next_effect_output_attempt_identity: u64,
-    effect_output_attempt_owners:
-        BTreeMap<EffectOutputAttemptId, (Arc<[crate::ParagraphRegionOwner]>, u64)>,
-    next_effect_output_owner_ordinals: BTreeMap<Arc<[crate::ParagraphRegionOwner]>, u64>,
     next_effect_semantic_record_ordinals: BTreeMap<EffectDomain, u64>,
     next_effect_placement_intra_order: u64,
-    active_effect_episode: Option<crate::PageOutputEpisodeId>,
     active_effect_publication: Option<EffectPublicationId>,
     active_effect_output_attempt: Option<EffectOutputAttemptId>,
-    active_effect_output_owner: Arc<[crate::ParagraphRegionOwner]>,
     active_effect_domain: Option<EffectDomain>,
     active_terminal_publication: Option<TerminalPublication>,
-    next_output_episode_identity: u64,
     next_terminal_publication_identity: u64,
     effect_root_ancestry: Arc<Vec<EffectRootIdentity>>,
     stream_bufs: Arc<StreamBufState>,
@@ -1810,38 +1730,14 @@ pub struct World {
     stream_open_contexts: BTreeMap<EffectPos, String>,
 }
 
-/// Rollback root for the observable half of one artifact-producing episode.
-///
-/// Page construction still runs to advance TeX's semantic state.  A retained
-/// paragraph can then replace the writes produced by that construction with
-/// the writes owned by the original artifact receipt, as one operation.
-#[doc(hidden)]
-#[derive(Clone, Debug)]
-pub struct OutputEpisodeStart {
-    effect_len: usize,
-    artifact_pos: usize,
-    stream_bufs: Arc<StreamBufState>,
-}
-
-/// Publication selected by an atomic retained page-output transaction.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OutputEpisodePublicationOutcome {
-    Retained,
-    Regenerated,
-}
-
-/// Final semantic disposition of one effect publication at a replay commit.
+/// Final semantic disposition of one effect publication commit.
 #[doc(hidden)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EffectPublicationDisposition {
     rejected: Option<EffectPublicationId>,
     winner: EffectPublicationId,
     output_attempt: EffectOutputAttemptId,
-    output_episode: Option<crate::PageOutputEpisodeId>,
     recursive_receipt: Option<PageOutputPublicationReceiptId>,
-    output_owner: Arc<[crate::ParagraphRegionOwner]>,
-    output_owner_ordinal: u64,
 }
 
 /// Semantic publication replaced by one recursive shipout attempt.
@@ -1873,19 +1769,13 @@ impl EffectPublicationDisposition {
         rejected: Option<EffectPublicationId>,
         winner: EffectPublicationId,
         output_attempt: EffectOutputAttemptId,
-        output_episode: Option<crate::PageOutputEpisodeId>,
         recursive_receipt: Option<PageOutputPublicationReceiptId>,
-        output_owner: Arc<[crate::ParagraphRegionOwner]>,
-        output_owner_ordinal: u64,
     ) -> Self {
         Self {
             rejected,
             winner,
             output_attempt,
-            output_episode,
             recursive_receipt,
-            output_owner,
-            output_owner_ordinal,
         }
     }
 
@@ -1904,11 +1794,6 @@ impl EffectPublicationDisposition {
         self.output_attempt
     }
 
-    #[must_use]
-    pub const fn output_episode(&self) -> Option<crate::PageOutputEpisodeId> {
-        self.output_episode
-    }
-
     /// Receipt inherited by recursive page-output transactions. Unlike an
     /// encounter-order position, this identity remains rooted at the retained
     /// episode while descendant episodes publish under it.
@@ -1916,19 +1801,9 @@ impl EffectPublicationDisposition {
     pub const fn recursive_receipt(&self) -> Option<PageOutputPublicationReceiptId> {
         self.recursive_receipt
     }
-
-    #[must_use]
-    pub fn output_owner(&self) -> &[crate::ParagraphRegionOwner] {
-        &self.output_owner
-    }
-
-    #[must_use]
-    pub const fn output_owner_ordinal(&self) -> u64 {
-        self.output_owner_ordinal
-    }
 }
 
-/// Artifact/DVI publication selected at detached-output rewind.
+/// One committed page-output publication.
 #[doc(hidden)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PageOutputPublicationReceipt {
@@ -2080,7 +1955,6 @@ pub struct EffectPlacementIntraOrder(u64);
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EffectDomain {
-    Paragraph(u64),
     TerminalPublication {
         identity: TerminalPublicationId,
         phase: TerminalPublicationPhase,
@@ -2173,13 +2047,6 @@ impl TerminalPublicationId {
     }
 }
 
-/// Provisional artifact winner selected while preparing page replay.
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct OutputArtifactPublicationCandidate {
-    outcome: OutputEpisodePublicationOutcome,
-}
-
 impl PageOutputPublicationReceipt {
     #[doc(hidden)]
     #[must_use]
@@ -2233,21 +2100,6 @@ impl PageOutputPublicationReceipt {
     }
 }
 
-impl OutputArtifactPublicationCandidate {
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn revision_outcome(self) -> OutputEpisodePublicationOutcome {
-        self.outcome
-    }
-}
-
-impl OutputEpisodeStart {
-    #[must_use]
-    pub const fn effect_len(&self) -> usize {
-        self.effect_len
-    }
-}
-
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EffectCommitFault {
@@ -2260,7 +2112,6 @@ impl Clone for World {
         Self {
             backend: self.backend.clone(),
             page_effect_prefix: self.page_effect_prefix.clone(),
-            page_effect_prefix_owners: self.page_effect_prefix_owners.clone(),
             page_effect_prefix_sequences: self.page_effect_prefix_sequences.clone(),
             page_effect_prefix_publications: self.page_effect_prefix_publications.clone(),
             page_effect_prefix_publication_record_ordinals: self
@@ -2275,7 +2126,6 @@ impl Clone for World {
                 .clone(),
             effect_base: self.effect_base,
             effects: self.effects.clone(),
-            effect_episode_owners: self.effect_episode_owners.clone(),
             effect_sequences: self.effect_sequences.clone(),
             effect_publications: self.effect_publications.clone(),
             effect_publication_record_ordinals: self.effect_publication_record_ordinals.clone(),
@@ -2291,16 +2141,11 @@ impl Clone for World {
                 .clone(),
             next_effect_domain: self.next_effect_domain,
             next_effect_output_attempt_identity: self.next_effect_output_attempt_identity,
-            effect_output_attempt_owners: self.effect_output_attempt_owners.clone(),
-            next_effect_output_owner_ordinals: self.next_effect_output_owner_ordinals.clone(),
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
-            active_effect_episode: self.active_effect_episode,
             active_effect_publication: self.active_effect_publication,
             active_effect_output_attempt: self.active_effect_output_attempt,
-            active_effect_output_owner: Arc::clone(&self.active_effect_output_owner),
             active_effect_domain: self.active_effect_domain,
-            next_output_episode_identity: self.next_output_episode_identity,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_root_ancestry: self.effect_root_ancestry.clone(),
             stream_bufs: self.stream_bufs.clone(),
@@ -2528,7 +2373,6 @@ impl World {
         Self {
             backend,
             page_effect_prefix: Arc::new(Vec::new()),
-            page_effect_prefix_owners: Arc::new(Vec::new()),
             page_effect_prefix_sequences: Arc::new(Vec::new()),
             page_effect_prefix_publications: Arc::new(Vec::new()),
             page_effect_prefix_publication_record_ordinals: Arc::new(Vec::new()),
@@ -2537,7 +2381,6 @@ impl World {
             page_effect_prefix_placement_intra_orders: Arc::new(Vec::new()),
             effect_base: EffectPos::default(),
             effects: Arc::new(Vec::new()),
-            effect_episode_owners: Arc::new(Vec::new()),
             effect_sequences: Arc::new(Vec::new()),
             effect_publications: Arc::new(Vec::new()),
             effect_publication_record_ordinals: Arc::new(Vec::new()),
@@ -2551,16 +2394,11 @@ impl World {
             next_effect_publication_record_ordinals: BTreeMap::new(),
             next_effect_domain: 0,
             next_effect_output_attempt_identity: 0,
-            effect_output_attempt_owners: BTreeMap::new(),
-            next_effect_output_owner_ordinals: BTreeMap::new(),
             next_effect_semantic_record_ordinals: BTreeMap::new(),
             next_effect_placement_intra_order: 0,
-            active_effect_episode: None,
             active_effect_publication: None,
             active_effect_output_attempt: None,
-            active_effect_output_owner: Arc::from([]),
             active_effect_domain: None,
-            next_output_episode_identity: 0,
             next_terminal_publication_identity: 0,
             effect_root_ancestry: Arc::new(Vec::new()),
             stream_bufs: Arc::new(StreamBufState::default()),
@@ -3492,20 +3330,12 @@ impl World {
         if let Some((sequence, _)) = group {
             self.next_publication_sequence = self.next_publication_sequence.max(sequence.0);
         }
-        self.active_artifact_publication_group = group.map(|(sequence, domain)| {
-            let group = ArtifactPublicationGroup {
+        self.active_artifact_publication_group =
+            group.map(|(sequence, domain)| ArtifactPublicationGroup {
                 sequence,
                 domain,
                 next_intra_order: 0,
-            };
-            if self.active_effect_episode.is_some() {
-                self.active_artifact_publication_group = Some(ArtifactPublicationGroup {
-                    next_intra_order: 1,
-                    ..group
-                });
-            }
-            group
-        });
+            });
     }
 
     #[doc(hidden)]
@@ -3933,222 +3763,6 @@ impl World {
             PrintSink::Stream(_) => unreachable!("stream writes are not printable-sink writes"),
         }
     }
-
-    /// Replays an already-rendered diagnostic write captured by a retained
-    /// paragraph. Unlike [`Self::write_text`], this does not wrap the payload
-    /// a second time; it restores the exact effect record and the printable
-    /// cursor transition that the original write owned.
-    pub fn replay_paragraph_write(&mut self, record: &EffectRecord) -> bool {
-        match record {
-            EffectRecord::StreamWrite { sink, text } => {
-                self.record_printable_write(*sink, text.clone());
-            }
-            EffectRecord::StreamWriteBytes { sink, bytes } => {
-                self.record_printable_bytes(*sink, bytes.clone());
-            }
-            EffectRecord::StreamOpen { .. }
-            | EffectRecord::StreamClose { .. }
-            | EffectRecord::DeferredWrite { .. }
-            | EffectRecord::Special { .. }
-            | EffectRecord::PdfObjectPlaceholder { .. }
-            | EffectRecord::ShellEscape(_) => return false,
-        }
-        true
-    }
-
-    /// Opens the observable half of an artifact-producing replay episode.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn begin_replayed_output_episode(&mut self) -> OutputEpisodeStart {
-        OutputEpisodeStart {
-            effect_len: self.effects.len(),
-            artifact_pos: self.artifact_pos(),
-            stream_bufs: Arc::clone(&self.stream_bufs),
-        }
-    }
-
-    /// Removes one globally unique output episode from both retained effect
-    /// segments while preserving every unrelated entry and its order.
-    #[doc(hidden)]
-    pub fn remove_output_episode_effects(&mut self, episode: crate::PageOutputEpisodeId) -> bool {
-        remove_owned_effects(
-            Arc::make_mut(&mut self.page_effect_prefix),
-            Arc::make_mut(&mut self.page_effect_prefix_owners),
-            Arc::make_mut(&mut self.page_effect_prefix_sequences),
-            Arc::make_mut(&mut self.page_effect_prefix_publications),
-            Arc::make_mut(&mut self.page_effect_prefix_publication_record_ordinals),
-            Arc::make_mut(&mut self.page_effect_prefix_domains),
-            Arc::make_mut(&mut self.page_effect_prefix_semantic_record_ordinals),
-            Arc::make_mut(&mut self.page_effect_prefix_placement_intra_orders),
-            episode,
-        ) | remove_owned_effects(
-            Arc::make_mut(&mut self.effects),
-            Arc::make_mut(&mut self.effect_episode_owners),
-            Arc::make_mut(&mut self.effect_sequences),
-            Arc::make_mut(&mut self.effect_publications),
-            Arc::make_mut(&mut self.effect_publication_record_ordinals),
-            Arc::make_mut(&mut self.effect_domains),
-            Arc::make_mut(&mut self.effect_semantic_record_ordinals),
-            Arc::make_mut(&mut self.effect_placement_intra_orders),
-            episode,
-        )
-    }
-
-    /// Reports whether a retained or live effect is published by `episode`.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn has_output_episode_effects(&self, episode: crate::PageOutputEpisodeId) -> bool {
-        self.page_effect_prefix_owners.contains(&Some(episode))
-            || self.effect_episode_owners.contains(&Some(episode))
-    }
-
-    /// Reports whether `episode` was mounted before this producer transaction.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn output_episode_was_mounted_at(
-        &self,
-        start: &OutputEpisodeStart,
-        episode: crate::PageOutputEpisodeId,
-    ) -> bool {
-        self.page_effect_prefix_owners.contains(&Some(episode))
-            || self.effect_episode_owners[..start.effect_len.min(self.effect_episode_owners.len())]
-                .contains(&Some(episode))
-    }
-
-    /// Assigns effects emitted during page selection to its typed producer.
-    #[doc(hidden)]
-    pub fn claim_output_episode_effects_since(
-        &mut self,
-        start: &OutputEpisodeStart,
-        episode: crate::PageOutputEpisodeId,
-    ) {
-        let start = start.effect_len.min(self.effect_episode_owners.len());
-        self.effect_episode_owners_mut()[start..].fill(Some(episode));
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn output_episode_cursor(&self) -> StreamBufState {
-        self.stream_bufs.as_ref().clone()
-    }
-
-    #[doc(hidden)]
-    pub fn restore_output_episode_cursor(&mut self, cursor: StreamBufState) {
-        self.stream_bufs = Arc::new(cursor);
-    }
-
-    /// Removes the observable suffix owned by a detached output publication.
-    #[doc(hidden)]
-    pub fn rewind_detached_output_publication(
-        &mut self,
-        effect_count: usize,
-        cursor: StreamBufState,
-    ) {
-        let keep = self
-            .effects
-            .len()
-            .checked_sub(effect_count)
-            .expect("detached output publication owns a live effect suffix");
-        self.truncate_effects(keep);
-        self.stream_bufs = Arc::new(cursor);
-    }
-
-    #[doc(hidden)]
-    pub fn rewind_detached_artifacts(
-        &mut self,
-        artifact_count: usize,
-    ) -> OutputArtifactPublicationCandidate {
-        if artifact_count > self.artifact_pos() {
-            return OutputArtifactPublicationCandidate {
-                outcome: OutputEpisodePublicationOutcome::Retained,
-            };
-        }
-        self.artifact_base = self.artifact_base.saturating_sub(artifact_count);
-        OutputArtifactPublicationCandidate {
-            outcome: OutputEpisodePublicationOutcome::Regenerated,
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn rewind_inherited_artifacts(&mut self, artifact_count: usize) {
-        self.artifact_base = self
-            .artifact_base
-            .checked_sub(artifact_count)
-            .expect("deoptimized output publication owns an inherited artifact suffix");
-    }
-
-    #[doc(hidden)]
-    pub fn deopt_mixed_inherited_artifact(&mut self) {
-        if self.artifact_base != 0 && !self.artifact_commits.is_empty() {
-            self.artifact_base -= 1;
-        }
-    }
-
-    /// Atomically substitutes the retained writes owned by an artifact receipt
-    /// for writes regenerated while rebuilding the corresponding page state.
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn finish_replayed_output_episode(
-        &mut self,
-        start: OutputEpisodeStart,
-        artifact_count: usize,
-        inherited_effect_start: usize,
-        inherited_effect_count: usize,
-        _effects: &[EffectRecord],
-        _retained_effect_root_mounted: bool,
-        outcome: OutputEpisodePublicationOutcome,
-    ) -> OutputEpisodePublicationOutcome {
-        let rebuilt_artifacts = self.artifact_pos().saturating_sub(start.artifact_pos);
-        assert!(
-            rebuilt_artifacts == 0 || rebuilt_artifacts == artifact_count,
-            "retained output receipt ({artifact_count}) must match or replace the rebuilt artifact episode ({rebuilt_artifacts})"
-        );
-        let _ = (inherited_effect_start, inherited_effect_count);
-        if let Some(episode) = self.active_effect_episode {
-            self.active_effect_episode = None;
-            match outcome {
-                OutputEpisodePublicationOutcome::Retained => {
-                    // The artifact transaction retained its accepted page;
-                    // discard only effects emitted by the rejected rebuild.
-                    let mut index = start.effect_len.min(self.effects.len());
-                    while index < self.effects.len() {
-                        if self.effect_episode_owners[index] == Some(episode) {
-                            self.effects_mut().remove(index);
-                            Arc::make_mut(&mut self.effect_episode_owners).remove(index);
-                            Arc::make_mut(&mut self.effect_sequences).remove(index);
-                            Arc::make_mut(&mut self.effect_publications).remove(index);
-                            Arc::make_mut(&mut self.effect_publication_record_ordinals)
-                                .remove(index);
-                            Arc::make_mut(&mut self.effect_domains).remove(index);
-                            Arc::make_mut(&mut self.effect_semantic_record_ordinals).remove(index);
-                            Arc::make_mut(&mut self.effect_placement_intra_orders).remove(index);
-                        } else {
-                            index += 1;
-                        }
-                    }
-                }
-                OutputEpisodePublicationOutcome::Regenerated => {
-                    // The rebuilt artifact won. Remove the independently
-                    // owned inherited publication while preserving the live
-                    // effects emitted after this transaction's start.
-                    let _ = remove_owned_effects(
-                        Arc::make_mut(&mut self.page_effect_prefix),
-                        Arc::make_mut(&mut self.page_effect_prefix_owners),
-                        Arc::make_mut(&mut self.page_effect_prefix_sequences),
-                        Arc::make_mut(&mut self.page_effect_prefix_publications),
-                        Arc::make_mut(&mut self.page_effect_prefix_publication_record_ordinals),
-                        Arc::make_mut(&mut self.page_effect_prefix_domains),
-                        Arc::make_mut(&mut self.page_effect_prefix_semantic_record_ordinals),
-                        Arc::make_mut(&mut self.page_effect_prefix_placement_intra_orders),
-                        episode,
-                    );
-                }
-            }
-        }
-        self.stream_bufs = start.stream_bufs;
-        outcome
-    }
-
     /// Appends a deferred `\write` after the owning `Universe` validates the
     /// token-list capability against its live store timeline.
     pub(crate) fn record_deferred_write(&mut self, stream: StreamSlot, tokens: TokenListId) {
@@ -4207,7 +3821,6 @@ impl World {
             if let Err(err) = self.apply_effect(index) {
                 if applied > 0 {
                     self.effects_mut().drain(0..applied);
-                    Arc::make_mut(&mut self.effect_episode_owners).drain(0..applied);
                     Arc::make_mut(&mut self.effect_sequences).drain(0..applied);
                     Arc::make_mut(&mut self.effect_publications).drain(0..applied);
                     Arc::make_mut(&mut self.effect_publication_record_ordinals).drain(0..applied);
@@ -4233,7 +3846,6 @@ impl World {
         }
 
         self.effects_mut().drain(0..applied);
-        Arc::make_mut(&mut self.effect_episode_owners).drain(0..applied);
         Arc::make_mut(&mut self.effect_sequences).drain(0..applied);
         Arc::make_mut(&mut self.effect_publications).drain(0..applied);
         Arc::make_mut(&mut self.effect_publication_record_ordinals).drain(0..applied);
@@ -4428,12 +4040,6 @@ impl World {
 
     #[doc(hidden)]
     #[must_use]
-    pub fn output_effect_episode_owners(&self) -> Arc<Vec<Option<crate::PageOutputEpisodeId>>> {
-        Arc::clone(&self.effect_episode_owners)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
     pub fn effect_sequences(&self) -> Arc<Vec<EffectSequence>> {
         Arc::clone(&self.effect_sequences)
     }
@@ -4452,7 +4058,7 @@ impl World {
         Arc::clone(&self.effect_publication_record_ordinals)
     }
 
-    /// Returns replay decisions made at completed semantic-effect commits.
+    /// Returns winner decisions made at completed semantic-effect commits.
     #[doc(hidden)]
     #[must_use]
     pub fn effect_publication_dispositions(&self) -> Arc<Vec<EffectPublicationDisposition>> {
@@ -4468,24 +4074,10 @@ impl World {
         rejected: Option<EffectPublicationId>,
         winner: EffectPublicationId,
         output_attempt: EffectOutputAttemptId,
-        output_episode: Option<crate::PageOutputEpisodeId>,
         recursive_receipt: Option<PageOutputPublicationReceiptId>,
     ) {
-        let (output_owner, output_owner_ordinal) = self
-            .effect_output_attempt_owners
-            .get(&output_attempt)
-            .cloned()
-            .expect("allocated effect output attempt retains its typed owner");
         Arc::make_mut(&mut self.effect_publication_dispositions).push(
-            EffectPublicationDisposition::new(
-                rejected,
-                winner,
-                output_attempt,
-                output_episode,
-                recursive_receipt,
-                output_owner,
-                output_owner_ordinal,
-            ),
+            EffectPublicationDisposition::new(rejected, winner, output_attempt, recursive_receipt),
         );
     }
 
@@ -4725,24 +4317,6 @@ impl World {
     }
 
     #[doc(hidden)]
-    pub fn install_output_effect_episode_owners(
-        &mut self,
-        owners: &[Option<crate::PageOutputEpisodeId>],
-    ) {
-        self.next_output_episode_identity = self.next_output_episode_identity.max(
-            owners
-                .iter()
-                .flatten()
-                .map(|episode| episode.identity())
-                .max()
-                .unwrap_or(0),
-        );
-        let mut installed = owners[..owners.len().min(self.effects.len())].to_vec();
-        installed.resize(self.effects.len(), None);
-        self.effect_episode_owners = Arc::new(installed);
-    }
-
-    #[doc(hidden)]
     #[must_use]
     pub fn effect_root_identity(&self) -> EffectRootIdentity {
         EffectRootIdentity(Arc::clone(&self.effects))
@@ -4898,7 +4472,6 @@ impl World {
         }
         self.effect_base = EffectPos::default();
         self.effects = Arc::new(effects);
-        self.effect_episode_owners = Arc::new(vec![None; self.effects.len()]);
         self.effect_sequences = Arc::new(
             (0..self.effects.len())
                 .map(|_| self.allocate_effect_sequence())
@@ -5162,7 +4735,6 @@ impl World {
         WorldSnapshot {
             effect_base: self.effect_base,
             effects: Arc::clone(&self.effects),
-            effect_episode_owners: Arc::clone(&self.effect_episode_owners),
             effect_sequences: Arc::clone(&self.effect_sequences),
             effect_publications: Arc::clone(&self.effect_publications),
             effect_publication_record_ordinals: Arc::clone(
@@ -5180,11 +4752,8 @@ impl World {
                 .clone(),
             next_effect_domain: self.next_effect_domain,
             next_effect_output_attempt_identity: self.next_effect_output_attempt_identity,
-            effect_output_attempt_owners: self.effect_output_attempt_owners.clone(),
-            next_effect_output_owner_ordinals: self.next_effect_output_owner_ordinals.clone(),
             next_effect_semantic_record_ordinals: self.next_effect_semantic_record_ordinals.clone(),
             next_effect_placement_intra_order: self.next_effect_placement_intra_order,
-            next_output_episode_identity: self.next_output_episode_identity,
             next_terminal_publication_identity: self.next_terminal_publication_identity,
             effect_root_ancestry: Arc::clone(&self.effect_root_ancestry),
             effect_pos: self.effect_pos(),
@@ -5251,7 +4820,6 @@ impl World {
             .expect("World input identity mark must name a retained ancestor");
         self.effect_base = snapshot.effect_base;
         self.effects = Arc::clone(&snapshot.effects);
-        self.effect_episode_owners = Arc::clone(&snapshot.effect_episode_owners);
         self.effect_sequences = Arc::clone(&snapshot.effect_sequences);
         self.effect_publications = Arc::clone(&snapshot.effect_publications);
         self.effect_publication_record_ordinals =
@@ -5269,12 +4837,9 @@ impl World {
             snapshot.next_effect_publication_record_ordinals.clone();
         self.next_effect_domain = snapshot.next_effect_domain;
         self.next_effect_output_attempt_identity = snapshot.next_effect_output_attempt_identity;
-        self.effect_output_attempt_owners = snapshot.effect_output_attempt_owners.clone();
-        self.next_effect_output_owner_ordinals = snapshot.next_effect_output_owner_ordinals.clone();
         self.next_effect_semantic_record_ordinals =
             snapshot.next_effect_semantic_record_ordinals.clone();
         self.next_effect_placement_intra_order = snapshot.next_effect_placement_intra_order;
-        self.next_output_episode_identity = snapshot.next_output_episode_identity;
         self.next_terminal_publication_identity = snapshot.next_terminal_publication_identity;
         self.next_artifact_publication_identity = snapshot.next_artifact_publication_identity;
         self.provisional_page_output_receipts =
@@ -5318,7 +4883,6 @@ impl World {
             .rollback(snapshot.input_identities)
             .expect("World input identity mark must name a retained ancestor");
         let mut page_effect_prefix = self.page_effect_prefix.as_ref().clone();
-        let mut page_effect_prefix_owners = self.page_effect_prefix_owners.as_ref().clone();
         let mut page_effect_prefix_sequences = self.page_effect_prefix_sequences.as_ref().clone();
         let mut page_effect_prefix_publications =
             self.page_effect_prefix_publications.as_ref().clone();
@@ -5342,7 +4906,6 @@ impl World {
             "generation fork page-effect prefix must cover the snapshot base"
         );
         page_effect_prefix.truncate(snapshot_base);
-        page_effect_prefix_owners.truncate(snapshot_base);
         page_effect_prefix_sequences.truncate(snapshot_base);
         page_effect_prefix_publications.truncate(snapshot_base);
         page_effect_prefix_publication_record_ordinals.truncate(snapshot_base);
@@ -5350,7 +4913,6 @@ impl World {
         page_effect_prefix_semantic_record_ordinals.truncate(snapshot_base);
         page_effect_prefix_placement_intra_orders.truncate(snapshot_base);
         page_effect_prefix.extend(snapshot.effects.iter().cloned());
-        page_effect_prefix_owners.extend(snapshot.effect_episode_owners.iter().copied());
         page_effect_prefix_sequences.extend(snapshot.effect_sequences.iter().copied());
         page_effect_prefix_publications.extend(snapshot.effect_publications.iter().copied());
         page_effect_prefix_publication_record_ordinals
@@ -5366,7 +4928,6 @@ impl World {
             "generation fork page-effect prefix must cover the absolute effect cursor"
         );
         self.page_effect_prefix = Arc::new(page_effect_prefix);
-        self.page_effect_prefix_owners = Arc::new(page_effect_prefix_owners);
         self.page_effect_prefix_sequences = Arc::new(page_effect_prefix_sequences);
         self.page_effect_prefix_publications = Arc::new(page_effect_prefix_publications);
         self.page_effect_prefix_publication_record_ordinals =
@@ -5378,24 +4939,18 @@ impl World {
             Arc::new(page_effect_prefix_placement_intra_orders);
         self.effect_base = snapshot.effect_pos;
         self.effects = Arc::new(Vec::new());
-        self.effect_episode_owners = Arc::new(Vec::new());
         self.effect_sequences = Arc::new(Vec::new());
         self.effect_publications = Arc::new(Vec::new());
         self.effect_publication_record_ordinals = Arc::new(Vec::new());
         self.effect_domains = Arc::new(Vec::new());
         self.effect_semantic_record_ordinals = Arc::new(Vec::new());
         self.effect_placement_intra_orders = Arc::new(Vec::new());
-        self.active_effect_episode = None;
         self.active_effect_publication = None;
         self.active_effect_output_attempt = None;
-        self.active_effect_output_owner = Arc::from([]);
-        // A retained-generation fork starts a new output transaction for
-        // each mapped paragraph owner. Accepted dispositions keep their own
-        // owner-local ordinals; replay must restart that namespace so a
-        // descendant attempt can name the accepted attempt it supersedes.
-        self.next_effect_output_owner_ordinals.clear();
+        // A retained-generation fork starts a new output transaction.
+        // Accepted dispositions keep their own publication-local ordinals,
+        // so a descendant attempt can name the accepted attempt it supersedes.
         self.active_effect_domain = None;
-        self.next_output_episode_identity = snapshot.next_output_episode_identity;
         self.provisional_page_output_receipts =
             Arc::clone(&snapshot.provisional_page_output_receipts);
         self.next_terminal_publication_identity = self
@@ -5460,7 +5015,6 @@ impl World {
 
     fn append_effect(&mut self, record: EffectRecord) {
         self.effects_mut().push(record);
-        Arc::make_mut(&mut self.effect_episode_owners).push(self.active_effect_episode);
         let terminal = self.active_terminal_publication;
         let sequence = if let Some(publication) = terminal {
             publication.sequence
@@ -5495,24 +5049,6 @@ impl World {
         Arc::make_mut(&mut self.effect_placement_intra_orders).push(placement);
     }
 
-    fn effect_episode_owners_mut(&mut self) -> &mut Vec<Option<crate::PageOutputEpisodeId>> {
-        Arc::make_mut(&mut self.effect_episode_owners)
-    }
-
-    #[doc(hidden)]
-    pub fn set_active_output_episode(&mut self, episode: Option<crate::PageOutputEpisodeId>) {
-        self.active_effect_episode = episode;
-        if episode.is_none() {
-            self.active_artifact_publication_group = None;
-        }
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub const fn active_output_episode(&self) -> Option<crate::PageOutputEpisodeId> {
-        self.active_effect_episode
-    }
-
     #[doc(hidden)]
     pub fn set_active_effect_publication(&mut self, publication: Option<EffectPublicationId>) {
         self.active_effect_publication = publication;
@@ -5530,53 +5066,17 @@ impl World {
     }
 
     #[doc(hidden)]
-    pub fn set_active_effect_output_owner(&mut self, owners: &[crate::ParagraphRegionOwner]) {
-        self.active_effect_output_owner = Arc::from(owners);
-    }
-
-    #[doc(hidden)]
     pub fn allocate_effect_output_attempt(&mut self) -> EffectOutputAttemptId {
         self.next_effect_output_attempt_identity = self
             .next_effect_output_attempt_identity
             .checked_add(1)
             .expect("effect output-attempt identity exhausted");
-        let attempt = EffectOutputAttemptId::new(self.next_effect_output_attempt_identity);
-        let owner = Arc::clone(&self.active_effect_output_owner);
-        let ordinal = self
-            .next_effect_output_owner_ordinals
-            .entry(Arc::clone(&owner))
-            .or_default();
-        *ordinal = ordinal
-            .checked_add(1)
-            .expect("effect output owner ordinal exhausted");
-        self.effect_output_attempt_owners
-            .insert(attempt, (owner, *ordinal));
-        attempt
+        EffectOutputAttemptId::new(self.next_effect_output_attempt_identity)
     }
 
     #[doc(hidden)]
     pub fn set_active_effect_domain(&mut self, domain: Option<EffectDomain>) {
         self.active_effect_domain = domain;
-    }
-
-    #[doc(hidden)]
-    pub fn allocate_output_episode_id(&mut self) -> crate::PageOutputEpisodeId {
-        self.next_output_episode_identity = self
-            .next_output_episode_identity
-            .checked_add(1)
-            .expect("page-output episode identity exhausted");
-        crate::PageOutputEpisodeId::new(self.next_output_episode_identity)
-    }
-
-    fn truncate_effects(&mut self, len: usize) {
-        self.effects_mut().truncate(len);
-        Arc::make_mut(&mut self.effect_episode_owners).truncate(len);
-        Arc::make_mut(&mut self.effect_sequences).truncate(len);
-        Arc::make_mut(&mut self.effect_publications).truncate(len);
-        Arc::make_mut(&mut self.effect_publication_record_ordinals).truncate(len);
-        Arc::make_mut(&mut self.effect_domains).truncate(len);
-        Arc::make_mut(&mut self.effect_semantic_record_ordinals).truncate(len);
-        Arc::make_mut(&mut self.effect_placement_intra_orders).truncate(len);
     }
 
     fn allocate_effect_sequence(&mut self) -> EffectSequence {
@@ -5814,45 +5314,6 @@ impl World {
             memory.log_output.extend_from_slice(bytes);
         }
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn remove_owned_effects(
-    effects: &mut Vec<EffectRecord>,
-    owners: &mut Vec<Option<crate::PageOutputEpisodeId>>,
-    sequences: &mut Vec<EffectSequence>,
-    publications: &mut Vec<Option<EffectPublicationId>>,
-    publication_record_ordinals: &mut Vec<Option<EffectPublicationRecordOrdinal>>,
-    domains: &mut Vec<EffectDomain>,
-    semantic_record_ordinals: &mut Vec<EffectSemanticRecordOrdinal>,
-    placement_intra_orders: &mut Vec<EffectPlacementIntraOrder>,
-    episode: crate::PageOutputEpisodeId,
-) -> bool {
-    debug_assert_eq!(effects.len(), owners.len());
-    debug_assert_eq!(effects.len(), sequences.len());
-    debug_assert_eq!(effects.len(), publications.len());
-    debug_assert_eq!(effects.len(), publication_record_ordinals.len());
-    debug_assert_eq!(effects.len(), domains.len());
-    debug_assert_eq!(effects.len(), semantic_record_ordinals.len());
-    debug_assert_eq!(effects.len(), placement_intra_orders.len());
-    let mut removed = false;
-    let mut index = 0;
-    while index < effects.len() {
-        if owners[index] == Some(episode) {
-            effects.remove(index);
-            owners.remove(index);
-            sequences.remove(index);
-            publications.remove(index);
-            publication_record_ordinals.remove(index);
-            domains.remove(index);
-            semantic_record_ordinals.remove(index);
-            placement_intra_orders.remove(index);
-            removed = true;
-        } else {
-            index += 1;
-        }
-    }
-    removed
 }
 
 impl Default for World {

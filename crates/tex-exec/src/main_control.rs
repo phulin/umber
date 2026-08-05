@@ -43,7 +43,6 @@ use tex_state::math::{
 use tex_state::meaning::{Meaning, MeaningFlags, UnexpandablePrimitive};
 use tex_state::node::{DiscKind, GlueKind, KernKind, LeaderPayload, Node, Whatsit};
 use tex_state::page::{PageDimension, PageInteger};
-use tex_state::provenance::ProvenanceStats;
 use tex_state::scaled::Scaled;
 use tex_state::token::TracedTokenWord;
 use tex_state::token::{Catcode, Token};
@@ -71,26 +70,6 @@ enum MathShiftContext {
     Inline,
     Display,
     EqNo(crate::mode::EqNoSide),
-}
-
-impl MathShiftContext {
-    fn paragraph_shift(self) -> tex_command::ParagraphMathShift {
-        match self {
-            Self::Inline => tex_command::ParagraphMathShift::Inline,
-            Self::Display => tex_command::ParagraphMathShift::Display,
-            Self::EqNo(crate::mode::EqNoSide::Left) => tex_command::ParagraphMathShift::EqNoLeft,
-            Self::EqNo(crate::mode::EqNoSide::Right) => tex_command::ParagraphMathShift::EqNoRight,
-        }
-    }
-
-    fn from_paragraph_shift(shift: tex_command::ParagraphMathShift) -> Self {
-        match shift {
-            tex_command::ParagraphMathShift::Inline => Self::Inline,
-            tex_command::ParagraphMathShift::Display => Self::Display,
-            tex_command::ParagraphMathShift::EqNoLeft => Self::EqNo(crate::mode::EqNoSide::Left),
-            tex_command::ParagraphMathShift::EqNoRight => Self::EqNo(crate::mode::EqNoSide::Right),
-        }
-    }
 }
 
 fn push_prepared_dvi_page(pages: &mut PreparedDviPages, page: crate::dispatch::PreparedDviPage) {
@@ -168,12 +147,6 @@ pub struct MainControl {
     /// explicit across command-sized steps so a suffix resumed after
     /// shipout is not given a duplicate trio either.
     end_job_ejection_pending: bool,
-    active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
-    /// A retained output episode owns every delayed shipout produced while
-    /// rebuilding its revision suffix. Ordinary page episodes each replace
-    /// the active handle, but a retained handle stays active until candidate
-    /// completion finalizes the whole provisional group.
-    retained_page_output_receipt_active: bool,
     /// tex.web's `init`/`tini` compile-time split as a session flag.
     ///
     /// tex.web builds INITEX and production TeX from the same source with
@@ -245,9 +218,6 @@ pub struct MainControl {
     /// host drains these only after `advance` has committed, so a resource
     /// suspension never leaks a checkpoint from its rolled-back operation.
     completed_boundaries: Vec<crate::EngineBoundary>,
-    /// Accepted paragraph input regions completed since the host last drained them.
-    paragraph_recorder: ParagraphRecorder,
-    paragraph_replay_replaced_mode_journal: bool,
     /// A committed artifact prefix waiting for the outer main-control owner.
     ///
     /// TeX82 §§1025--1026 may execute several `ship_out` calls while an
@@ -519,15 +489,8 @@ struct StepSnapshot {
     completed_replay_episode: Option<tex_command::CommandReplayEpisode>,
     prepared_dvi_pages: PreparedDviPages,
     completed_boundaries: Vec<crate::EngineBoundary>,
-    paragraph_recorder: ParagraphRecorder,
-    paragraph_replay_replaced_mode_journal: bool,
     pending_shipout_boundary: bool,
     end_job_ejection_pending: bool,
-    /// Typed publication handle retained after the effect episode closes.
-    /// Delayed shipouts remain part of that page-output publication until the
-    /// incremental candidate explicitly finalizes it.
-    active_page_output_receipt: Option<tex_state::PageOutputPublicationReceiptId>,
-    retained_page_output_receipt_active: bool,
     /// A step's §537/§362 open-paren accounting is engine state outside
     /// `Universe`, exactly like `next_alignment_identity` and `boxes` above:
     /// a step that prints `(name` and then rolls back must have
@@ -541,11 +504,6 @@ impl StepSnapshot {
     fn capture(control: &mut MainControl, stores: &mut Universe) -> Self {
         #[cfg(feature = "profiling")]
         let started = std::time::Instant::now();
-        #[cfg(feature = "profiling")]
-        let active_paragraph_recorder_logical_bytes = control
-            .paragraph_recorder
-            .pending
-            .then(|| control.paragraph_recorder.snapshot_clone_logical_bytes());
         let snapshot = Self {
             command: control.command.snapshot(),
             mode_savepoint: control.modes.begin_journal(),
@@ -562,20 +520,15 @@ impl StepSnapshot {
             completed_replay_episode: control.completed_replay_episode,
             prepared_dvi_pages: control.prepared_dvi_pages.clone(),
             completed_boundaries: control.completed_boundaries.clone(),
-            paragraph_recorder: control.paragraph_recorder.clone(),
-            paragraph_replay_replaced_mode_journal: control.paragraph_replay_replaced_mode_journal,
             pending_shipout_boundary: control.pending_shipout_boundary,
             end_job_ejection_pending: control.end_job_ejection_pending,
-            active_page_output_receipt: control.active_page_output_receipt,
-            retained_page_output_receipt_active: control.retained_page_output_receipt_active,
             job: control.job.clone(),
             universe: stores.snapshot(),
         };
         #[cfg(feature = "profiling")]
-        crate::paragraph_replay_measurement::record_step_snapshot(
+        crate::step_snapshot_measurement::record_step_snapshot(
             started.elapsed(),
             std::mem::size_of::<Self>(),
-            active_paragraph_recorder_logical_bytes,
         );
         snapshot
     }
@@ -611,13 +564,8 @@ impl StepSnapshot {
         control.completed_replay_episode = self.completed_replay_episode;
         control.prepared_dvi_pages = self.prepared_dvi_pages;
         control.completed_boundaries = self.completed_boundaries;
-        control.paragraph_recorder = self.paragraph_recorder;
-        control.paragraph_replay_replaced_mode_journal =
-            self.paragraph_replay_replaced_mode_journal;
         control.pending_shipout_boundary = self.pending_shipout_boundary;
         control.end_job_ejection_pending = self.end_job_ejection_pending;
-        control.active_page_output_receipt = self.active_page_output_receipt;
-        control.retained_page_output_receipt_active = self.retained_page_output_receipt_active;
         control.job = self.job;
     }
 
@@ -626,9 +574,6 @@ impl StepSnapshot {
     }
 
     fn commit(self, control: &mut MainControl) {
-        if std::mem::take(&mut control.paragraph_replay_replaced_mode_journal) {
-            return;
-        }
         control
             .modes
             .commit_journal(self.mode_savepoint)
@@ -642,846 +587,6 @@ impl StepSnapshot {
 /// of [`command_processor`] so that no episode can be constructed without
 /// stating which commit buffer it belongs to.
 type ObservationSlot = Option<ObservationBuffer>;
-
-#[derive(Clone, Debug, Default)]
-struct PageOutputEpisode {
-    identity: u64,
-    owners: Arc<[u64]>,
-    artifacts: std::ops::Range<usize>,
-    effects: Arc<[tex_state::EffectRecord]>,
-    effect_start: usize,
-    starting_cursor: Option<tex_state::StreamBufState>,
-    ending_cursor: Option<tex_state::StreamBufState>,
-    effect_root: Option<tex_state::EffectRootIdentity>,
-    publication: Option<tex_state::EffectPublicationId>,
-    publication_sequence: Option<tex_state::EffectSequence>,
-    artifact_publication_sequence: Option<tex_state::EffectSequence>,
-    artifact_publication_domain: Option<tex_state::EffectDomain>,
-}
-
-/// Typed receipt for an accepted-generation output publication superseded by
-/// a completed live page-output episode.
-#[doc(hidden)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SupersededPageOutputEpisode {
-    identity: tex_state::PageOutputEpisodeId,
-    effects: std::ops::Range<usize>,
-    regenerated_effects: Option<std::ops::Range<usize>>,
-    accepted_artifacts: AcceptedArtifactPublicationRange,
-    live_artifacts: Option<LiveArtifactPublicationRange>,
-    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
-    committed_publication: Option<tex_state::PageOutputPublicationReceipt>,
-    retained_publication: Option<tex_state::EffectPublicationId>,
-    retained_sequence: Option<tex_state::EffectSequence>,
-    regenerated_sequence: Option<tex_state::EffectSequence>,
-}
-
-/// Absolute accepted-generation artifact positions owned by one publication.
-#[doc(hidden)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AcceptedArtifactPublicationRange(std::ops::Range<usize>);
-
-/// Absolute live-generation artifact positions owned by one publication.
-#[doc(hidden)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LiveArtifactPublicationRange(std::ops::Range<usize>);
-
-impl SupersededPageOutputEpisode {
-    #[must_use]
-    pub const fn identity(&self) -> tex_state::PageOutputEpisodeId {
-        self.identity
-    }
-
-    #[must_use]
-    pub const fn effects(&self) -> &std::ops::Range<usize> {
-        &self.effects
-    }
-
-    #[must_use]
-    pub const fn regenerated_effects(&self) -> Option<&std::ops::Range<usize>> {
-        self.regenerated_effects.as_ref()
-    }
-
-    #[must_use]
-    pub const fn accepted_artifacts(&self) -> &std::ops::Range<usize> {
-        &self.accepted_artifacts.0
-    }
-
-    #[must_use]
-    pub fn live_artifacts(&self) -> Option<&std::ops::Range<usize>> {
-        self.live_artifacts.as_ref().map(|range| &range.0)
-    }
-
-    #[must_use]
-    pub const fn publication_candidate(
-        &self,
-    ) -> Option<tex_state::OutputArtifactPublicationCandidate> {
-        self.publication_candidate
-    }
-
-    #[must_use]
-    pub const fn committed_publication(&self) -> Option<&tex_state::PageOutputPublicationReceipt> {
-        self.committed_publication.as_ref()
-    }
-
-    #[must_use]
-    pub const fn retained_publication(&self) -> Option<tex_state::EffectPublicationId> {
-        self.retained_publication
-    }
-
-    #[must_use]
-    pub const fn retained_sequence(&self) -> Option<tex_state::EffectSequence> {
-        self.retained_sequence
-    }
-
-    #[must_use]
-    pub const fn regenerated_sequence(&self) -> Option<tex_state::EffectSequence> {
-        self.regenerated_sequence
-    }
-}
-
-/// Identity and exact command-owned input transaction for one finished paragraph.
-#[derive(Clone, Debug)]
-pub struct ParagraphRegion {
-    identity: u64,
-    input: tex_command::ParagraphInputTransaction,
-    owned_input: Arc<tex_command::OwnedCommandContinuation>,
-    entry_outer_parskip: bool,
-    entry_prev_graf: i32,
-    entry_prev_graf_affects_break: bool,
-    // Paragraph boundaries are immutable after capture and are copied into
-    // every scalar command savepoint while a paragraph is active. Sharing
-    // them keeps that rollback bookkeeping constant-time without changing
-    // the Universe timeline they identify.
-    starting_universe: Arc<tex_state::Snapshot>,
-    ending_universe: Arc<tex_state::Snapshot>,
-    artifact_count: usize,
-    starting_effect_pos: usize,
-    ending_artifact_pos: usize,
-    ending_effect_pos: usize,
-    ending_modes: crate::ModeNestSummary,
-    finished_lines: Option<tex_state::survivor::RetainedNodeList>,
-    effects: std::sync::Arc<[tex_state::EffectRecord]>,
-    output_episode_ids: Arc<Vec<u64>>,
-    output_episodes: Arc<Vec<PageOutputEpisode>>,
-    output_effect_episode_owners: Arc<Vec<Option<tex_state::PageOutputEpisodeId>>>,
-    output_effect_publications: Arc<Vec<Option<tex_state::EffectPublicationId>>>,
-    effect_domains: Arc<Vec<tex_state::EffectDomain>>,
-    effect_semantic_record_ordinals: Arc<Vec<tex_state::EffectSemanticRecordOrdinal>>,
-    effect_placement_intra_orders: Arc<Vec<tex_state::EffectPlacementIntraOrder>>,
-    starting_provenance: ProvenanceStats,
-    ending_provenance: ProvenanceStats,
-    dependencies: std::sync::Arc<[tex_state::ObservedDependency]>,
-    front_dependency_ordinals: std::sync::Arc<[u32]>,
-    break_dependency_ordinals: std::sync::Arc<[u32]>,
-    mutation_entry_in_group: bool,
-    mutations: std::sync::Arc<[tex_state::PureParagraphMutation]>,
-    line_count: i32,
-    line_last_badness: i32,
-    display_active_directions: Option<std::sync::Arc<[tex_state::node::Direction]>>,
-    barriers: std::sync::Arc<[tex_state::ParagraphBarrierReason]>,
-    line_provenance: tex_state::ParagraphLineProvenance,
-}
-
-impl ParagraphRegion {
-    #[doc(hidden)]
-    #[must_use]
-    pub fn output_effect_episode_owners(&self) -> &[Option<tex_state::PageOutputEpisodeId>] {
-        &self.output_effect_episode_owners
-    }
-    #[doc(hidden)]
-    #[must_use]
-    pub fn output_effect_publications(&self) -> &[Option<tex_state::EffectPublicationId>] {
-        &self.output_effect_publications
-    }
-    #[doc(hidden)]
-    #[must_use]
-    pub fn effect_domains(&self) -> &[tex_state::EffectDomain] {
-        &self.effect_domains
-    }
-    #[doc(hidden)]
-    #[must_use]
-    pub fn effect_semantic_record_ordinals(&self) -> &[tex_state::EffectSemanticRecordOrdinal] {
-        &self.effect_semantic_record_ordinals
-    }
-    #[doc(hidden)]
-    #[must_use]
-    pub fn effect_placement_intra_orders(&self) -> &[tex_state::EffectPlacementIntraOrder] {
-        &self.effect_placement_intra_orders
-    }
-    pub(crate) fn materialize_owned_input_into(&mut self, destination: &mut Universe) {
-        let (summary, mut inputs) = self.owned_input.materialize_with_paragraphs(destination);
-        self.input = inputs
-            .pop()
-            .expect("paragraph-owned continuation contains its input transaction");
-        assert!(inputs.is_empty());
-        self.owned_input = Arc::new(
-            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-                &summary,
-                [(&self.input, None)],
-                destination,
-            ),
-        );
-    }
-
-    /// Whether a cold replacement may enter this region without first
-    /// restoring an accepted execution checkpoint. Typed barriers summarize
-    /// effects, unsupported mutations, and ownership transitions whose cold
-    /// prefix must execute before any later region can be considered.
-    #[must_use]
-    pub fn permits_contiguous_cold_replay(&self) -> bool {
-        self.barriers.is_empty()
-    }
-
-    pub(crate) fn replace_input(
-        &mut self,
-        input: tex_command::ParagraphInputTransaction,
-        destination: &mut Universe,
-    ) {
-        self.input = input;
-        let summary = self.owned_input.materialize(destination);
-        self.owned_input = Arc::new(
-            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-                &summary,
-                [(&self.input, None)],
-                destination,
-            ),
-        );
-    }
-
-    pub(crate) fn remap_meaning_dependencies(
-        &mut self,
-        meanings: &std::collections::HashMap<u32, tex_state::interner::Symbol>,
-    ) {
-        let dependencies = Arc::make_mut(&mut self.dependencies);
-        for dependency in dependencies {
-            if let tex_state::DependencyKey::Meaning(raw) = dependency.key
-                && let Some(symbol) = meanings.get(&raw)
-            {
-                dependency.key = tex_state::DependencyKey::Meaning(symbol.raw());
-            }
-        }
-    }
-
-    pub(crate) fn meaning_dependency_raws(&self) -> impl Iterator<Item = u32> + '_ {
-        self.dependencies
-            .iter()
-            .filter_map(|dependency| match dependency.key {
-                tex_state::DependencyKey::Meaning(raw) => Some(raw),
-                _ => None,
-            })
-    }
-
-    pub(crate) fn can_mount_finished_lines(&self, universe: &Universe) -> bool {
-        self.finished_lines
-            .as_ref()
-            .is_none_or(|lines| universe.can_mount_retained_paragraph_result(lines))
-    }
-
-    pub(crate) fn mount_finished_lines(&self, universe: &mut Universe) -> bool {
-        let Some(lines) = &self.finished_lines else {
-            return true;
-        };
-        match &self.line_provenance {
-            tex_state::ParagraphLineProvenance::Accepted(resolver) => universe
-                .mount_prevalidated_paragraph_result_lazy(lines, std::sync::Arc::clone(resolver))
-                .is_some(),
-            tex_state::ParagraphLineProvenance::Pending => false,
-        }
-    }
-
-    fn materialize_finished_nodes(
-        &self,
-        universe: &mut Universe,
-    ) -> Option<Vec<tex_state::node::Node>> {
-        let lines = self.finished_lines.as_ref()?;
-        let tex_state::ParagraphLineProvenance::Accepted(resolver) = &self.line_provenance else {
-            return None;
-        };
-        let list = universe
-            .mount_prevalidated_paragraph_result_lazy(lines, std::sync::Arc::clone(resolver))?;
-        Some(universe.nodes(list).to_vec())
-    }
-    fn history_record(&self) -> tex_state::ParagraphHistoryRecord {
-        let coverage = self.input.coverage();
-        tex_state::ParagraphHistoryRecord {
-            identity: self.identity,
-            root_start: coverage.root_start(),
-            root_end: coverage.root_end(),
-            delivered_commands: coverage.delivered_commands(),
-            input_transition_count: coverage.transitions().len(),
-            retained_bytes: self.finished_lines.as_ref().map_or(0, |_| {
-                std::mem::size_of::<tex_state::survivor::RetainedNodeList>()
-            }),
-            dependencies: std::sync::Arc::clone(&self.dependencies),
-            front_dependency_ordinals: std::sync::Arc::clone(&self.front_dependency_ordinals),
-            break_dependency_ordinals: std::sync::Arc::clone(&self.break_dependency_ordinals),
-            mutation_entry_in_group: self.mutation_entry_in_group,
-            mutations: std::sync::Arc::clone(&self.mutations),
-            finished_lines: self.finished_lines.clone(),
-            line_count: self.line_count,
-            line_last_badness: self.line_last_badness,
-            display_active_directions: self.display_active_directions.clone(),
-            barriers: std::sync::Arc::clone(&self.barriers),
-            effects: std::sync::Arc::clone(&self.effects),
-            starting_provenance: self.starting_provenance,
-            ending_provenance: self.ending_provenance,
-            line_provenance: self.line_provenance.clone(),
-        }
-    }
-
-    /// Publishes this accepted replay region into universe-owned history.
-    pub fn publish_carried_history(&self, stores: &mut Universe) {
-        stores.with_pure_memo(|memo| {
-            memo.record_carried_accepted_paragraph_region(self.history_record());
-        });
-    }
-
-    #[must_use]
-    pub const fn identity(&self) -> u64 {
-        self.identity
-    }
-
-    #[must_use]
-    pub const fn input(&self) -> &tex_command::ParagraphInputTransaction {
-        &self.input
-    }
-
-    /// Retained vertical material produced by TeX82 §§816--895.
-    #[must_use]
-    pub const fn finished_lines(&self) -> Option<&tex_state::survivor::RetainedNodeList> {
-        self.finished_lines.as_ref()
-    }
-
-    /// Universe-owned effects committed while the paragraph was active.
-    #[must_use]
-    pub fn effects(&self) -> impl ExactSizeIterator<Item = &tex_state::EffectRecord> {
-        self.effects.iter()
-    }
-
-    #[must_use]
-    pub const fn line_count(&self) -> i32 {
-        self.line_count
-    }
-
-    #[must_use]
-    pub const fn line_last_badness(&self) -> i32 {
-        self.line_last_badness
-    }
-
-    #[must_use]
-    pub const fn line_provenance(&self) -> &tex_state::ParagraphLineProvenance {
-        &self.line_provenance
-    }
-
-    pub(crate) fn accepted_origin_resolver(
-        &self,
-    ) -> Option<std::sync::Arc<tex_state::ParagraphOriginResolver>> {
-        match &self.line_provenance {
-            tex_state::ParagraphLineProvenance::Accepted(resolver) => {
-                Some(std::sync::Arc::clone(resolver))
-            }
-            tex_state::ParagraphLineProvenance::Pending => None,
-        }
-    }
-
-    pub fn accept_line_provenance(
-        &mut self,
-        resolver: std::sync::Arc<tex_state::ParagraphOriginResolver>,
-    ) {
-        if self.finished_lines.is_some()
-            && matches!(
-                self.line_provenance,
-                tex_state::ParagraphLineProvenance::Pending
-            )
-        {
-            self.line_provenance = tex_state::ParagraphLineProvenance::Accepted(resolver);
-        }
-    }
-
-    /// Exact aggregate dependency/mutation witness at paragraph entry.
-    #[must_use]
-    pub fn starting_state_hash(&self) -> u64 {
-        self.starting_universe.state_hash()
-    }
-
-    /// Exact aggregate dependency/mutation witness after line publication.
-    #[must_use]
-    pub fn ending_state_hash(&self) -> u64 {
-        self.ending_universe.state_hash()
-    }
-
-    /// Rollback-coupled provenance arena bounds for this region.
-    #[must_use]
-    pub const fn provenance_bounds(&self) -> (&ProvenanceStats, &ProvenanceStats) {
-        (&self.starting_provenance, &self.ending_provenance)
-    }
-
-    /// Validates only the exact state facts read by this paragraph.
-    #[must_use]
-    pub fn dependencies_match(&self, stores: &Universe) -> bool {
-        crate::paragraph_memo::validate_dependencies(stores, &self.dependencies)
-    }
-
-    /// Rehomes a region proven wholly before an edited root interval.
-    /// Regions intersecting or following the edit are filtered out because
-    /// their physical cursor/provenance mapping belongs to the old revision.
-    #[must_use]
-    pub fn rehome_unchanged_root_prefix(
-        &self,
-        old: &[u8],
-        new: std::sync::Arc<[u8]>,
-        unchanged_end: usize,
-    ) -> Option<Self> {
-        let mut rebound = self.clone();
-        rebound.input =
-            self.input
-                .rebind_unchanged_root_prefix(old, Arc::clone(&new), unchanged_end)?;
-        if !Arc::make_mut(&mut rebound.owned_input).rebind_paragraph_unchanged_root_prefix(
-            old,
-            new,
-            unchanged_end,
-        ) {
-            return None;
-        }
-        Some(rebound)
-    }
-
-    /// Rehomes a region wholly before or after one edited root interval.
-    /// Semantic snapshots, effects, modes, and retained lines remain shared;
-    /// only command-owned physical input/provenance coordinates are revised.
-    #[must_use]
-    pub fn rehome_edited_root(
-        &self,
-        old: &[u8],
-        new: std::sync::Arc<[u8]>,
-        edited: std::ops::Range<usize>,
-    ) -> Option<Self> {
-        let mut rebound = self.clone();
-        rebound.input = self
-            .input
-            .rebind_edited_root(old, Arc::clone(&new), edited.clone())?;
-        if !Arc::make_mut(&mut rebound.owned_input).rebind_paragraph_edited_root(old, new, edited) {
-            return None;
-        }
-        Some(rebound)
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-struct ParagraphRecorder {
-    pending: bool,
-    lookup_attempted: bool,
-    next_identity: u64,
-    pending_identity: Option<u64>,
-    starting_universe: Option<Arc<tex_state::Snapshot>>,
-    starting_artifact_pos: usize,
-    replayed_artifact_prefix: usize,
-    effect_start: usize,
-    starting_provenance: Option<ProvenanceStats>,
-    starting_prev_graf: i32,
-    starting_prev_graf_affects_break: bool,
-    next_output_episode_identity: u64,
-    output_episodes: Arc<Vec<PageOutputEpisode>>,
-    output_producers: std::collections::VecDeque<(u64, tex_state::StreamBufState, usize, usize)>,
-    pending_output_episode_ids: std::collections::VecDeque<u64>,
-    shipout_observation_floor: usize,
-    replacing_output_publication: bool,
-    superseded_output_episodes: Vec<SupersededPageOutputEpisode>,
-    entry_outer_parskip: bool,
-    // Aggregate command savepoints clone the recorder before every command.
-    // Paragraph histories must therefore remain persistent roots: copying all
-    // prior regions here makes a document's command cost grow with every
-    // paragraph it has already completed.
-    finished: Arc<Vec<ParagraphRegion>>,
-    replay: Arc<Vec<ParagraphRegion>>,
-}
-
-#[derive(Clone, Debug)]
-#[allow(clippy::large_enum_variant)]
-enum RetainedOutputEpisodeMatch {
-    None,
-    Complete {
-        episode: PageOutputEpisode,
-        identity: u64,
-    },
-}
-
-#[cfg(test)]
-mod paragraph_recorder_tests {
-    use super::*;
-
-    #[test]
-    fn scalar_savepoint_shares_active_paragraph_boundary_snapshot() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let boundary = Arc::new(stores.snapshot_with_exact_identity());
-        let recorder = ParagraphRecorder {
-            pending: true,
-            starting_universe: Some(Arc::clone(&boundary)),
-            ..ParagraphRecorder::default()
-        };
-
-        let savepoint = recorder.clone();
-        let saved = savepoint
-            .starting_universe
-            .as_ref()
-            .expect("active savepoint retains the paragraph boundary");
-        assert!(Arc::ptr_eq(&boundary, saved));
-        assert_eq!(boundary.state_hash(), saved.state_hash());
-    }
-}
-
-impl ParagraphRecorder {
-    #[cfg(feature = "profiling")]
-    fn snapshot_clone_logical_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            .saturating_add(
-                self.output_producers
-                    .len()
-                    .saturating_mul(std::mem::size_of::<(
-                        u64,
-                        tex_state::StreamBufState,
-                        usize,
-                        usize,
-                    )>()),
-            )
-            .saturating_add(
-                self.pending_output_episode_ids
-                    .len()
-                    .saturating_mul(std::mem::size_of::<u64>()),
-            )
-            .saturating_add(
-                self.superseded_output_episodes
-                    .len()
-                    .saturating_mul(std::mem::size_of::<SupersededPageOutputEpisode>()),
-            )
-    }
-
-    fn start_output_episode(
-        &mut self,
-        owners: &[tex_state::ParagraphRegionOwner],
-        starting_cursor: tex_state::StreamBufState,
-        producer_artifact: usize,
-        producer_effect: usize,
-        stores: &mut Universe,
-    ) -> Option<u64> {
-        let owners: Arc<[u64]> = owners.iter().map(|owner| owner.identity()).collect();
-        if owners.is_empty() {
-            return None;
-        }
-        let identity = stores.world_mut().allocate_output_episode_id().identity();
-        self.next_output_episode_identity = self.next_output_episode_identity.max(identity);
-        Arc::make_mut(&mut self.output_episodes).push(PageOutputEpisode {
-            identity,
-            owners,
-            ..PageOutputEpisode::default()
-        });
-        self.output_producers.push_back((
-            identity,
-            starting_cursor,
-            producer_artifact,
-            producer_effect,
-        ));
-        Some(identity)
-    }
-
-    fn take_matching_output_episode(
-        &mut self,
-        owners: &[tex_state::ParagraphRegionOwner],
-    ) -> RetainedOutputEpisodeMatch {
-        let Some(pending) = self.pending_output_episode_ids.front().copied() else {
-            return RetainedOutputEpisodeMatch::None;
-        };
-        let episode = self
-            .output_episodes
-            .iter()
-            .find(|episode| episode.identity == pending)
-            .expect("pending output episode identity remains in its immutable table");
-        if !owners
-            .iter()
-            .map(|owner| owner.identity())
-            .any(|owner| episode.owners.contains(&owner))
-        {
-            return RetainedOutputEpisodeMatch::None;
-        }
-        self.pending_output_episode_ids.pop_front();
-        RetainedOutputEpisodeMatch::Complete {
-            episode: episode.clone(),
-            identity: pending,
-        }
-    }
-
-    fn begin(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
-        if self.pending {
-            return;
-        }
-        // A durable checkpoint projected from inside a paragraph deliberately
-        // omits the command/recorder owner. Its restored Universe may still
-        // carry the operational dependency cursor from that event-time root;
-        // discharge that ownerless cursor before opening the next paragraph.
-        if stores.dependency_region_is_active() {
-            stores.with_pure_memo(|memo| {
-                memo.record_paragraph_validation_failure(
-                    tex_state::ParagraphValidationFailure::ParagraphStart,
-                );
-            });
-            let _ = stores.finish_paragraph_dependency_region();
-            let _ = stores.abandon_pure_paragraph_recording();
-        }
-        command.begin_paragraph_input_transaction();
-        self.next_identity = self.next_identity.wrapping_add(1);
-        self.pending_identity = Some(self.next_identity);
-        stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
-            self.next_identity,
-        )));
-        stores
-            .world_mut()
-            .set_active_effect_domain(Some(tex_state::EffectDomain::Paragraph(self.next_identity)));
-        stores.begin_dependency_region();
-        let memo_enabled = stores
-            .with_pure_memo(|memo| memo.paragraph_front_ends_enabled())
-            .unwrap_or(false);
-        stores.begin_pure_paragraph_recording(memo_enabled);
-        modes.clear_completed_paragraph_nodes();
-        self.lookup_attempted = false;
-        self.starting_universe = Some(Arc::new(stores.snapshot_with_exact_identity()));
-        self.starting_artifact_pos = stores.world().artifact_pos();
-        self.effect_start = stores.world().effect_records().len();
-        self.starting_provenance = Some(stores.provenance_stats());
-        self.starting_prev_graf = modes.enclosing_vertical_prev_graf();
-        self.starting_prev_graf_affects_break = stores.paragraph_shape_len() != 0
-            || stores.dimen_param(DimenParam::HANG_INDENT).raw() != 0
-                && stores.int_param(IntParam::HANG_AFTER) != 0;
-        self.entry_outer_parskip = modes.depth() == 1 && modes.current_mode() == Mode::Vertical
-            || modes.depth() == 2 && modes.current_mode() == Mode::Horizontal;
-        self.pending = true;
-    }
-
-    fn capture_output_publication(
-        &mut self,
-        artifact_start: usize,
-        _effect_start: usize,
-        stores: &mut Universe,
-    ) {
-        if std::mem::take(&mut self.replacing_output_publication) {
-            return;
-        }
-        let artifact_end = stores.world().artifact_pos();
-        if artifact_end <= artifact_start {
-            return;
-        }
-        if self.output_producers.is_empty() {
-            return;
-        }
-        let effect_end = stores.world().effect_records().len();
-        while let Some((episode_id, starting_cursor, producer_artifact, producer_effect)) =
-            self.output_producers.pop_front()
-        {
-            let next_artifact = self
-                .output_producers
-                .front()
-                .map_or(artifact_end, |next| next.2);
-            let next_effect = self
-                .output_producers
-                .front()
-                .map_or(effect_end, |next| next.3);
-            let Some(effects) = stores
-                .world()
-                .effect_records()
-                .get(producer_effect..next_effect)
-                .map(|effects| effects.to_vec().into())
-            else {
-                Arc::make_mut(&mut self.output_episodes)
-                    .retain(|episode| episode.identity != episode_id);
-                continue;
-            };
-            let Some(episode) = Arc::make_mut(&mut self.output_episodes)
-                .iter_mut()
-                .find(|episode| episode.identity == episode_id)
-            else {
-                continue;
-            };
-            episode.artifacts = producer_artifact..next_artifact;
-            if let Some(publication) = stores.world().artifact_publication_at(producer_artifact) {
-                episode.artifact_publication_sequence = Some(publication.sequence());
-                episode.artifact_publication_domain = Some(publication.domain());
-            }
-            episode.effects = effects;
-            episode.effect_start = producer_effect;
-            episode.starting_cursor = Some(starting_cursor);
-            episode.ending_cursor = Some(stores.world().output_episode_cursor());
-            episode.effect_root = Some(stores.world().effect_root_identity());
-            let owners = Arc::clone(&episode.owners);
-            for region in Arc::make_mut(&mut self.finished)
-                .iter_mut()
-                .filter(|region| owners.contains(&region.identity))
-            {
-                Arc::make_mut(&mut region.output_episode_ids).push(episode_id);
-                region.ending_artifact_pos = next_artifact;
-                region.ending_effect_pos = next_effect;
-                region.ending_universe = Arc::new(stores.snapshot_with_exact_identity());
-            }
-            let effect_owners = stores.world().output_effect_episode_owners();
-            let effect_publications = stores.world().effect_publications();
-            for region in Arc::make_mut(&mut self.finished).iter_mut() {
-                region.output_effect_episode_owners = Arc::clone(&effect_owners);
-                region.output_effect_publications = Arc::clone(&effect_publications);
-                region.effect_domains = stores.world().effect_domains();
-                region.effect_semantic_record_ordinals =
-                    stores.world().effect_semantic_record_ordinals();
-                region.effect_placement_intra_orders =
-                    stores.world().effect_placement_intra_orders();
-            }
-        }
-    }
-
-    fn finish(&mut self, command: &mut CommandState, modes: &mut ModeNest, stores: &mut Universe) {
-        if !std::mem::take(&mut self.pending) {
-            return;
-        }
-        stores.set_active_paragraph_owner(None);
-        stores.world_mut().set_active_effect_domain(None);
-        let Some(input) = command.finish_paragraph_input_transaction() else {
-            return;
-        };
-        let owned_input = Arc::new(
-            tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-                &command
-                    .publish_summary()
-                    .expect("finished paragraph leaves a publishable command boundary"),
-                [(&input, None)],
-                stores,
-            ),
-        );
-        let finished = modes.take_completed_paragraph_nodes().unwrap_or_default();
-        let finished_lines = (!finished.is_empty()).then(|| {
-            let list = stores.freeze_node_list(&finished);
-            stores.retain_paragraph_result(list)
-        });
-        let effects: std::sync::Arc<[tex_state::EffectRecord]> = stores
-            .world()
-            .effect_records()
-            .get(self.effect_start..)
-            .unwrap_or_default()
-            .to_vec()
-            .into();
-        let artifact_count = stores
-            .world()
-            .artifact_pos()
-            .saturating_sub(self.starting_artifact_pos);
-        let (front_dependencies, break_dependencies) = stores.finish_paragraph_dependency_region();
-        let front_len = front_dependencies.len();
-        let mut dependencies = front_dependencies;
-        dependencies.extend(break_dependencies);
-        let front_dependency_ordinals = (0..front_len as u32).collect::<Vec<_>>().into();
-        let break_dependency_ordinals = (front_len as u32..dependencies.len() as u32)
-            .collect::<Vec<_>>()
-            .into();
-        let dependencies = dependencies.into();
-        let mutation_summary = stores.finish_pure_paragraph_recording().unwrap_or(
-            tex_state::PureParagraphMutationSummary {
-                entry_in_group: tex_state::ExpansionState::execution_group_depth(stores) != 0,
-                unsupported_group_ownership: false,
-                mutations: Vec::new(),
-            },
-        );
-        let identity = self
-            .pending_identity
-            .take()
-            .expect("pending paragraph owns its stable region identity");
-        let display_active_directions = modes
-            .current_list()
-            .display_interrupt()
-            .map(|interrupt| interrupt.active_directions.clone().into());
-        let mut barriers = Vec::new();
-        // The input transaction owns the live math-shift continuation and
-        // replay recreates its save-stack group before applying local
-        // mutations, so display interruption is no longer a replay barrier.
-        if effects.iter().any(|effect| {
-            !matches!(
-                effect,
-                tex_state::EffectRecord::StreamWrite { .. }
-                    | tex_state::EffectRecord::StreamWriteBytes { .. }
-            )
-        }) {
-            barriers.push(tex_state::ParagraphBarrierReason::UntrackedWorldAccess);
-        }
-        if mutation_summary.unsupported_group_ownership {
-            barriers.push(tex_state::ParagraphBarrierReason::UnsupportedGroupTransition);
-        }
-        barriers.extend(stores.take_pure_paragraph_barriers());
-        barriers.sort_unstable();
-        barriers.dedup();
-        let region = ParagraphRegion {
-            identity,
-            input,
-            owned_input,
-            entry_outer_parskip: self.entry_outer_parskip,
-            entry_prev_graf: self.starting_prev_graf,
-            entry_prev_graf_affects_break: self.starting_prev_graf_affects_break,
-            starting_universe: self
-                .starting_universe
-                .take()
-                .expect("pending paragraph owns its starting Universe"),
-            ending_universe: Arc::new(stores.snapshot_with_exact_identity()),
-            artifact_count,
-            starting_effect_pos: self.effect_start,
-            ending_artifact_pos: stores.world().artifact_pos(),
-            ending_effect_pos: stores.world().effect_records().len(),
-            ending_modes: modes.summary(),
-            finished_lines,
-            effects,
-            output_episode_ids: Arc::new(Vec::new()),
-            output_episodes: Arc::new(Vec::new()),
-            output_effect_episode_owners: Arc::new(Vec::new()),
-            output_effect_publications: Arc::new(Vec::new()),
-            effect_domains: stores.world().effect_domains(),
-            effect_semantic_record_ordinals: stores.world().effect_semantic_record_ordinals(),
-            effect_placement_intra_orders: stores.world().effect_placement_intra_orders(),
-            starting_provenance: self
-                .starting_provenance
-                .take()
-                .expect("pending paragraph owns its provenance bound"),
-            ending_provenance: stores.provenance_stats(),
-            dependencies,
-            front_dependency_ordinals,
-            break_dependency_ordinals,
-            mutation_entry_in_group: mutation_summary.entry_in_group,
-            mutations: mutation_summary.mutations.into(),
-            line_count: modes
-                .enclosing_vertical_prev_graf()
-                .saturating_sub(self.starting_prev_graf),
-            line_last_badness: stores.last_badness(),
-            display_active_directions,
-            barriers: barriers.clone().into(),
-            line_provenance: tex_state::ParagraphLineProvenance::Pending,
-        };
-        if barriers.is_empty() {
-            stores.with_pure_memo(|memo| {
-                memo.record_accepted_paragraph_region(region.history_record());
-            });
-        }
-        if !barriers.is_empty() {
-            stores.with_pure_memo(|memo| memo.record_paragraph_barriers(&barriers));
-        }
-        if !barriers.contains(&tex_state::ParagraphBarrierReason::UnsupportedGroupTransition) {
-            Arc::make_mut(&mut self.finished).push(region);
-        }
-    }
-
-    /// Discards an in-flight paragraph recording before replacing the whole
-    /// command/universe state from a durable checkpoint.
-    fn abandon(&mut self, command: &mut CommandState, stores: &mut Universe) {
-        if !std::mem::take(&mut self.pending) {
-            return;
-        }
-        command.abandon_paragraph_input_transaction();
-        let _ = stores.finish_paragraph_dependency_region();
-        let _ = stores.finish_pure_paragraph_recording();
-        self.starting_universe = None;
-        self.starting_provenance = None;
-    }
-}
 
 #[derive(Debug, Default)]
 struct ObservationBuffer(Vec<CommandObservation>);
@@ -1603,46 +708,6 @@ impl MainControl {
     /// carried history outside the command step loop.
     pub fn attach_pure_memo_capability(&self, stores: &mut Universe) {
         stores.attach_pure_memo_capability(&self.pure_memo);
-    }
-
-    fn activate_page_output_receipt(
-        &mut self,
-        episode: tex_state::PageOutputEpisodeId,
-        retained: bool,
-    ) {
-        if retained || !self.retained_page_output_receipt_active {
-            self.active_page_output_receipt = Some(tex_state::PageOutputPublicationReceiptId::new(
-                episode.identity(),
-            ));
-        }
-        self.retained_page_output_receipt_active |= retained;
-    }
-
-    /// Finalizes every delayed artifact committed under the active typed
-    /// page-output receipt. Candidate construction calls this only after the
-    /// command run has completed successfully; ordinary rollback restores
-    /// both this handle and World's provisional registry from its snapshot.
-    #[doc(hidden)]
-    pub fn finalize_page_output_receipts(&mut self, stores: &mut Universe) {
-        for superseded in &mut self.paragraph_recorder.superseded_output_episodes {
-            let Some(committed) = superseded.committed_publication.as_ref() else {
-                continue;
-            };
-            let receipt = committed.receipt();
-            let Some(records) = stores.world().provisional_page_output_receipt(receipt) else {
-                continue;
-            };
-            superseded.committed_publication =
-                tex_state::PageOutputPublicationReceipt::committed_group(
-                    committed.effect(),
-                    records,
-                );
-            stores
-                .world_mut()
-                .discard_provisional_page_output_receipt(receipt);
-        }
-        self.active_page_output_receipt = None;
-        self.retained_page_output_receipt_active = false;
     }
 
     /// Reports aggregate-operation/savepoint accounting without exposing the
@@ -1864,17 +929,14 @@ impl MainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_checkpoint(
+        crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
             &self.modes,
             stores,
             budget_counters,
             false,
-        )?;
-        checkpoint
-            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
-        Ok(checkpoint)
+        )
     }
 
     /// Captures a quiescent named checkpoint with the strong optional state
@@ -1885,38 +947,14 @@ impl MainControl {
         stores: &mut Universe,
         budget_counters: crate::ExecutionBudgetCounters,
     ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_checkpoint(
+        crate::EngineCheckpoint::capture_checkpoint(
             boundary,
             &self.command,
             &self.modes,
             stores,
             budget_counters,
             true,
-        )?;
-        checkpoint
-            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
-        Ok(checkpoint)
-    }
-
-    /// Captures a boundary reached inside an enclosing paragraph without
-    /// ending or snapshotting the live paragraph recorders.
-    pub fn capture_checkpoint_projecting_paragraph(
-        &self,
-        boundary: crate::EngineBoundary,
-        stores: &mut Universe,
-        budget_counters: crate::ExecutionBudgetCounters,
-    ) -> Result<crate::EngineCheckpoint, tex_command::CommandSummaryError> {
-        let mut checkpoint = crate::EngineCheckpoint::capture_during_paragraph(
-            boundary,
-            &self.command,
-            &self.modes,
-            stores,
-            budget_counters,
-            true,
-        )?;
-        checkpoint
-            .advance_detached_artifact_prefix(self.paragraph_recorder.replayed_artifact_prefix);
-        Ok(checkpoint)
+        )
     }
 
     /// Restores a named checkpoint into this command processor.  The
@@ -1927,12 +965,10 @@ impl MainControl {
         checkpoint: &crate::EngineCheckpoint,
         stores: &mut Universe,
     ) -> Result<(), crate::CheckpointRestoreError> {
-        self.paragraph_recorder.abandon(&mut self.command, stores);
         checkpoint.restore_state(&mut self.command, &mut self.modes, stores)?;
         self.active_alignment = None;
         self.boxes = ReplayBoxes::default();
         self.pending_shipout_boundary = false;
-        self.paragraph_recorder = ParagraphRecorder::default();
         Ok(())
     }
 
@@ -2642,367 +1678,14 @@ impl MainControl {
         std::mem::take(&mut self.completed_boundaries)
     }
 
-    /// Drains completed accepted paragraph input regions in publication order.
-    #[must_use]
-    pub fn take_finished_paragraph_regions(&mut self) -> Vec<ParagraphRegion> {
-        let episodes = Arc::clone(&self.paragraph_recorder.output_episodes);
-        let mut regions =
-            Arc::unwrap_or_clone(std::mem::take(&mut self.paragraph_recorder.finished));
-        for region in &mut regions {
-            region.output_episodes = Arc::clone(&episodes);
-        }
-        regions
-    }
-
-    /// Drains typed accepted-generation output publications replaced by this
-    /// live run. Incremental suffix adoption uses these receipts to avoid
-    /// remounting exactly those old effects.
-    #[doc(hidden)]
-    pub fn take_superseded_page_output_episodes(&mut self) -> Vec<SupersededPageOutputEpisode> {
-        std::mem::take(&mut self.paragraph_recorder.superseded_output_episodes)
-    }
-
-    /// Installs accepted regions for exact pre-delivery paragraph replay.
-    ///
-    /// Replay is a safe miss unless both the command-owned input root and the
-    /// exact Universe entry identity agree. Resource suspension therefore
-    /// remains owned by ordinary delivery when an edited paragraph cannot be
-    /// reused.
-    pub fn install_paragraph_replay_regions(
-        &mut self,
-        regions: impl IntoIterator<Item = ParagraphRegion>,
-    ) {
-        let regions = regions.into_iter().collect::<Vec<_>>();
-        self.paragraph_recorder.next_identity = self.paragraph_recorder.next_identity.max(
-            regions
-                .iter()
-                .map(|region| region.identity)
-                .max()
-                .unwrap_or(0),
-        );
-        for region in &regions {
-            for episode in region.output_episodes.iter() {
-                if !self
-                    .paragraph_recorder
-                    .output_episodes
-                    .iter()
-                    .any(|known| known.identity == episode.identity)
-                {
-                    Arc::make_mut(&mut self.paragraph_recorder.output_episodes)
-                        .push(episode.clone());
-                }
-                self.paragraph_recorder.next_output_episode_identity = self
-                    .paragraph_recorder
-                    .next_output_episode_identity
-                    .max(episode.identity);
-            }
-        }
-        Arc::make_mut(&mut self.paragraph_recorder.replay).extend(regions);
-    }
-
-    /// Installs a cold-start suffix whose semantic continuity ends at its
-    /// first failed entry validation.
-    pub fn install_contiguous_cold_paragraph_replay_regions(
-        &mut self,
-        regions: impl IntoIterator<Item = ParagraphRegion>,
-    ) {
-        self.install_paragraph_replay_regions(regions);
-    }
-
-    /// Whether a later source-aligned paragraph or one of its retained page
-    /// publications still has an accepted replay candidate. Editor
-    /// convergence must not adopt the enclosing suffix before these
-    /// finer-grained candidates and their output receipts are resolved.
-    #[must_use]
-    pub fn has_pending_paragraph_replay(&self) -> bool {
-        !self.paragraph_recorder.replay.is_empty()
-            || !self
-                .paragraph_recorder
-                .pending_output_episode_ids
-                .is_empty()
-    }
-
-    fn try_replay_paragraph_before_delivery(&mut self, stores: &mut Universe) -> bool {
-        if !self.paragraph_recorder.pending
-            || self.paragraph_recorder.replay.is_empty()
-            || !matches!(self.modes.current_mode(), Mode::Vertical | Mode::Horizontal)
-            || self.modes.depth() > 2
-        {
-            return false;
-        }
-        if self.paragraph_recorder.lookup_attempted {
-            return false;
-        }
-        let mut selected = None;
-        let mut validation_failure = None;
-        for (index, region) in self.paragraph_recorder.replay.iter().enumerate() {
-            let mut input_probe = self.command.clone();
-            if input_probe
-                .replay_paragraph_input_transaction_with(&region.input, |left, right| {
-                    stores
-                        .macro_definition(left)
-                        .semantic_eq(stores.macro_definition(right))
-                })
-                .is_err()
-            {
-                continue;
-            }
-            self.paragraph_recorder.lookup_attempted = true;
-            if !region.barriers.is_empty() {
-                Arc::make_mut(&mut self.paragraph_recorder.replay).drain(index..);
-                stores.with_pure_memo(|memo| {
-                    memo.record_accepted_paragraph_lookup(false, 0, 0);
-                });
-                return false;
-            }
-            if !crate::paragraph_memo::same_mutation_entry_class(
-                region.mutation_entry_in_group,
-                tex_state::ExpansionState::execution_group_depth(stores),
-            ) {
-                continue;
-            }
-            if region.entry_prev_graf_affects_break
-                && region.entry_prev_graf != self.paragraph_recorder.starting_prev_graf
-            {
-                validation_failure
-                    .get_or_insert(tex_state::ParagraphValidationFailure::ParagraphStart);
-                continue;
-            }
-            if let Some(key) =
-                crate::paragraph_memo::dependency_failure(stores, &region.dependencies)
-            {
-                let is_break_dependency =
-                    region
-                        .break_dependency_ordinals
-                        .first()
-                        .is_some_and(|first| {
-                            region.dependencies[*first as usize..]
-                                .iter()
-                                .any(|dependency| dependency.key == key)
-                        });
-                let failure = if is_break_dependency {
-                    tex_state::ParagraphValidationFailure::BreakDependency
-                } else {
-                    tex_state::ParagraphValidationFailure::from_dependency(key)
-                };
-                validation_failure.get_or_insert(failure);
-                continue;
-            }
-            if !crate::paragraph_memo::validate_mutations(stores, &region.mutations) {
-                validation_failure.get_or_insert(tex_state::ParagraphValidationFailure::Mutation);
-                continue;
-            }
-            selected = Some(index);
-            break;
-        }
-        let Some(index) = selected else {
-            if let Some(failure) = validation_failure {
-                stores.with_pure_memo(|memo| memo.record_paragraph_validation_failure(failure));
-                if failure == tex_state::ParagraphValidationFailure::BreakDependency {
-                    Arc::make_mut(&mut self.paragraph_recorder.replay).clear();
-                }
-            }
-            stores.with_pure_memo(|memo| {
-                memo.record_accepted_paragraph_lookup(false, 0, 0);
-            });
-            return false;
-        };
-        let input = self.paragraph_recorder.replay[index].input.clone();
-        if self
-            .command
-            .replay_paragraph_input_transaction_with(&input, |left, right| {
-                stores
-                    .macro_definition(left)
-                    .semantic_eq(stores.macro_definition(right))
-            })
-            .is_err()
-        {
-            stores.with_pure_memo(|memo| {
-                memo.record_accepted_paragraph_lookup(false, 0, 0);
-            });
-            return false;
-        }
-        let region = Arc::make_mut(&mut self.paragraph_recorder.replay).remove(index);
-        if region.entry_outer_parskip {
-            stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
-                region.identity,
-            )));
-            crate::vertical::append_vertical_contribution(
-                &mut self.modes,
-                stores,
-                Node::Glue {
-                    spec: stores.glue_param(GlueParam::PAR_SKIP),
-                    kind: GlueKind::ParSkip,
-                    leader: None,
-                },
-            );
-            stores.set_active_paragraph_owner(None);
-        }
-        let finished_nodes = region.materialize_finished_nodes(stores);
-        if finished_nodes.is_some() {
-            stores.with_pure_memo(tex_state::PureMemoRuntime::record_paragraph_line_hit);
-        }
-        stores.with_pure_memo(|memo| {
-            memo.record_accepted_paragraph_lookup(
-                true,
-                region.input.coverage().delivered_commands(),
-                region.mutations.len(),
-            );
-        });
-        self.command.abandon_paragraph_input_transaction();
-        self.paragraph_recorder.pending = false;
-        self.paragraph_recorder.pending_identity = None;
-        stores.set_active_paragraph_owner(None);
-        stores.world_mut().set_active_effect_domain(None);
-        self.paragraph_recorder.starting_universe = None;
-        self.paragraph_recorder.starting_provenance = None;
-        // `begin` opened both recorders before the front key was available.
-        // A hit replaces that speculative cold paragraph wholesale, so close
-        // and discard its empty recording phases before the next paragraph
-        // starts.
-        let _ = stores.finish_paragraph_dependency_region();
-        let _ = stores.finish_pure_paragraph_recording();
-        debug_assert_eq!(
-            self.active_math_shifts
-                .iter()
-                .copied()
-                .map(MathShiftContext::paragraph_shift)
-                .collect::<Vec<_>>(),
-            region.input.starting_math_shifts()
-        );
-        for shift in region.input.ending_math_shifts() {
-            stores.enter_group_with_kind_at_line(
-                GroupKind::MathShift,
-                self.command.current_file_line_number(),
-            );
-            self.active_math_shifts
-                .push(MathShiftContext::from_paragraph_shift(*shift));
-        }
-        crate::paragraph_memo::replay_mutations(stores, &region.mutations);
-        crate::paragraph_end::normal_paragraph(&mut self.modes, stores);
-        let effect_owner_start = region.starting_effect_pos;
-        for (offset, effect) in region.effects().enumerate() {
-            let owner = region
-                .output_effect_episode_owners
-                .get(effect_owner_start + offset)
-                .copied()
-                .flatten();
-            stores.world_mut().set_active_output_episode(owner);
-            let publication = region
-                .output_effect_publications
-                .get(effect_owner_start + offset)
-                .copied()
-                .flatten();
-            stores
-                .world_mut()
-                .set_active_effect_publication(publication);
-            let domain = region
-                .effect_domains
-                .get(effect_owner_start + offset)
-                .copied();
-            stores.world_mut().set_active_effect_domain(domain);
-            assert!(
-                stores.world_mut().replay_paragraph_write(effect),
-                "barrier-free paragraph owns only replayable diagnostic writes"
-            );
-        }
-        stores.world_mut().set_active_output_episode(None);
-        stores.world_mut().set_active_effect_publication(None);
-        stores.world_mut().set_active_effect_domain(None);
-        stores.with_pure_memo(|memo| {
-            memo.record_carried_accepted_paragraph_region(region.history_record());
-        });
-        let entry_prev_graf = self.paragraph_recorder.starting_prev_graf;
-        self.modes = ModeNest::from_summary(region.ending_modes.clone())
-            .expect("accepted canonical paragraph mode summary remains valid");
-        self.modes
-            .set_enclosing_vertical_prev_graf(entry_prev_graf.saturating_add(region.line_count));
-        self.paragraph_replay_replaced_mode_journal = true;
-        for episode_id in region.output_episode_ids.iter().copied() {
-            // Every co-owner can mount another portion of the same episode.
-            // Detach after replaying this region's effects even when the
-            // shared receipt is already queued by an earlier owner.
-            let _ = stores.remove_replayed_output_episode_effects(
-                tex_state::PageOutputEpisodeId::new(episode_id),
-            );
-            if !self
-                .paragraph_recorder
-                .pending_output_episode_ids
-                .contains(&episode_id)
-            {
-                // The retained region can carry effects from a page whose
-                // producer has not run on this generation yet.  Its typed
-                // episode receipt proves exactly which inherited publication
-                // the later live fire-up supersedes; detach it when the
-                // normal region replacement is mounted, before any partial
-                // mixed-owner fire-up can be attempted.
-                self.paragraph_recorder
-                    .pending_output_episode_ids
-                    .push_back(episode_id);
-                let episode = self
-                    .paragraph_recorder
-                    .output_episodes
-                    .iter()
-                    .find(|episode| episode.identity == episode_id)
-                    .expect("paragraph output receipt remains in its immutable table");
-                self.paragraph_recorder.superseded_output_episodes.push(
-                    SupersededPageOutputEpisode {
-                        identity: tex_state::PageOutputEpisodeId::new(episode_id),
-                        effects: episode.effect_start
-                            ..episode.effect_start.saturating_add(episode.effects.len()),
-                        regenerated_effects: None,
-                        accepted_artifacts: AcceptedArtifactPublicationRange(
-                            episode.artifacts.clone(),
-                        ),
-                        live_artifacts: None,
-                        publication_candidate: None,
-                        committed_publication: None,
-                        retained_publication: episode.publication,
-                        retained_sequence: episode.artifact_publication_sequence,
-                        regenerated_sequence: None,
-                    },
-                );
-            }
-        }
-        if let Some(nodes) = finished_nodes {
-            stores.set_active_paragraph_owner(Some(tex_state::ParagraphRegionOwner::new(
-                region.identity,
-            )));
-            for node in nodes {
-                crate::vertical::append_vertical_contribution(&mut self.modes, stores, node);
-            }
-            stores.set_active_paragraph_owner(None);
-        }
-        crate::vertical::build_page_if_outer_vertical(&self.modes, stores)
-            .expect("prevalidated retained paragraph contribution batch must replay");
-        self.paragraph_recorder.replayed_artifact_prefix = self
-            .paragraph_recorder
-            .replayed_artifact_prefix
-            .saturating_add(region.artifact_count);
-        self.pending_shipout_boundary |= region.artifact_count != 0;
-        self.finish_shipout_publication(
-            stores.world().artifact_commits().len(),
-            stores.world().effect_records().len(),
-            stores,
-        );
-        self.paragraph_recorder.next_identity =
-            self.paragraph_recorder.next_identity.max(region.identity);
-        Arc::make_mut(&mut self.paragraph_recorder.finished).push(region);
-        self.completed_boundaries
-            .push(crate::EngineBoundary::OuterParagraphEnd);
-        true
-    }
-
     /// Records newly committed artifacts and releases their one outermost
     /// checkpoint boundary only after all continuation-owning work unwinds.
     fn finish_shipout_publication(
         &mut self,
         artifact_count: usize,
-        effect_count: usize,
+        _effect_count: usize,
         stores: &mut Universe,
     ) {
-        self.paragraph_recorder
-            .capture_output_publication(artifact_count, effect_count, stores);
         self.pending_shipout_boundary |= stores.world().artifact_commits().len() != artifact_count;
         if self.pending_shipout_boundary
             && !self.boxes.output_routine_active
@@ -3427,7 +2110,7 @@ impl MainControl {
         // episode here instead of asking only whether another fire-up is
         // currently pending; otherwise its observations survive into the
         // next command step and that command's raw delivery overtakes them.
-        let opens_output_episode = !self.page_output_observations.is_empty()
+        let opens_output_batch = !self.page_output_observations.is_empty()
             || (stores.page_fire_up().is_some() && !self.boxes.output_routine_active);
         self.fire_pending_page_output(stores)?;
         {
@@ -3443,17 +2126,14 @@ impl MainControl {
                 .into_iter()
                 .map(CommandObservation::Input)
                 .collect();
-            if opens_output_episode {
+            if opens_output_batch {
                 // Same order as the ordinary tail: the named token-list push
                 // command state held across the transition, then the shipouts
                 // it committed, then the episode's own records.
                 records.extend(
-                    committed_shipout_observations(
-                        artifact_count.max(self.paragraph_recorder.shipout_observation_floor),
-                        stores,
-                    )
-                    .into_iter()
-                    .map(CommandObservation::Effect),
+                    committed_shipout_observations(artifact_count, stores)
+                        .into_iter()
+                        .map(CommandObservation::Effect),
                 );
                 records.extend(
                     committed_stream_effect_observations(
@@ -3475,35 +2155,18 @@ impl MainControl {
         Ok(applied)
     }
 
-    /// Closes the paragraph-recording ownership transition shared by the
-    /// ordinary and host-owned step tails.
+    /// Publishes the ordinary cold paragraph boundary after `end_graf`.
     fn finish_paragraph_boundary(
         &mut self,
         outer_paragraph_was_active: bool,
-        stores: &mut Universe,
+        _stores: &mut Universe,
     ) {
-        let outer_paragraph_is_active =
-            self.modes.current_mode() == Mode::Horizontal && self.modes.depth() == 2;
-        if !outer_paragraph_was_active && outer_paragraph_is_active {
-            self.paragraph_recorder
-                .begin(&mut self.command, &mut self.modes, stores);
-        }
-        let outer_paragraph_finished = outer_paragraph_was_active
+        if outer_paragraph_was_active
             && self.modes.current_mode() == Mode::Vertical
             && self.modes.depth() == 1
-            || self.paragraph_recorder.pending && self.modes.current_mode() == Mode::DisplayMath;
-        if outer_paragraph_finished {
-            self.paragraph_recorder
-                .finish(&mut self.command, &mut self.modes, stores);
+        {
             self.completed_boundaries
                 .push(crate::EngineBoundary::OuterParagraphEnd);
-        } else if !outer_paragraph_was_active
-            && !outer_paragraph_is_active
-            && self.paragraph_recorder.pending
-            && self.modes.depth() == 1
-            && self.modes.current_mode() == Mode::Vertical
-        {
-            self.paragraph_recorder.abandon(&mut self.command, stores);
         }
     }
 
@@ -3751,11 +2414,6 @@ impl MainControl {
         stores.attach_pure_memo_capability(&self.pure_memo);
         if self.fatal.is_some() {
             return Ok(StepResult::Progress(MainControlStep::End));
-        }
-        if self.modes.current_mode() == Mode::Horizontal
-            && self.try_replay_paragraph_before_delivery(stores)
-        {
-            return Ok(StepResult::Progress(MainControlStep::Continue));
         }
         self.advance_telemetry.attempts += 1;
         self.advance_telemetry.live_savepoints += 1;
@@ -4012,25 +2670,6 @@ impl MainControl {
         let artifact_count = stores.world().artifact_commits().len();
         let effect_count = stores.world().effect_records().len();
         let prepared_page_count = self.prepared_dvi_pages.len();
-        if mode == Mode::Vertical
-            && self.modes.depth() == 1
-            && scanned.starts_paragraph_from_vertical()
-        {
-            self.paragraph_recorder
-                .begin(&mut self.command, &mut self.modes, stores);
-            if !self.paragraph_recorder.replay.is_empty()
-                && self.try_replay_paragraph_before_delivery(stores)
-            {
-                return self.finish_host_owned_step(
-                    Ok(ReplayStep::Continue),
-                    outer_paragraph_was_active,
-                    artifact_count,
-                    effect_count,
-                    prepared_page_count,
-                    stores,
-                );
-            }
-        }
         let parking = self.suspend_main_control_parking(&scanned);
         let scanned = match self.apply_host_owned_step(scanned, stores) {
             ControlFlow::Break(applied) => {
@@ -4258,82 +2897,9 @@ impl MainControl {
             let Some(fire_up) = stores.page_fire_up() else {
                 break;
             };
-            // TeX82 §1024 reaches §82's `error` synchronously while the
-            // command-owned terminator backup is still live.  The durable
-            // Universe summary is published only at step boundaries, so the
-            // report must receive context from the live command stack.
             let error_context = self.command.output_open_context(&stores.command_context());
-            let output_start = stores.world_mut().begin_replayed_output_episode();
-            let producer_cursor = stores.world().output_episode_cursor();
-            let producer_artifact = stores.world().artifact_pos();
-            let producer_effect = stores.world().effect_records().len();
             match crate::page_output::select_pending_page_output(stores, fire_up, error_context)? {
-                crate::page_output::SelectedPageOutput::Default(page, ownership, owners) => {
-                    let retained = self
-                        .paragraph_recorder
-                        .take_matching_output_episode(&owners);
-                    let (episode, retained_active_episode) = match retained {
-                        RetainedOutputEpisodeMatch::None => (None, None),
-                        RetainedOutputEpisodeMatch::Complete { episode, identity } => {
-                            (Some(episode), Some(identity))
-                        }
-                    };
-                    let replacement = episode.as_ref().map(|episode| {
-                        self.paragraph_recorder.replacing_output_publication = true;
-                        let artifact_candidate = stores
-                            .world_mut()
-                            .rewind_detached_artifacts(episode.artifacts.len());
-                        let inherited_effect_count = episode.effects.len();
-                        let replacement = output_start.clone();
-                        let retained_effect_root_mounted =
-                            stores.world().output_episode_was_mounted_at(
-                                &output_start,
-                                tex_state::PageOutputEpisodeId::new(episode.identity),
-                            );
-                        let cursor = episode
-                            .starting_cursor
-                            .clone()
-                            .expect("retained output episode owns its §638 pre-marker cursor");
-                        stores.world_mut().restore_output_episode_cursor(cursor);
-                        (
-                            replacement,
-                            inherited_effect_count,
-                            retained_effect_root_mounted,
-                            artifact_candidate,
-                        )
-                    });
-                    let active_episode = retained_active_episode.or_else(|| {
-                        (ownership != tex_state::PagePrefixOwnership::Unowned)
-                            .then(|| {
-                                self.paragraph_recorder.start_output_episode(
-                                    &owners,
-                                    producer_cursor.clone(),
-                                    producer_artifact,
-                                    producer_effect,
-                                    stores,
-                                )
-                            })
-                            .flatten()
-                    });
-                    let active_episode = active_episode.map(tex_state::PageOutputEpisodeId::new);
-                    if let Some(active_episode) = active_episode {
-                        self.activate_page_output_receipt(active_episode, episode.is_some());
-                    }
-                    stores.world_mut().set_active_output_episode(active_episode);
-                    stores.world_mut().set_active_effect_output_owner(&owners);
-                    stores.world_mut().set_active_artifact_publication_group(
-                        episode.as_ref().and_then(|episode| {
-                            Some((
-                                episode.artifact_publication_sequence?,
-                                episode.artifact_publication_domain?,
-                            ))
-                        }),
-                    );
-                    if let Some(active_episode) = active_episode {
-                        stores
-                            .world_mut()
-                            .claim_output_episode_effects_since(&output_start, active_episode);
-                    }
+                crate::page_output::SelectedPageOutput::Default(page) => {
                     let mut command = CommandMachine {
                         state: &mut self.command,
                         runtime: &mut self.runtime,
@@ -4344,129 +2910,16 @@ impl MainControl {
                         initex: self.initex,
                         emit_dvi_override: self.emit_dvi_override,
                     };
-                    let publication_candidate =
-                        replacement.as_ref().map(|(_, _, _, candidate)| *candidate);
-                    let effect_candidate = episode.as_ref().and_then(|episode| {
-                        episode
-                            .publication
-                            .map(tex_state::EffectPublicationCandidate::replacing)
-                    });
-                    let publication = shipout_replay_box(
-                        page,
-                        stores,
-                        &mut command,
-                        publication_candidate,
-                        effect_candidate,
-                        self.active_page_output_receipt,
-                    )?;
-                    if episode.is_none()
-                        && let (Some(active_episode), Some(publication)) =
-                            (active_episode, publication.as_ref())
-                        && let Some(record) =
-                            Arc::make_mut(&mut self.paragraph_recorder.output_episodes)
-                                .iter_mut()
-                                .find(|record| record.identity == active_episode.identity())
-                    {
-                        record.publication = Some(publication.artifact.effect());
-                        record.publication_sequence = stores
-                            .world()
-                            .effect_sequences()
-                            .get(publication.effects.start)
-                            .copied();
-                    }
-                    if let Some(receipt) = publication
-                        .as_ref()
-                        .and_then(|publication| publication.dvi.clone())
-                    {
+                    let publication = shipout_replay_box(page, stores, &mut command)?;
+                    if let Some(receipt) = publication.and_then(|publication| publication.dvi) {
                         push_prepared_dvi_page(&mut self.prepared_dvi_pages, receipt);
                     }
-                    if let (
-                        Some((
-                            _replacement,
-                            inherited_effect_count,
-                            retained_effect_root_mounted,
-                            _,
-                        )),
-                        Some(episode),
-                        Some(publication),
-                    ) = (replacement, episode, publication)
-                    {
-                        let _ = (inherited_effect_count, retained_effect_root_mounted);
-                        if let Some(cursor) = episode.ending_cursor {
-                            stores.world_mut().restore_output_episode_cursor(cursor);
-                        }
-                        self.paragraph_recorder.shipout_observation_floor =
-                            stores.world().artifact_pos();
-                        if let Some(receipt) = self
-                            .paragraph_recorder
-                            .superseded_output_episodes
-                            .iter_mut()
-                            .find(|receipt| receipt.identity.identity() == episode.identity)
-                        {
-                            receipt.regenerated_effects = Some(publication.effects.clone());
-                            receipt.live_artifacts = Some(LiveArtifactPublicationRange(
-                                producer_artifact..stores.world().artifact_pos(),
-                            ));
-                            receipt.regenerated_sequence = stores
-                                .world()
-                                .effect_sequences()
-                                .get(publication.effects.start)
-                                .copied();
-                            receipt.publication_candidate = publication.revision_candidate;
-                            if let Some(committed) = receipt.committed_publication.as_mut() {
-                                committed.extend(&publication.artifact);
-                            } else {
-                                receipt.committed_publication = Some(publication.artifact);
-                            }
-                        }
-                    }
-                    stores.world_mut().set_active_output_episode(None);
-                    stores.world_mut().set_active_effect_output_owner(&[]);
-                    // TeX82 §§1014--1025 complete this invocation of
-                    // `build_page` after the default `ship_out`. Umber defers
-                    // that synchronous fire-up to the command-step tail, so
-                    // re-entering the builder here would be a second
-                    // invocation: contributions appended after the selected
-                    // breakpoint (notably a forced post-display penalty)
-                    // could ship a second page in the same deferred episode.
-                    // A later contributing command, or §1054's end-job loop,
-                    // starts the next invocation.
                     break;
                 }
-                crate::page_output::SelectedPageOutput::UserRoutine(ownership, owners) => {
-                    if ownership != tex_state::PagePrefixOwnership::Unowned {
-                        let active = self.paragraph_recorder.start_output_episode(
-                            &owners,
-                            producer_cursor,
-                            producer_artifact,
-                            producer_effect,
-                            stores,
-                        );
-                        let active = active.map(tex_state::PageOutputEpisodeId::new);
-                        if let Some(active) = active {
-                            self.activate_page_output_receipt(active, false);
-                        }
-                        stores.world_mut().set_active_output_episode(active);
-                        if let Some(active) = active {
-                            stores
-                                .world_mut()
-                                .claim_output_episode_effects_since(&output_start, active);
-                        }
-                    }
-                    // This episode belongs to the step that contributed the
-                    // page, but an observed step publishes it only after its
-                    // own mutation and effect records.  Redirect the commit
-                    // buffer for the episode's duration instead of letting
-                    // this call site decide whether to observe at all.
+                crate::page_output::SelectedPageOutput::UserRoutine => {
                     let enclosing = self.operation_observations.take();
                     if enclosing.is_some() {
                         self.operation_observations = Some(ObservationBuffer::default());
-                        // TeX82 §1091's `every_par` (and every other named
-                        // hook installed earlier in this aggregate step) has
-                        // already run `begin_token_list`. Move those pending
-                        // publications into the page-output transaction before
-                        // §1025 opens `output_text`, so the one deferred queue
-                        // retains their chronological §323 order.
                         self.operation_observations
                             .as_mut()
                             .expect("observed page-output episode has a buffer")
@@ -4489,8 +2942,9 @@ impl MainControl {
                     processor
                         .retire_completed_right_brace_backup()
                         .map_err(command_error)?;
-                    let opened = processor.begin_selected_output_routine();
-                    let opened = opened.map_err(command_error);
+                    let opened = processor
+                        .begin_selected_output_routine()
+                        .map_err(command_error);
                     if enclosing.is_some() {
                         let deferred =
                             std::mem::replace(&mut self.operation_observations, enclosing)
@@ -4885,8 +3339,6 @@ impl MainControl {
                     };
                     let shift = MathShiftContext::EqNo(side);
                     self.active_math_shifts.push(shift);
-                    self.command
-                        .record_paragraph_math_shift_enter(shift.paragraph_shift());
                     self.modes
                         .current_list_mutation()
                         .set_display_eq_no(crate::mode::DisplayEqNo { side, display });
@@ -5083,8 +3535,6 @@ impl MainControl {
             MathShiftContext::Inline
         };
         self.active_math_shifts.push(shift);
-        self.command
-            .record_paragraph_math_shift_enter(shift.paragraph_shift());
         Ok(())
     }
 
@@ -5158,7 +3608,6 @@ impl MainControl {
                 context: "math shift group",
             })?;
         self.active_math_shifts.pop();
-        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok(())
     }
@@ -5206,7 +3655,6 @@ impl MainControl {
                 context: "equation number group",
             })?;
         self.active_math_shifts.pop();
-        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         Ok((eq.display, finished))
     }
@@ -5241,7 +3689,6 @@ impl MainControl {
                 context: "display alignment group",
             })?;
         self.active_math_shifts.pop();
-        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_display_inner(stores, interrupt.active_directions, scan_optional_space)
     }
@@ -5291,7 +3738,6 @@ impl MainControl {
                 context: "display math group",
             })?;
         self.active_math_shifts.pop();
-        self.command.record_paragraph_math_shift_exit();
         schedule_aftergroup(&mut self.command_machine(), stores, aftergroup)?;
         self.resume_display(stores, interrupt.active_directions)
     }
@@ -6118,10 +4564,7 @@ impl MainControl {
                 }
                 records.extend(effects.into_iter().map(CommandObservation::Effect));
             }
-            for shipout in committed_shipout_observations(
-                artifact_count.max(self.paragraph_recorder.shipout_observation_floor),
-                stores,
-            ) {
+            for shipout in committed_shipout_observations(artifact_count, stores) {
                 records.push(CommandObservation::Effect(shipout));
             }
             records.append(&mut self.page_output_observations);
@@ -7624,24 +6067,6 @@ enum MathShiftPairing {
 }
 
 impl ScannedStep {
-    /// Whether applying this already-scanned step in vertical mode owns
-    /// TeX82 §1090's transition through `new_graf`.
-    fn starts_paragraph_from_vertical(&self) -> bool {
-        matches!(
-            self,
-            Self::ParagraphStart
-                | Self::Character {
-                    cat: Catcode::Letter | Catcode::Other,
-                    ..
-                }
-                | Self::CharacterCode { .. }
-                | Self::HorizontalSkip { .. }
-                | Self::ControlSpace
-                | Self::FixedHorizontalGlue { .. }
-                | Self::ParagraphIndent { .. }
-        )
-    }
-
     const fn fires_afterassignment(&self) -> bool {
         matches!(
             self,
@@ -7684,15 +6109,6 @@ impl ScannedStep {
         )
     }
 
-    /// The character TeX82 §1030 hands to §1034's `main_loop`, if this step
-    /// is one of its four entries: `hmode+letter`, `hmode+other_char`,
-    /// `hmode+char_given`, or `hmode+char_num`.
-    ///
-    /// These are the only cases of the big `case` statement that do not end
-    /// at `goto big_switch`. The mode and font tests §1030/§1036 also impose
-    /// are applied by the caller against the state the step *left* behind,
-    /// because §1090's `vmode+letter` starts a paragraph first and only then
-    /// reaches the same `main_loop`.
     fn main_loop_character(&self) -> Option<char> {
         match *self {
             Self::Character {
@@ -13478,9 +11894,6 @@ fn shipout_replay_box(
     node: Node,
     stores: &mut Universe,
     command: &mut CommandMachine<'_>,
-    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
-    effect_candidate: Option<tex_state::EffectPublicationCandidate>,
-    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
 ) -> Result<Option<crate::dispatch::CommittedPagePublication>, ExecError> {
     // §638's `[` marker reports the page's `\count0`..`\count9` and, under
     // `\tracingoutput`, dumps the shipped box. Both are read before the page
@@ -13633,9 +12046,6 @@ fn shipout_replay_box(
             },
             stores,
             emit_dvi,
-            publication_candidate,
-            effect_candidate,
-            receipt,
         )?;
     let command = command_cell.into_inner();
     if let Some(receipt) = receipt
@@ -13721,7 +12131,7 @@ pub(crate) fn test_shipout_replay_box(
         initex: true,
         emit_dvi_override: None,
     };
-    match shipout_replay_box(node, stores, &mut command, None, None) {
+    match shipout_replay_box(node, stores, &mut command) {
         Ok(receipt) => {
             snapshot.commit(&mut control);
             Ok(receipt)
@@ -16454,11 +14864,6 @@ fn apply_scanned_step(
             Ok(ReplayStep::Continue)
         }
         ScannedStep::AfterGroup(token) => {
-            if command.state.paragraph_started_in_macro_frame() {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
-                );
-            }
             stores.push_aftergroup_traced(token);
             Ok(ReplayStep::Continue)
         }
@@ -16642,20 +15047,6 @@ fn apply_scanned_step(
                         report_improper_setbox(context, stores)?;
                     }
                     ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-                        if !stores.paragraph_box_is_locally_owned(index) {
-                            stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                                bank: tex_state::DependencyBank::Box,
-                                index: u32::from(index),
-                            });
-                        }
-                        if !copy
-                            && stores.box_reg(index).is_some()
-                            && !stores.paragraph_box_is_locally_owned(index)
-                        {
-                            stores.mark_pure_paragraph_barrier(
-                                tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                            );
-                        }
                         let id = if copy {
                             stores.box_reg(index)
                         } else {
@@ -16723,20 +15114,6 @@ fn apply_scanned_step(
             copy,
             ships_out,
         } => {
-            if !stores.paragraph_box_is_locally_owned(index) {
-                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                    bank: tex_state::DependencyBank::Box,
-                    index: u32::from(index),
-                });
-            }
-            if !copy
-                && stores.box_reg(index).is_some()
-                && !stores.paragraph_box_is_locally_owned(index)
-            {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
             let id = if copy {
                 stores.box_reg(index)
             } else {
@@ -16755,23 +15132,6 @@ fn apply_scanned_step(
             index,
             error_context,
         } => {
-            if !stores.paragraph_box_is_locally_owned(index) {
-                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                    bank: tex_state::DependencyBank::Box,
-                    index: u32::from(index),
-                });
-            }
-            if stores.box_reg(index).is_some()
-                && !stores.paragraph_box_is_locally_owned(index)
-                && matches!(
-                    primitive,
-                    UnexpandablePrimitive::UnHBox | UnexpandablePrimitive::UnVBox
-                )
-            {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
             crate::box_runtime::execute_scanned_unbox_with_error_context(
                 primitive,
                 index,
@@ -17194,21 +15554,11 @@ fn apply_scanned_step(
             // is therefore a real text boundary on both entry and exit:
             // `{f}i` must not form `fi` across the closing brace.
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            if command.state.paragraph_started_in_macro_frame() {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
-                );
-            }
             enter_group(stores, command.state, GroupKind::Simple);
             Ok(ReplayStep::Continue)
         }
         ScannedStep::BeginSemiSimpleGroup => {
             crate::box_runtime::flush_pending_hchars_with_fuel(modes, stores, command.fuel)?;
-            if command.state.paragraph_started_in_macro_frame() {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedGroupTransition,
-                );
-            }
             enter_group(stores, command.state, GroupKind::SemiSimple);
             Ok(ReplayStep::Continue)
         }
@@ -17458,7 +15808,7 @@ fn apply_scanned_step(
                 boxes.pending_leader = Some((kind, payload));
             } else if ships_out {
                 debug_assert!(box_state.ships_out);
-                if let Some(receipt) = shipout_replay_box(node, stores, command, None, None, None)?
+                if let Some(receipt) = shipout_replay_box(node, stores, command)?
                     .and_then(|publication| publication.dvi)
                 {
                     push_prepared_dvi_page(prepared_dvi_pages, receipt);
@@ -18606,20 +16956,6 @@ fn apply_box_shift(
             Ok(ReplayStep::Continue)
         }
         ScannedBoxShiftPayload::BoxRegister { index, copy } => {
-            if !stores.paragraph_box_is_locally_owned(index) {
-                stores.observe_semantic_dependency(tex_state::DependencyKey::Cell {
-                    bank: tex_state::DependencyBank::Box,
-                    index: u32::from(index),
-                });
-            }
-            if !copy
-                && stores.box_reg(index).is_some()
-                && !stores.paragraph_box_is_locally_owned(index)
-            {
-                stores.mark_pure_paragraph_barrier(
-                    tex_state::ParagraphBarrierReason::UnsupportedEscapingWrite,
-                );
-            }
             let id = if copy {
                 stores.box_reg(index)
             } else {
@@ -18787,7 +17123,7 @@ fn box_end(
         // §1075 guards `ship_out` with `cur_box<>null`.
         BoxContext::ShipOut => {
             if let Some(node) = node
-                && let Some(receipt) = shipout_replay_box(node, stores, command, None, None, None)?
+                && let Some(receipt) = shipout_replay_box(node, stores, command)?
                     .and_then(|publication| publication.dvi)
             {
                 push_prepared_dvi_page(prepared_dvi_pages, receipt);
@@ -19843,48 +18179,3 @@ mod discretionary_hyphen_tests {
 #[cfg(any())]
 #[path = "main_control/tests.rs"]
 mod direct_tests;
-
-#[cfg(test)]
-mod page_output_receipt_tests {
-    use super::*;
-
-    #[test]
-    fn retained_receipt_survives_delayed_activation_and_rollback() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = MainControl::default();
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(1), false);
-        let snapshot = StepSnapshot::capture(&mut control, &mut stores);
-
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(19), false);
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(20), false);
-        assert_eq!(
-            control.active_page_output_receipt,
-            Some(tex_state::PageOutputPublicationReceiptId::new(2))
-        );
-
-        snapshot.rollback(&mut control, &mut stores);
-        assert_eq!(
-            control.active_page_output_receipt,
-            Some(tex_state::PageOutputPublicationReceiptId::new(1))
-        );
-        assert!(!control.retained_page_output_receipt_active);
-    }
-
-    #[test]
-    fn finalization_releases_retained_receipt_for_standalone_episode() {
-        let mut stores = Universe::new_with_plain_catcodes();
-        let mut control = MainControl::default();
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(2), true);
-
-        control.finalize_page_output_receipts(&mut stores);
-        assert_eq!(control.active_page_output_receipt, None);
-        assert!(!control.retained_page_output_receipt_active);
-
-        control.activate_page_output_receipt(tex_state::PageOutputEpisodeId::new(3), false);
-        assert_eq!(
-            control.active_page_output_receipt,
-            Some(tex_state::PageOutputPublicationReceiptId::new(3))
-        );
-    }
-}

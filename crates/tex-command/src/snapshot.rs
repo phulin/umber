@@ -268,8 +268,6 @@ pub enum CommandSummaryError {
     ScannerWarningContext,
     /// A command diagnostic has not yet crossed the executor boundary.
     PendingSemanticDiagnostic,
-    /// A paragraph input transaction has not reached `end_graf`.
-    ActiveParagraphInputTransaction,
 }
 
 impl fmt::Display for CommandSummaryError {
@@ -289,7 +287,6 @@ impl fmt::Display for CommandSummaryError {
             Self::PendingSemanticDiagnostic => {
                 "a command semantic diagnostic is awaiting executor delivery"
             }
-            Self::ActiveParagraphInputTransaction => "a paragraph input transaction is active",
         })
     }
 }
@@ -297,22 +294,6 @@ impl fmt::Display for CommandSummaryError {
 impl std::error::Error for CommandSummaryError {}
 
 impl CommandState {
-    /// Publishes a durable summary of the current command continuation while
-    /// leaving an active paragraph input recorder out of the projection.
-    ///
-    /// A shipout may complete while TeX82 §1091's enclosing paragraph is
-    /// still being recorded. The transaction is incremental-only bookkeeping;
-    /// its current input and parameter state already live in the ordinary
-    /// command roots and are therefore sufficient for a restart checkpoint.
-    #[doc(hidden)]
-    pub fn publish_summary_without_paragraph_transaction(
-        &self,
-    ) -> Result<CommandSummary, CommandSummaryError> {
-        let mut projected = self.clone();
-        projected.paragraph_input_transaction = None;
-        projected.publish_summary()
-    }
-
     /// Captures every future-relevant command field for executor-step retry.
     ///
     /// Capture clones retained source and token backing through their owned
@@ -397,10 +378,6 @@ impl CommandState {
         if !self.transient.rollback_roots.is_empty() {
             return Err(CommandSummaryError::LiveRollbackRoot);
         }
-        if self.paragraph_input_transaction.is_some() {
-            return Err(CommandSummaryError::ActiveParagraphInputTransaction);
-        }
-
         Ok(CommandSummary {
             input: self.input.clone(),
             parameters: self.parameters.clone(),
@@ -439,7 +416,6 @@ impl CommandState {
             name_in_progress: false,
             named_token_list_pushes: Vec::new(),
             file_framing_events: Vec::new(),
-            paragraph_input_transaction: None,
             transient: TransientState {
                 next_builder_identity: summary.next_builder_identity,
                 ..TransientState::default()

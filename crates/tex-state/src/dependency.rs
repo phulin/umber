@@ -260,7 +260,6 @@ pub struct DependencyRuntime {
     tracker: DependencyTracker,
     active: Option<DependencyRegion>,
     staged: DependencyRegion,
-    paragraph_front: Option<Vec<ObservedDependency>>,
     tracking_enabled: bool,
 }
 
@@ -294,35 +293,6 @@ impl DependencyRuntime {
             .take()
             .expect("no dependency region is active")
             .into_observations()
-    }
-
-    /// Rotates an active canonical paragraph from front-end recording into
-    /// line-breaking recording without losing either phase's exact reads.
-    pub fn begin_paragraph_break_region(&mut self) {
-        assert!(
-            self.paragraph_front.is_none(),
-            "paragraph break region already active"
-        );
-        let Some(front) = self.active.take() else {
-            // Dependency recording is optional. Inner or directly-entered
-            // canonical paragraphs can reach the shared breaking boundary
-            // without an outer paragraph recorder, in which case there is
-            // no phase to rotate and none must be invented.
-            return;
-        };
-        self.paragraph_front = Some(front.into_observations());
-        self.active = Some(DependencyRegion::default());
-    }
-
-    /// Finishes a canonical paragraph and returns its two dependency phases.
-    pub fn finish_paragraph_region(
-        &mut self,
-    ) -> (Vec<ObservedDependency>, Vec<ObservedDependency>) {
-        let active = self.finish_region();
-        match self.paragraph_front.take() {
-            Some(front) => (front, active),
-            None => (active, Vec::new()),
-        }
     }
 
     pub fn mark_changed(&mut self, key: DependencyKey) -> ChangedAt {

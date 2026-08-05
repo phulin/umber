@@ -37,13 +37,6 @@ impl OriginRecordArchive {
         }
     }
 
-    fn snapshot(&self) -> OriginRecordSnapshot {
-        OriginRecordSnapshot {
-            sealed: Arc::clone(&self.sealed),
-            tail: self.tail.clone().into(),
-        }
-    }
-
     fn len(&self) -> usize {
         self.sealed
             .len()
@@ -111,102 +104,6 @@ impl OriginRecordArchive {
         } else {
             debug_assert_eq!(full, sealed.len());
             self.tail.truncate(remainder);
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct OriginRecordSnapshot {
-    sealed: Arc<Vec<Arc<[ArchivedOriginRecord]>>>,
-    tail: Arc<[ArchivedOriginRecord]>,
-}
-
-impl OriginRecordSnapshot {
-    fn get(&self, origin: OriginId) -> Option<OriginRecord> {
-        let crate::token::OriginEncoding::Arena(key) = origin.decode() else {
-            return None;
-        };
-        if let Some(&(found, record)) = self
-            .tail
-            .binary_search_by_key(&key, |(key, _)| *key)
-            .ok()
-            .and_then(|index| self.tail.get(index))
-        {
-            debug_assert_eq!(found, key);
-            return Some(record);
-        }
-        let index = self
-            .sealed
-            .partition_point(|chunk| chunk.first().is_some_and(|(first, _)| *first <= key))
-            .checked_sub(1)?;
-        let chunk = &self.sealed[index];
-        let index = chunk.binary_search_by_key(&key, |(key, _)| *key).ok()?;
-        Some(chunk[index].1)
-    }
-}
-
-/// Immutable accepted-generation resolver for diagnostic-only paragraph
-/// origins. Cloning this handle is constant time; origin chains are followed
-/// only when a diagnostic consumer requests a source location.
-#[derive(Clone, Debug)]
-pub struct ParagraphOriginResolver {
-    provenance: OriginRecordSnapshot,
-    fragments: crate::source_fragments::FragmentStore,
-}
-
-impl ParagraphOriginResolver {
-    pub(crate) fn new(
-        provenance: OriginRecordSnapshot,
-        fragments: crate::source_fragments::FragmentStore,
-    ) -> Self {
-        Self {
-            provenance,
-            fragments,
-        }
-    }
-
-    /// Resolves one retained raw origin to stable editor backing without
-    /// allocating a live provenance record.
-    #[must_use]
-    pub fn stable_span(&self, origin: OriginId) -> Option<crate::RootSpanId> {
-        let mut current = origin;
-        for _ in 0..68 {
-            if let Some(span) = self.fragments.direct_root_span_id(current) {
-                return Some(span);
-            }
-            current = match current.decode() {
-                crate::token::OriginEncoding::Arena(_) => match self.provenance.get(current)? {
-                    OriginRecord::MacroInvocation(invocation) => invocation.invocation(),
-                    OriginRecord::Inserted(inserted) => inserted.parent(),
-                    OriginRecord::Synthesized(synthesized) => synthesized.parent(),
-                    OriginRecord::SourceSpan(span) => {
-                        return self.fragments.root_span_for_source_span(span);
-                    }
-                    OriginRecord::Source(_)
-                    | OriginRecord::UnknownBootstrap
-                    | OriginRecord::Synthetic(_) => return None,
-                },
-                crate::token::OriginEncoding::Unknown
-                | crate::token::OriginEncoding::NoExpandFallback
-                | crate::token::OriginEncoding::DirectSource(_) => return None,
-            };
-        }
-        None
-    }
-
-    /// Reads one origin record retained by this accepted generation.
-    ///
-    /// This is used only while detaching a continuation whose raw arena key
-    /// is no longer live in the fork source. Callers must recursively detach
-    /// every referenced identity before carrying the record forward.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn origin_record(&self, origin: OriginId) -> Option<OriginRecord> {
-        match origin.decode() {
-            crate::token::OriginEncoding::Arena(_) => self.provenance.get(origin),
-            crate::token::OriginEncoding::Unknown => Some(OriginRecord::UnknownBootstrap),
-            crate::token::OriginEncoding::NoExpandFallback
-            | crate::token::OriginEncoding::DirectSource(_) => None,
         }
     }
 }
@@ -1223,10 +1120,6 @@ impl ProvenanceStore {
             self.records.append(key, record);
             self.record_keys.append(key, slot);
         }
-    }
-
-    pub(crate) fn record_snapshot(&self) -> OriginRecordSnapshot {
-        self.records.snapshot()
     }
 
     fn list_budget_allows(&self, len: usize) -> bool {

@@ -57,15 +57,6 @@ pub struct RootRehomeContext<'a> {
     new_content_hash: ContentHash,
 }
 
-/// Complete editor-root replacement supplied to one checkpoint fork.
-pub struct EditorFork<'a> {
-    pub old_source: &'a [u8],
-    pub new_source: std::sync::Arc<[u8]>,
-    pub fragments: &'a FragmentStore,
-    pub layout: &'a tex_state::EditorLayout,
-    pub paragraphs: &'a [crate::ParagraphRegion],
-}
-
 impl<'a> RootRehomeContext<'a> {
     #[must_use]
     pub fn new(old_source: &'a str, new_source: &'a str) -> Self {
@@ -84,64 +75,6 @@ impl<'a> RootRehomeContext<'a> {
 }
 
 impl EngineCheckpoint {
-    pub(crate) fn advance_detached_artifact_prefix(&mut self, count: usize) {
-        self.artifact_prefix = self.artifact_prefix.saturating_add(count);
-    }
-
-    /// Materializes retained paragraph command graphs into an independently
-    /// prepared cold destination without restoring this checkpoint's runtime
-    /// continuation.
-    pub fn materialize_accepted_paragraphs_into(
-        &self,
-        destination: &mut Universe,
-        substrate: &GenerationSubstrate,
-        paragraphs: &[crate::ParagraphRegion],
-    ) -> Result<Vec<crate::ParagraphRegion>, EditorRestoreError> {
-        let summary = self.command_summary();
-        let (_, (owned, detached_meanings)) = substrate
-            .fork_at_prepared(&self.universe, |source| {
-                let owned = tex_command::OwnedCommandContinuation::detach(summary, source);
-                let mut meanings = std::collections::HashMap::new();
-                for paragraph in paragraphs {
-                    for raw in paragraph.meaning_dependency_raws() {
-                        if let Some(identity) = source.detach_paragraph_meaning_dependency(raw) {
-                            meanings.entry(raw).or_insert(identity);
-                        }
-                    }
-                }
-                (owned, meanings)
-            })
-            .map_err(EditorRestoreError::Fork)?;
-        let _ = owned.materialize(destination);
-        let materialized_meanings = detached_meanings
-            .into_iter()
-            .map(|(raw, (kind, spelling))| {
-                let symbol = match kind {
-                    tex_state::interner::ControlSequenceKind::ActiveCharacter => destination
-                        .intern_active_character(spelling.chars().next().expect("active spelling"))
-                        .symbol(),
-                    tex_state::interner::ControlSequenceKind::Null
-                    | tex_state::interner::ControlSequenceKind::SingleCharacter
-                    | tex_state::interner::ControlSequenceKind::Named => {
-                        destination.intern(&spelling).symbol()
-                    }
-                    tex_state::interner::ControlSequenceKind::Internal => destination
-                        .intern_internal_control_sequence(&spelling)
-                        .symbol(),
-                };
-                (raw, symbol)
-            })
-            .collect();
-        let mut materialized = paragraphs.to_vec();
-        for paragraph in &mut materialized {
-            paragraph.materialize_owned_input_into(destination);
-            paragraph.remap_meaning_dependencies(&materialized_meanings);
-        }
-        materialized.retain(|paragraph| paragraph.can_mount_finished_lines(destination));
-        materialized.retain(|paragraph| paragraph.mount_finished_lines(destination));
-        Ok(materialized)
-    }
-
     /// Captures a named boundary.  Command publication proves that
     /// no scanner, macro matcher, or alignment delivery remains live.
     pub fn capture_checkpoint(
@@ -153,45 +86,6 @@ impl EngineCheckpoint {
         exact_state_identity: bool,
     ) -> Result<Self, CommandSummaryError> {
         let command = command.publish_summary()?;
-        let root_anchor = command.root_source_anchor().unwrap_or(0);
-        let root_content_hash = universe.explicit_root_editor_content_hash();
-        let modes = nest.summary();
-        let mode_hash = modes.semantic_fingerprint(universe);
-        let effect_prefix = usize::try_from(universe.world().effect_pos().raw())
-            .expect("effect log position must fit in memory address space");
-        let artifact_prefix = universe.world().artifact_pos();
-        let universe = if exact_state_identity {
-            universe.snapshot_with_exact_identity()
-        } else {
-            universe.snapshot()
-        };
-        let state_hash = combine_mode_hash(universe.state_hash(), mode_hash);
-        Ok(Self {
-            schema_version: ENGINE_CHECKPOINT_SCHEMA_VERSION,
-            boundary,
-            universe,
-            command: Box::new(command),
-            modes,
-            state_hash,
-            root_anchor,
-            root_content_hash,
-            effect_prefix,
-            artifact_prefix,
-            budget_counters,
-        })
-    }
-
-    /// Captures the restartable event-time projection of a checkpoint reached
-    /// while an enclosing paragraph recorder remains active.
-    pub(crate) fn capture_during_paragraph(
-        boundary: EngineBoundary,
-        command: &CommandState,
-        nest: &ModeNest,
-        universe: &mut Universe,
-        budget_counters: crate::ExecutionBudgetCounters,
-        exact_state_identity: bool,
-    ) -> Result<Self, CommandSummaryError> {
-        let command = command.publish_summary_without_paragraph_transaction()?;
         let root_anchor = command.root_source_anchor().unwrap_or(0);
         let root_content_hash = universe.explicit_root_editor_content_hash();
         let modes = nest.summary();
@@ -277,8 +171,7 @@ impl EngineCheckpoint {
         Ok(())
     }
 
-    /// Forks a retained checkpoint and substitutes an edited root
-    /// source whose consumed prefix is unchanged.
+    /// Forks a retained checkpoint and substitutes an edited root source whose consumed prefix is unchanged.
     pub fn fork_editor(
         &self,
         control: &mut crate::MainControl,
@@ -288,43 +181,6 @@ impl EngineCheckpoint {
         fragments: &FragmentStore,
         layout: &tex_state::EditorLayout,
     ) -> Result<(Universe, Duration), EditorRestoreError> {
-        self.fork_editor_with_paragraphs(
-            control,
-            substrate,
-            EditorFork {
-                old_source,
-                new_source,
-                fragments,
-                layout,
-                paragraphs: &[],
-            },
-        )
-        .map(|(universe, latency, _, _)| (universe, latency))
-    }
-
-    /// Forks a checkpoint and atomically remaps its command continuation and
-    /// retained paragraph endpoints before either can be restored.
-    pub fn fork_editor_with_paragraphs(
-        &self,
-        control: &mut crate::MainControl,
-        substrate: &GenerationSubstrate,
-        request: EditorFork<'_>,
-    ) -> Result<
-        (
-            Universe,
-            Duration,
-            Vec<crate::ParagraphRegion>,
-            Vec<tex_state::ParagraphValidationFailure>,
-        ),
-        EditorRestoreError,
-    > {
-        let EditorFork {
-            old_source,
-            new_source,
-            fragments,
-            layout,
-            paragraphs,
-        } = request;
         if self.root_content_hash != Some(ContentHash::from_bytes(old_source)) {
             return Err(EditorRestoreError::RootRevisionMismatch);
         }
@@ -337,109 +193,26 @@ impl EngineCheckpoint {
         let new_content_hash = ContentHash::from_bytes(&new_source);
         let fork_started = Timer::start();
         let summary = self.command_summary();
-        let (mut universe, (owned, detached_meanings)) = substrate
+        let (mut universe, owned) = substrate
             .fork_at_prepared(&self.universe, |source| {
-                #[cfg(feature = "profiling")]
-                let detach_started = std::time::Instant::now();
-                let owned = tex_command::OwnedCommandContinuation::detach_with_paragraphs(
-                    summary,
-                    paragraphs
-                        .iter()
-                        .map(|paragraph| (paragraph.input(), paragraph.accepted_origin_resolver())),
-                    source,
-                );
-                #[cfg(feature = "profiling")]
-                crate::paragraph_replay_measurement::record_continuation_detach(
-                    detach_started.elapsed(),
-                    paragraphs.len(),
-                );
-                let mut meanings = std::collections::HashMap::new();
-                for paragraph in paragraphs {
-                    for raw in paragraph.meaning_dependency_raws() {
-                        if let Some(identity) = source.detach_paragraph_meaning_dependency(raw) {
-                            meanings.entry(raw).or_insert(identity);
-                        }
-                    }
-                }
-                (owned, meanings)
+                tex_command::OwnedCommandContinuation::detach(summary, source)
             })
             .map_err(EditorRestoreError::Fork)?;
         let fork_latency = fork_started.elapsed();
         let mut rebound = self.clone();
-        let command = &mut rebound.command;
-        // Stable accepted-generation origins are materialized against the new
-        // editor layout together with the continuation graph.
         universe
             .install_editor_fragments(fragments, layout)
             .map_err(EditorRestoreError::Layout)?;
-        #[cfg(feature = "profiling")]
-        let materialize_started = std::time::Instant::now();
-        let (materialized, materialized_paragraphs) =
-            owned.materialize_with_paragraphs(&mut universe);
-        #[cfg(feature = "profiling")]
-        crate::paragraph_replay_measurement::record_continuation_materialize(
-            materialize_started.elapsed(),
-            paragraphs.len(),
-        );
-        **command = materialized;
-        if !command.rebind_root_source(old_source, new_source) {
+        *rebound.command = owned.materialize(&mut universe);
+        if !rebound.command.rebind_root_source(old_source, new_source) {
             return Err(EditorRestoreError::RootRevisionMismatch);
-        }
-        let mut paragraphs = paragraphs.to_vec();
-        let materialized_meanings = detached_meanings
-            .into_iter()
-            .map(|(raw, (kind, spelling))| {
-                let symbol = match kind {
-                    tex_state::interner::ControlSequenceKind::ActiveCharacter => universe
-                        .intern_active_character(spelling.chars().next().expect("active spelling"))
-                        .symbol(),
-                    tex_state::interner::ControlSequenceKind::Null
-                    | tex_state::interner::ControlSequenceKind::SingleCharacter
-                    | tex_state::interner::ControlSequenceKind::Named => {
-                        universe.intern(&spelling).symbol()
-                    }
-                    tex_state::interner::ControlSequenceKind::Internal => universe
-                        .intern_internal_control_sequence(&spelling)
-                        .symbol(),
-                };
-                (raw, symbol)
-            })
-            .collect();
-        for (paragraph, input) in paragraphs.iter_mut().zip(materialized_paragraphs) {
-            paragraph.replace_input(input, &mut universe);
-            paragraph.remap_meaning_dependencies(&materialized_meanings);
-        }
-        // A retained graph is an optional replay candidate, not part of the
-        // checkpoint continuation. Validate every graph before mounting any
-        // of them, then conservatively discard candidates whose resource
-        // closure is unavailable in the selected fork. This preserves the
-        // fail-before-mutation contract while allowing ordinary cold delivery
-        // to handle unsupported node forms and post-anchor font resources.
-        let retained_before_validation = paragraphs.len();
-        paragraphs.retain(|paragraph| paragraph.can_mount_finished_lines(&universe));
-        let invalid_retained_paragraphs = retained_before_validation - paragraphs.len();
-        if !paragraphs
-            .iter()
-            .all(|paragraph| paragraph.mount_finished_lines(&mut universe))
-        {
-            return Err(EditorRestoreError::Checkpoint(
-                CheckpointRestoreError::InvalidRetainedParagraph,
-            ));
         }
         rebound.universe = universe.snapshot();
         control
             .restore_checkpoint(&rebound, &mut universe)
             .map_err(EditorRestoreError::Checkpoint)?;
         universe.set_root_editor_content_hash(new_content_hash);
-        Ok((
-            universe,
-            fork_latency,
-            paragraphs,
-            vec![
-                tex_state::ParagraphValidationFailure::RetainedResult;
-                invalid_retained_paragraphs
-            ],
-        ))
+        Ok((universe, fork_latency))
     }
 
     /// Checks the immutable prerequisites for an edited-root fork.
@@ -653,7 +426,6 @@ impl CheckpointSink for Vec<EngineCheckpoint> {
 /// Failure to restore a command checkpoint.
 #[derive(Debug)]
 pub enum CheckpointRestoreError {
-    InvalidRetainedParagraph,
     CommandProfile(CommandProfileMismatch),
     Mode(ExecError),
 }
@@ -661,9 +433,6 @@ pub enum CheckpointRestoreError {
 impl fmt::Display for CheckpointRestoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidRetainedParagraph => {
-                f.write_str("retained paragraph graph cannot be mounted atomically")
-            }
             Self::CommandProfile(error) => {
                 write!(f, "could not restore checkpoint command profile: {error}")
             }

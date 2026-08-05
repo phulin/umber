@@ -778,7 +778,7 @@ impl InputSummary {
     }
 
     /// Cheap revision-coordinate-independent candidate identity for a
-    /// paragraph beginning while replay input is active.
+    /// paragraph beginning while a restored input frame is active.
     #[must_use]
     pub fn paragraph_boundary_identity(&self, stores: &impl crate::ExpansionState) -> u64 {
         let mut hasher = ahash::AHasher::default();

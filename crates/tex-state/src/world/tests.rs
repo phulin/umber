@@ -24,25 +24,6 @@ fn cloned_memory_world_shares_seeded_input_bytes() {
     assert!(Arc::ptr_eq(original, cloned));
 }
 
-#[test]
-fn retained_paragraph_replays_only_detached_diagnostic_writes() {
-    let mut source = World::memory();
-    source.write_text(PrintSink::TerminalAndLog, "diagnostic");
-    let write = source.effect_records()[0].clone();
-
-    let mut replay = World::memory();
-    assert!(replay.replay_paragraph_write(&write));
-    assert_eq!(replay.effect_records(), [write]);
-
-    let open = EffectRecord::StreamOpen {
-        slot: StreamSlot::new(1),
-        target: WriteTarget {
-            path: PathBuf::from("unsafe.out"),
-        },
-    };
-    assert!(!replay.replay_paragraph_write(&open));
-    assert_eq!(replay.effect_records().len(), 1);
-}
 use crate::Universe;
 
 #[test]
@@ -121,15 +102,14 @@ fn mixed_artifact_provenance_decodes_only_the_requested_source() {
     let span = fragments
         .registered_root_span_id(registration, 1..4)
         .expect("stable root span");
-    let recipe = crate::ParagraphProvenanceRecipe {
+    let recipe = crate::OutputProvenanceRecipe {
         piece_anchors: Arc::from([span.start_anchor()]),
-        root_spans: Arc::from([crate::ParagraphProvenanceSpan {
+        root_spans: Arc::from([crate::OutputProvenanceSpan {
             piece: 0,
             start: span.start(),
             end: span.end(),
         }]),
         origin_slots: Arc::from([0]),
-        node_slots: Arc::from([]),
     };
     let first = OriginId::from_raw(11);
     let last = OriginId::from_raw(12);
@@ -1689,7 +1669,7 @@ fn provisional_page_output_receipts_clone_rollback_and_continue_ordered_group() 
 #[test]
 fn effect_semantic_record_ordinals_survive_clone_rollback_and_install() {
     let mut world = World::memory();
-    let domain = EffectDomain::Paragraph(17);
+    let domain = EffectDomain::World(17);
     world.set_active_effect_domain(Some(domain));
     world.record_special("test", b"one".to_vec());
     world.record_special("test", b"two".to_vec());
@@ -1740,16 +1720,12 @@ fn effect_placement_intra_orders_survive_clone_rollback_install_and_failed_gaps(
     assert_eq!(world.effect_placement_intra_orders().as_slice(), expected);
     assert_eq!(fork.effect_placement_intra_orders().as_slice(), expected);
 
-    let episode = world.allocate_output_episode_id();
-    world.set_active_output_episode(Some(episode));
     world.record_special("test", b"failed".to_vec());
-    world.set_active_output_episode(None);
-    assert!(world.remove_output_episode_effects(episode));
     world.record_special("test", b"after gap".to_vec());
     assert_eq!(
         world.effect_placement_intra_orders().last(),
         Some(&EffectPlacementIntraOrder::new(4)),
-        "removing a failed record must not reuse its placement order"
+        "each appended record must receive a fresh placement order"
     );
 
     let mut installed = World::memory();

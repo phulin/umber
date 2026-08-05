@@ -12,7 +12,6 @@ pub mod banks;
 pub(crate) mod box_bank;
 pub(crate) mod group;
 pub(crate) mod overflow;
-pub(crate) mod paragraph;
 pub(crate) mod raw;
 
 use self::banks::{
@@ -179,7 +178,6 @@ pub struct Env {
     pdf_no_ligatures: BTreeMap<u32, WordStamp>,
     current_font: WordStamp,
     math_family_fonts: FixedBank<FontIdCodec, MATH_FAMILY_FONT_COUNT>,
-    paragraph_mutations: Option<paragraph::ParagraphMutationRecorder>,
     journal: Journal,
     group_boundaries: Vec<group::GroupBoundary>,
     aftergroup: Vec<crate::token::TracedTokenWord>,
@@ -230,7 +228,6 @@ impl Env {
             pdf_no_ligatures: BTreeMap::new(),
             current_font: WordStamp::default(),
             math_family_fonts: FixedBank::new(),
-            paragraph_mutations: None,
             journal: Journal::new(),
             group_boundaries: Vec::new(),
             aftergroup: Vec::new(),
@@ -367,13 +364,6 @@ impl Env {
     }
 
     fn set_count_with_scope(&mut self, index: u16, value: i32, global: bool) {
-        let old = self.count(index);
-        self.record_paragraph_mutation(
-            CellId::new(BankTag::Count, u32::from(index)),
-            u64::from(old as u32),
-            u64::from(value as u32),
-            global,
-        );
         let context = BankSetContext {
             journal: &mut self.journal,
             #[cfg(feature = "shadow")]
@@ -547,12 +537,6 @@ impl Env {
 
     /// Sets a local integer parameter value.
     pub(crate) fn set_int_param(&mut self, param: IntParam, value: i32) {
-        self.record_paragraph_mutation(
-            CellId::new(BankTag::IntParam, u32::from(param.raw())),
-            u64::from(self.int_param(param) as u32),
-            u64::from(value as u32),
-            false,
-        );
         self.int_params.set(
             param.raw(),
             value,
@@ -569,12 +553,6 @@ impl Env {
 
     /// Sets a global integer parameter value.
     pub(crate) fn set_int_param_global(&mut self, param: IntParam, value: i32) {
-        self.record_paragraph_mutation(
-            CellId::new(BankTag::IntParam, u32::from(param.raw())),
-            u64::from(self.int_param(param) as u32),
-            u64::from(value as u32),
-            true,
-        );
         self.int_params.set(
             param.raw(),
             value,
@@ -912,8 +890,6 @@ impl Env {
     }
 
     fn set_current_font_word(&mut self, word: u64, global: bool) {
-        let old = self.current_font.word;
-        self.record_paragraph_mutation(CellId::new(BankTag::CurrentFont, 0), old, word, global);
         let cell = if global {
             CellId::new_global(BankTag::CurrentFont, 0)
         } else {

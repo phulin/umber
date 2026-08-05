@@ -821,17 +821,17 @@ fn page_badness(stores: &Universe) -> Result<i32, ExecError> {
 
 fn contribute_front(stores: &mut Universe) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
-    if let Some((node, owner)) = stores.pop_page_contribution_front_owned() {
-        stores.push_current_page_node_owned(node, owner);
+    if let Some(node) = stores.pop_page_contribution_front() {
+        stores.push_current_page_node(node);
     }
     Ok(())
 }
 
 fn contribute_front_as(stores: &mut Universe, node: Node) -> Result<(), ExecError> {
     ensure_max_depth(stores)?;
-    if let Some((_, owner)) = stores.pop_page_contribution_front_owned() {
+    if stores.pop_page_contribution_front().is_some() {
         stores.update_page_last_from_node(&node);
-        stores.push_current_page_node_owned(node, owner);
+        stores.push_current_page_node(node);
     }
     Ok(())
 }

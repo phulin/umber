@@ -4,14 +4,9 @@
 //! formats, and semantic hashes. Disabled execution is one `Option` branch and
 //! uses no locks or atomics.
 
-use crate::dependency::DependencyKey;
-use crate::env::banks::IntParam;
 use crate::glue::GlueSpec;
-use crate::ids::FontId;
-use crate::interner::Symbol;
-use crate::survivor::RetainedNodeList;
-use crate::{ContentHash, DetachedMemoValue, ObservedDependency, RootSpanId};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use crate::{ContentHash, DetachedMemoValue, RootSpanId};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -43,10 +38,9 @@ impl TelemetryTimer {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PureMemoRecordingPolicy {
     pub pretolerance: bool,
-    pub paragraphs: bool,
     pub pages: bool,
     pub shipouts: bool,
 }
@@ -56,20 +50,8 @@ impl PureMemoRecordingPolicy {
     pub const fn all() -> Self {
         Self {
             pretolerance: true,
-            paragraphs: true,
             pages: true,
             shipouts: true,
-        }
-    }
-}
-
-impl Default for PureMemoRecordingPolicy {
-    fn default() -> Self {
-        Self {
-            pretolerance: false,
-            paragraphs: true,
-            pages: false,
-            shipouts: false,
         }
     }
 }
@@ -144,7 +126,6 @@ impl MemoLayerStats {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PureMemoLayer {
     Pretolerance,
-    Paragraph,
     Page,
     Shipout,
 }
@@ -157,194 +138,6 @@ pub enum MemoTimingPhase {
     Import,
 }
 
-/// Profiling-only attribution for paragraph recording work that sits outside
-/// the cache layer's generic lookup/record/validation/import buckets.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ParagraphRecordingPhase {
-    FrontEndDependencies,
-    InputTransition,
-    RegionPublication,
-    BreakDependencies,
-    BreakKeyDiscovery,
-    BreakStampRegistration,
-    BreakValueProjection,
-    LineProvenance,
-    LineRetention,
-}
-
-/// Work and retained storage attributed to accepted paragraph history.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ParagraphOpportunityMetric {
-    pub regions: u64,
-    pub bytes: u64,
-    pub nanos: u64,
-}
-
-impl ParagraphOpportunityMetric {
-    #[must_use]
-    pub fn saturating_since(self, earlier: Self) -> Self {
-        Self {
-            regions: self.regions.saturating_sub(earlier.regions),
-            bytes: self.bytes.saturating_sub(earlier.bytes),
-            nanos: self.nanos.saturating_sub(earlier.nanos),
-        }
-    }
-}
-
-/// Accepted paragraph history publication and carry-forward telemetry.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ParagraphOpportunityStats {
-    pub carried_forward: ParagraphOpportunityMetric,
-    pub published: ParagraphOpportunityMetric,
-}
-
-/// Handle-free accepted-history record for a canonical command paragraph.
-///
-/// The executable replay payload remains owned by `tex-exec`; this state-side
-/// record is the authoritative ordered publication and telemetry substrate
-/// carried between editor generations.
-#[derive(Clone, Debug)]
-pub struct ParagraphHistoryRecord {
-    pub identity: u64,
-    pub root_start: Option<usize>,
-    pub root_end: Option<usize>,
-    pub delivered_commands: usize,
-    pub input_transition_count: usize,
-    pub retained_bytes: usize,
-    /// Exact semantic reads captured while canonical main control owned the
-    /// paragraph. These remain detached across accepted generations.
-    pub dependencies: Arc<[ObservedDependency]>,
-    pub front_dependency_ordinals: Arc<[u32]>,
-    pub break_dependency_ordinals: Arc<[u32]>,
-    /// Entry-class and setter-observed replay preconditions.
-    pub mutation_entry_in_group: bool,
-    pub mutations: Arc<[PureParagraphMutation]>,
-    /// Accepted retained output and its rollback-coupled provenance bounds.
-    pub finished_lines: Option<RetainedNodeList>,
-    pub line_count: i32,
-    pub line_last_badness: i32,
-    pub display_active_directions: Option<Arc<[crate::node::Direction]>>,
-    pub barriers: Arc<[ParagraphBarrierReason]>,
-    pub effects: Arc<[crate::EffectRecord]>,
-    pub starting_provenance: crate::provenance::ProvenanceStats,
-    pub ending_provenance: crate::provenance::ProvenanceStats,
-    pub line_provenance: ParagraphLineProvenance,
-}
-
-impl ParagraphOpportunityStats {
-    #[must_use]
-    pub fn saturating_since(self, earlier: Self) -> Self {
-        Self {
-            carried_forward: self
-                .carried_forward
-                .saturating_since(earlier.carried_forward),
-            published: self.published.saturating_since(earlier.published),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ParagraphRecordingStats {
-    /// Number of `Instant::now`/`elapsed` pairs used by these named phases.
-    pub timer_samples: u64,
-    pub front_end_dependency_nanos: u64,
-    pub input_transition_nanos: u64,
-    pub region_publication_nanos: u64,
-    pub break_dependency_nanos: u64,
-    pub break_key_discovery_nanos: u64,
-    pub break_stamp_registration_nanos: u64,
-    pub break_value_projection_nanos: u64,
-    pub line_provenance_nanos: u64,
-    pub line_retention_nanos: u64,
-}
-
-impl ParagraphRecordingStats {
-    #[must_use]
-    pub fn saturating_since(self, earlier: Self) -> Self {
-        Self {
-            timer_samples: self.timer_samples.saturating_sub(earlier.timer_samples),
-            front_end_dependency_nanos: self
-                .front_end_dependency_nanos
-                .saturating_sub(earlier.front_end_dependency_nanos),
-            input_transition_nanos: self
-                .input_transition_nanos
-                .saturating_sub(earlier.input_transition_nanos),
-            region_publication_nanos: self
-                .region_publication_nanos
-                .saturating_sub(earlier.region_publication_nanos),
-            break_dependency_nanos: self
-                .break_dependency_nanos
-                .saturating_sub(earlier.break_dependency_nanos),
-            break_key_discovery_nanos: self
-                .break_key_discovery_nanos
-                .saturating_sub(earlier.break_key_discovery_nanos),
-            break_stamp_registration_nanos: self
-                .break_stamp_registration_nanos
-                .saturating_sub(earlier.break_stamp_registration_nanos),
-            break_value_projection_nanos: self
-                .break_value_projection_nanos
-                .saturating_sub(earlier.break_value_projection_nanos),
-            line_provenance_nanos: self
-                .line_provenance_nanos
-                .saturating_sub(earlier.line_provenance_nanos),
-            line_retention_nanos: self
-                .line_retention_nanos
-                .saturating_sub(earlier.line_retention_nanos),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[repr(u8)]
-pub enum ParagraphValidationFailure {
-    Meaning,
-    Cell,
-    Code,
-    Font,
-    Hyphenation,
-    Input,
-    Engine,
-    Page,
-    World,
-    Query,
-    Mutation,
-    Effect,
-    InputTransition,
-    RetainedResult,
-    BreakDependency,
-    ParagraphStart,
-}
-
-impl ParagraphValidationFailure {
-    #[must_use]
-    pub const fn from_dependency(key: DependencyKey) -> Self {
-        match key {
-            DependencyKey::Meaning(_) => Self::Meaning,
-            DependencyKey::Cell { .. } => Self::Cell,
-            DependencyKey::Code { .. } | DependencyKey::CodeGeneration(_) => Self::Code,
-            DependencyKey::Font { .. } => Self::Font,
-            DependencyKey::HyphenationPatterns(_)
-            | DependencyKey::HyphenationExceptions(_)
-            | DependencyKey::HyphenationCodes(_) => Self::Hyphenation,
-            DependencyKey::InputRecord(_)
-            | DependencyKey::PhysicalLine { .. }
-            | DependencyKey::InputLine
-            | DependencyKey::InputStream(_)
-            | DependencyKey::InputStack => Self::Input,
-            DependencyKey::Engine(_) => Self::Engine,
-            DependencyKey::PageDimension(_)
-            | DependencyKey::PageInteger(_)
-            | DependencyKey::PageMark(_)
-            | DependencyKey::PageMarkClass { .. }
-            | DependencyKey::Page(_) => Self::Page,
-            DependencyKey::World { .. } => Self::World,
-            DependencyKey::Query { .. } => Self::Query,
-        }
-    }
-}
-
-const PARAGRAPH_VALIDATION_FAILURES: usize = 16;
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PureMemoStats {
     pub lookups: u64,
@@ -356,48 +149,17 @@ pub struct PureMemoStats {
     pub retained_entries: usize,
     pub retained_bytes: usize,
     pub pretolerance_retained_bytes: usize,
-    pub paragraph_retained_bytes: usize,
     pub page_retained_bytes: usize,
     pub shipout_retained_bytes: usize,
     pub pretolerance_evictions: u64,
-    pub paragraph_evictions: u64,
     pub page_evictions: u64,
     pub shipout_evictions: u64,
-    pub paragraph_lookups: u64,
-    pub paragraph_hits: u64,
-    pub paragraph_inserts: u64,
-    pub paragraph_commands_skipped: u64,
-    pub paragraph_mutations_replayed: u64,
-    /// Hits whose incoming count/int fingerprint differed, admitted because
-    /// unchanged source and read dependencies establish the same write script.
-    pub paragraph_line_hits: u64,
-    pub paragraph_validation_misses: u64,
-    /// Cold outer paragraphs whose starting token had a stable root anchor and
-    /// therefore began dependency recording.
-    pub paragraph_anchored_cold_starts: u64,
-    /// Cold outer paragraphs whose starting token came from a frame without a
-    /// stable root anchor.
-    pub paragraph_unanchored_cold_starts: u64,
-    /// Cold outer paragraphs for which another admission guard prevented a
-    /// paragraph-history probe.
-    pub paragraph_blocked_cold_starts: u64,
-    pub paragraph_barriers: u64,
-    pub paragraph_eligible_regions: u64,
-    pub paragraph_display_math_barriers: u64,
-    pub paragraph_scantokens_barriers: u64,
-    pub paragraph_input_open_barriers: u64,
-    pub paragraph_untracked_world_barriers: u64,
-    pub paragraph_output_routine_barriers: u64,
-    pub paragraph_endinput_barriers: u64,
-    pub paragraph_unsupported_write_barriers: u64,
-    pub paragraph_unsupported_input_transition_barriers: u64,
-    pub paragraph_unsupported_group_transition_barriers: u64,
+    pub page_import_failures: u64,
     pub page_lookups: u64,
     pub page_hits: u64,
     pub page_inserts: u64,
     pub page_contributions_skipped: u64,
     pub page_imported_bytes: u64,
-    pub page_import_failures: u64,
     pub shipout_lookups: u64,
     pub shipout_hits: u64,
     pub shipout_inserts: u64,
@@ -405,13 +167,8 @@ pub struct PureMemoStats {
     pub shipout_imported_bytes: u64,
     pub output_routine_executions: u64,
     pub pretolerance: MemoLayerStats,
-    pub paragraph: MemoLayerStats,
     pub page: MemoLayerStats,
     pub shipout: MemoLayerStats,
-    pub paragraph_history_metadata_bytes: usize,
-    pub paragraph_validation_failure_reasons: [u64; PARAGRAPH_VALIDATION_FAILURES],
-    pub paragraph_recording: ParagraphRecordingStats,
-    pub paragraph_opportunities: ParagraphOpportunityStats,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -428,40 +185,20 @@ pub struct PureBreakPlan {
     pub last_line_fill: Option<GlueSpec>,
 }
 
-/// Why a cold paragraph trace cannot be replayed. These reasons are stable
-/// telemetry rather than inferred failures at a later cache lookup.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ParagraphBarrierReason {
-    DisplayMath,
-    Scantokens,
-    MidParagraphInputOpen,
-    EndInput,
-    UntrackedWorldAccess,
-    NestedOutputRoutine,
-    UnsupportedEscapingWrite,
-    UnsupportedInputTransition,
-    UnsupportedGroupTransition,
-    MixedPageOwnership,
-    UnownedPageOwnership,
-}
-
-/// Stable current-revision rebinding recipe for the provenance slots reachable
-/// from one retained paragraph graph.
+/// Stable current-revision recipe for artifact provenance slots.
 ///
 /// `piece_anchors` stores one full stable identity per referenced editor piece;
 /// `root_spans` stores compact offsets into those pieces. `origin_slots`
-/// follows ordinary depth-first node traversal and indexes `root_spans`;
-/// `u32::MAX` denotes provenance which cannot be represented by a stable root.
+/// indexes `root_spans`; `u32::MAX` denotes provenance which cannot be
+/// represented by a stable root.
 #[derive(Clone, Debug, Default)]
-pub struct ParagraphProvenanceRecipe {
+pub struct OutputProvenanceRecipe {
     pub piece_anchors: Arc<[RootSpanId]>,
-    pub root_spans: Arc<[ParagraphProvenanceSpan]>,
+    pub root_spans: Arc<[OutputProvenanceSpan]>,
     pub origin_slots: Arc<[u32]>,
-    /// Sparse survivor-word to origin-slot starts for character-bearing nodes.
-    pub node_slots: Arc<[ParagraphProvenanceNode]>,
 }
 
-impl ParagraphProvenanceRecipe {
+impl OutputProvenanceRecipe {
     /// Resolves one compact diagnostic slot to stable editor backing without
     /// allocating a live provenance record.
     #[must_use]
@@ -471,43 +208,13 @@ impl ParagraphProvenanceRecipe {
         let piece = self.piece_anchors.get(usize::try_from(span.piece).ok()?)?;
         Some(piece.with_offsets(span.start, span.end))
     }
-
-    #[must_use]
-    pub fn node_origin_slots(&self, word: u32, len: usize) -> Option<std::ops::Range<usize>> {
-        let index = self
-            .node_slots
-            .binary_search_by_key(&word, |node| node.word)
-            .ok()?;
-        let start = self.node_slots[index].slot as usize;
-        let end = start.checked_add(len)?;
-        (end <= self.origin_slots.len()).then_some(start..end)
-    }
-}
-
-/// Opaque diagnostic provenance attached to retained paragraph output.
-///
-/// Cold paragraph publication leaves this pending. The accepted generation
-/// installs one shared resolver for every newly published region, so capture
-/// is constant time and raw node origins are decoded only by a diagnostic
-/// consumer.
-#[derive(Clone, Debug, Default)]
-pub enum ParagraphLineProvenance {
-    #[default]
-    Pending,
-    Accepted(Arc<crate::ParagraphOriginResolver>),
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ParagraphProvenanceSpan {
+pub struct OutputProvenanceSpan {
     pub piece: u32,
     pub start: u32,
     pub end: u32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ParagraphProvenanceNode {
-    pub word: u32,
-    pub slot: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -521,38 +228,7 @@ pub struct PurePageEntry {
 pub struct PureShipoutEntry {
     pub artifact: DetachedMemoValue,
     pub render_origin_ends: Vec<u32>,
-    pub render_provenance: ParagraphProvenanceRecipe,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PureParagraphMutation {
-    Count {
-        index: u16,
-        expected: i32,
-        value: i32,
-        global: bool,
-    },
-    IntParam {
-        param: IntParam,
-        expected: i32,
-        value: i32,
-        global: bool,
-    },
-    CurrentFont {
-        expected_font: FontId,
-        expected_symbol: Option<Symbol>,
-        value_font: FontId,
-        value_symbol: Option<Symbol>,
-        global: bool,
-    },
-}
-
-/// Cold paragraph root-transition accounting observed directly by setters.
-#[derive(Clone, Debug)]
-pub struct PureParagraphMutationSummary {
-    pub entry_in_group: bool,
-    pub unsupported_group_ownership: bool,
-    pub mutations: Vec<PureParagraphMutation>,
+    pub render_provenance: OutputProvenanceRecipe,
 }
 
 /// Strong key used to verify a compact candidate bucket.
@@ -606,13 +282,9 @@ struct PureMemoCache {
 #[derive(Clone, Debug, Default)]
 pub struct PureMemoRuntime {
     cache: Option<PureMemoCache>,
-    paragraph_front_ends: bool,
     pretolerance: bool,
     page_episodes: bool,
     shipout_episodes: bool,
-    prior_accepted_paragraphs: Vec<ParagraphHistoryRecord>,
-    recorded_accepted_paragraphs: Vec<ParagraphHistoryRecord>,
-    paragraph_barrier_reasons: BTreeMap<ParagraphBarrierReason, u64>,
 }
 
 #[allow(clippy::disallowed_methods)] // Operational profiling timers never become TeX facts.
@@ -630,11 +302,6 @@ impl PureMemoRuntime {
     }
 
     #[must_use]
-    pub const fn paragraph_front_ends_enabled(&self) -> bool {
-        self.cache.is_some() && self.paragraph_front_ends
-    }
-
-    #[must_use]
     pub const fn pretolerance_enabled(&self) -> bool {
         self.cache.is_some() && self.pretolerance
     }
@@ -649,10 +316,6 @@ impl PureMemoRuntime {
         self.cache.is_some() && self.shipout_episodes
     }
 
-    pub fn enable_paragraph_front_ends(&mut self) {
-        self.paragraph_front_ends = self.cache.is_some();
-    }
-
     pub fn enable_page_episodes(&mut self) {
         self.page_episodes = self.cache.is_some();
     }
@@ -663,7 +326,6 @@ impl PureMemoRuntime {
 
     pub(crate) fn enable(&mut self, config: PureMemoConfig) {
         self.pretolerance = config.recording.pretolerance;
-        self.paragraph_front_ends = config.recording.paragraphs;
         self.page_episodes = config.recording.pages;
         self.shipout_episodes = config.recording.shipouts;
         self.cache = Some(PureMemoCache {
@@ -868,9 +530,7 @@ impl PureMemoRuntime {
             .retained_bytes()
             .saturating_sub(std::mem::size_of::<DetachedMemoValue>())
             .saturating_add(value.render_origin_ends.capacity().saturating_mul(4))
-            .saturating_add(paragraph_provenance_retained_bytes(
-                &value.render_provenance,
-            ));
+            .saturating_add(output_provenance_retained_bytes(&value.render_provenance));
         let started = TelemetryTimer::start();
         let before = self.cache.as_ref().map_or(0, |cache| cache.stats.inserts);
         self.insert_value(key, PureMemoValue::Shipout(value), owned_bytes);
@@ -908,205 +568,6 @@ impl PureMemoRuntime {
             cache.stats.output_routine_executions =
                 cache.stats.output_routine_executions.saturating_add(1);
         }
-    }
-
-    pub fn record_paragraph_hit(&mut self, commands: usize, mutations: usize) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.hits = cache.stats.hits.saturating_add(1);
-        cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
-        cache.stats.paragraph.hits = cache.stats.paragraph.hits.saturating_add(1);
-        cache.stats.paragraph_commands_skipped = cache
-            .stats
-            .paragraph_commands_skipped
-            .saturating_add(commands as u64);
-        cache.stats.paragraph_mutations_replayed = cache
-            .stats
-            .paragraph_mutations_replayed
-            .saturating_add(mutations as u64);
-    }
-
-    pub fn record_accepted_paragraph_region(&mut self, record: ParagraphHistoryRecord) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_eligible_regions =
-            cache.stats.paragraph_eligible_regions.saturating_add(1);
-        cache.stats.paragraph_inserts = cache.stats.paragraph_inserts.saturating_add(1);
-        cache.stats.paragraph.inserts = cache.stats.paragraph.inserts.saturating_add(1);
-        cache.stats.paragraph_opportunities.published.regions = cache
-            .stats
-            .paragraph_opportunities
-            .published
-            .regions
-            .saturating_add(1);
-        cache.stats.paragraph_opportunities.published.bytes = cache
-            .stats
-            .paragraph_opportunities
-            .published
-            .bytes
-            .saturating_add(record.retained_bytes as u64);
-        self.recorded_accepted_paragraphs.push(record);
-    }
-
-    pub fn record_carried_accepted_paragraph_region(&mut self, record: ParagraphHistoryRecord) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_opportunities.carried_forward.regions = cache
-            .stats
-            .paragraph_opportunities
-            .carried_forward
-            .regions
-            .saturating_add(1);
-        cache.stats.paragraph_opportunities.carried_forward.bytes = cache
-            .stats
-            .paragraph_opportunities
-            .carried_forward
-            .bytes
-            .saturating_add(record.retained_bytes as u64);
-        self.recorded_accepted_paragraphs.push(record);
-    }
-
-    pub fn record_accepted_paragraph_lookup(
-        &mut self,
-        hit: bool,
-        commands: usize,
-        mutations: usize,
-    ) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_lookups = cache.stats.paragraph_lookups.saturating_add(1);
-        cache.stats.paragraph.lookups = cache.stats.paragraph.lookups.saturating_add(1);
-        if hit {
-            cache.stats.paragraph_hits = cache.stats.paragraph_hits.saturating_add(1);
-            cache.stats.paragraph.hits = cache.stats.paragraph.hits.saturating_add(1);
-            cache.stats.paragraph_commands_skipped = cache
-                .stats
-                .paragraph_commands_skipped
-                .saturating_add(commands as u64);
-            cache.stats.paragraph_mutations_replayed = cache
-                .stats
-                .paragraph_mutations_replayed
-                .saturating_add(mutations as u64);
-        } else {
-            cache.stats.paragraph.key_misses = cache.stats.paragraph.key_misses.saturating_add(1);
-        }
-    }
-
-    #[must_use]
-    pub fn accepted_paragraph_history(&self) -> &[ParagraphHistoryRecord] {
-        &self.prior_accepted_paragraphs
-    }
-
-    pub fn record_paragraph_line_hit(&mut self) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_line_hits = cache.stats.paragraph_line_hits.saturating_add(1);
-    }
-
-    pub(crate) fn record_paragraph_validation_miss(&mut self) {
-        if let Some(cache) = &mut self.cache {
-            cache.stats.paragraph_validation_misses =
-                cache.stats.paragraph_validation_misses.saturating_add(1);
-            cache.stats.paragraph.validation_failures =
-                cache.stats.paragraph.validation_failures.saturating_add(1);
-        }
-    }
-
-    pub fn record_paragraph_barriers(&mut self, reasons: &[ParagraphBarrierReason]) {
-        let Some(cache) = &mut self.cache else {
-            return;
-        };
-        cache.stats.paragraph_barriers = cache.stats.paragraph_barriers.saturating_add(1);
-        cache.stats.paragraph.ineligible_barriers = cache
-            .stats
-            .paragraph
-            .ineligible_barriers
-            .saturating_add(reasons.len() as u64);
-        for &reason in reasons {
-            let count = self.paragraph_barrier_reasons.entry(reason).or_default();
-            *count = count.saturating_add(1);
-            match reason {
-                ParagraphBarrierReason::DisplayMath => {
-                    cache.stats.paragraph_display_math_barriers = cache
-                        .stats
-                        .paragraph_display_math_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::Scantokens => {
-                    cache.stats.paragraph_scantokens_barriers =
-                        cache.stats.paragraph_scantokens_barriers.saturating_add(1);
-                }
-                ParagraphBarrierReason::MidParagraphInputOpen => {
-                    cache.stats.paragraph_input_open_barriers =
-                        cache.stats.paragraph_input_open_barriers.saturating_add(1);
-                }
-                ParagraphBarrierReason::UntrackedWorldAccess => {
-                    cache.stats.paragraph_untracked_world_barriers = cache
-                        .stats
-                        .paragraph_untracked_world_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::NestedOutputRoutine => {
-                    cache.stats.paragraph_output_routine_barriers = cache
-                        .stats
-                        .paragraph_output_routine_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::EndInput => {
-                    cache.stats.paragraph_endinput_barriers =
-                        cache.stats.paragraph_endinput_barriers.saturating_add(1);
-                }
-                ParagraphBarrierReason::UnsupportedEscapingWrite => {
-                    cache.stats.paragraph_unsupported_write_barriers = cache
-                        .stats
-                        .paragraph_unsupported_write_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::UnsupportedInputTransition => {
-                    cache.stats.paragraph_unsupported_input_transition_barriers = cache
-                        .stats
-                        .paragraph_unsupported_input_transition_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::UnsupportedGroupTransition => {
-                    cache.stats.paragraph_unsupported_group_transition_barriers = cache
-                        .stats
-                        .paragraph_unsupported_group_transition_barriers
-                        .saturating_add(1);
-                }
-                ParagraphBarrierReason::MixedPageOwnership
-                | ParagraphBarrierReason::UnownedPageOwnership => {}
-            }
-        }
-    }
-
-    /// Starts one speculative accepted-history suffix. Only a fork of the prior
-    /// accepted substrate may resolve the retained node handles.
-    pub fn begin_paragraph_history(&mut self, _reuse_prior: bool) {
-        self.recorded_accepted_paragraphs.clear();
-    }
-
-    /// Publishes the speculative trace wholesale after its owning Universe is
-    /// accepted as the new retained generation.
-    pub fn accept_paragraph_history(&mut self, resolver: Arc<crate::ParagraphOriginResolver>) {
-        for region in &mut self.recorded_accepted_paragraphs {
-            if region.finished_lines.is_some()
-                && matches!(region.line_provenance, ParagraphLineProvenance::Pending)
-            {
-                region.line_provenance = ParagraphLineProvenance::Accepted(Arc::clone(&resolver));
-            }
-        }
-        self.prior_accepted_paragraphs = std::mem::take(&mut self.recorded_accepted_paragraphs);
-    }
-
-    /// Drops all trace metadata produced by an abandoned execution branch.
-    pub fn discard_paragraph_history(&mut self) {
-        self.recorded_accepted_paragraphs.clear();
     }
 
     pub fn insert_pretolerance(&mut self, key: PureMemoKey, plan: Option<PureBreakPlan>) {
@@ -1198,11 +659,9 @@ impl PureMemoRuntime {
             .cache
             .as_ref()
             .map_or_else(PureMemoStats::default, |cache| cache.stats);
-        stats.paragraph_history_metadata_bytes = self.paragraph_metadata_bytes();
         stats.pretolerance.retained_bytes = stats.pretolerance_retained_bytes;
         stats.page.retained_bytes = stats.page_retained_bytes;
         stats.shipout.retained_bytes = stats.shipout_retained_bytes;
-        stats.paragraph.retained_bytes = stats.paragraph_history_metadata_bytes;
         stats
     }
 
@@ -1231,22 +690,6 @@ impl PureMemoRuntime {
             MemoTimingPhase::Import => &mut stats.import_nanos,
         };
         *target = target.saturating_add(elapsed);
-    }
-
-    pub fn record_paragraph_validation_failure(&mut self, reason: ParagraphValidationFailure) {
-        self.record_paragraph_validation_miss();
-        if let Some(cache) = &mut self.cache {
-            let slot = &mut cache.stats.paragraph_validation_failure_reasons[reason as usize];
-            *slot = slot.saturating_add(1);
-        }
-    }
-
-    fn paragraph_metadata_bytes(&self) -> usize {
-        self.prior_accepted_paragraphs
-            .iter()
-            .chain(&self.recorded_accepted_paragraphs)
-            .map(|record| record.retained_bytes)
-            .sum()
     }
 }
 
@@ -1356,24 +799,14 @@ impl PureMemoStats {
     pub const fn layer(&self, layer: PureMemoLayer) -> MemoLayerStats {
         match layer {
             PureMemoLayer::Pretolerance => self.pretolerance,
-            PureMemoLayer::Paragraph => self.paragraph,
             PureMemoLayer::Page => self.page,
             PureMemoLayer::Shipout => self.shipout,
         }
     }
 
-    #[must_use]
-    pub const fn paragraph_validation_failure_count(
-        &self,
-        reason: ParagraphValidationFailure,
-    ) -> u64 {
-        self.paragraph_validation_failure_reasons[reason as usize]
-    }
-
     fn layer_mut(&mut self, layer: PureMemoLayer) -> &mut MemoLayerStats {
         match layer {
             PureMemoLayer::Pretolerance => &mut self.pretolerance,
-            PureMemoLayer::Paragraph => &mut self.paragraph,
             PureMemoLayer::Page => &mut self.page,
             PureMemoLayer::Shipout => &mut self.shipout,
         }
@@ -1384,7 +817,7 @@ fn elapsed_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> usize {
+fn output_provenance_retained_bytes(recipe: &OutputProvenanceRecipe) -> usize {
     recipe
         .piece_anchors
         .len()
@@ -1393,19 +826,13 @@ fn paragraph_provenance_retained_bytes(recipe: &ParagraphProvenanceRecipe) -> us
             recipe
                 .root_spans
                 .len()
-                .saturating_mul(std::mem::size_of::<ParagraphProvenanceSpan>()),
+                .saturating_mul(std::mem::size_of::<OutputProvenanceSpan>()),
         )
         .saturating_add(
             recipe
                 .origin_slots
                 .len()
                 .saturating_mul(std::mem::size_of::<u32>()),
-        )
-        .saturating_add(
-            recipe
-                .node_slots
-                .len()
-                .saturating_mul(std::mem::size_of::<ParagraphProvenanceNode>()),
         )
 }
 

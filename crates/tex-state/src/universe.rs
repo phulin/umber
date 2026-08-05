@@ -36,8 +36,7 @@ use crate::node::Node;
 use crate::node_arena::{NodeList, NodeListBuilder};
 use crate::page::{
     PageBreak, PageBuilderState, PageContents, PageDimension, PageFireUp, PageHashCache,
-    PageInsertion, PageInteger, PageMark, PageMemoState, PagePrefixOwnership, PageStateHashCursor,
-    ParagraphRegionOwner,
+    PageInsertion, PageInteger, PageMark, PageMemoState, PageStateHashCursor,
 };
 use crate::pdf::{
     PdfDocumentFragmentKind, PdfDocumentObjectIds, PdfExternalImageId, PdfExternalImageMetadata,
@@ -71,7 +70,7 @@ use crate::world::{
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamSlot, World, WorldCommitMode,
     WorldError, WorldSnapshot, WorldStateHashCursor, install_job_clock_params,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 #[cfg(any(test, feature = "testing", feature = "shadow"))]
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -1371,8 +1370,6 @@ pub struct Universe {
     /// retained values and acceptance policy never live in aggregate state.
     pure_memo_config: Option<crate::PureMemoConfig>,
     pure_memo_capability: std::sync::Weak<std::sync::Mutex<crate::PureMemoRuntime>>,
-    /// Narrow mutation recorder used while execution observes one paragraph.
-    paragraph_memo: ParagraphMemoCapability,
     geometry_observations: Vec<GeometryObservation>,
     geometry_observation_enabled: bool,
     /// tex.web's `line` and `pack_begin_line`, the two globals §660/§675's
@@ -1381,14 +1378,6 @@ pub struct Universe {
     /// internal quantity -- so, like [`Self::error_context_widths`], they
     /// stay out of formats, snapshots, and semantic hashes.
     diagnostic_position: DiagnosticPosition,
-}
-
-#[derive(Clone, Debug, Default)]
-struct ParagraphMemoCapability {
-    checkpoint: Option<crate::env::paragraph::ParagraphMutationCheckpoint>,
-    barriers: Vec<crate::ParagraphBarrierReason>,
-    group_depth: u32,
-    local_boxes: HashSet<u16>,
 }
 
 /// TeX82 §177's `print_spec(p,"pt")`, used by §252 `show_eqtb` when §283
@@ -1636,7 +1625,6 @@ impl Clone for Universe {
             dependencies: self.dependencies.clone(),
             pure_memo_config: self.pure_memo_config,
             pure_memo_capability: self.pure_memo_capability.clone(),
-            paragraph_memo: self.paragraph_memo.clone(),
             geometry_observations: self.geometry_observations.clone(),
             geometry_observation_enabled: self.geometry_observation_enabled,
             diagnostic_position: DiagnosticPosition::default(),
@@ -1651,49 +1639,6 @@ impl Default for Universe {
 }
 
 impl Universe {
-    /// Removes effects published by one retained page-output episode.
-    ///
-    /// A retained paragraph may mount output belonging to a later page before
-    /// replay reaches that page's producer.  The episode receipt, rather than
-    /// its position in the mounted effect root, identifies that superseded
-    /// publication.  Retarget the incremental hash cursor together with the
-    /// removal so the replacement starts a new coherent semantic suffix.
-    #[doc(hidden)]
-    pub fn remove_replayed_output_episode_effects(
-        &mut self,
-        episode: crate::PageOutputEpisodeId,
-    ) -> bool {
-        let removed = self.world.remove_output_episode_effects(episode);
-        if removed {
-            self.state_hash_base.world = self.world.state_hash_cursor();
-        }
-        removed
-    }
-
-    #[doc(hidden)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn finish_replayed_output_episode(
-        &mut self,
-        start: crate::OutputEpisodeStart,
-        artifact_count: usize,
-        inherited_effect_start: usize,
-        inherited_effect_count: usize,
-        effects: &[crate::EffectRecord],
-        retained_effect_root_mounted: bool,
-        outcome: crate::OutputEpisodePublicationOutcome,
-    ) -> crate::OutputEpisodePublicationOutcome {
-        let outcome = self.world.finish_replayed_output_episode(
-            start,
-            artifact_count,
-            inherited_effect_start,
-            inherited_effect_count,
-            effects,
-            retained_effect_root_mounted,
-            outcome,
-        );
-        self.state_hash_base.world = self.world.state_hash_cursor();
-        outcome
-    }
     /// TeX82-shaped live allocator use projected from the typed stores.
     #[must_use]
     pub fn engine_usage_statistics(&mut self) -> crate::stores::EngineUsageStatistics {
@@ -1892,7 +1837,6 @@ impl Universe {
             dependencies: DependencyRuntime::default(),
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
-            paragraph_memo: ParagraphMemoCapability::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
             diagnostic_position: DiagnosticPosition::default(),
@@ -2019,18 +1963,6 @@ impl Universe {
     /// Finishes the active dependency region in deterministic key order.
     pub fn finish_dependency_region(&mut self) -> Vec<ObservedDependency> {
         self.dependencies.finish_region()
-    }
-
-    /// Starts the line-breaking dependency phase of a canonical paragraph.
-    pub fn begin_paragraph_break_dependency_region(&mut self) {
-        self.dependencies.begin_paragraph_break_region();
-    }
-
-    /// Finishes both canonical paragraph dependency phases.
-    pub fn finish_paragraph_dependency_region(
-        &mut self,
-    ) -> (Vec<ObservedDependency>, Vec<ObservedDependency>) {
-        self.dependencies.finish_paragraph_region()
     }
 
     /// Marks one observable fact after its aggregate mutation barrier.
@@ -2384,17 +2316,6 @@ impl Universe {
         self.pure_memo_config = Some(config);
     }
 
-    /// Enables effect-free paragraph-front-end entries in the pure memo runtime.
-    ///
-    /// This is separate from pure-kernel memoization so callers can measure and
-    /// release the broader executor optimization independently.
-    pub fn enable_paragraph_memo(&mut self) {
-        self.pure_memo_config
-            .get_or_insert_with(crate::PureMemoConfig::default)
-            .recording
-            .paragraphs = true;
-    }
-
     /// Enables detached page-builder episode reuse in the session cache.
     pub fn enable_page_memo(&mut self) {
         self.pure_memo_config
@@ -2453,58 +2374,6 @@ impl Universe {
             .lock()
             .expect("memo runtime mutex is not poisoned");
         Some(operation(&mut runtime))
-    }
-
-    #[doc(hidden)]
-    pub fn begin_pure_paragraph_recording(&mut self, enabled: bool) {
-        if !enabled {
-            return;
-        }
-        self.paragraph_memo.checkpoint = Some(self.stores.begin_paragraph_mutations());
-        self.paragraph_memo.barriers.clear();
-        self.paragraph_memo.group_depth = crate::ExpansionState::execution_group_depth(self);
-        self.paragraph_memo.local_boxes.clear();
-    }
-
-    /// Marks an effect that cannot be reproduced by paragraph redo while the
-    /// current canonical paragraph recording is active.
-    #[doc(hidden)]
-    pub fn mark_pure_paragraph_barrier(&mut self, reason: crate::ParagraphBarrierReason) {
-        if self.paragraph_memo.checkpoint.is_some()
-            && !self.paragraph_memo.barriers.contains(&reason)
-        {
-            self.paragraph_memo.barriers.push(reason);
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn paragraph_box_is_locally_owned(&self, index: u16) -> bool {
-        self.paragraph_memo.checkpoint.is_some() && self.paragraph_memo.local_boxes.contains(&index)
-    }
-
-    #[doc(hidden)]
-    pub fn take_pure_paragraph_barriers(&mut self) -> Vec<crate::ParagraphBarrierReason> {
-        std::mem::take(&mut self.paragraph_memo.barriers)
-    }
-
-    #[doc(hidden)]
-    pub fn finish_pure_paragraph_recording(
-        &mut self,
-    ) -> Option<crate::PureParagraphMutationSummary> {
-        let checkpoint = self.paragraph_memo.checkpoint.take()?;
-        self.paragraph_memo.local_boxes.clear();
-        Some(self.stores.finish_paragraph_mutations(checkpoint))
-    }
-
-    #[doc(hidden)]
-    pub fn abandon_pure_paragraph_recording(&mut self) -> bool {
-        let Some(checkpoint) = self.paragraph_memo.checkpoint.take() else {
-            return false;
-        };
-        self.paragraph_memo.barriers.clear();
-        self.paragraph_memo.local_boxes.clear();
-        self.stores.abandon_paragraph_mutations(checkpoint);
-        true
     }
 
     fn mark_code_changed(&mut self, table: DependencyCodeTable, _ch: char) {
@@ -2759,7 +2628,6 @@ impl Universe {
             dependencies: DependencyRuntime::default(),
             pure_memo_config: None,
             pure_memo_capability: std::sync::Weak::new(),
-            paragraph_memo: ParagraphMemoCapability::default(),
             geometry_observations: Vec::new(),
             geometry_observation_enabled: false,
             diagnostic_position: DiagnosticPosition::default(),
@@ -5645,98 +5513,6 @@ impl Universe {
         list.start().checked_add(u32::try_from(index).ok()?)
     }
 
-    /// Captures accepted-history ownership of a shared, mountable paragraph
-    /// graph while keeping the local root under ordinary rollback ownership.
-    pub fn retain_paragraph_result(&mut self, id: NodeListId) -> crate::survivor::RetainedNodeList {
-        self.stores.retain_paragraph_result(id)
-    }
-
-    #[must_use]
-    pub fn can_mount_retained_paragraph_result(
-        &self,
-        retained: &crate::survivor::RetainedNodeList,
-    ) -> bool {
-        self.stores.can_mount_retained_paragraph_result(retained)
-    }
-
-    /// Mounts one immutable accepted-history graph with current-revision
-    /// diagnostic provenance and returns its unchanged ordinary list handle.
-    pub fn mount_retained_paragraph_result(
-        &mut self,
-        retained: &crate::survivor::RetainedNodeList,
-        root_origins: &[crate::token::OriginId],
-        origin_slots: &[u32],
-    ) -> Option<NodeListId> {
-        self.stores
-            .mount_retained_paragraph_result(retained, root_origins, origin_slots)
-    }
-
-    /// Consumes the closure proof established by
-    /// [`Self::can_mount_retained_paragraph_result`] in the current paragraph
-    /// replay transaction, avoiding a second graph traversal.
-    #[doc(hidden)]
-    pub fn mount_prevalidated_paragraph_result(
-        &mut self,
-        retained: &crate::survivor::RetainedNodeList,
-        root_origins: &[crate::token::OriginId],
-        origin_slots: &[u32],
-    ) -> Option<NodeListId> {
-        self.stores
-            .mount_prevalidated_paragraph_result(retained, root_origins, origin_slots)
-    }
-
-    /// Mounts validated semantic output while keeping diagnostic provenance
-    /// as a stable recipe until a non-memoized shipout actually needs it.
-    #[doc(hidden)]
-    pub fn mount_prevalidated_paragraph_result_deferred(
-        &mut self,
-        retained: &crate::survivor::RetainedNodeList,
-        provenance: crate::ParagraphProvenanceRecipe,
-    ) -> Option<NodeListId> {
-        self.stores
-            .mount_prevalidated_paragraph_result_deferred(retained, provenance)
-    }
-
-    /// Mounts validated semantic output with an accepted-generation resolver;
-    /// raw node origins remain untouched until diagnostic consumption.
-    #[doc(hidden)]
-    pub fn mount_prevalidated_paragraph_result_lazy(
-        &mut self,
-        retained: &crate::survivor::RetainedNodeList,
-        resolver: std::sync::Arc<crate::ParagraphOriginResolver>,
-    ) -> Option<NodeListId> {
-        self.stores
-            .mount_prevalidated_paragraph_result_lazy(retained, resolver)
-    }
-
-    /// Captures one constant-time diagnostic resolver for the current
-    /// accepted paragraph generation.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn paragraph_origin_resolver(&self) -> std::sync::Arc<crate::ParagraphOriginResolver> {
-        self.stores.paragraph_origin_resolver()
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn deferred_node_origins(
-        &self,
-        list: NodeListId,
-        index: usize,
-        len: usize,
-    ) -> Option<crate::survivor::DeferredNodeOrigins<'_>> {
-        self.stores.deferred_node_origins(list, index, len)
-    }
-
-    #[doc(hidden)]
-    #[must_use]
-    pub fn deferred_node_origin_cursor(
-        &self,
-        list: NodeListId,
-    ) -> crate::survivor::DeferredNodeOriginCursor<'_> {
-        self.stores.deferred_node_origin_cursor(list)
-    }
-
     pub fn finish_node_list(&mut self, builder: &mut NodeListBuilder) -> NodeListId {
         self.stores.finish_node_list(builder)
     }
@@ -6430,13 +6206,6 @@ impl Universe {
     }
 
     pub fn set_dimen(&mut self, index: u16, value: Scaled) {
-        if self.paragraph_memo.checkpoint.is_some()
-            && crate::ExpansionState::execution_group_depth(self) <= self.paragraph_memo.group_depth
-        {
-            self.mark_pure_paragraph_barrier(
-                crate::ParagraphBarrierReason::UnsupportedEscapingWrite,
-            );
-        }
         self.stores.set_dimen(index, value);
         self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
@@ -6447,7 +6216,6 @@ impl Universe {
     }
 
     pub fn set_dimen_global(&mut self, index: u16, value: Scaled) {
-        self.mark_pure_paragraph_barrier(crate::ParagraphBarrierReason::UnsupportedEscapingWrite);
         self.stores.set_dimen_global(index, value);
         self.mark_cell_changed(DependencyBank::Dimen, u32::from(index));
     }
@@ -6498,11 +6266,6 @@ impl Universe {
     }
 
     pub fn set_box_reg(&mut self, index: u16, value: NodeListId) {
-        if self.paragraph_memo.checkpoint.is_some()
-            && crate::ExpansionState::execution_group_depth(self) > self.paragraph_memo.group_depth
-        {
-            self.paragraph_memo.local_boxes.insert(index);
-        }
         self.stores.set_box_reg(index, value);
         self.mark_cell_changed(DependencyBank::Box, u32::from(index));
     }
@@ -6791,16 +6554,14 @@ impl Universe {
 
     pub fn append_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
-        self.page
-            .push_contribution(node, self.page.active_paragraph_owner());
+        self.page.push_contribution(node);
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     pub fn prepend_page_contribution(&mut self, node: Node) {
         self.stores.assert_live_handles_in_node(&node);
-        self.page
-            .prepend_contribution(node, self.page.active_paragraph_owner());
+        self.page.prepend_contribution(node);
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
@@ -6876,8 +6637,7 @@ impl Universe {
 
     pub fn prepend_page_contributions(&mut self, nodes: Vec<Node>) {
         self.stores.assert_live_handles_in_nodes(&nodes);
-        self.page
-            .prepend_contributions(nodes, self.page.active_paragraph_owner());
+        self.page.prepend_contributions(nodes);
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
@@ -6940,7 +6700,7 @@ impl Universe {
         &mut self,
         bytes: Vec<u8>,
         render_origin_ends: Vec<u32>,
-        render_provenance: crate::ParagraphProvenanceRecipe,
+        render_provenance: crate::OutputProvenanceRecipe,
         receipt: Option<crate::PageOutputPublicationReceiptId>,
     ) -> Result<
         (
@@ -7053,33 +6813,6 @@ impl Universe {
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
     }
 
-    #[doc(hidden)]
-    pub fn set_active_paragraph_owner(&mut self, owner: Option<ParagraphRegionOwner>) {
-        self.page.set_active_paragraph_owner(owner);
-    }
-
-    #[doc(hidden)]
-    pub fn pop_page_contribution_front_owned(
-        &mut self,
-    ) -> Option<(Node, Option<ParagraphRegionOwner>)> {
-        let result = self.page.pop_contribution_front_owned();
-        self.dependencies
-            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
-        result
-    }
-
-    #[doc(hidden)]
-    pub fn push_current_page_node_owned(
-        &mut self,
-        node: Node,
-        owner: Option<ParagraphRegionOwner>,
-    ) {
-        self.stores.assert_live_handles_in_node(&node);
-        self.page.push_current_page_owned(node, owner);
-        self.dependencies
-            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
-    }
-
     #[must_use]
     pub fn page_insertions(&self) -> &[PageInsertion] {
         self.page.page_insertions()
@@ -7108,37 +6841,6 @@ impl Universe {
         self.dependencies
             .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
         split
-    }
-
-    #[doc(hidden)]
-    #[allow(clippy::type_complexity)]
-    pub fn take_current_page_prefix_owned(
-        &mut self,
-        split_index: usize,
-    ) -> (
-        Vec<Node>,
-        Vec<Node>,
-        Vec<Option<ParagraphRegionOwner>>,
-        Vec<Option<ParagraphRegionOwner>>,
-        PagePrefixOwnership,
-        Vec<ParagraphRegionOwner>,
-    ) {
-        let split = self.page.take_current_page_prefix_owned(split_index);
-        self.dependencies
-            .mark_changed(DependencyKey::Page(DependencyPageField::CurrentPage));
-        split
-    }
-
-    #[doc(hidden)]
-    pub fn prepend_owned_page_contributions(
-        &mut self,
-        nodes: Vec<Node>,
-        owners: Vec<Option<ParagraphRegionOwner>>,
-    ) {
-        self.stores.assert_live_handles_in_nodes(&nodes);
-        self.page.prepend_owned_contributions(nodes, owners);
-        self.dependencies
-            .mark_changed(DependencyKey::Page(DependencyPageField::Contributions));
     }
 
     pub fn update_page_last_from_node(&mut self, node: &Node) {

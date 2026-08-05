@@ -23,25 +23,25 @@ mod main_control;
 mod math;
 mod mode;
 mod node_dump;
+mod output_provenance;
 mod pack_report;
 mod packing_params;
 mod page_builder;
 mod page_output;
 mod paragraph_end;
-mod paragraph_memo;
-#[cfg(feature = "profiling")]
-mod paragraph_replay_measurement;
 mod retained_resource;
 mod session_api;
 mod shipout;
 mod splitting;
+#[cfg(feature = "profiling")]
+mod step_snapshot_measurement;
 mod timing;
 mod vertical;
 
 #[cfg(feature = "profiling")]
 pub use align::{AlignmentTemplateMeasurement, alignment_template_measurement};
 #[cfg(feature = "profiling")]
-pub use paragraph_replay_measurement::{ParagraphReplayMeasurement, paragraph_replay_measurement};
+pub use step_snapshot_measurement::{StepSnapshotMeasurement, step_snapshot_measurement};
 
 pub use assignments::{
     install_etex_unexpandable_primitives, install_unexpandable_primitives,
@@ -52,8 +52,8 @@ pub use canonical_step::{
     OutputLedger,
 };
 pub use checkpoint::{
-    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorFork,
-    EditorRestoreError, EngineBoundary, EngineCheckpoint, RootRehomeContext,
+    CheckpointRestoreError, CheckpointSink, ENGINE_CHECKPOINT_SCHEMA_VERSION, EditorRestoreError,
+    EngineBoundary, EngineCheckpoint, RootRehomeContext,
 };
 pub use dispatch::{DispatchAction, ExecutionStats, PreparedDviPage};
 pub use error::{ExecError, FrozenDiagnosticOrigin};
@@ -67,8 +67,7 @@ pub use job::{
 };
 pub use main_control::{
     AdvanceOutcome, AdvanceReadiness, AdvanceTelemetry, DiagnosticStep, DiagnosticStepResult,
-    MainControl, MainControlStep, ParagraphRegion, ResourceNeed, RootCompletionPolicy, StepResult,
-    SupersededPageOutputEpisode,
+    MainControl, MainControlStep, ResourceNeed, RootCompletionPolicy, StepResult,
 };
 pub use mode::{
     AlignColumn, AlignState, AlignmentKind, AlignmentPackSpec, Mode, ModeLevelSummary, ModeList,

@@ -37,7 +37,6 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/env/box_bank.rs`: Dense-and-paged box slots combining semantic values with journal-owned assignment and coalescing state.
 - `src/env/group.rs`: Group stack, aftergroup/afterassignment handling, group mismatch types, and environment snapshot logic.
 - `src/env/overflow.rs`: Sparse e-TeX overflow register banks for high register numbers.
-- `src/env/paragraph.rs`: Lazy count/int paragraph fingerprints and setter-observed root-transition recording.
 - `src/env/raw.rs`: Restore-only raw environment writes, semantic word iteration, shadow verification, and raw word helpers.
 - `src/env/tests.rs`: Unit tests for environment write barriers, grouping, globals, aftergroup, font banks, and raw restore behavior.
 - `src/epoch.rs`: Monotonic epoch stamps used to coalesce journal entries within a state epoch.
@@ -82,7 +81,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/node_arena/semantic.rs`: Versioned, allocation-independent semantic identity for immutable node-list aggregates.
 - `src/node_arena/storage.rs`: Canonical node words, sidecar coordination, encoding, aggregate watermarks, and rollback.
 - `src/node_arena/tables.rs`: Typed structure-of-arrays sidecar tables for boxes, unsets, insertions, and noads.
-- `src/node_arena/view.rs`: Zero-allocation node references, list spans, mount-local output-provenance overlays, raw tag predicates, character runs, and iterators.
+- `src/node_arena/view.rs`: Zero-allocation node references, list spans, raw tag predicates, character runs, and iterators.
 - `src/node_arena/tests.rs`: Unit tests for node-list allocation, lookup, rollback, and arena liveness.
 - `src/page.rs`: Snapshot-owned page-builder state, page dimensions/integers, contribution/current-page queues, and fire-up records.
 - `src/pdf.rs`: Checkpointed pdfTeX document mode, deterministic object allocation, and committed-page ledger.
@@ -97,9 +96,9 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/print.rs`: tex.web §54's print `selector`, §§57--65's print primitives, §73's `print_err`, and §82's `error` report channel.
 - `src/print/error_context.rs`: tex.web §§310--318's `show_context` two-line pseudoprint, §314's token-list labels, and §310's `\errorcontextlines` elision, shared by every input-stack owner.
 - `src/print/tests.rs`: Unit tests for context widths, selector routing, help routing, and error-report completion.
-- `src/provenance.rs`: Chunked diagnostic origin-record snapshots, origin-list arenas, lazy paragraph resolvers, and rollback watermarks.
+- `src/provenance.rs`: Chunked diagnostic origin records, origin-list arenas, and rollback watermarks.
 - `src/provenance/tests.rs`: Unit tests for provenance allocation, readback, and rollback marks.
-- `src/pure_memo.rs`: Optional bounded execution/session-owned pure-query cache plus the single ordered accepted-paragraph history, validation telemetry, opaque accepted-generation output provenance, and accepted-history-owned retained node mounts. `Universe` retains only a weak execution capability and its write-barrier-coupled paragraph mutation recorder.
+- `src/pure_memo.rs`: Optional bounded pure-query caches for pretolerance, page-breaking, and shipout results plus stable output-provenance recipes.
 - `src/resource.rs`: Generic host-resource availability, absence, and stable
   suspension identities plus the state-owned immutable input-content resolver
   contract shared across engine layers.
@@ -113,7 +112,7 @@ All production mutation of live TeX state should pass through `Universe` or simi
 - `src/source_fragments/layout_index.rs`: Fragment-and-offset index for logarithmic current/deleted piece resolution across repeated views.
 - `src/source_fragments/tests.rs`: Fragment range, deletion, fork-liveness, anchor, allocator, snapshot, and line-index cache tests.
 - `src/state_hash.rs`: Deterministic semantic state hasher used by snapshots and replay convergence checks.
-- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor mounts and rollback pins, input, and rollback/shipout scope state.
+- `src/stores.rs`: Internal aggregate store tuple that coordinates interner, env, token, provenance, glue, node, font, survivor rollback pins, input, and rollback/shipout scope state.
 - `src/stores/handles.rs`: Store-boundary liveness checks for symbols, token lists, origins, glue, fonts, macros, and node handles.
 - `src/stores/exact_identity.rs`: Persistent deterministic Merkle treap for canonical environment-cell identities retained by checkpoints.
 - `src/stores/exact_collection.rs`: Expected-O(1) commutative set fingerprint for allocation-order-independent immutable-store identities.

@@ -73,7 +73,6 @@ impl<'a> ShipoutTransaction<'a> {
         Self { write, replay }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn stage_page(
         &mut self,
         node: Node,
@@ -81,12 +80,8 @@ impl<'a> ShipoutTransaction<'a> {
         origin: ShipoutOrigin,
         stores: &mut Universe,
         emit_dvi: bool,
-        publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
-        effect_candidate: Option<tex_state::EffectPublicationCandidate>,
-        receipt: Option<tex_state::PageOutputPublicationReceiptId>,
     ) -> Result<Option<CommittedPagePublication>, ExecError> {
         let prior_attempt = stores.world().active_effect_output_attempt();
-        let output_episode = stores.world().active_output_episode();
         let output_attempt =
             prior_attempt.unwrap_or_else(|| stores.world_mut().allocate_effect_output_attempt());
         stores
@@ -100,8 +95,6 @@ impl<'a> ShipoutTransaction<'a> {
             emit_dvi,
             self.write,
             self.replay,
-            publication_candidate,
-            receipt,
         );
         stores
             .world_mut()
@@ -112,22 +105,9 @@ impl<'a> ShipoutTransaction<'a> {
         }
         if let Some(publication) = publication.as_ref() {
             let live = publication.artifact.effect();
-            match effect_candidate {
-                Some(candidate) => stores.world_mut().commit_effect_publication_winner(
-                    Some(live),
-                    candidate.retained(),
-                    output_attempt,
-                    output_episode,
-                    receipt,
-                ),
-                None => stores.world_mut().commit_effect_publication_winner(
-                    None,
-                    live,
-                    output_attempt,
-                    output_episode,
-                    receipt,
-                ),
-            }
+            stores
+                .world_mut()
+                .commit_effect_publication_winner(None, live, output_attempt, None);
         }
         Ok(publication)
     }

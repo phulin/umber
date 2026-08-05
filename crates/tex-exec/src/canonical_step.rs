@@ -179,16 +179,7 @@ impl OutputLedger {
                     control.capture_checkpoint(boundary, universe, counters)?
                 }
                 CheckpointIdentity::Exact => {
-                    match control
-                        .capture_checkpoint_with_exact_identity(boundary, universe, counters)
-                    {
-                        Ok(checkpoint) => checkpoint,
-                        Err(CommandSummaryError::ActiveParagraphInputTransaction) => control
-                            .capture_checkpoint_projecting_paragraph(
-                                boundary, universe, counters,
-                            )?,
-                        Err(error) => return Err(error),
-                    }
+                    control.capture_checkpoint_with_exact_identity(boundary, universe, counters)?
                 }
             };
             sink.checkpoint(checkpoint);

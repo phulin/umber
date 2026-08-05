@@ -78,7 +78,6 @@ impl ParagraphEnd {
             }
             return Ok(ParagraphBreakResult::empty());
         }
-        stores.begin_paragraph_break_dependency_region();
         break_current_paragraph(
             nest,
             stores,
@@ -102,10 +101,7 @@ pub(crate) fn end_paragraph_with_fuel(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
     let context = command.output_open_context(&stores.command_context());
-    let result = ParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
-    if !result.finished_nodes.is_empty() {
-        nest.publish_completed_paragraph_nodes(result.finished_nodes);
-    }
+    ParagraphEnd::end(Some(context)).finish(nest, stores, fuel)?;
     Ok(())
 }
 
@@ -114,10 +110,7 @@ pub(crate) fn end_paragraph_without_source(
     stores: &mut Universe,
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<(), ExecError> {
-    let result = ParagraphEnd::end(None).finish(nest, stores, fuel)?;
-    if !result.finished_nodes.is_empty() {
-        nest.publish_completed_paragraph_nodes(result.finished_nodes);
-    }
+    ParagraphEnd::end(None).finish(nest, stores, fuel)?;
     Ok(())
 }
 
@@ -127,8 +120,5 @@ pub(crate) fn interrupt_paragraph_for_display(
     fuel: &mut tex_command::CommandFuel,
 ) -> Result<ParagraphBreakResult, ExecError> {
     let result = ParagraphEnd::display_interruption().finish(nest, stores, fuel)?;
-    if !result.finished_nodes.is_empty() {
-        nest.publish_completed_paragraph_nodes(result.finished_nodes.clone());
-    }
     Ok(result)
 }

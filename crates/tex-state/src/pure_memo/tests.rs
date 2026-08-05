@@ -1,51 +1,5 @@
 use super::*;
 
-#[test]
-fn paragraph_history_and_telemetry_follow_acceptance() {
-    let mut runtime = PureMemoRuntime::default();
-    runtime.enable(PureMemoConfig::default());
-    runtime.begin_paragraph_history(false);
-    let record = ParagraphHistoryRecord {
-        identity: 7,
-        root_start: Some(10),
-        root_end: Some(20),
-        delivered_commands: 3,
-        input_transition_count: 0,
-        retained_bytes: 64,
-        dependencies: Arc::from([]),
-        front_dependency_ordinals: Arc::from([]),
-        break_dependency_ordinals: Arc::from([]),
-        mutation_entry_in_group: false,
-        mutations: Arc::from([]),
-        finished_lines: None,
-        line_count: 0,
-        line_last_badness: 0,
-        display_active_directions: None,
-        barriers: Arc::from([]),
-        effects: Arc::from([]),
-        starting_provenance: crate::provenance::ProvenanceStats::default(),
-        ending_provenance: crate::provenance::ProvenanceStats::default(),
-        line_provenance: ParagraphLineProvenance::Pending,
-    };
-    runtime.record_accepted_paragraph_region(record.clone());
-    runtime.record_accepted_paragraph_lookup(false, 0, 0);
-    runtime.record_accepted_paragraph_lookup(true, 3, 2);
-    assert!(runtime.accepted_paragraph_history().is_empty());
-    runtime.accept_paragraph_history(crate::Universe::new().paragraph_origin_resolver());
-    assert_eq!(
-        runtime.accepted_paragraph_history()[0].identity,
-        record.identity
-    );
-    let stats = runtime.stats();
-    assert_eq!(stats.paragraph_inserts, 1);
-    assert_eq!(stats.paragraph_lookups, 2);
-    assert_eq!(stats.paragraph_hits, 1);
-    assert_eq!(stats.paragraph.key_misses, 1);
-    assert_eq!(stats.paragraph_commands_skipped, 3);
-    assert_eq!(stats.paragraph_mutations_replayed, 2);
-    assert_eq!(stats.paragraph_opportunities.published.regions, 1);
-    assert_eq!(stats.paragraph_opportunities.published.bytes, 64);
-}
 fn plan(position: usize) -> Option<PureBreakPlan> {
     Some(PureBreakPlan {
         breaks: vec![PureBreakDecision {
@@ -59,9 +13,8 @@ fn plan(position: usize) -> Option<PureBreakPlan> {
 }
 
 #[test]
-fn default_policy_records_generation_paragraphs_only() {
+fn default_policy_records_no_layers() {
     let policy = PureMemoConfig::default().recording;
-    assert!(policy.paragraphs);
     assert!(!policy.pretolerance);
     assert!(!policy.pages);
     assert!(!policy.shipouts);

@@ -143,28 +143,21 @@ pub use memo::{
 };
 pub use page::{
     AWFUL_BAD, DEPLORABLE, EJECT_PENALTY, INF_PENALTY, PageBreak, PageContents, PageDimension,
-    PageFireUp, PageInteger, PageOutputEpisodeId, PagePrefixOwnership, ParagraphRegionOwner,
+    PageFireUp, PageInteger,
 };
-pub use provenance::ParagraphOriginResolver;
 pub use provenance_resolver::{
     DetachedGeneratedSourceSpan, ProvenanceResolver, ResolvedSourceLocation,
 };
 pub use pure_memo::{
-    MemoLayerStats, MemoTimingPhase, ParagraphBarrierReason, ParagraphHistoryRecord,
-    ParagraphLineProvenance, ParagraphOpportunityMetric, ParagraphOpportunityStats,
-    ParagraphProvenanceNode, ParagraphProvenanceRecipe, ParagraphProvenanceSpan,
-    ParagraphRecordingPhase, ParagraphRecordingStats, ParagraphValidationFailure,
+    MemoLayerStats, MemoTimingPhase, OutputProvenanceRecipe, OutputProvenanceSpan,
     PureBreakDecision, PureBreakPlan, PureMemoConfig, PureMemoKey, PureMemoLayer,
-    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureParagraphMutation,
-    PureParagraphMutationSummary, PureShipoutEntry,
+    PureMemoRecordingPolicy, PureMemoRuntime, PureMemoStats, PurePageEntry, PureShipoutEntry,
 };
 pub use source_fragments::{
     EditorLayout, EditorLayoutError, FragmentId, FragmentStore, LayoutGeneration,
     LayoutResolvedOrigin, Piece, PieceId, RootSpanId,
 };
 pub use stores::{FontParameterError, GroupFrame, GroupKind, GroupMismatch, PrepareMagDiagnostic};
-#[doc(hidden)]
-pub use survivor::{DeferredNodeOriginCursor, DeferredNodeOrigins};
 pub use universe::{
     BoxBuildTransaction, BoxDimension, EngineBoundaryHasher, ExpansionContext, ExpansionState,
     FormatError, GenerationForkError, GenerationSubstrate, GeometryObservation, InputOpenContext,
@@ -183,7 +176,6 @@ pub use world::{
     EffectSemanticRecordOrdinal, EffectSequence, ExecutionTraceEvent, FileContent,
     FileModificationDate, InputDependency, InputDependencyAccess, InputDependencyOutcome,
     InputOrigin, InputRecord, InputRecordId, JobClock, MAX_INPUT_DEPENDENCIES, MemoryOutput,
-    OutputArtifactPublicationCandidate, OutputEpisodePublicationOutcome, OutputEpisodeStart,
     PageOutputPublicationReceipt, PageOutputPublicationReceiptId, PrintSink, ReadTarget,
     RenderOriginIter, RenderOrigins, RenderProvenanceBuilder, RetainedOutputOpenOutcome, RngState,
     ShellEscapePolicy, ShellEscapeRecord, StreamBufState, StreamOpenFailure, StreamSlot,

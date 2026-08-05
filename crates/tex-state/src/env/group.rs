@@ -523,7 +523,6 @@ impl Env {
 
     pub(crate) fn push_aftergroup_traced(&mut self, payload: TracedTokenWord) {
         if self.group_depth != 0 {
-            self.record_paragraph_group_frame_mutation();
             self.aftergroup.push(payload);
         }
     }
@@ -597,7 +596,6 @@ impl Env {
     fn leave_group_unchecked(
         &mut self,
     ) -> (Vec<TracedTokenWord>, bool, ChangedCells, Vec<RestoreRecord>) {
-        self.record_paragraph_group_frame_mutation();
         let Some(boundary) = self.group_boundaries.pop() else {
             panic!("leave_group without matching group marker");
         };

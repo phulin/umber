@@ -9,7 +9,6 @@ use tex_state::macro_store::{MacroDefinitionProvenance, MacroMeaning};
 use tex_state::provenance::OriginRecord;
 use tex_state::token::{OriginId, Token, TracedTokenWord};
 
-use crate::ParagraphInputTransaction;
 use crate::input::{
     BackedUpToken, InputLevel, SharedBackedUpBuffer, SharedTokenBuffer, TokenPayload,
 };
@@ -38,7 +37,6 @@ struct OwnedMacro {
 #[derive(Clone, Copy, Debug)]
 enum OwnedOrigin {
     Record(OriginRecord),
-    StableSource(tex_state::RootSpanId),
 }
 
 /// A command summary plus the complete arena-backed closure it reaches.
@@ -54,51 +52,9 @@ pub struct OwnedCommandContinuation {
     macros: HashMap<MacroDefinitionId, OwnedMacro>,
     origins: HashMap<OriginId, OwnedOrigin>,
     symbols: HashMap<Symbol, OwnedSymbol>,
-    transactions: Vec<ParagraphInputTransaction>,
-    allow_missing_origins: bool,
-    accepted_resolvers: Vec<std::sync::Arc<tex_state::ParagraphOriginResolver>>,
 }
 
 impl OwnedCommandContinuation {
-    /// Rebinds the sole retained paragraph transaction across an unchanged
-    /// root prefix while preserving its detached arena closure.
-    #[must_use]
-    pub fn rebind_paragraph_unchanged_root_prefix(
-        &mut self,
-        old: &[u8],
-        new: std::sync::Arc<[u8]>,
-        unchanged_end: usize,
-    ) -> bool {
-        let [transaction] = self.transactions.as_slice() else {
-            return false;
-        };
-        let Some(rebound) = transaction.rebind_unchanged_root_prefix(old, new, unchanged_end)
-        else {
-            return false;
-        };
-        self.transactions[0] = rebound;
-        true
-    }
-
-    /// Rebinds the sole retained paragraph transaction around one root edit
-    /// while preserving its detached arena closure.
-    #[must_use]
-    pub fn rebind_paragraph_edited_root(
-        &mut self,
-        old: &[u8],
-        new: std::sync::Arc<[u8]>,
-        edited: std::ops::Range<usize>,
-    ) -> bool {
-        let [transaction] = self.transactions.as_slice() else {
-            return false;
-        };
-        let Some(rebound) = transaction.rebind_edited_root(old, new, edited) else {
-            return false;
-        };
-        self.transactions[0] = rebound;
-        true
-    }
-
     #[must_use]
     pub fn detach(summary: &CommandSummary, universe: &Universe) -> Self {
         let mut owned = Self {
@@ -108,71 +64,9 @@ impl OwnedCommandContinuation {
             macros: HashMap::new(),
             origins: HashMap::new(),
             symbols: HashMap::new(),
-            transactions: Vec::new(),
-            allow_missing_origins: false,
-            accepted_resolvers: Vec::new(),
         };
         owned.collect_summary(universe);
         owned
-    }
-
-    /// Detaches one checkpoint continuation and ordered paragraph endpoints
-    /// into a single graph so shared stored identities materialize once.
-    #[must_use]
-    pub fn detach_with_paragraphs<'a>(
-        summary: &CommandSummary,
-        paragraphs: impl IntoIterator<
-            Item = (
-                &'a ParagraphInputTransaction,
-                Option<std::sync::Arc<tex_state::ParagraphOriginResolver>>,
-            ),
-        >,
-        universe: &Universe,
-    ) -> Self {
-        let paragraphs = paragraphs.into_iter().collect::<Vec<_>>();
-        let mut owned = Self {
-            summary: summary.clone(),
-            token_lists: HashMap::new(),
-            origin_lists: HashMap::new(),
-            macros: HashMap::new(),
-            origins: HashMap::new(),
-            symbols: HashMap::new(),
-            transactions: Vec::new(),
-            allow_missing_origins: true,
-            accepted_resolvers: paragraphs
-                .iter()
-                .filter_map(|(_, resolver)| resolver.clone())
-                .collect(),
-        };
-        owned.collect_summary(universe);
-        for (paragraph, _) in paragraphs {
-            owned.collect_input(&paragraph.starting_input, universe);
-            owned.collect_input(&paragraph.ending_input, universe);
-            owned.collect_parameters(&paragraph.starting_parameters, universe);
-            owned.collect_parameters(&paragraph.ending_parameters, universe);
-            owned.transactions.push(paragraph.clone());
-        }
-        owned.allow_missing_origins = false;
-        owned
-    }
-
-    /// Materializes the entire closure atomically into one destination.
-    #[must_use]
-    pub fn materialize_with_paragraphs(
-        &self,
-        universe: &mut Universe,
-    ) -> (CommandSummary, Vec<ParagraphInputTransaction>) {
-        let mut summary = self.summary.clone();
-        let mut paragraphs = self.transactions.clone();
-        let mut remap = Materializer::new(self, universe);
-        remap.materialize_summary(&mut summary);
-        for paragraph in &mut paragraphs {
-            remap.materialize_input(&mut paragraph.starting_input);
-            remap.materialize_input(&mut paragraph.ending_input);
-            remap.materialize_parameters(&mut paragraph.starting_parameters);
-            remap.materialize_parameters(&mut paragraph.ending_parameters);
-        }
-        (summary, paragraphs)
     }
 
     #[must_use]
@@ -333,42 +227,9 @@ impl OwnedCommandContinuation {
         if id == OriginId::UNKNOWN || self.origins.contains_key(&id) {
             return;
         }
-        let live_record = universe.origin_if_live(id);
-        let record = live_record.or_else(|| {
-            self.accepted_resolvers
-                .iter()
-                .find_map(|resolver| resolver.origin_record(id))
-        });
-        let Some(record) = record else {
-            if let Some(span) = self
-                .accepted_resolvers
-                .iter()
-                .find_map(|resolver| resolver.stable_span(id))
-            {
-                self.origins.insert(id, OwnedOrigin::StableSource(span));
-            } else {
-                assert!(
-                    self.allow_missing_origins,
-                    "command continuation origin is not live"
-                );
-                self.origins
-                    .insert(id, OwnedOrigin::Record(OriginRecord::UnknownBootstrap));
-            }
-            return;
-        };
-        if live_record.is_none()
-            && matches!(
-                record,
-                OriginRecord::Source(_) | OriginRecord::SourceSpan(_)
-            )
-            && let Some(span) = self
-                .accepted_resolvers
-                .iter()
-                .find_map(|resolver| resolver.stable_span(id))
-        {
-            self.origins.insert(id, OwnedOrigin::StableSource(span));
-            return;
-        }
+        let record = universe
+            .origin_if_live(id)
+            .expect("command continuation origin is live");
         self.origins.insert(id, OwnedOrigin::Record(record));
         match record {
             OriginRecord::MacroInvocation(origin) => {
@@ -501,10 +362,6 @@ impl<'a> Materializer<'a> {
         }
         let record = self.owned.origins[&old];
         let id = match record {
-            OwnedOrigin::StableSource(span) => self
-                .universe
-                .origin_for_root_span(span)
-                .expect("detached stable continuation source exists in the rebound layout"),
             OwnedOrigin::Record(record) => match record {
                 OriginRecord::UnknownBootstrap => self.universe.bootstrap_origin(),
                 OriginRecord::Source(source) => self.universe.source_origin_with_input_record(

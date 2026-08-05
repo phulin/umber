@@ -23,15 +23,8 @@ const END_JOB_PENALTY: i32 = -AWFUL_BAD - 1;
 /// routine or command-owned `\\output` replay begins.
 #[derive(Debug)]
 pub(crate) enum SelectedPageOutput {
-    Default(
-        Node,
-        tex_state::PagePrefixOwnership,
-        Vec<tex_state::ParagraphRegionOwner>,
-    ),
-    UserRoutine(
-        tex_state::PagePrefixOwnership,
-        Vec<tex_state::ParagraphRegionOwner>,
-    ),
+    Default(Node),
+    UserRoutine,
 }
 
 /// Selects and packages one pending page without accessing input. Main control
@@ -42,13 +35,13 @@ pub(crate) fn select_pending_page_output(
     fire_up: PageFireUp,
     error_context: String,
 ) -> Result<SelectedPageOutput, ExecError> {
-    let (ownership, owners) = prepare_box255(stores, fire_up, Some(&error_context))?;
+    prepare_box255(stores, fire_up, Some(&error_context))?;
     let output = stores.tok_param(TokParam::OUTPUT);
     if stores.tokens(output).is_empty() {
         prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
-        return Ok(SelectedPageOutput::Default(page, ownership, owners));
+        return Ok(SelectedPageOutput::Default(page));
     }
     let dead_cycles = stores.page_integer(PageInteger::DeadCycles);
     if dead_cycles >= stores.int_param(IntParam::MAX_DEAD_CYCLES) {
@@ -56,11 +49,11 @@ pub(crate) fn select_pending_page_output(
         prepend_output_heldover(stores, Vec::new(), true);
         let page = take_box255_node(stores)?;
         stores.clear_page_discards();
-        return Ok(SelectedPageOutput::Default(page, ownership, owners));
+        return Ok(SelectedPageOutput::Default(page));
     }
     stores.with_pure_memo(tex_state::PureMemoRuntime::record_output_routine_execution);
     stores.set_page_integer(PageInteger::DeadCycles, dead_cycles + 1);
-    Ok(SelectedPageOutput::UserRoutine(ownership, owners))
+    Ok(SelectedPageOutput::UserRoutine)
 }
 
 /// TeX82 §1026's input-free tail after the command-owned output list has
@@ -83,13 +76,7 @@ pub(crate) fn prepare_box255(
     stores: &mut Universe,
     fire_up: PageFireUp,
     error_context: Option<&str>,
-) -> Result<
-    (
-        tex_state::PagePrefixOwnership,
-        Vec<tex_state::ParagraphRegionOwner>,
-    ),
-    ExecError,
-> {
+) -> Result<(), ExecError> {
     if let Some(box255) = stores.box_reg(255) {
         stores.clear_box_reg_same_level(255);
         report_box255_not_void(stores, box255, error_context)?;
@@ -97,17 +84,10 @@ pub(crate) fn prepare_box255(
 
     let split_index = fire_up.best_break().index();
     let page_max_depth = stores.page_max_depth();
-    let (page_nodes, mut after_break, _, after_break_owners, ownership, owners) =
-        stores.take_current_page_prefix_owned(split_index);
-    let mut after_break_owners = after_break_owners;
-    let output_penalty = output_penalty_and_rewrite_break(
-        stores,
-        &mut after_break,
-        &mut after_break_owners,
-        fire_up,
-    );
+    let (page_nodes, mut after_break) = stores.take_current_page_prefix(split_index);
+    let output_penalty = output_penalty_and_rewrite_break(stores, &mut after_break, fire_up);
     stores.set_int_param_global(IntParam::OUTPUT_PENALTY, output_penalty);
-    stores.prepend_owned_page_contributions(after_break, after_break_owners);
+    stores.prepend_page_contributions(after_break);
     let distributed = distribute_insertions(stores, page_nodes)?;
     update_page_marks_at_fire_up(stores, &distributed.page_nodes);
 
@@ -125,18 +105,14 @@ pub(crate) fn prepare_box255(
     let box255 = stores.freeze_node_list(&[Node::VList(packed.node)]);
     stores.set_box_reg_global(255, box255);
     stores.start_page_after_output();
-    let heldover_owner = match ownership {
-        tex_state::PagePrefixOwnership::Single(owner) => Some(owner),
-        tex_state::PagePrefixOwnership::Mixed | tex_state::PagePrefixOwnership::Unowned => None,
-    };
     for node in distributed.heldover {
-        stores.push_current_page_node_owned(node, heldover_owner);
+        stores.push_current_page_node(node);
     }
     stores.set_page_integer(
         PageInteger::InsertPenalties,
         i32::try_from(distributed.heldover_count).map_err(|_| ExecError::ArithmeticOverflow)?,
     );
-    Ok((ownership, owners))
+    Ok(())
 }
 
 fn update_page_marks_at_fire_up(stores: &mut Universe, page_nodes: &[Node]) {
@@ -393,8 +369,7 @@ pub(crate) fn prepend_output_heldover(
     output_nodes: Vec<Node>,
     discard_rewritten_break: bool,
 ) {
-    let (mut heldover, _, mut heldover_owners, _, _, _) =
-        stores.take_current_page_prefix_owned(stores.current_page_len());
+    let (mut heldover, _) = stores.take_current_page_prefix(stores.current_page_len());
     // TeX82 §§994/1012 resume the page builder after `fire_up`; without an
     // output routine that continuation discards the chosen penalty after
     // §1013 rewrites it to `inf_penalty`. Main control defers the
@@ -413,23 +388,19 @@ pub(crate) fn prepend_output_heldover(
             && matches!(stores.page_contribution_front(), Some(Node::Penalty(value)) if *value == INF_PENALTY);
         if heldover_is_rewritten_break {
             heldover.clear();
-            heldover_owners.clear();
         } else if contribution_is_rewritten_break {
             let _ = stores.pop_page_contribution_front();
         }
     }
-    let output_node_count = output_nodes.len();
     heldover.extend(output_nodes);
-    heldover_owners.extend(std::iter::repeat_n(None, output_node_count));
     stores.start_page_after_output();
     stores.set_page_integer(PageInteger::InsertPenalties, 0);
-    stores.prepend_owned_page_contributions(heldover, heldover_owners);
+    stores.prepend_page_contributions(heldover);
 }
 
 fn output_penalty_and_rewrite_break(
     stores: &mut Universe,
     after_break: &mut Vec<Node>,
-    after_break_owners: &mut Vec<Option<tex_state::ParagraphRegionOwner>>,
     fire_up: PageFireUp,
 ) -> i32 {
     if let Some(Node::Penalty(value)) = after_break.first_mut() {
@@ -441,12 +412,8 @@ fn output_penalty_and_rewrite_break(
     if fire_up.trigger() == fire_up.best_break()
         && let Some(Node::Penalty(penalty)) = stores.page_contribution_front().cloned()
     {
-        let owner = stores
-            .pop_page_contribution_front_owned()
-            .map(|(_, owner)| owner)
-            .unwrap_or(None);
+        let _ = stores.pop_page_contribution_front();
         after_break.push(Node::Penalty(INF_PENALTY));
-        after_break_owners.push(owner);
         return penalty;
     }
 

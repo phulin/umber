@@ -76,7 +76,6 @@ pub fn retry_unavailable_stream_open(
 /// most recently committed input summary while retaining command input in its
 /// own state.  The direct artifact kernel needs only this detached summary,
 /// never a source-consumption capability.
-#[allow(clippy::too_many_arguments)] // Traversal capabilities are borrowed only for the atomic transaction.
 pub(crate) fn shipout_node_with_input_summary(
     node: Node,
     input_summary: tex_state::InputSummary,
@@ -85,8 +84,6 @@ pub(crate) fn shipout_node_with_input_summary(
     emit_dvi: bool,
     write_expander: &mut direct::WriteExpander<'_>,
     replay_expander: &mut direct::ReplayTextExpander<'_>,
-    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
-    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
     let pending_end = origin.pending_end;
     prepare_pdf_output_policy(stores)?;
@@ -152,7 +149,7 @@ pub(crate) fn shipout_node_with_input_summary(
                 detached.payload,
                 entry.render_origin_ends,
                 entry.render_provenance,
-                receipt,
+                None,
             )?;
             stores.with_pure_memo(|memo| {
                 memo.record_timing(
@@ -187,7 +184,6 @@ pub(crate) fn shipout_node_with_input_summary(
                     publication,
                     receipt: publication.receipt(),
                 }),
-                revision_candidate: publication_candidate,
                 effects: 0..0,
                 effect_output_attempt: None,
             }));
@@ -234,7 +230,7 @@ pub(crate) fn shipout_node_with_input_summary(
         });
     let reservation = transaction
         .world_mut()
-        .reserve_active_artifact_publication_at(effect_start, receipt);
+        .reserve_active_artifact_publication_at(effect_start, None);
     let effect_end = transaction.world().effect_records().len();
     let (hash, publication) =
         transaction.commit(staged.artifact, staged.effect_pos, reservation)?;
@@ -263,7 +259,7 @@ pub(crate) fn shipout_node_with_input_summary(
         })
     {
         let render_provenance =
-            crate::paragraph_memo::provenance_recipe_for_origins(stores, render_origins);
+            crate::output_provenance::provenance_recipe_for_origins(stores, render_origins);
         stores.with_pure_memo(|memo| {
             memo.insert_shipout(
                 key,
@@ -284,7 +280,6 @@ pub(crate) fn shipout_node_with_input_summary(
             publication,
             receipt: publication.receipt(),
         }),
-        revision_candidate: publication_candidate,
         effects: 0..0,
         effect_output_attempt: None,
     }))
@@ -324,7 +319,6 @@ fn shipout_error_context(
         .unwrap_or_else(|| crate::diagnostics::show_context(stores, input_summary))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_page(
     node: Node,
     input_summary: tex_state::InputSummary,
@@ -333,8 +327,6 @@ pub(crate) fn stage_page(
     emit_dvi: bool,
     write_expander: &mut WriteReplayHost<'_>,
     replay_expander: &mut TextReplayHost<'_>,
-    publication_candidate: Option<tex_state::OutputArtifactPublicationCandidate>,
-    receipt: Option<tex_state::PageOutputPublicationReceiptId>,
 ) -> Result<Option<CommittedPagePublication>, ExecError> {
     shipout_node_with_input_summary(
         node,
@@ -344,8 +336,6 @@ pub(crate) fn stage_page(
         emit_dvi,
         write_expander,
         replay_expander,
-        publication_candidate,
-        receipt,
     )
 }
 
