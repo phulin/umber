@@ -252,11 +252,14 @@ for the next return only.
 
 On a typed resource need, the run first detaches the request payload, then
 restores every field in `StepSavepoint` and enters `AwaitingResources`. No
-restoration calls host policy. Terminal TeX errors preserve the live failure
-state, matching the one-shot interpreter contract; their staged checkpoints
-and read observations are discarded, and the run enters `Failed`. Cancellation
-is checked before mutation. A Rust panic is not a supported suspension and does
-not promise recovery.
+restoration calls host policy. A diagnostic-oriented runner returns a captured
+TeX82 §93 fatal with its source site after restoring the failed candidate step.
+The retained complete-job owner instead uses the runner's fatal-completing
+entry: §81's `jump_out` latches semantic completion at §1332's `end_of_TEX`,
+then the owner performs §1333 cleanup. Neither path retries the unavailable
+input. Host-protocol and execution-budget failures enter `Failed`.
+Cancellation is checked before mutation. A Rust panic is not a supported
+suspension and does not promise recovery.
 
 On native hosts, observational telemetry times savepoint capture and rollback
 separately from the remaining engine step body. This distinguishes local retry

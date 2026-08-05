@@ -748,7 +748,7 @@ impl<'a> EngineSession<'a> {
                 Some(observer) => {
                     runner.step_with_observer(checkpoints, &tex_exec::Cancellation::new(), observer)
                 }
-                None => runner.step(checkpoints, &tex_exec::Cancellation::new()),
+                None => runner.step_completing_fatal(checkpoints, &tex_exec::Cancellation::new()),
             };
             if let Some(checkpoint) = self.retry_materialization.take() {
                 let reconciled = self
@@ -2002,7 +2002,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "xfail: umber2-horq"]
     fn completed_input_absence_retries_only_in_interactive_modes() {
         for interaction in [
             tex_state::InteractionMode::Scroll,
@@ -2040,10 +2039,20 @@ mod tests {
                 calls: 0,
             };
 
-            session
+            let run = session
                 .run(&mut host, &mut Vec::new())
                 .expect("fatal termination still completes retained cleanup");
-            assert!(session.control.fatal_error().is_some());
+            let fatal =
+                tex_command::FatalError::emergency_stop("job aborted, file error in nonstop mode");
+            assert_eq!(run.fatal, Some(fatal));
+            assert_eq!(session.control.fatal_error(), Some(fatal));
+            assert_eq!(host.calls, 1);
+            assert!(matches!(
+                session
+                    .advance_until_waiting(&mut Vec::new())
+                    .expect("fatal retained cleanup stays complete"),
+                SessionState::Complete(result) if result.fatal == Some(fatal)
+            ));
             assert_eq!(host.calls, 1);
         }
     }

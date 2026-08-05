@@ -216,6 +216,30 @@ impl<'a> CanonicalStepRunner<'a> {
         self.step_inner(sink, cancellation, None)
     }
 
+    /// Advances a complete-job session through TeX82 §81's `jump_out`.
+    ///
+    /// Diagnostic-oriented callers use [`Self::step`] so a captured fatal
+    /// retains its source site. A retained complete-job owner instead has the
+    /// frame corresponding to §1332's `end_of_TEX`; it converts that same
+    /// fatal into terminal completion so §1333 cleanup can run.
+    pub fn step_completing_fatal(
+        &mut self,
+        sink: &mut dyn CheckpointSink,
+        cancellation: &Cancellation,
+    ) -> CanonicalStepResult {
+        let result = self.step_inner(sink, cancellation, None);
+        match result {
+            CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error)) => {
+                if let Some(fatal) = error.as_fatal() {
+                    CanonicalStepResult::Completed(self.control.succumb(fatal))
+                } else {
+                    CanonicalStepResult::Failed(CanonicalStepFailure::Execution(error))
+                }
+            }
+            result => result,
+        }
+    }
+
     pub fn step_with_observer(
         &mut self,
         sink: &mut dyn CheckpointSink,

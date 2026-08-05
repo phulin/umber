@@ -4179,7 +4179,7 @@ impl MainControl {
     /// only frame that corresponds to `end_of_TEX` -- latches the terminal
     /// state and reports the job over. Nothing is rolled back: `jump_out`
     /// abandons the current procedure, it does not undo it.
-    fn succumb(&mut self, fatal: FatalError) -> MainControlStep {
+    pub(crate) fn succumb(&mut self, fatal: FatalError) -> MainControlStep {
         self.fatal.get_or_insert(fatal);
         MainControlStep::End
     }
