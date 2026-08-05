@@ -343,23 +343,23 @@ Affected crates: `tex-out`, `tex-exec`, `umber`, `tex-incr`, and `tex-command-st
 
 Affected crates: `tex-state`, `tex-exec`, `tex-incr`, `umber`, and `tex-out`.
 
-**Current design — implemented.** `tex-incr::Session` owns retained memo history between revisions and `MainControl` owns it while a candidate executes. `Universe` keeps only a weak execution capability and the small mutation recorder required by state write barriers; it neither retains cache values nor decides acceptance. The former aggregate forwarding surface and the older parallel `RecordedParagraphRegion` history/index/runtime are deleted.
+**Current design — implemented.** `tex-incr::Session` owns the bounded pure-query cache between revisions and `MainControl` owns it while a candidate executes. Its only layers are pretolerance, page building, and shipout. `Universe` keeps only a weak execution capability and the mutation bookkeeping required by state write barriers; it neither retains cache values nor decides acceptance. Changed-document restart separately restores an accepted checkpoint's `CommandSummary` and aggregate execution roots, or uses `JobStart`, and suffix reuse depends on generic canonical-state and boundary-schedule convergence. The former paragraph recorder, transaction, validation/mount path, and paragraph-specific runtime are deleted.
 
 **Detached-graph stop decision.** The proposed common format/memo/PDF/page graph was not introduced. Measurement found that preserving schema-11 format bytes, memo-integrity framing, PDF graph-role validation, page-artifact streaming, and each domain's independent budgets requires compatibility adapters and dual readers larger than the envelopes they could remove. The explicit stop condition therefore applies; these detached boundaries remain distinct and are not counted as deletion.
 
 This is not a recommendation to turn all state into a generic object graph.
 
-**Measured reduction.** The memo ownership/runtime convergence deletes more than it adds; issue close writeback records the final production/test line count after formatting.
+**Measured reduction.** The completed ownership convergence and paragraph-replay deletion removed more than they added; issue close writeback records the final production/test line count after formatting.
 
-**Preservation argument.** Format schema bytes, memo hit/miss ordering, malformed-payload rejection, provenance, rollback, forks, page/paragraph memo behavior, PDF envelopes, and state identity must remain unchanged.
+**Preservation argument.** Format schema bytes, pretolerance/page/shipout cache hit and miss ordering, malformed-payload rejection, provenance, rollback, forks, PDF envelopes, checkpoint restoration, generic suffix convergence, and state identity must remain unchanged.
 
-**Migration result.** Operational memo calls use one weak execution capability;
-incremental retention and acceptance own the runtime directly, and the
-aggregate forwarding and duplicate recorded-paragraph runtime are deleted.
-Detached transport readers remain unchanged because the graph experiment was
-stopped before adding compatibility code.
+**Migration result.** The three remaining pure-cache layers use one weak
+execution capability; incremental retention and acceptance own the runtime
+directly, and the aggregate forwarding and paragraph-replay subsystem are
+deleted. Detached transport readers remain unchanged because the graph
+experiment was stopped before adding compatibility code.
 
-**Gates and risks.** Test memo-disabled execution, paragraph and page memo hits, failed-candidate rollback, state hashes, format loading, PDF output, malformed payloads, budgets, and cold-versus-incremental parity. Risks include borrow complexity, accidentally moving provenance out of `tex-state`, and retaining mutable state in a supposedly immutable graph.
+**Gates and risks.** Test cache-disabled execution, pretolerance/page/shipout cache hits, failed-candidate rollback, accepted-checkpoint and `JobStart` restart, generic convergence, state hashes, format loading, PDF output, malformed payloads, budgets, and cold-versus-incremental parity. Risks include borrow complexity, accidentally moving provenance out of `tex-state`, and retaining mutable state in a supposedly immutable graph.
 
 **Dependencies and conflicts.** Rank 1 and rank 6 are prerequisites. Rank 13 must be kept distinct: it concerns node schema/traversal, not memo ownership. This program should be stopped if the detached graph adds more code than it removes.
 

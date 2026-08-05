@@ -331,11 +331,11 @@ their cached projections. Detached effects and artifacts remain splice-owned
 history and are deliberately excluded.
 
 The copy-on-write hyphenation root also retains derived per-language dependency
-fingerprints for paragraph validation and recording. Pattern, exception, and
+fingerprints for bounded pure-query cache validation. Pattern, exception, and
 saved-code writes invalidate the new root's projection before mutation; forks
 of an unchanged root share it. This acceleration is excluded from format
-serialization and semantic equality, while dependency changed-at stamps remain
-the validation authority.
+serialization and semantic equality. It is not a retained paragraph record or
+a paragraph-specific restart authority.
 
 This identity is session-local acceleration state, not a durable content or
 persistence identity. Equality is authoritative for suffix adoption: there is
