@@ -284,33 +284,11 @@ impl<'a> EngineSession<'a> {
             match self.control.diagnostic_expand_step(self.stores)? {
                 DiagnosticStepResult::Progress(step) => return Ok(step),
                 DiagnosticStepResult::Suspended(need) => {
-                    let outcome = {
-                        let mut world = ResourceWorld::new(self.stores);
-                        host.fulfill(&mut world, &need)
+                    declined = if self.answer_need(host, &need)? {
+                        0
+                    } else {
+                        declined.saturating_add(1)
                     };
-                    match outcome {
-                        ResourceOutcome::Fulfilled(fulfillment) => {
-                            self.fulfill(&need, fulfillment)?;
-                            declined = 0;
-                        }
-                        ResourceOutcome::Unavailable => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                self.mark_unavailable(&need);
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                        ResourceOutcome::Declined => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                    }
                     if declined >= self.no_progress_limit {
                         return Err(SessionError::NoProgress {
                             need,
@@ -863,33 +841,11 @@ impl<'a> EngineSession<'a> {
             match state {
                 SessionState::Complete(result) => return Ok(result),
                 SessionState::NeedResource(need) => {
-                    let outcome = {
-                        let mut world = ResourceWorld::new(self.stores);
-                        host.fulfill(&mut world, &need)
+                    declined = if self.answer_need(host, &need)? {
+                        0
+                    } else {
+                        declined.saturating_add(1)
                     };
-                    match outcome {
-                        ResourceOutcome::Fulfilled(fulfillment) => {
-                            self.fulfill(&need, fulfillment)?;
-                            declined = 0;
-                        }
-                        ResourceOutcome::Unavailable => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                self.mark_unavailable(&need);
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                        ResourceOutcome::Declined => {
-                            if let Some(fulfillment) = self.same_run_output(&need) {
-                                self.fulfill(&need, fulfillment)?;
-                                declined = 0;
-                            } else {
-                                declined = declined.saturating_add(1);
-                            }
-                        }
-                    }
                     if declined >= self.no_progress_limit {
                         return Err(SessionError::NoProgress {
                             need,
@@ -899,6 +855,29 @@ impl<'a> EngineSession<'a> {
                 }
             }
         }
+    }
+
+    fn answer_need(
+        &mut self,
+        host: &mut dyn ResourceHost,
+        need: &ResourceNeed,
+    ) -> Result<bool, SessionError> {
+        let outcome = {
+            let mut world = ResourceWorld::new(self.stores);
+            host.fulfill(&mut world, need)
+        };
+        if let ResourceOutcome::Fulfilled(fulfillment) = outcome {
+            self.fulfill(need, fulfillment)?;
+            return Ok(true);
+        }
+        if let Some(fulfillment) = self.same_run_output(need) {
+            self.fulfill(need, fulfillment)?;
+            return Ok(true);
+        }
+        if matches!(outcome, ResourceOutcome::Unavailable) {
+            self.mark_unavailable(need);
+        }
+        Ok(false)
     }
 
     /// Resolves an exact input name from output already committed by this
