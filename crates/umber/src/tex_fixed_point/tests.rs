@@ -34,7 +34,12 @@ fn finish(
                         ResourceRequest::File(request) => {
                             ResourceResponse::FileUnavailable(request.key().clone())
                         }
-                        request => panic!("unexpected non-file resource request: {request:?}"),
+                        ResourceRequest::Font(request) => {
+                            ResourceResponse::FontUnavailable(request.key)
+                        }
+                        ResourceRequest::PkFont(request) => {
+                            ResourceResponse::PkFontUnavailable(request)
+                        }
                     })
                     .collect();
                 session.provide_resources(responses)?;
@@ -54,7 +59,6 @@ fn generated<'a>(output: &'a TexFixedPointOutput, path: &str) -> &'a [u8] {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 fn primitive_and_latex_reference_fixtures_reach_cold_identical_fixed_points() {
     for (engine, source, expected_files) in [
         (
