@@ -9,7 +9,7 @@ measurement with:
 
 ```bash
 /usr/bin/time -f 'wall=%e maxrss_kib=%M' \
-  cargo run-dev -q -p tex-command-stream -- \
+  cargo run-dev -q -p tex-command-stream --bin tex-command-stream -- \
   --repository . --max-divergences 100000
 ```
 

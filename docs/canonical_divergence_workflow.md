@@ -57,7 +57,7 @@ away from.
    divergence against committed fixtures:
 
    ```bash
-   cargo run-dev -q -p tex-command-stream -- --repository . --max-divergences 100000
+   cargo run-dev -q -p tex-command-stream --bin tex-command-stream -- --repository . --max-divergences 100000
    ```
 
    Run this from the repository root. It is hermetic (no corpus,

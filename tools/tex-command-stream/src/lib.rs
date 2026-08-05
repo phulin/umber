@@ -221,7 +221,7 @@ fn validate_automated_footprint(
              {AUTOMATED_MAX_SOURCES} source(s), {AUTOMATED_MAX_SOURCE_BYTES} source byte(s), \
              and {AUTOMATED_MAX_EVENTS} event(s). Move full-document traces to \
              tests/corpus/command/tex82-documents and run the explicit \
-             `cargo run-dev -q -p tex-command-stream -- --repository .` diagnostic",
+             `cargo run-dev -q -p tex-command-stream --bin tex-command-stream -- --repository .` diagnostic",
             footprint.sources, footprint.source_bytes, footprint.events
         ),
     ))

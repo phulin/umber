@@ -89,7 +89,7 @@ Use this crate when behavior is about driving the engine, presenting CLI output,
 Run `cargo test --tests -p umber` after CLI or composed-runner changes. For behavior that changes emitted diagnostics or fixtures, follow `tests/AGENTS.md` and regenerate deliberately with `scripts/regen-fixtures.sh`. Ordinary corpus tests consume committed fixtures; external end-to-end conformance tests consume locally generated oracles and fail with materialization instructions when those are absent (see "End-to-End Conformance Gate Contract" in `docs/testing_infrastructure.md`).
 
 Diagnosing a `umber2-johp` divergence has a fixed recipe: run the
-differential tracer (`cargo run -q -p tex-command-stream -- --repository .`)
+differential tracer (`cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository .`)
 first, then the `first_failure_locator` example for the live end-to-end
 front, and only fall back to manual instrumentation if both come up short.
 See the diagnosis order in

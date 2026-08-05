@@ -182,7 +182,7 @@ The offline comparison runner is deliberately a host tool rather than a
 `tex-command` production dependency:
 
 ```bash
-cargo run -q -p tex-command-stream -- --repository .
+cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository .
 ```
 
 It validates the complete registered suite, constructs the explicit canonical

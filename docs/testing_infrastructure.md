@@ -1129,9 +1129,9 @@ an oracle, and what to do with the result, see the diagnosis order in
 ### Differential Tracer
 
 ```bash
-cargo run -q -p tex-command-stream -- --repository . --max-divergences 100000
-cargo run -q -p tex-command-stream -- --repository . --realign-window 128
-cargo run -q -p tex-command-stream -- --repository . --ungrouped
+cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository . --max-divergences 100000
+cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository . --realign-window 128
+cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository . --ungrouped
 ```
 
 The default budget (`DEFAULT_MAX_DIVERGENCES` = 20) saturates on `gentle`, so
@@ -1572,7 +1572,7 @@ thousands of document events unoptimized takes minutes where the `test`
 profile takes seconds:
 
 ```bash
-cargo run-dev -p tex-command-stream -- --repository . --max-divergences 100000
+cargo run-dev -p tex-command-stream --bin tex-command-stream -- --repository . --max-divergences 100000
 ```
 
 #### Generating the full-document traces

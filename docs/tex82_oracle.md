@@ -35,7 +35,7 @@ comparison:
 
 ```bash
 scripts/build-tex82-document-traces.sh --document gentle
-cargo run -q -p tex-command-stream -- --repository . \
+cargo run -q -p tex-command-stream --bin tex-command-stream -- --repository . \
   --max-divergences 100000
 ```
 
