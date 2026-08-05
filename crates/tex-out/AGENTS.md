@@ -36,6 +36,8 @@ Use this crate for stable, driver-facing artifact structures and serialization c
 - `src/lib.rs`: Crate documentation, module wiring, tests module registration, and public re-exports.
 - `src/model.rs`: Detached page artifact, versioned font-layout/classic/OpenType identities, node, glue, kern, and output effect data model.
 - `src/pdf.rs`: validated detached PDF object/page/resource graph, canonical ordering, and semantic identity.
+- `src/pdf/graph.rs`: private canonical graph-role and nested-value cursor shared by validation, hashing, preflight, and serialization.
+- `src/pdf/paint.rs`: private compact/ordered PDF paint program and shared graphics/text-state interpreter.
 - `src/pdf/tests.rs`: PDF graph validation, canonical identity, and budget tests.
 - `src/pdf/serialize.rs`: deterministic `pdf_writer` adapter, typed errors, version selection, and stream compression policy.
 - `src/pdf/serialize/tests.rs`: exact-byte determinism, independent parsing, compression, and adapter-error tests.

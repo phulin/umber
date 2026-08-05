@@ -6,10 +6,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU32;
 
-use pdf_writer::{Name, Str};
 use sha2::{Digest, Sha256};
 
+mod graph;
+mod paint;
 mod serialize;
+
+use graph::{PdfGraphView, PdfValueCursor, PdfValueEvent};
+use paint::PdfPaintProgram;
 
 pub use serialize::{
     PdfObjectCompression, PdfSerializationOptions, PdfSerializeError, PdfStreamCompression,
@@ -136,139 +140,19 @@ pub fn type3_space_glyph_content(advance: f32) -> Vec<u8> {
 /// Encodes filled rule rectangles exclusively through `pdf_writer`.
 #[must_use]
 pub fn filled_rectangle_content(rectangles: &[PdfContentRectangle]) -> Vec<u8> {
-    page_content(rectangles, &[])
+    PdfPaintProgram::rectangles(rectangles).finish()
 }
 
-/// Encodes page painting operators exclusively through `pdf_writer`.
+/// Encodes the compact rectangle-and-text page policy through `pdf_writer`.
 #[must_use]
-pub fn page_content(
-    rectangles: &[PdfContentRectangle],
-    text_runs: &[PdfContentTextRun],
-) -> Vec<u8> {
-    let mut content = pdf_writer::Content::new();
-    content.save_state();
-    for rectangle in rectangles {
-        content
-            .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
-            .fill_nonzero();
-    }
-    content.restore_state();
-    if !text_runs.is_empty() {
-        content.begin_text();
-        for run in text_runs {
-            content
-                .set_font(Name(&run.font_name), run.font_size)
-                .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
-                .show(Str(&run.bytes));
-        }
-        content.end_text();
-    }
-    content.finish().to_vec()
+pub fn page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
+    PdfPaintProgram::compact(operations).finish()
 }
 
 /// Encodes ordered pdfTeX page operations through the vendored `pdf_writer`.
 #[must_use]
 pub fn ordered_page_content(operations: &[PdfContentOperation]) -> Vec<u8> {
-    let mut content = pdf_writer::Content::new();
-    let mut origin = (0.0, 0.0);
-    let mut saved_origins = Vec::new();
-    let mut in_text = false;
-    let set_origin = |content: &mut pdf_writer::Content, origin: &mut (f32, f32), x, y| {
-        let dx = x - origin.0;
-        let dy = y - origin.1;
-        if dx != 0.0 || dy != 0.0 {
-            content.transform([1.0, 0.0, 0.0, 1.0, dx, dy]);
-            *origin = (x, y);
-        }
-    };
-    for operation in operations {
-        match operation {
-            PdfContentOperation::Rectangle(rectangle) => {
-                end_pdf_text(&mut content, &mut in_text);
-                content.save_state();
-                content
-                    .rect(rectangle.x, rectangle.y, rectangle.width, rectangle.height)
-                    .fill_nonzero();
-                content.restore_state();
-            }
-            PdfContentOperation::Text(run) => {
-                if !in_text {
-                    content.begin_text();
-                    in_text = true;
-                }
-                content
-                    .set_font(Name(&run.font_name), run.font_size)
-                    .set_text_matrix([1.0, 0.0, 0.0, 1.0, run.x, run.baseline])
-                    .show(Str(&run.bytes));
-            }
-            PdfContentOperation::Literal { mode, x, y, bytes } => {
-                if *mode != crate::PdfLiteralMode::Direct {
-                    end_pdf_text(&mut content, &mut in_text);
-                }
-                if *mode == crate::PdfLiteralMode::Origin {
-                    set_origin(&mut content, &mut origin, *x, *y);
-                }
-                content.verbatim_operations(bytes);
-            }
-            PdfContentOperation::ColorStack { mode, x, y, bytes } => {
-                if *mode != crate::PdfLiteralMode::Direct {
-                    end_pdf_text(&mut content, &mut in_text);
-                }
-                if *mode == crate::PdfLiteralMode::Origin {
-                    set_origin(&mut content, &mut origin, *x, *y);
-                }
-                content.color_stack_operations(bytes);
-            }
-            PdfContentOperation::SetMatrix { x, y, matrix } => {
-                end_pdf_text(&mut content, &mut in_text);
-                set_origin(&mut content, &mut origin, *x, *y);
-                content.transform([matrix[0], matrix[1], matrix[2], matrix[3], 0.0, 0.0]);
-            }
-            PdfContentOperation::Save { x, y } => {
-                end_pdf_text(&mut content, &mut in_text);
-                set_origin(&mut content, &mut origin, *x, *y);
-                saved_origins.push(origin);
-                content.save_state();
-            }
-            PdfContentOperation::Restore { x, y } => {
-                end_pdf_text(&mut content, &mut in_text);
-                set_origin(&mut content, &mut origin, *x, *y);
-                content.restore_state();
-                if let Some(saved) = saved_origins.pop() {
-                    origin = saved;
-                }
-            }
-            PdfContentOperation::FormXObject { x, y, name } => {
-                end_pdf_text(&mut content, &mut in_text);
-                content.save_state();
-                content.transform([1.0, 0.0, 0.0, 1.0, *x, *y]);
-                content.x_object(Name(name));
-                content.restore_state();
-            }
-            PdfContentOperation::ImageXObject {
-                x,
-                y,
-                width,
-                height,
-                name,
-            } => {
-                end_pdf_text(&mut content, &mut in_text);
-                content.save_state();
-                content.transform([*width, 0.0, 0.0, *height, *x, *y]);
-                content.x_object(Name(name));
-                content.restore_state();
-            }
-        }
-    }
-    end_pdf_text(&mut content, &mut in_text);
-    content.finish().to_vec()
-}
-
-fn end_pdf_text(content: &mut pdf_writer::Content, in_text: &mut bool) {
-    if *in_text {
-        content.end_text();
-        *in_text = false;
-    }
+    PdfPaintProgram::ordered(operations).finish()
 }
 
 /// Stable indirect-object identity within one PDF document timeline.
@@ -407,7 +291,9 @@ impl PdfDictionary {
         self.entries.get(&PdfName::new(key))
     }
 
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&PdfName, &PdfValue)> {
+    pub fn iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (&PdfName, &PdfValue)> + ExactSizeIterator {
         self.entries.iter()
     }
 
@@ -751,14 +637,15 @@ impl PdfDocument {
     /// Hashes a versioned canonical structural encoding, independent of input order.
     #[must_use]
     pub fn semantic_hash(&self) -> PdfDocumentHash {
+        let graph = PdfGraphView::validated(self);
         let mut hasher = CanonicalHasher::new();
         hasher.byte(self.version().major());
         hasher.byte(self.version().minor());
         hasher.u32(self.catalog().get());
         hasher.len(self.0.objects.len());
-        for indirect in &self.0.objects {
+        for indirect in graph.objects() {
             hasher.u32(indirect.id.get());
-            hash_object(&indirect.object, &mut hasher);
+            hash_object(indirect.object, &mut hasher);
         }
         hasher.bool(self.0.trailer.info.is_some());
         if let Some(info) = self.0.trailer.info {
@@ -868,29 +755,25 @@ fn validate_document(
         }
     }
 
-    let ids = document
-        .objects
-        .iter()
-        .map(|object| object.id)
-        .collect::<BTreeSet<_>>();
-    if !ids.contains(&document.catalog) {
+    let graph = PdfGraphView::unvalidated(document);
+    if !graph.contains(document.catalog) {
         return Err(PdfModelError::MissingObject(document.catalog));
     }
     if let Some(info) = document.trailer.info
-        && !ids.contains(&info)
+        && !graph.contains(info)
     {
         return Err(PdfModelError::MissingObject(info));
     }
     if let Some(info) = document.trailer.info
-        && object_dictionary(document, info).is_none()
+        && graph.dictionary(info).is_none()
     {
         return Err(PdfModelError::InfoNotDictionary(info));
     }
 
     let mut value_count = 0_usize;
     let mut stream_bytes = 0_usize;
-    for indirect in &document.objects {
-        match &indirect.object {
+    for indirect in graph.objects() {
+        match indirect.object {
             PdfObject::Stream { dictionary, data }
             | PdfObject::EncodedStream { dictionary, data }
             | PdfObject::FormXObject {
@@ -933,13 +816,36 @@ fn validate_document(
                 limit: limits.max_stream_bytes,
             });
         }
-        validate_object_values(
-            &indirect.object,
-            &ids,
-            &mut value_count,
-            limits.max_values,
-            limits.max_depth,
-        )?;
+        for id in indirect.typed_references() {
+            if !graph.contains(id) {
+                return Err(PdfModelError::MissingObject(id));
+            }
+        }
+        for event in graph.values(indirect.object) {
+            let PdfValueEvent::Value { value, depth } = event else {
+                continue;
+            };
+            if depth > limits.max_depth {
+                return Err(PdfModelError::NestingTooDeep {
+                    actual: depth,
+                    limit: limits.max_depth,
+                });
+            }
+            value_count = value_count
+                .checked_add(1)
+                .expect("an addressable PDF cannot contain usize::MAX values");
+            if value_count > limits.max_values {
+                return Err(PdfModelError::TooManyValues {
+                    actual: value_count,
+                    limit: limits.max_values,
+                });
+            }
+            if let PdfValue::Reference(id) = value
+                && !graph.contains(*id)
+            {
+                return Err(PdfModelError::MissingObject(*id));
+            }
+        }
     }
     validate_page_graph(document)?;
     validate_outline_graph(document, limits.max_depth)
@@ -1034,188 +940,6 @@ fn validate_outline_siblings(
         return Err(PdfModelError::OutlineSiblingInvalid(last));
     }
     Ok((total, visible))
-}
-
-fn validate_object_values(
-    object: &PdfObject,
-    ids: &BTreeSet<PdfObjectId>,
-    value_count: &mut usize,
-    max_values: usize,
-    max_depth: usize,
-) -> Result<(), PdfModelError> {
-    let mut stack = Vec::new();
-    match object {
-        PdfObject::Value(value) => stack.push((value, 1_usize)),
-        PdfObject::Stream { dictionary, .. }
-        | PdfObject::EncodedStream { dictionary, .. }
-        | PdfObject::FormXObject { dictionary, .. } => {
-            stack.extend(dictionary.iter().map(|(_, value)| (value, 1)))
-        }
-        PdfObject::Raw(_) => {}
-        PdfObject::ImageXObject { image, .. } => {
-            if let Some(mask) = image.soft_mask
-                && !ids.contains(&mask)
-            {
-                return Err(PdfModelError::MissingObject(mask));
-            }
-        }
-        PdfObject::Annotation(annotation) => {
-            if let Some(PdfAnnotationAction::Destination(action)) = &annotation.action {
-                if let PdfDestinationTarget::Page {
-                    page: PdfDestinationPage::Internal(id),
-                    ..
-                } = action.target
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-                if let PdfDestinationTarget::Reference(id) = action.target
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-                if let Some(PdfDestinationStructure::Internal(id)) = action.structure
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-            }
-        }
-        PdfObject::Destination(destination) | PdfObject::NamedDestination(destination) => {
-            if !ids.contains(&destination.page) {
-                return Err(PdfModelError::MissingObject(destination.page));
-            }
-        }
-        PdfObject::DestinationNameTree(tree) => match &tree.children {
-            PdfDestinationNameTreeChildren::Names(entries) => {
-                for (_, id) in entries {
-                    if !ids.contains(id) {
-                        return Err(PdfModelError::MissingObject(*id));
-                    }
-                }
-            }
-            PdfDestinationNameTreeChildren::Kids(kids) => {
-                for id in kids {
-                    if !ids.contains(id) {
-                        return Err(PdfModelError::MissingObject(*id));
-                    }
-                }
-            }
-        },
-        PdfObject::Names(names) => {
-            if let Some(id) = names.destinations
-                && !ids.contains(&id)
-            {
-                return Err(PdfModelError::MissingObject(id));
-            }
-        }
-        PdfObject::Action(action) => {
-            if let PdfAnnotationAction::Destination(action) = action {
-                if let PdfDestinationTarget::Page {
-                    page: PdfDestinationPage::Internal(id),
-                    ..
-                } = action.target
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-                if let PdfDestinationTarget::Reference(id) = action.target
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-                if let Some(PdfDestinationStructure::Internal(id)) = action.structure
-                    && !ids.contains(&id)
-                {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-            }
-        }
-        PdfObject::PdfStringSyntax(_) => {}
-        PdfObject::Outline(outline) => {
-            for id in [outline.first, outline.last] {
-                if !ids.contains(&id) {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-            }
-        }
-        PdfObject::OutlineItem(item) => {
-            for id in [
-                Some(item.title),
-                Some(item.action),
-                Some(item.parent),
-                item.previous,
-                item.next,
-                item.first,
-                item.last,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !ids.contains(&id) {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-            }
-        }
-        PdfObject::ThreadList(threads) => {
-            for id in threads {
-                if !ids.contains(id) {
-                    return Err(PdfModelError::MissingObject(*id));
-                }
-            }
-        }
-        PdfObject::Thread(thread) => {
-            if !ids.contains(&thread.first_bead) {
-                return Err(PdfModelError::MissingObject(thread.first_bead));
-            }
-        }
-        PdfObject::Bead(bead) => {
-            for id in [
-                bead.thread,
-                Some(bead.previous),
-                Some(bead.next),
-                Some(bead.page),
-                Some(bead.rectangle),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if !ids.contains(&id) {
-                    return Err(PdfModelError::MissingObject(id));
-                }
-            }
-        }
-    }
-    while let Some((value, depth)) = stack.pop() {
-        if depth > max_depth {
-            return Err(PdfModelError::NestingTooDeep {
-                actual: depth,
-                limit: max_depth,
-            });
-        }
-        *value_count = value_count
-            .checked_add(1)
-            .expect("an addressable PDF cannot contain usize::MAX values");
-        if *value_count > max_values {
-            return Err(PdfModelError::TooManyValues {
-                actual: *value_count,
-                limit: max_values,
-            });
-        }
-        match value {
-            PdfValue::Reference(id) if !ids.contains(id) => {
-                return Err(PdfModelError::MissingObject(*id));
-            }
-            PdfValue::Array(values) => {
-                stack.extend(values.iter().map(|value| (value, depth + 1)));
-            }
-            PdfValue::Dictionary(dictionary) => {
-                stack.extend(dictionary.iter().map(|(_, value)| (value, depth + 1)));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
 }
 
 fn validate_page_graph(document: &UnvalidatedPdfDocument) -> Result<(), PdfModelError> {
@@ -1326,18 +1050,11 @@ fn validate_page(
 }
 
 fn object(document: &UnvalidatedPdfDocument, id: PdfObjectId) -> Option<&PdfObject> {
-    document
-        .objects
-        .binary_search_by_key(&id, |object| object.id)
-        .ok()
-        .map(|index| &document.objects[index].object)
+    PdfGraphView::unvalidated(document).object(id)
 }
 
 fn object_dictionary(document: &UnvalidatedPdfDocument, id: PdfObjectId) -> Option<&PdfDictionary> {
-    match object(document, id) {
-        Some(PdfObject::Value(PdfValue::Dictionary(dictionary))) => Some(dictionary),
-        _ => None,
-    }
+    PdfGraphView::unvalidated(document).dictionary(id)
 }
 
 fn reference_value(value: Option<&PdfValue>) -> Option<PdfObjectId> {
@@ -1645,54 +1362,57 @@ fn hash_annotation_action(action: Option<&PdfAnnotationAction>, hasher: &mut Can
 }
 
 fn hash_value(value: &PdfValue, hasher: &mut CanonicalHasher) {
-    match value {
-        PdfValue::Null => hasher.byte(0),
-        PdfValue::Bool(value) => {
-            hasher.byte(1);
-            hasher.byte(u8::from(*value));
-        }
-        PdfValue::Integer(value) => {
-            hasher.byte(2);
-            hasher.i64(*value);
-        }
-        PdfValue::Number(value) => {
-            hasher.byte(3);
-            hasher.i64(value.coefficient());
-            hasher.byte(value.decimal_places());
-        }
-        PdfValue::Name(name) => {
-            hasher.byte(4);
-            hasher.bytes(name.as_bytes());
-        }
-        PdfValue::String(value) => {
-            hasher.byte(5);
-            hasher.bytes(value);
-        }
-        PdfValue::Array(values) => {
-            hasher.byte(6);
-            hasher.len(values.len());
-            for value in values {
-                hash_value(value, hasher);
-            }
-        }
-        PdfValue::Dictionary(dictionary) => {
-            hasher.byte(7);
-            hash_dictionary(dictionary, hasher);
-        }
-        PdfValue::Reference(id) => {
-            hasher.byte(8);
-            hasher.u32(id.get());
-        }
-    }
+    hash_value_events(PdfValueCursor::value(value), hasher);
 }
 
 fn hash_dictionary(dictionary: &PdfDictionary, hasher: &mut CanonicalHasher) {
     hasher.len(dictionary.len());
-    for (key, value) in dictionary.iter() {
-        hasher.bytes(key.as_bytes());
-        hash_value(value, hasher);
+    hash_value_events(PdfValueCursor::dictionary(dictionary), hasher);
+}
+
+fn hash_value_events(cursor: PdfValueCursor<'_>, hasher: &mut CanonicalHasher) {
+    for event in cursor {
+        match event {
+            PdfValueEvent::Value { value, .. } => match value {
+                PdfValue::Null => hasher.byte(0),
+                PdfValue::Bool(value) => {
+                    hasher.byte(1);
+                    hasher.byte(u8::from(*value));
+                }
+                PdfValue::Integer(value) => {
+                    hasher.byte(2);
+                    hasher.i64(*value);
+                }
+                PdfValue::Number(value) => {
+                    hasher.byte(3);
+                    hasher.i64(value.coefficient());
+                    hasher.byte(value.decimal_places());
+                }
+                PdfValue::Name(name) => {
+                    hasher.byte(4);
+                    hasher.bytes(name.as_bytes());
+                }
+                PdfValue::String(value) => {
+                    hasher.byte(5);
+                    hasher.bytes(value);
+                }
+                PdfValue::Array(values) => {
+                    hasher.byte(6);
+                    hasher.len(values.len());
+                }
+                PdfValue::Dictionary(dictionary) => {
+                    hasher.byte(7);
+                    hasher.len(dictionary.len());
+                }
+                PdfValue::Reference(id) => {
+                    hasher.byte(8);
+                    hasher.u32(id.get());
+                }
+            },
+            PdfValueEvent::DictionaryKey(key) => hasher.bytes(key.as_bytes()),
+            PdfValueEvent::DictionaryRaw(raw) => hasher.bytes(raw),
+        }
     }
-    hasher.bytes(dictionary.raw_entries());
 }
 
 struct CanonicalHasher(Sha256);

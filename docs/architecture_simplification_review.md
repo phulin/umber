@@ -393,6 +393,16 @@ Retain the current serializers as fallback visitors until byte parity is establi
 
 **Dependencies and conflicts.** Rank 1 supplies canonical page effects; rank 10 supplies DVI-side page currency. Rank 11’s detached content work must not be counted again as PDF graph deletion.
 
+**Migration status.** Complete. `tex-out` now owns one private `PdfGraphView`
+and nested-value cursor used by validation, semantic hashing, serializer
+preflight, ordinary serialization, and object-stream selection. One private
+`PdfPaintProgram` owns compact and ordered page/form policies and the shared
+graphics/text-state interpreter. `umber` passes the canonical operation stream
+directly to either policy instead of reconstructing rectangle and text lists.
+Allocation, coordinate conversion, resource construction, annotations, images,
+fonts, object streams, and compression remain explicit in their existing
+owners.
+
 ### 13. Consolidate node schema and source-independent traversal
 
 Affected crates: `tex-state`, `tex-typeset`, `tex-exec`, `tex-out`, and `tex-command-stream`.

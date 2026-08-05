@@ -16,6 +16,7 @@ use super::{
     PdfDestinationStructure, PdfDestinationTarget, PdfDestinationView, PdfDictionary, PdfDocument,
     PdfExplicitDestination, PdfImageColorSpace, PdfImageFilter, PdfImageXObject, PdfNumber,
     PdfObject, PdfObjectId, PdfValue,
+    graph::{PdfGraphView, PdfObjectRole, PdfValueEvent},
 };
 
 /// Deterministic stream encoding selected at final serialization.
@@ -82,6 +83,7 @@ impl PdfDocument {
         options: PdfSerializationOptions,
     ) -> Result<Vec<u8>, PdfSerializeError> {
         validate_serialization_inputs(self, options)?;
+        let graph = PdfGraphView::validated(self);
 
         let mut pdf = Pdf::with_settings(Settings {
             pretty: options.pretty,
@@ -92,10 +94,10 @@ impl PdfDocument {
         }
         pdf.set_trailer_raw_entries(self.trailer().raw_entries.clone());
 
-        for indirect in self.objects() {
+        for indirect in graph.objects() {
             let reference = writer_ref(indirect.id)?;
-            if indirect.id == self.catalog() {
-                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object else {
+            if indirect.role == PdfObjectRole::Catalog {
+                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = indirect.object else {
                     unreachable!("validated PDF catalog is a dictionary")
                 };
                 let mut catalog = pdf.catalog(reference);
@@ -110,8 +112,8 @@ impl PdfDocument {
                 catalog.finish();
                 continue;
             }
-            if self.trailer().info == Some(indirect.id) {
-                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object else {
+            if indirect.role == PdfObjectRole::Info {
+                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = indirect.object else {
                     unreachable!("validated PDF info object is a dictionary")
                 };
                 let mut info = pdf.document_info(reference);
@@ -119,9 +121,10 @@ impl PdfDocument {
                 info.finish();
                 continue;
             }
-            if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
-                && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
-            {
+            if indirect.role == PdfObjectRole::Page {
+                let PdfObject::Value(PdfValue::Dictionary(dictionary)) = indirect.object else {
+                    unreachable!("validated PDF page is a dictionary")
+                };
                 let mut page = pdf.page(reference);
                 if let Some(PdfValue::Array(ids)) = dictionary.get(b"Annots") {
                     page.annotations(ids.iter().map(|value| match value {
@@ -152,7 +155,7 @@ impl PdfDocument {
                 continue;
             }
 
-            match &indirect.object {
+            match indirect.object {
                 PdfObject::Value(value)
                     if matches!(options.object_compression, PdfObjectCompression::None) =>
                 {
@@ -288,18 +291,13 @@ impl PdfDocument {
         match options.object_compression {
             PdfObjectCompression::None => Ok(pdf.finish()),
             PdfObjectCompression::ObjectStreams { .. } => {
-                let (object_stream_id, xref_id) = auxiliary_refs(self)?;
+                let (object_stream_id, xref_id) = auxiliary_refs(&graph)?;
                 let mut object_stream = pdf.object_stream(object_stream_id);
-                for indirect in self.objects() {
-                    if indirect.id == self.catalog() || self.trailer().info == Some(indirect.id) {
+                for indirect in graph.objects() {
+                    if indirect.role != PdfObjectRole::Ordinary {
                         continue;
                     }
-                    if let PdfObject::Value(PdfValue::Dictionary(dictionary)) = &indirect.object
-                        && matches!(dictionary.get(b"Type"), Some(PdfValue::Name(name)) if name.as_bytes() == b"Page")
-                    {
-                        continue;
-                    }
-                    match &indirect.object {
+                    match indirect.object {
                         PdfObject::Value(value) => {
                             write_value(object_stream.object(writer_ref(indirect.id)?), value)?;
                         }
@@ -502,9 +500,30 @@ fn validate_serialization_inputs(
     {
         return Err(PdfSerializeError::ObjectStreamsRequirePdf15);
     }
-    for indirect in document.objects() {
+    let graph = PdfGraphView::validated(document);
+    for indirect in graph.objects() {
         writer_ref(indirect.id)?;
-        validate_object_scalars(&indirect.object)?;
+        for event in graph.values(indirect.object) {
+            let PdfValueEvent::Value { value, .. } = event else {
+                continue;
+            };
+            match value {
+                PdfValue::Integer(value) => {
+                    i32::try_from(*value)
+                        .map_err(|_| PdfSerializeError::IntegerOutOfRange(*value))?;
+                }
+                PdfValue::Reference(id) => {
+                    writer_ref(*id)?;
+                }
+                PdfValue::Null
+                | PdfValue::Bool(_)
+                | PdfValue::Number(_)
+                | PdfValue::Name(_)
+                | PdfValue::String(_)
+                | PdfValue::Array(_)
+                | PdfValue::Dictionary(_) => {}
+            }
+        }
         if matches!(
             options.stream_compression,
             PdfStreamCompression::Flate { .. }
@@ -517,11 +536,8 @@ fn validate_serialization_inputs(
     Ok(())
 }
 
-fn auxiliary_refs(document: &PdfDocument) -> Result<(Ref, Ref), PdfSerializeError> {
-    let last = document
-        .objects()
-        .last()
-        .map_or(0, |object| object.id.get());
+fn auxiliary_refs(graph: &PdfGraphView<'_>) -> Result<(Ref, Ref), PdfSerializeError> {
+    let last = graph.last_id().map_or(0, PdfObjectId::get);
     let object_stream = last
         .checked_add(1)
         .and_then(PdfObjectId::new)
@@ -531,48 +547,6 @@ fn auxiliary_refs(document: &PdfDocument) -> Result<(Ref, Ref), PdfSerializeErro
         .and_then(PdfObjectId::new)
         .ok_or(PdfSerializeError::ObjectIdSpaceExhausted)?;
     Ok((writer_ref(object_stream)?, writer_ref(xref)?))
-}
-
-fn validate_object_scalars(object: &PdfObject) -> Result<(), PdfSerializeError> {
-    let mut stack = Vec::new();
-    match object {
-        PdfObject::Value(value) => stack.push(value),
-        PdfObject::Stream { dictionary, .. }
-        | PdfObject::EncodedStream { dictionary, .. }
-        | PdfObject::FormXObject { dictionary, .. } => {
-            stack.extend(dictionary.iter().map(|(_, value)| value));
-        }
-        PdfObject::Raw(_) => {}
-        PdfObject::Annotation(_) => {}
-        PdfObject::ImageXObject { .. }
-        | PdfObject::Destination(_)
-        | PdfObject::NamedDestination(_)
-        | PdfObject::DestinationNameTree(_)
-        | PdfObject::Names(_)
-        | PdfObject::Action(_)
-        | PdfObject::PdfStringSyntax(_)
-        | PdfObject::Outline(_)
-        | PdfObject::OutlineItem(_)
-        | PdfObject::ThreadList(_)
-        | PdfObject::Thread(_)
-        | PdfObject::Bead(_) => {}
-    }
-    while let Some(value) = stack.pop() {
-        match value {
-            PdfValue::Integer(value) => {
-                i32::try_from(*value).map_err(|_| PdfSerializeError::IntegerOutOfRange(*value))?;
-            }
-            PdfValue::Reference(id) => {
-                writer_ref(*id)?;
-            }
-            PdfValue::Array(values) => stack.extend(values),
-            PdfValue::Dictionary(dictionary) => {
-                stack.extend(dictionary.iter().map(|(_, value)| value));
-            }
-            _ => {}
-        }
-    }
-    Ok(())
 }
 
 fn write_form_xobject(

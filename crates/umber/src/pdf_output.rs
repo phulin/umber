@@ -925,21 +925,7 @@ fn pdf_from_committed_artifacts_at_dpi_with_virtual_fonts(
                 data: if has_pdf_graphics {
                     ordered_page_content(&content_operations)
                 } else {
-                    let rectangles = content_operations
-                        .iter()
-                        .filter_map(|operation| match operation {
-                            PdfContentOperation::Rectangle(rectangle) => Some(*rectangle),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    let text_runs = content_operations
-                        .iter()
-                        .filter_map(|operation| match operation {
-                            PdfContentOperation::Text(run) => Some(run.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>();
-                    page_content(&rectangles, &text_runs)
+                    page_content(&content_operations)
                 },
             },
         });

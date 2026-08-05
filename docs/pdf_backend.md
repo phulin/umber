@@ -128,8 +128,11 @@ the action and the nonsequential page-object ordering used by pdfTeX.
 The implemented adapter pins `pdf-writer` 0.15.0 and emits deterministic PDF
 through that crate. It visits objects in ascending Umber identity order,
 ordinary dictionaries in bytewise name order, and values in canonical graph
-order. The typed catalog writer owns its required `/Type /Catalog` entry; the
-remaining catalog entries retain model order.
+order. One private detached-graph view classifies catalog, information, page,
+and ordinary objects and supplies the nested-value cursor used by validation,
+semantic hashing, serializer preflight, and serialization. The typed catalog
+writer owns its required `/Type /Catalog` entry; the remaining catalog entries
+retain model order.
 `pdf_writer` owns PDF token spelling, escaping, stream lengths, byte offsets,
 the cross-reference table, trailer size, and final framing. Umber owns the
 visit order, normalized fixed-point inputs, page/resource structure, and the
@@ -151,6 +154,12 @@ Type3 bitmap glyph streams also remain crate-owned: the fork's content
 builder accepts typed width, height, image-mask, bit depth, decode array, and
 payload inputs and writes the complete inline-image operation. Umber never
 handwrites `BI`, `ID`, or `EI` framing.
+
+Page and form content use one private paint program with explicit compact and
+ordered construction policies. Compact construction groups rules before text;
+ordered construction retains pdfTeX literal, color-stack, matrix, save/restore,
+form, and image order. Both policies execute through one graphics/text-state
+interpreter, including origin restoration and typed `pdf_writer` operators.
 
 The selected 0.15.0 source fork is `phulin/pdf-writer` commit
 `030c3b1ad0e528b13ee3e6ca4605c91fbeaa3d91`, revision-pinned through
