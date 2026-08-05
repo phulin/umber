@@ -8,17 +8,28 @@ mod compiler;
 mod lexer;
 mod pool;
 mod program;
+mod read;
+mod vm;
 
-pub use cache::CompilationCache;
-pub use compiler::{CompileResult, compile};
-pub use pool::{
-    ClassicStringPool, PoolStringId, StringPoolLimit, StringPoolLimits, StringPoolUsage,
+pub(crate) use cache::ClassicRuntimeCache;
+pub(crate) use compiler::{CompileResult, compile};
+pub(crate) use pool::ClassicStringPool;
+pub(crate) use program::{
+    BUILTIN_REGISTRY, Builtin, Callable, CompiledCommand, CompiledStyle, FunctionId, Instruction,
+    SpecialSymbol, SymbolId, SymbolKind,
 };
-pub use program::{
-    Builtin, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
-    Instruction, ProgramCharge, SpecialSymbol, StringId, Symbol, SymbolId, SymbolKind,
-    Web2cReallocation,
+pub(crate) use read::{
+    ClassicDatabase, ClassicDatabaseDiagnostic, ClassicDatabaseEntry, ClassicDatabaseSource,
 };
+pub(crate) use vm::{
+    ClassicVmDiagnostic, ClassicVmDiagnosticKind, ClassicVmLimits, ClassicVmLogEvent,
+    ClassicVmResult, execute_classic_style,
+};
+
+#[cfg(test)]
+pub(crate) use pool::StringPoolLimit;
+#[cfg(test)]
+pub(crate) use read::prepare_classic_database;
 
 /// Hard limits for one style compilation.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -50,10 +61,6 @@ impl Default for CompileLimits {
     }
 }
 
-/// The stable classic-0.99d compiler identity used by caches.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct ClassicCompatibility;
-
 /// A byte/line source coordinate. Byte offsets are zero based; lines and
 /// columns are one based and count source bytes, not Unicode scalar values.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -68,16 +75,8 @@ impl SourceLocation {
         Self { byte, line, column }
     }
     #[must_use]
-    pub const fn byte(self) -> usize {
-        self.byte
-    }
-    #[must_use]
     pub const fn line(self) -> usize {
         self.line
-    }
-    #[must_use]
-    pub const fn column(self) -> usize {
-        self.column
     }
 }
 
@@ -111,12 +110,9 @@ impl Diagnostic {
         }
     }
     #[must_use]
+    #[cfg(test)]
     pub const fn kind(&self) -> DiagnosticKind {
         self.kind
-    }
-    #[must_use]
-    pub const fn location(&self) -> SourceLocation {
-        self.location
     }
     #[must_use]
     pub fn message(&self) -> &str {

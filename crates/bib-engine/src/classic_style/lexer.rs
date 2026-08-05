@@ -1,6 +1,6 @@
 //! Byte-aware classic BST tokenization.
 
-use crate::{CompileLimits, Diagnostic, DiagnosticKind, SourceLocation};
+use super::{CompileLimits, Diagnostic, DiagnosticKind, SourceLocation};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TokenKind {

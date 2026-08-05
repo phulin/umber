@@ -5,14 +5,14 @@
 //! duplicate handling, citation selection, and crossref inheritance remain
 //! observable to the later BST VM.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem;
 use std::sync::Arc;
 
-use bib_bst::{ClassicStringPool, CompiledStyle, SymbolId, SymbolKind};
 use bib_input::{RawBibDatabase, RawBibEntry, RawBibRecord, RawBibValue, RawBibValuePart};
 use umber_vfs::{FileContentId, VirtualPath};
 
+use super::{ClassicStringPool, CompiledStyle, SymbolId, SymbolKind};
 use crate::{ClassicControl, ClassicDatabaseOptions, ClassicSourceLocation};
 
 /// One raw datasource with its immutable VFS identity.
@@ -48,6 +48,7 @@ pub struct ClassicDatabaseDiagnostic {
 
 impl ClassicDatabaseDiagnostic {
     #[must_use]
+    #[cfg(test)]
     pub const fn kind(&self) -> ClassicDatabaseDiagnosticKind {
         self.kind
     }
@@ -103,12 +104,6 @@ impl ClassicDatabaseEntry {
         self.fields.get(&symbol).map(String::as_str)
     }
 
-    pub fn fields(&self) -> impl ExactSizeIterator<Item = (SymbolId, &str)> {
-        self.fields
-            .iter()
-            .map(|(&symbol, value)| (symbol, value.as_str()))
-    }
-
     #[must_use]
     pub fn crossref(&self) -> Option<&str> {
         self.crossref.as_deref()
@@ -132,10 +127,6 @@ pub struct ClassicDatabase {
 impl ClassicDatabase {
     pub fn entries(&self) -> impl ExactSizeIterator<Item = &ClassicDatabaseEntry> {
         self.entries.iter()
-    }
-
-    pub fn preambles(&self) -> impl ExactSizeIterator<Item = &str> {
-        self.preambles.iter().map(String::as_str)
     }
 
     /// The value visible through the future `preamble$` builtin.
@@ -191,7 +182,7 @@ impl ClassicDatabase {
 }
 
 impl ClassicDatabaseEntry {
-    fn retained_bytes(&self) -> usize {
+    pub(super) fn retained_bytes(&self) -> usize {
         mem::size_of::<Self>()
             .saturating_add(self.key.capacity())
             .saturating_add(self.entry_type.capacity())
@@ -218,135 +209,6 @@ impl ClassicDatabaseDiagnostic {
     }
 }
 
-/// Prepared-database cache keyed by every `READ` semantic input.
-#[derive(Clone, Debug)]
-pub struct ClassicDatabaseCache {
-    values: BTreeMap<PreparedKey, Arc<ClassicDatabase>>,
-    order: VecDeque<PreparedKey>,
-    retained_bytes: usize,
-    max_entries: usize,
-    max_bytes: usize,
-}
-
-impl Default for ClassicDatabaseCache {
-    fn default() -> Self {
-        Self::new(32, 64 * 1024 * 1024)
-    }
-}
-
-impl ClassicDatabaseCache {
-    #[must_use]
-    pub const fn new(max_entries: usize, max_bytes: usize) -> Self {
-        Self {
-            values: BTreeMap::new(),
-            order: VecDeque::new(),
-            retained_bytes: 0,
-            max_entries,
-            max_bytes,
-        }
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
-    /// Bytes charged to immutable prepared views and their cache keys.
-    #[must_use]
-    pub const fn retained_bytes(&self) -> usize {
-        self.retained_bytes
-    }
-
-    /// Applies persistent-session cache policy before a job begins. Any
-    /// tighter policy immediately evicts the oldest immutable views.
-    pub fn set_limits(&mut self, max_entries: usize, max_bytes: usize) {
-        self.max_entries = max_entries;
-        self.max_bytes = max_bytes;
-        if max_entries == 0 || max_bytes == 0 {
-            self.values.clear();
-            self.order.clear();
-            self.retained_bytes = 0;
-            return;
-        }
-        while self.values.len() > max_entries || self.retained_bytes > max_bytes {
-            if !self.evict_oldest() {
-                break;
-            }
-        }
-    }
-
-    pub fn prepare(
-        &mut self,
-        control: &ClassicControl,
-        style: &CompiledStyle,
-        sources: &[ClassicDatabaseSource<'_>],
-        options: &ClassicDatabaseOptions,
-    ) -> Arc<ClassicDatabase> {
-        let key = PreparedKey::new(control, style, sources, options);
-        if let Some(value) = self.values.get(&key) {
-            return Arc::clone(value);
-        }
-        let value = Arc::new(prepare_classic_database(control, style, sources, options));
-        self.insert(key, Arc::clone(&value));
-        value
-    }
-
-    fn insert(&mut self, key: PreparedKey, value: Arc<ClassicDatabase>) {
-        if self.max_entries == 0 || self.max_bytes == 0 {
-            return;
-        }
-        // The FIFO order owns a second key so eviction does not depend on map
-        // ordering. Charge both copies as well as the immutable prepared view.
-        let charge = key
-            .retained_bytes()
-            .saturating_mul(2)
-            .saturating_add(value.retained_bytes());
-        if charge > self.max_bytes {
-            return;
-        }
-        while self.values.len() >= self.max_entries
-            || self.retained_bytes.saturating_add(charge) > self.max_bytes
-        {
-            if !self.evict_oldest() {
-                break;
-            }
-        }
-        self.retained_bytes = self.retained_bytes.saturating_add(charge);
-        self.order.push_back(key.clone());
-        self.values.insert(key, value);
-    }
-
-    fn evict_oldest(&mut self) -> bool {
-        let Some(oldest) = self.order.pop_front() else {
-            self.values.clear();
-            self.retained_bytes = 0;
-            return false;
-        };
-        if let Some(evicted) = self.values.remove(&oldest) {
-            self.retained_bytes = self.retained_bytes.saturating_sub(
-                oldest
-                    .retained_bytes()
-                    .saturating_mul(2)
-                    .saturating_add(evicted.retained_bytes()),
-            );
-            true
-        } else {
-            // The FIFO and lookup map are always updated together. Recover
-            // defensively if an internal invariant is ever violated rather
-            // than allowing cache eviction to spin in a persistent session.
-            self.values.clear();
-            self.order.clear();
-            self.retained_bytes = 0;
-            false
-        }
-    }
-}
-
 /// Prepares one classic database without caching.
 #[must_use]
 pub fn prepare_classic_database(
@@ -364,7 +226,7 @@ pub fn prepare_classic_database(
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct PreparedKey {
+pub(super) struct PreparedKey {
     sources: Vec<(String, FileContentId, String)>,
     citations: Vec<String>,
     schema: Vec<(String, String, String)>,
@@ -372,7 +234,7 @@ struct PreparedKey {
 }
 
 impl PreparedKey {
-    fn new(
+    pub(super) fn new(
         control: &ClassicControl,
         style: &CompiledStyle,
         sources: &[ClassicDatabaseSource<'_>],
@@ -413,7 +275,7 @@ impl PreparedKey {
         }
     }
 
-    fn retained_bytes(&self) -> usize {
+    pub(super) fn retained_bytes(&self) -> usize {
         mem::size_of::<Self>()
             .saturating_add(
                 self.sources
@@ -908,5 +770,5 @@ fn project(
 }
 
 #[cfg(test)]
-#[path = "classic_database/tests.rs"]
+#[path = "read/tests.rs"]
 mod tests;

@@ -7,22 +7,24 @@
 
 use std::sync::Arc;
 
-use bib_bst::{ClassicStringPool, CompilationCache, CompileLimits, CompiledStyle, Instruction};
 use bib_input::parse_raw_bibtex_bytes;
 use umber_vfs::{FileKind, FileRequest, FileRequestBatch, VfsSnapshot, VirtualPath};
 
+use crate::classic_style::{
+    BUILTIN_REGISTRY, ClassicDatabase, ClassicDatabaseDiagnostic, ClassicDatabaseSource,
+    ClassicRuntimeCache, ClassicStringPool, ClassicVmDiagnostic, ClassicVmDiagnosticKind,
+    ClassicVmLimits, ClassicVmLogEvent, ClassicVmResult, CompileLimits, CompiledStyle, Instruction,
+    execute_classic_style,
+};
 use crate::{
     BibliographyAttempt, BibliographyDiagnostic, BibliographyDiagnosticCode, BibliographyDocument,
     BibliographyHistory, BibliographyResult, BibliographyStats, ClassicBibCacheUsage,
-    ClassicBibJob, ClassicControl, ClassicDatabaseCache, ClassicDatabaseDiagnostic,
-    ClassicDiagnosticCode, ClassicVmDiagnostic, ClassicVmDiagnosticKind, ClassicVmLimits,
-    GeneratedFile, execute_classic_style,
+    ClassicBibJob, ClassicControl, ClassicDiagnosticCode, GeneratedFile,
 };
 
 #[derive(Clone, Debug)]
 pub(crate) struct ClassicExecutionSession {
-    styles: CompilationCache,
-    databases: ClassicDatabaseCache,
+    cache: ClassicRuntimeCache,
 }
 
 impl Default for ClassicExecutionSession {
@@ -35,8 +37,7 @@ impl ClassicExecutionSession {
     pub(crate) fn new() -> Self {
         let limits = CompileLimits::default();
         Self {
-            styles: CompilationCache::new(32, limits.retained_cache_bytes),
-            databases: ClassicDatabaseCache::new(32, limits.retained_cache_bytes),
+            cache: ClassicRuntimeCache::new(32, limits.retained_cache_bytes),
         }
     }
 
@@ -48,9 +49,7 @@ impl ClassicExecutionSession {
         control_session: &mut crate::classic::ClassicControlSession,
         accepted_inputs: &mut Vec<crate::BibliographyInput>,
     ) -> BibliographyAttempt {
-        self.styles
-            .set_limits(job.options().cache_entries(), job.options().cache_bytes());
-        self.databases
+        self.cache
             .set_limits(job.options().cache_entries(), job.options().cache_bytes());
         let Some(style_name) = control.style() else {
             return self.finished_empty(control);
@@ -93,7 +92,7 @@ impl ClassicExecutionSession {
         }));
         let style_file = found[0];
         let compile = self
-            .styles
+            .cache
             .compile(style_file.bytes(), CompileLimits::default());
         let mut diagnostics = compile
             .diagnostics()
@@ -122,11 +121,9 @@ impl ClassicExecutionSession {
             .collect::<Vec<_>>();
         let database_sources = sources
             .iter()
-            .map(|(file, raw)| {
-                crate::ClassicDatabaseSource::new(file.path(), file.content_id(), raw)
-            })
+            .map(|(file, raw)| ClassicDatabaseSource::new(file.path(), file.content_id(), raw))
             .collect::<Vec<_>>();
-        let database = self.databases.prepare(
+        let database = self.cache.prepare(
             &control,
             style,
             &database_sources,
@@ -181,9 +178,10 @@ impl ClassicExecutionSession {
     }
 
     pub(crate) fn cache_usage(&self) -> ClassicBibCacheUsage {
+        let (compiled_styles, prepared_databases) = self.cache.retained_bytes();
         ClassicBibCacheUsage {
-            compiled_styles: self.styles.retained_bytes(),
-            prepared_databases: self.databases.retained_bytes(),
+            compiled_styles,
+            prepared_databases,
         }
     }
 
@@ -342,8 +340,8 @@ fn vm_diagnostic(diagnostic: &ClassicVmDiagnostic) -> BibliographyDiagnostic {
 fn render_log(
     control: &ClassicControl,
     style: &CompiledStyle,
-    database: &crate::ClassicDatabase,
-    vm: &crate::ClassicVmResult,
+    database: &ClassicDatabase,
+    vm: &ClassicVmResult,
 ) -> Vec<u8> {
     let mut log = String::from("This is BibTeX, Version 0.99d (TeX Live 2025)\n");
     log.push_str("Capacity: max_strings=200000, hash_size=200000, hash_prime=170003\n");
@@ -363,11 +361,11 @@ fn render_log(
     }
     for event in vm.log_events() {
         match event {
-            crate::classic_vm::ClassicVmLogEvent::Stack(value) => {
+            ClassicVmLogEvent::Stack(value) => {
                 log.push_str(value);
                 log.push('\n');
             }
-            crate::classic_vm::ClassicVmLogEvent::Diagnostic(diagnostic) => {
+            ClassicVmLogEvent::Diagnostic(diagnostic) => {
                 render_vm_diagnostic(&mut log, diagnostic, control)
             }
         }
@@ -389,10 +387,7 @@ fn render_log(
     log.push_str(&format!(
         "and the built_in function-call counts, {calls} in all, are:\n"
     ));
-    for ((_, name), calls) in crate::classic_vm::CLASSIC_BUILTINS
-        .iter()
-        .zip(vm.builtin_calls())
-    {
+    for ((_, name), calls) in BUILTIN_REGISTRY.iter().zip(vm.builtin_calls()) {
         log.push_str(&format!("{name} -- {calls}\n"));
     }
     let errors = vm
@@ -527,7 +522,7 @@ fn wiz_defined_locations(style: &CompiledStyle) -> usize {
 fn classic_string_usage(
     control: &ClassicControl,
     style: &CompiledStyle,
-    database: &crate::ClassicDatabase,
+    database: &ClassicDatabase,
 ) -> (usize, usize) {
     let mut pool = ClassicStringPool::web2c();
     for (index, aux) in control.aux_files().enumerate() {

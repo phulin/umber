@@ -2,18 +2,19 @@
 
 use std::sync::Arc;
 
-use crate::lexer::{Token, TokenKind, lex};
-use crate::program::{
-    Builtin, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
+use super::lexer::{Token, TokenKind, lex};
+use super::program::{
+    Builtin, Callable, CompiledCommand, CompiledFunction, CompiledStyle, Declarations, FunctionId,
     Instruction, ProgramCharge, SpecialSymbol, SymbolId, SymbolKind, Web2cReallocation, builtin,
     fold,
 };
-use crate::{CompileLimits, CompileStats, Diagnostic, DiagnosticKind, SourceLocation};
+use super::{CompileLimits, CompileStats, Diagnostic, DiagnosticKind, SourceLocation};
 
 #[derive(Clone, Debug)]
 pub struct CompileResult {
     program: Option<Arc<CompiledStyle>>,
     diagnostics: Vec<Diagnostic>,
+    #[cfg_attr(not(test), allow(dead_code))]
     stats: CompileStats,
 }
 impl CompileResult {
@@ -26,10 +27,12 @@ impl CompileResult {
         &self.diagnostics
     }
     #[must_use]
+    #[cfg(test)]
     pub const fn stats(&self) -> CompileStats {
         self.stats
     }
     #[must_use]
+    #[cfg(test)]
     pub fn is_success(&self) -> bool {
         self.program.is_some()
     }
@@ -495,13 +498,17 @@ impl Compiler {
             return;
         };
         match kind {
-            SymbolKind::Builtin(builtin) => instructions.push(Instruction::Builtin(builtin)),
+            SymbolKind::Builtin(builtin) => {
+                instructions.push(Instruction::Call(Callable::Builtin(builtin)))
+            }
             SymbolKind::UserFunction(function) if function == current => self.error(
                 DiagnosticKind::IllegalRecursion,
                 location,
                 "recursive BST function definition",
             ),
-            SymbolKind::UserFunction(function) => instructions.push(Instruction::Call(function)),
+            SymbolKind::UserFunction(function) => {
+                instructions.push(Instruction::Call(Callable::Function(function)))
+            }
             _ => instructions.push(Instruction::Read(id)),
         }
     }
@@ -691,7 +698,7 @@ impl Compiler {
         let id = FunctionId(self.functions.len() as u32);
         self.functions.push(CompiledFunction::new(
             format!("<builtin:{name}>"),
-            vec![Instruction::Builtin(builtin)],
+            vec![Instruction::Call(Callable::Builtin(builtin))],
         ));
         Some(id)
     }

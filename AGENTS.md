@@ -62,8 +62,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/bib-unicode`: pinned immutable Unicode compatibility resource boundary.
 - `crates/bib-input`: control, configuration, and datasource input-stage boundary.
 - `crates/bib-output`: detached deterministic serializer boundary.
-- `crates/bib-engine`: public bibliography facade, engine-private typed Biber worker, and pinned upstream compatibility suite.
-- `crates/bib-bst`: bounded classic BibTeX style lexer, parser, compiler, and immutable programs.
+- `crates/bib-engine`: public bibliography facade, engine-private Biber and classic BibTeX runtimes, and pinned upstream compatibility suite.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
 - `benchmarks/tex-command`: bounded generated-source descriptor identity reuse benchmark.

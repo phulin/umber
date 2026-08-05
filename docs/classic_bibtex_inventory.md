@@ -55,7 +55,7 @@ the review summary.
 | Reference-owned surface       | Count | Primary implementation issue                   | Primary test boundary                          |
 | ----------------------------- | ----: | ---------------------------------------------- | ---------------------------------------------- |
 | AUX commands                  |     4 | `umber2-ild0.3`                                | classic AUX/VFS integration tests              |
-| BST top-level commands        |    10 | `umber2-ild0.5`                                | `bib-bst` parser/compiler matrices             |
+| BST top-level commands        |    10 | `umber2-ild0.5`                                | private classic-style parser/compiler matrices |
 | BIB record commands           |     3 | `umber2-ild0.4`, `umber2-ild0.7`               | raw parser and classic database tests          |
 | Built-in functions            |    37 | `umber2-ild0.8`, `umber2-ild0.9`               | VM matrix plus one focused matrix per built-in |
 | Predefined VM-visible symbols |     4 | `umber2-ild0.7`, `umber2-ild0.8`               | database and VM tests                          |
@@ -87,7 +87,7 @@ history rendering, and process status. Typed diagnostics are rendered into BLG
 and terminal bytes only after semantic ordering is fixed.
 
 Large `.bst` programs also expose the Web2C change file's dynamic allocation
-records. The immutable `bib-bst` program preserves each compiler-time
+records. The immutable private classic-style program preserves each compiler-time
 transition in source order; the classic execution seam replays those records
 only into the BLG stream, using the exact `Reallocated … (elt_size=…) to …
 items from ….` form. In particular, the per-definition `singl_function`
@@ -164,7 +164,7 @@ full 47/47 dispatch-branch and 10/10 lifecycle-transition coverage.
 
 ### Web2C string-pool accounting
 
-`bib-bst/src/pool.rs` owns the monotonic classic string-pool model. A pool
+`bib-engine/src/classic_style/pool.rs` owns the monotonic classic string-pool model. A pool
 assigns a stable `PoolStringId` on first insertion, charges one string and its
 byte length exactly once, and shares that identity across all owners; an empty
 string is an ordinary chargeable value. Its explicit bootstrap sequence is the
@@ -185,7 +185,7 @@ job-lifetime pool identity and exact unnormalized BLG summaries.
 ## VM core and built-in completion
 
 `umber2-ild0.8` supplies the bounded execution core in
-`bib-engine/src/classic_vm.rs`. It consumes immutable `bib-bst` programs and
+`bib-engine/src/classic_style/vm.rs`. It consumes immutable classic-style programs and
 prepared classic database state, with explicit operand and call stacks rather
 than user-controlled Rust recursion. It owns command lifecycle, current-entry
 state, variables and assignment, core control flow, stable `SORT`, and
@@ -198,15 +198,15 @@ purification handling, character conversion, name counting and formatting,
 entry-type dispatch, stack diagnostics, text units, and CMR10 width values.
 The fixed `entry.max$` and `global.max$` values remain visible independently of
 Umber's safety limits. Focused VM coverage lives in
-`bib-engine/src/classic_vm/tests.rs`; fixture-level output/diagnostic parity
+`bib-engine/src/classic_style/vm/tests.rs`; fixture-level output/diagnostic parity
 continues to be owned by the later command-parity phase.
 
 ## Public execution and command boundary
 
 `umber2-ild0.11` connects the already separate classic phases without routing
 them through the Biber pipeline. `ClassicBibSession` now resolves the AUX
-closure, compiles the requested BST through a bounded cache, prepares the raw
-classic database through its independent cache, executes the bounded VM, and
+closure, compiles the requested BST and prepares the compact raw-record arena
+through the runtime's single bounded cache owner, executes the bounded VM, and
 returns detached `.bbl` and `.blg` artifacts with warning or fatal history.
 Fatal VM artifacts remain in `partial_files` and are never publishable.
 
@@ -215,7 +215,7 @@ only requested files into the VFS for `umber bibtex job`, then publishes the
 returned artifacts. It does not invoke a system BibTeX executable. The smoke
 fixture exercises this boundary both cold and cached. `umber2-ild0.21` imports
 the TeX Live 2025 `plain.bst` and `apalike.bst` bytes with small, exact BBL
-execution fixtures, and `bib-bst` compiles both styles hermetically.
+execution fixtures, and the private classic-style compiler compiles both styles hermetically.
 `umber2-ild0.22` fixes the VM's quoted-assignment and control-flow operand
 ordering by representing `while$` continuations explicitly rather than
 draining active caller frames. `umber2-ild0.23` fixes no-comma name parsing,
@@ -329,14 +329,14 @@ host BibTeX installation: reference comparison consumes the committed corpus,
 and only `scripts/regen-fixtures.sh --area bibtex` may run the pinned Web2C
 binary. The completed evidence is:
 
-| Surface                        | Evidence                                                                                                                                          | Gate                                                                            |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Differential                   | 37 fixed-seed legal programs, 47/47 dispatch branches, and 10/10 lifecycle transitions have exact unnormalized status, BBL, and BLG parity.       | `scripts/regen-fixtures.sh --area bibtex`                                       |
-| Standard and real-world corpus | `plain`, `apalike`, `xampl`, four `elsarticle-num` cases, and IEEEtran run through the public command with exact committed artifacts.             | `cargo test -q -p bib-engine --test it classic_`                                |
-| Adversarial input              | Arbitrary-byte styles, compiler limits, VM recovery/limits, and cache-limit revalidation terminate without a production panic.                    | `cargo test -q -p bib-bst` and `cargo test -q -p bib-engine --test it classic_` |
-| Persistent cache pressure      | Compiler and prepared-database caches evict by charged bytes; restrictive later jobs revalidate rather than inheriting permissive earlier limits. | native tests and `persistent_wasm_classic_caches_evict_maximum_charge_jobs`     |
-| Native project sessions        | Explicit and auto modes converge; fatal results roll back; a backend switch removes incompatible generated bibliography artifacts.                | `cargo test -q -p umber classic_projects_ v2_backend_switch_ fatal_classic_`    |
-| WASM project sessions          | Versioned classic project options and the persistent cache boundary run through the browser binding.                                              | `wasm-pack test --headless --firefox crates/umber-wasm`                         |
+| Surface                        | Evidence                                                                                                                                       | Gate                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Differential                   | 37 fixed-seed legal programs, 47/47 dispatch branches, and 10/10 lifecycle transitions have exact unnormalized status, BBL, and BLG parity.    | `scripts/regen-fixtures.sh --area bibtex`                                    |
+| Standard and real-world corpus | `plain`, `apalike`, `xampl`, four `elsarticle-num` cases, and IEEEtran run through the public command with exact committed artifacts.          | `cargo test -q -p bib-engine --test it classic_`                             |
+| Adversarial input              | Arbitrary-byte styles, compiler limits, VM recovery/limits, and cache-limit revalidation terminate without a production panic.                 | `cargo test -q --tests -p bib-engine`                                        |
+| Persistent cache pressure      | Compiled styles and prepared reads share one charged FIFO; restrictive later jobs revalidate rather than inheriting permissive earlier limits. | native tests and `persistent_wasm_classic_caches_evict_maximum_charge_jobs`  |
+| Native project sessions        | Explicit and auto modes converge; fatal results roll back; a backend switch removes incompatible generated bibliography artifacts.             | `cargo test -q -p umber classic_projects_ v2_backend_switch_ fatal_classic_` |
+| WASM project sessions          | Versioned classic project options and the persistent cache boundary run through the browser binding.                                           | `wasm-pack test --headless --firefox crates/umber-wasm`                      |
 
 ### Versioned performance tier
 
@@ -392,5 +392,5 @@ wrappers pass; their earlier formatting and profiling blockers are closed.
 | Convergence, resource suspension, rollback, oscillation, and backend switch | project-session suite in `crates/umber/src/latex_project/tests.rs`; its resource loop exercises suspension and accepted-generation rollback/switch behavior |
 | Existing biblatex behavior remains unchanged                                | wrapped legacy-byte identity in `crates/bib-engine/tests/it/foundation.rs` and the pinned Biber suite                                                       |
 | Differential thresholds and real-world exact parity                         | committed differential ledger above and five public-command real-world fixtures                                                                             |
-| Deterministic adversarial termination and byte-weighted persistence         | `crates/bib-bst/src/tests.rs`, `crates/bib-engine` classic tests, and `crates/umber-wasm/tests/it.rs`                                                       |
+| Deterministic adversarial termination and byte-weighted persistence         | `crates/bib-engine/src/classic_style/tests.rs`, engine classic tests, and `crates/umber-wasm/tests/it.rs`                                                   |
 | Explicit performance budgets and compatibility documentation                | this section and `scripts/check-classic-bibtex-budgets.sh`                                                                                                  |

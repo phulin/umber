@@ -126,6 +126,7 @@ impl ClassicStringPool {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn value(&self, id: PoolStringId) -> Option<&str> {
         self.values.get(id.0 as usize).map(String::as_str)
     }

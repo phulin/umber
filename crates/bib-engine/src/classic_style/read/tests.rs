@@ -1,11 +1,10 @@
-use bib_bst::{ClassicStringPool, CompileLimits, StringPoolLimits, compile};
+use crate::classic_style::pool::StringPoolLimits;
+use crate::classic_style::{ClassicStringPool, CompileLimits, compile};
 use bib_input::{BibTexOptions, parse_raw_bibtex_bytes};
 use umber_vfs::{FileContentId, VirtualPath};
 
-use super::{
-    ClassicDatabaseCache, ClassicDatabaseDiagnosticKind, ClassicDatabaseSource,
-    prepare_classic_database,
-};
+use super::{ClassicDatabaseDiagnosticKind, ClassicDatabaseSource, prepare_classic_database};
+use crate::classic_style::ClassicRuntimeCache;
 use crate::{ClassicControl, ClassicDatabaseLimits, ClassicDatabaseOptions};
 
 fn control(citations: &[&str]) -> ClassicControl {
@@ -155,7 +154,7 @@ fn cache_key_changes_for_schema_and_read_options() {
     let title = compiled_title.program().expect("style");
     let compiled_empty = compile(b"ENTRY { } { } { } READ", CompileLimits::default());
     let empty = compiled_empty.program().expect("style");
-    let mut cache = ClassicDatabaseCache::default();
+    let mut cache = ClassicRuntimeCache::new(32, 64 * 1024 * 1024);
     let first = cache.prepare(&control, title, &source, &ClassicDatabaseOptions::default());
     assert!(std::sync::Arc::ptr_eq(
         &first,
@@ -204,7 +203,7 @@ fn cache_is_byte_weighted_and_revalidates_read_limits_per_job() {
     let all_control = control(&["*"]);
     let compiled = compile(b"ENTRY { title } { } { } READ", CompileLimits::default());
     let style = compiled.program().expect("style");
-    let mut cache = ClassicDatabaseCache::new(32, 4_096);
+    let mut cache = ClassicRuntimeCache::new(32, 4_096);
 
     let permissive = cache.prepare(
         &all_control,
@@ -213,7 +212,7 @@ fn cache_is_byte_weighted_and_revalidates_read_limits_per_job() {
         &ClassicDatabaseOptions::default(),
     );
     assert_eq!(permissive.entries().len(), 2);
-    assert!(cache.retained_bytes() <= 4_096);
+    assert!(cache.retained_bytes().1 <= 4_096);
 
     let restricted = ClassicDatabaseOptions::default().with_limits(ClassicDatabaseLimits {
         entries: 1,
@@ -244,9 +243,9 @@ fn cache_is_byte_weighted_and_revalidates_read_limits_per_job() {
             &sources,
             &ClassicDatabaseOptions::default(),
         );
-        assert!(cache.retained_bytes() <= 4_096, "job {suffix}");
+        assert!(cache.retained_bytes().1 <= 4_096, "job {suffix}");
     }
-    assert!(cache.retained_bytes() > 0);
+    assert!(cache.retained_bytes().1 > 0);
     assert!(
         cache.len() < 16,
         "byte budget must evict maximum-charge jobs"

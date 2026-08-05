@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ClassicStringPool, SourceLocation, StringPoolLimits, StringPoolUsage};
+#[cfg(test)]
+use super::pool::{StringPoolLimits, StringPoolUsage};
+use super::{ClassicStringPool, SourceLocation};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FunctionId(pub u32);
@@ -51,6 +53,46 @@ pub enum Builtin {
     Width,
     Write,
 }
+
+pub(crate) const BUILTIN_REGISTRY: [(Builtin, &str); 37] = [
+    (Builtin::Equals, "="),
+    (Builtin::GreaterThan, ">"),
+    (Builtin::LessThan, "<"),
+    (Builtin::Add, "+"),
+    (Builtin::Subtract, "-"),
+    (Builtin::Concatenate, "*"),
+    (Builtin::Assign, ":="),
+    (Builtin::AddPeriod, "add.period$"),
+    (Builtin::CallType, "call.type$"),
+    (Builtin::ChangeCase, "change.case$"),
+    (Builtin::ChrToInt, "chr.to.int$"),
+    (Builtin::Cite, "cite$"),
+    (Builtin::Duplicate, "duplicate$"),
+    (Builtin::Empty, "empty$"),
+    (Builtin::FormatName, "format.name$"),
+    (Builtin::If, "if$"),
+    (Builtin::IntToChr, "int.to.chr$"),
+    (Builtin::IntToStr, "int.to.str$"),
+    (Builtin::Missing, "missing$"),
+    (Builtin::Newline, "newline$"),
+    (Builtin::NumNames, "num.names$"),
+    (Builtin::Pop, "pop$"),
+    (Builtin::Preamble, "preamble$"),
+    (Builtin::Purify, "purify$"),
+    (Builtin::Quote, "quote$"),
+    (Builtin::Skip, "skip$"),
+    (Builtin::Stack, "stack$"),
+    (Builtin::Substring, "substring$"),
+    (Builtin::Swap, "swap$"),
+    (Builtin::TextLength, "text.length$"),
+    (Builtin::TextPrefix, "text.prefix$"),
+    (Builtin::Top, "top$"),
+    (Builtin::Type, "type$"),
+    (Builtin::Warning, "warning$"),
+    (Builtin::While, "while$"),
+    (Builtin::Width, "width$"),
+    (Builtin::Write, "write$"),
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SpecialSymbol {
@@ -172,10 +214,16 @@ pub enum Instruction {
     PushInteger(i64),
     PushString(StringId),
     PushFunction(FunctionId),
-    Call(FunctionId),
+    Call(Callable),
     Read(SymbolId),
     Assign(SymbolId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Callable {
+    Function(FunctionId),
     Builtin(Builtin),
+    Variable(SymbolId),
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledFunction {
@@ -298,6 +346,7 @@ impl CompiledStyle {
     /// Compiler-owned pool charge in isolation, useful for cache accounting
     /// and focused tests. Job summaries should replay into their shared pool.
     #[must_use]
+    #[cfg(test)]
     pub fn compiler_pool_usage(&self) -> StringPoolUsage {
         let mut pool = ClassicStringPool::new(StringPoolLimits::unlimited());
         self.apply_pool_trace(&mut pool);
@@ -334,44 +383,8 @@ pub(crate) fn fold(name: &str) -> String {
     name.to_ascii_lowercase()
 }
 pub(crate) fn builtin(name: &str) -> Option<Builtin> {
-    Some(match fold(name).as_str() {
-        "=" => Builtin::Equals,
-        ">" => Builtin::GreaterThan,
-        "<" => Builtin::LessThan,
-        "+" => Builtin::Add,
-        "-" => Builtin::Subtract,
-        "*" => Builtin::Concatenate,
-        ":=" => Builtin::Assign,
-        "add.period$" => Builtin::AddPeriod,
-        "call.type$" => Builtin::CallType,
-        "change.case$" => Builtin::ChangeCase,
-        "chr.to.int$" => Builtin::ChrToInt,
-        "cite$" => Builtin::Cite,
-        "duplicate$" => Builtin::Duplicate,
-        "empty$" => Builtin::Empty,
-        "format.name$" => Builtin::FormatName,
-        "if$" => Builtin::If,
-        "int.to.chr$" => Builtin::IntToChr,
-        "int.to.str$" => Builtin::IntToStr,
-        "missing$" => Builtin::Missing,
-        "newline$" => Builtin::Newline,
-        "num.names$" => Builtin::NumNames,
-        "pop$" => Builtin::Pop,
-        "preamble$" => Builtin::Preamble,
-        "purify$" => Builtin::Purify,
-        "quote$" => Builtin::Quote,
-        "skip$" => Builtin::Skip,
-        "stack$" => Builtin::Stack,
-        "substring$" => Builtin::Substring,
-        "swap$" => Builtin::Swap,
-        "text.length$" => Builtin::TextLength,
-        "text.prefix$" => Builtin::TextPrefix,
-        "top$" => Builtin::Top,
-        "type$" => Builtin::Type,
-        "warning$" => Builtin::Warning,
-        "while$" => Builtin::While,
-        "width$" => Builtin::Width,
-        "write$" => Builtin::Write,
-        _ => return None,
-    })
+    let name = fold(name);
+    BUILTIN_REGISTRY
+        .iter()
+        .find_map(|(builtin, candidate)| (*candidate == name).then_some(*builtin))
 }

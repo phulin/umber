@@ -127,22 +127,20 @@ The existing `bib-*` dependency direction remains valid. The new classic
 runtime must not introduce dependencies from `bib-model`, `bib-input`, or
 `bib-output` back toward `bib-engine`.
 
-### 4.1 Proposed crate and module ownership
+### 4.1 Current module ownership
 
-Add `bib-bst`, an internal semantic worker crate with no host I/O:
+The classic semantic worker is private to its sole production consumer:
 
 ```text
-crates/bib-bst/
-  src/lib.rs                 public compile/execute boundary
-  src/lexer.rs               byte-aware style tokenization
-  src/parser.rs              top-level command and function parsing
-  src/symbols.rs             typed symbols and declaration validation
-  src/program.rs             immutable compiled representation
-  src/compiler.rs            resolution and lowering
-  src/value.rs               VM integers, strings, functions, and missing values
-  src/vm.rs                  bounded stack and call execution
-  src/builtins/              classic built-in families
-  src/tests/                 internal parser, compiler, and VM tests
+crates/bib-engine/src/classic_style/
+  mod.rs                     private runtime boundary and sole cache owner
+  lexer.rs                   byte-aware style tokenization
+  program.rs                 immutable program and builtin registry
+  compiler.rs                parsing, resolution, and direct-call lowering
+  pool.rs                    one job-lifetime Web2C string-pool ledger
+  read.rs                    compact arena built from raw bib-input records
+  vm.rs                      bounded stack and call execution
+  tests.rs                   compiler, cache, pool, and limit tests
 ```
 
 Keep job composition in `bib-engine`:
@@ -152,8 +150,8 @@ crates/bib-engine/src/
   classic.rs                 classic jobs, options, attempts, and results
   classic/session.rs         VFS resource loop and content caches
   classic/aux.rs             recursive AUX parsing and control extraction
-  classic/database.rs        classic database preparation and crossrefs
-  classic/output.rs          transactional BBL/BLG sinks
+  classic_style/read.rs      classic database preparation and crossrefs
+  classic_execution.rs       runtime composition and detached BBL/BLG effects
   session.rs                 existing biblatex session, retained API
   bibliography.rs            backend-neutral enum facade
 ```
@@ -760,8 +758,8 @@ network, or native filesystem search.
 
 Test placement follows `docs/testing_policy.md`:
 
-- `bib-bst/src/.../tests.rs` for lexer, parser, symbol, compiler, VM, built-in,
-  limit, and adversarial internal tests;
+- `bib-engine/src/classic_style/.../tests.rs` for lexer, parser, symbol,
+  compiler, VM, built-in, limit, and adversarial internal tests;
 - one `bib-engine/tests/it.rs` integration binary with classic submodules for
   public facade and parity tests;
 - `umber` project-session tests for transactional multipass behavior; and
@@ -977,7 +975,8 @@ unchanged, and no classic-observable syntax required by the census is lost.
 
 ### Phase 4: BST lexer, parser, and compiler
 
-- Create `bib-bst` with source spans, limits, and typed diagnostics.
+- Create the engine-private `classic_style` runtime with source spans, limits,
+  and typed diagnostics.
 - Implement all top-level commands and phase validation.
 - Implement typed symbol resolution and immutable compiled programs.
 - Add the full negative parser/recovery suite.

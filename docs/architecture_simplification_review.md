@@ -269,9 +269,7 @@ Rollback is command-level: retain old generator subcommands and old corpus-sync 
 
 Affected crates: `bib-bst`, `bib-engine`, and `bib-input`.
 
-**Current design — observed.** Raw BibTeX data originates in [`crates/bib-input/src/bibtex/raw.rs:256`](/home/phulin/umber/crates/bib-input/src/bibtex/raw.rs:256). Classic processing then creates another database representation in [`crates/bib-engine/src/classic_database.rs:449`](/home/phulin/umber/crates/bib-engine/src/classic_database.rs:449), while `bib-bst` owns a public program and VM model beginning at [`crates/bib-bst/src/program.rs:63`](/home/phulin/umber/crates/bib-bst/src/program.rs:63). The lexer retains complete token/string structures at [`crates/bib-bst/src/lexer.rs:5`](/home/phulin/umber/crates/bib-bst/src/lexer.rs:5), and cache/pool ownership is divided between crates.
-
-`bib-bst` has only one production workspace consumer.
+**Former design — observed.** Raw BibTeX data originated in `bib-input`, classic processing created a second public-facing database representation in `bib-engine`, and the single-consumer `bib-bst` package owned the program model while cache and pool ownership was divided across the boundary.
 
 **End state.** Move the classic runtime behind a private `bib-engine::classic_style` boundary. Retain the raw parser as the sole parse result, then use one compact database/read arena, one string-pool ledger, one bounded cache, one builtin registry, and direct callable instructions. The algorithmic VM remains recognizable, but the public `bib-bst` boundary, duplicate database, synthetic callable functions, and parallel pool/cache ownership disappear.
 
@@ -290,6 +288,10 @@ Moved classic algorithms are not counted as deleted; only duplicate representati
 5. Delete the package boundary and obsolete public representations.
 
 A compatibility crate façade can remain temporarily if external publication obligations require it.
+
+**Migration status.** Complete. `bib-engine::classic_style` now privately owns the moved lexer/compiler/VM algorithms, compact immutable `READ` state, the job string-pool ledger, and the sole classic cache owner. Classic execution consumes `bib-input::RawBibDatabase` directly, callable instructions carry builtin/function/variable targets without synthetic wrapper functions, and the builtin name table has one definition. The public `bib-bst` package and the standalone `classic_database`/`classic_vm` module boundaries have been deleted. Moved algorithms are excluded from the deletion total.
+
+Rollback is a single revert of the migration commit; there is no retained compatibility façade or dual execution path.
 
 **Gates and risks.** Use classic `.bbl`, `.blg`, `.aux`, trace, malformed-style, nested-function, memory-limit, and string-pool parity cases. Risks are external users of `bib-bst`, subtle string-pool identity changes, and error/trace ordering.
 

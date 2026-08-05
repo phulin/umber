@@ -13,7 +13,6 @@ members = [
 # real. `default_members_cover_every_host_testable_crate` in `test-support`
 # fails if this list drifts from the workspace (umber2-johp.211).
 default-members = [
-  "crates/bib-bst",
   "crates/bib-engine",
   "crates/bib-input",
   "crates/bib-model",

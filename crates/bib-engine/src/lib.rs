@@ -10,9 +10,8 @@ mod biber;
 mod bibliography;
 mod classic;
 mod classic_command;
-mod classic_database;
 mod classic_execution;
-mod classic_vm;
+mod classic_style;
 mod command;
 mod session;
 mod tool;
@@ -53,15 +52,6 @@ pub use classic::{
     ClassicControl,
 };
 pub use classic_command::{ClassicBibCommand, ClassicBibCommandError, ClassicBibCommandOutput};
-pub use classic_database::{
-    ClassicDatabase, ClassicDatabaseCache, ClassicDatabaseDiagnostic,
-    ClassicDatabaseDiagnosticKind, ClassicDatabaseEntry, ClassicDatabaseSource,
-    prepare_classic_database,
-};
-pub use classic_vm::{
-    ClassicVmDiagnostic, ClassicVmDiagnosticKind, ClassicVmLimits, ClassicVmResult, VmValue,
-    execute_classic_style,
-};
 pub use command::{BibCommand, BibCommandError, BibCommandMode, BibCommandOutput, BibExitStatus};
 pub use session::{BibInitFailure, BibSession, BibSessionOptions};
 pub use tool::{SyntheticTool, ToolFailure, ToolFailureKind, ToolResult};

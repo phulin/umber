@@ -1,17 +1,18 @@
-use bib_bst::{Builtin, CompileLimits, compile};
+use crate::classic_style::{
+    Builtin, ClassicDatabaseSource, CompileLimits, CompiledStyle, DiagnosticKind, compile,
+    prepare_classic_database,
+};
 use bib_input::{BibTexOptions, parse_raw_bibtex_bytes};
 use umber_vfs::{FileContentId, VirtualPath};
 
 use super::{ClassicVmDiagnosticKind, ClassicVmLimits, execute_classic_style};
-use crate::{
-    ClassicControl, ClassicDatabaseOptions, ClassicDatabaseSource, prepare_classic_database,
-};
+use crate::{ClassicControl, ClassicDatabaseOptions};
 
 fn database(
-    style: &bib_bst::CompiledStyle,
+    style: &CompiledStyle,
     source: &[u8],
     citations: &[&str],
-) -> crate::ClassicDatabase {
+) -> crate::classic_style::ClassicDatabase {
     let raw = parse_raw_bibtex_bytes(source, BibTexOptions::default());
     let path = VirtualPath::user("refs.bib").expect("path");
     prepare_classic_database(
@@ -259,10 +260,10 @@ fn compiler_rejects_direct_recursion_before_execution() {
     let compiled = compile(b"FUNCTION {loop} { loop }", CompileLimits::default());
     assert!(!compiled.is_success());
     assert!(
-        compiled.diagnostics().iter().any(|diagnostic| matches!(
-            diagnostic.kind(),
-            bib_bst::DiagnosticKind::IllegalRecursion
-        ))
+        compiled
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.kind(), DiagnosticKind::IllegalRecursion))
     );
 }
 

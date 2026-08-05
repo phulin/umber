@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
-use crate::{
-    ClassicStringPool, CompilationCache, CompileLimits, CompiledCommand, DiagnosticKind,
-    Instruction, StringPoolLimit, StringPoolLimits, compile,
+use super::pool::StringPoolLimits;
+use super::{
+    Builtin, Callable, ClassicRuntimeCache, ClassicStringPool, CompileLimits, CompiledCommand,
+    DiagnosticKind, FunctionId, Instruction, StringPoolLimit, compile,
 };
 
 const VALID: &[u8] = br#"
@@ -33,9 +34,9 @@ fn compiles_all_top_level_commands() {
         style.commands(),
         &[
             CompiledCommand::Read,
-            CompiledCommand::Execute(crate::FunctionId(0)),
-            CompiledCommand::Iterate(crate::FunctionId(0)),
-            CompiledCommand::Reverse(crate::FunctionId(0)),
+            CompiledCommand::Execute(FunctionId(0)),
+            CompiledCommand::Iterate(FunctionId(0)),
+            CompiledCommand::Reverse(FunctionId(0)),
             CompiledCommand::Sort
         ]
     );
@@ -43,7 +44,7 @@ fn compiles_all_top_level_commands() {
         style.functions()[0].instructions(),
         [
             Instruction::PushString(_),
-            Instruction::Builtin(crate::Builtin::Write)
+            Instruction::Call(Callable::Builtin(Builtin::Write))
         ]
     ));
 }
@@ -128,14 +129,14 @@ fn compiles_signed_literals_and_quoted_builtins() {
         [
             Instruction::PushInteger(-1),
             Instruction::PushFunction(_),
-            Instruction::Builtin(crate::Builtin::If)
+            Instruction::Call(Callable::Builtin(Builtin::If))
         ]
     ));
 }
 
 #[test]
 fn cache_hit_revalidates_active_limits() {
-    let mut cache = CompilationCache::new(2, 1024 * 1024);
+    let mut cache = ClassicRuntimeCache::new(2, 1024 * 1024);
     assert!(cache.compile(VALID, CompileLimits::default()).is_success());
     assert!(
         cache
@@ -164,7 +165,7 @@ fn cache_hit_revalidates_active_limits() {
 
 #[test]
 fn byte_weighted_cache_evicts_persistent_maximum_charge_styles() {
-    let mut cache = CompilationCache::new(32, 900);
+    let mut cache = ClassicRuntimeCache::new(32, 900);
     for index in 0..16 {
         let source = format!(
             "ENTRY {{ }} {{ }} {{ }} FUNCTION {{ main{index} }} {{ \"{}\" write$ }} READ EXECUTE {{ main{index} }}",
@@ -175,7 +176,7 @@ fn byte_weighted_cache_evicts_persistent_maximum_charge_styles() {
                 .compile(source.as_bytes(), CompileLimits::default())
                 .is_success()
         );
-        assert!(cache.retained_bytes() <= 900, "job {index}");
+        assert!(cache.retained_bytes().0 <= 900, "job {index}");
     }
     assert!(cache.len() < 16, "byte budget must evict old styles");
 }
@@ -208,7 +209,7 @@ fn classic_compilation_and_cache_performance_budgets() {
         COLD_COMPILES * sources.len()
     );
 
-    let mut cache = CompilationCache::new(8, CACHE_BYTES);
+    let mut cache = ClassicRuntimeCache::new(8, CACHE_BYTES);
     for source in &sources {
         assert!(cache.compile(source, CompileLimits::default()).is_success());
     }
@@ -229,9 +230,9 @@ fn classic_compilation_and_cache_performance_budgets() {
         CACHE_HITS * sources.len()
     );
     assert!(
-        cache.retained_bytes() <= CACHE_BYTES,
+        cache.retained_bytes().0 <= CACHE_BYTES,
         "compiled-style cache retained {} bytes (budget {CACHE_BYTES})",
-        cache.retained_bytes()
+        cache.retained_bytes().0
     );
 }
 

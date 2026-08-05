@@ -11,8 +11,7 @@ in native and WASM builds without subprocesses or native-filesystem access.
 - `src/classic.rs`: backend-neutral protocol detection plus bounded classic AUX closure and typed classic resource discovery.
 - `src/classic_execution.rs`: classic style compilation, raw database preparation, VM execution, detached artifact routing, and cold/cache parity.
 - `src/classic_command.rs`: in-process classic command parsing, status mapping, terminal bytes, and partial-artifact exposure.
-- `src/classic_database.rs`: classic `READ` preparation, immutable VM-visible entry storage, and schema/options-aware prepared-database cache.
-- `src/classic_vm.rs`: bounded classic BST command execution, mutable VM state, and detached BBL/BLG effects.
+- `src/classic_style/`: engine-private classic BST lexer/compiler, compact `READ` arena, shared pool/cache ownership, bounded VM, and focused tests.
 - `src/command.rs`: pinned in-process command invocation, output naming, status, terminal, and log-byte adapter.
 - `src/command/tests.rs`: exact invocation validation and command-result fixtures.
 - `src/session.rs`: resumable VFS resource loop, bounded caches, accepted-input selection, and detached output routing.

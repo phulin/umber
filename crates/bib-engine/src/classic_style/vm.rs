@@ -5,52 +5,12 @@
 //! model: braces are structural, a top-level braced control sequence is one
 //! text unit, and ordinary strings retain their original TeX spelling.
 
-use bib_bst::{
-    Builtin, CompiledCommand, CompiledStyle, FunctionId, Instruction, SourceLocation, SymbolId,
-    SymbolKind,
+use super::{
+    BUILTIN_REGISTRY, Builtin, Callable, CompiledCommand, CompiledStyle, FunctionId, Instruction,
+    SourceLocation, SymbolId, SymbolKind,
 };
 
-use crate::ClassicDatabase;
-
-pub(crate) const CLASSIC_BUILTINS: [(Builtin, &str); 37] = [
-    (Builtin::Equals, "="),
-    (Builtin::GreaterThan, ">"),
-    (Builtin::LessThan, "<"),
-    (Builtin::Add, "+"),
-    (Builtin::Subtract, "-"),
-    (Builtin::Concatenate, "*"),
-    (Builtin::Assign, ":="),
-    (Builtin::AddPeriod, "add.period$"),
-    (Builtin::CallType, "call.type$"),
-    (Builtin::ChangeCase, "change.case$"),
-    (Builtin::ChrToInt, "chr.to.int$"),
-    (Builtin::Cite, "cite$"),
-    (Builtin::Duplicate, "duplicate$"),
-    (Builtin::Empty, "empty$"),
-    (Builtin::FormatName, "format.name$"),
-    (Builtin::If, "if$"),
-    (Builtin::IntToChr, "int.to.chr$"),
-    (Builtin::IntToStr, "int.to.str$"),
-    (Builtin::Missing, "missing$"),
-    (Builtin::Newline, "newline$"),
-    (Builtin::NumNames, "num.names$"),
-    (Builtin::Pop, "pop$"),
-    (Builtin::Preamble, "preamble$"),
-    (Builtin::Purify, "purify$"),
-    (Builtin::Quote, "quote$"),
-    (Builtin::Skip, "skip$"),
-    (Builtin::Stack, "stack$"),
-    (Builtin::Substring, "substring$"),
-    (Builtin::Swap, "swap$"),
-    (Builtin::TextLength, "text.length$"),
-    (Builtin::TextPrefix, "text.prefix$"),
-    (Builtin::Top, "top$"),
-    (Builtin::Type, "type$"),
-    (Builtin::Warning, "warning$"),
-    (Builtin::While, "while$"),
-    (Builtin::Width, "width$"),
-    (Builtin::Write, "write$"),
-];
+use super::ClassicDatabase;
 
 /// Values which can occur on the classic BibTeX operand stack.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -136,18 +96,17 @@ pub(crate) enum ClassicVmLogEvent {
 
 /// Detached effects and audit state produced by a VM attempt.
 ///
-/// A fatal execution retains partial effects for inspection, but `bbl` and
-/// `blg` withhold them so callers cannot accidentally publish an artifact.
+/// A fatal execution retains partial effects for inspection, but callers
+/// cannot accidentally publish them as a complete artifact.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassicVmResult {
     fatal: bool,
     bbl: String,
-    blg: String,
     diagnostics: Vec<ClassicVmDiagnostic>,
     log_events: Vec<ClassicVmLogEvent>,
+    #[cfg(test)]
     entry_order: Vec<String>,
-    builtin_calls: [usize; CLASSIC_BUILTINS.len()],
-    work: usize,
+    builtin_calls: [usize; BUILTIN_REGISTRY.len()],
 }
 
 impl ClassicVmResult {
@@ -156,20 +115,13 @@ impl ClassicVmResult {
         self.fatal
     }
     #[must_use]
+    #[cfg(test)]
     pub fn bbl(&self) -> Option<&str> {
         (!self.fatal).then_some(&self.bbl)
     }
     #[must_use]
-    pub fn blg(&self) -> Option<&str> {
-        (!self.fatal).then_some(&self.blg)
-    }
-    #[must_use]
     pub fn partial_bbl(&self) -> &str {
         &self.bbl
-    }
-    #[must_use]
-    pub fn partial_blg(&self) -> &str {
-        &self.blg
     }
     #[must_use]
     pub fn diagnostics(&self) -> &[ClassicVmDiagnostic] {
@@ -186,15 +138,12 @@ impl ClassicVmResult {
         })
     }
     #[must_use]
+    #[cfg(test)]
     pub fn entry_order(&self) -> &[String] {
         &self.entry_order
     }
-    pub(crate) const fn builtin_calls(&self) -> &[usize; CLASSIC_BUILTINS.len()] {
+    pub(crate) const fn builtin_calls(&self) -> &[usize; BUILTIN_REGISTRY.len()] {
         &self.builtin_calls
-    }
-    #[must_use]
-    pub const fn work(&self) -> usize {
-        self.work
     }
 }
 
@@ -224,13 +173,6 @@ enum Frame {
 }
 
 #[derive(Clone, Copy)]
-enum Callable {
-    Function(FunctionId),
-    /// A quoted mutable symbol, invoked by reading its current value.
-    Variable(SymbolId),
-}
-
-#[derive(Clone, Copy)]
 enum WhileState {
     RunCondition,
     CheckCondition,
@@ -255,10 +197,10 @@ struct Vm<'a> {
     order: Vec<usize>,
     current: Option<usize>,
     bbl: String,
-    blg: String,
+    log_bytes: usize,
     diagnostics: Vec<ClassicVmDiagnostic>,
     log_events: Vec<ClassicVmLogEvent>,
-    builtin_calls: [usize; CLASSIC_BUILTINS.len()],
+    builtin_calls: [usize; BUILTIN_REGISTRY.len()],
     work: usize,
     fatal: bool,
     instruction_source: Option<SourceLocation>,
@@ -290,10 +232,10 @@ impl<'a> Vm<'a> {
             order: (0..entry_count).collect(),
             current: None,
             bbl: String::new(),
-            blg: String::new(),
+            log_bytes: 0,
             diagnostics: Vec::new(),
             log_events: Vec::new(),
-            builtin_calls: [0; CLASSIC_BUILTINS.len()],
+            builtin_calls: [0; BUILTIN_REGISTRY.len()],
             work: 0,
             fatal: false,
             instruction_source: None,
@@ -301,6 +243,7 @@ impl<'a> Vm<'a> {
     }
 
     fn result(self) -> ClassicVmResult {
+        #[cfg(test)]
         let entry_order = self
             .order
             .iter()
@@ -316,12 +259,11 @@ impl<'a> Vm<'a> {
         ClassicVmResult {
             fatal: self.fatal,
             bbl: self.bbl,
-            blg: self.blg,
             diagnostics: self.diagnostics,
             log_events: self.log_events,
+            #[cfg(test)]
             entry_order,
             builtin_calls: self.builtin_calls,
-            work: self.work,
         }
     }
 
@@ -496,15 +438,12 @@ impl<'a> Vm<'a> {
                     .unwrap_or_default(),
             )),
             Instruction::PushFunction(function) => self.push(VmValue::Function(function)),
-            Instruction::Call(function) => {
-                self.push_function(function);
-            }
+            Instruction::Call(callable) => self.call_callable(callable),
             Instruction::Read(symbol) => {
                 let value = self.read(symbol);
                 self.push(value);
             }
             Instruction::Assign(symbol) => self.push(VmValue::Variable(symbol)),
-            Instruction::Builtin(builtin) => self.builtin(builtin),
         }
     }
 
@@ -859,7 +798,7 @@ impl<'a> Vm<'a> {
             Some(SymbolKind::GlobalString(index)) => self.set_string_global(index as usize, value),
             Some(SymbolKind::EntryInteger(index)) => self.set_integer_entry(index as usize, value),
             Some(SymbolKind::EntryString(index)) => self.set_string_entry(index as usize, value),
-            Some(SymbolKind::Special(bib_bst::SpecialSymbol::SortKey)) => self.set_sort_key(value),
+            Some(SymbolKind::Special(super::SpecialSymbol::SortKey)) => self.set_sort_key(value),
             _ => self.wrong_type(),
         }
     }
@@ -912,19 +851,19 @@ impl<'a> Vm<'a> {
             SymbolKind::StringMacro(index) => {
                 VmValue::String(self.style.declarations().strings()[index.0 as usize].clone())
             }
-            SymbolKind::Special(bib_bst::SpecialSymbol::SortKey) => self
+            SymbolKind::Special(super::SpecialSymbol::SortKey) => self
                 .current
                 .map(|entry| VmValue::String(self.entries[entry].sort_key.clone()))
                 .unwrap_or(VmValue::Missing),
-            SymbolKind::Special(bib_bst::SpecialSymbol::Crossref) => self
+            SymbolKind::Special(super::SpecialSymbol::Crossref) => self
                 .current_entry()
                 .and_then(|entry| entry.crossref().map(str::to_owned))
                 .map(VmValue::String)
                 .unwrap_or(VmValue::Missing),
             // These are fixed by the pinned classic Web2C configuration, not
             // by Umber's separate safety limits.
-            SymbolKind::Special(bib_bst::SpecialSymbol::EntryMax) => VmValue::Integer(100),
-            SymbolKind::Special(bib_bst::SpecialSymbol::GlobalMax) => VmValue::Integer(1_000),
+            SymbolKind::Special(super::SpecialSymbol::EntryMax) => VmValue::Integer(100),
+            SymbolKind::Special(super::SpecialSymbol::GlobalMax) => VmValue::Integer(1_000),
             _ => VmValue::Missing,
         }
     }
@@ -965,7 +904,7 @@ impl<'a> Vm<'a> {
         }
     }
 
-    fn current_entry(&self) -> Option<&crate::ClassicDatabaseEntry> {
+    fn current_entry(&self) -> Option<&super::ClassicDatabaseEntry> {
         self.current
             .and_then(|index| self.database.entries().nth(index))
     }
@@ -1024,6 +963,7 @@ impl<'a> Vm<'a> {
             Callable::Function(function) => {
                 self.push_function(function);
             }
+            Callable::Builtin(builtin) => self.builtin(builtin),
             Callable::Variable(symbol) => {
                 let value = self.read(symbol);
                 self.push(value);
@@ -1037,16 +977,18 @@ impl<'a> Vm<'a> {
         }
     }
     fn effect(&mut self, log: bool, text: &str) {
-        let sink = if log { &mut self.blg } else { &mut self.bbl };
+        let used = if log { self.log_bytes } else { self.bbl.len() };
         let limit = if log {
             self.limits.blg_bytes
         } else {
             self.limits.bbl_bytes
         };
-        if sink.len().saturating_add(text.len()) > limit {
+        if used.saturating_add(text.len()) > limit {
             self.fail(ClassicVmDiagnosticKind::Limit, "BST output limit exceeded");
+        } else if log {
+            self.log_bytes += text.len();
         } else {
-            sink.push_str(text);
+            self.bbl.push_str(text);
         }
     }
     fn charge(&mut self) -> bool {

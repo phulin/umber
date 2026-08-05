@@ -5,7 +5,6 @@ edition.workspace = true
 description = "Public facade for Umber's in-process bibliography engine"
 
 [dependencies]
-bib-bst = { path = "../bib-bst" }
 bib-input = { path = "../bib-input" }
 bib-model = { path = "../bib-model" }
 bib-output = { path = "../bib-output" }
