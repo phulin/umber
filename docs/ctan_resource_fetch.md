@@ -1,5 +1,9 @@
 # Automatic CTAN Resource Fetch
 
+The cross-subsystem target identity, verification, admission, and publication
+vocabulary is fixed by [Canonical resource identity and lifecycle](resource_lifecycle.md).
+This document remains authoritative for implemented native host acquisition.
+
 Status: complete under the `umber2-mbwq` epic. Builds on the
 completed VFS substrate ([umber_vfs.md](umber_vfs.md)) and resource session
 protocol ([wasm_resource_acquisition.md](wasm_resource_acquisition.md)). The

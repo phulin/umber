@@ -1,5 +1,9 @@
 # Asynchronous WASM Resource Acquisition
 
+The cross-subsystem target vocabulary and migration invariants are fixed by
+[Canonical resource identity and lifecycle](resource_lifecycle.md). This
+document remains authoritative for implemented session and JavaScript behavior.
+
 Status: partially implemented contract and active rollout plan. Typed,
 batched file/OpenType resource acquisition and its shared native/WASM retry
 state are implemented by the persistent compile session; the remaining

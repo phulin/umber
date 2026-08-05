@@ -1,5 +1,9 @@
 # In-process bibliography backend
 
+Cross-subsystem resource identity, suspension, admission, and publication must
+follow [Canonical resource identity and lifecycle](resource_lifecycle.md).
+This document remains authoritative for bibliography semantics and closure.
+
 Status: complete for the pinned Biber 2.22 beta compatibility target. Native
 and WASM callers share the pure-Rust semantic pipeline, resumable VFS session,
 command adapter, and transactional multipass LaTeX project orchestration.

@@ -130,6 +130,9 @@ Rank reflects architectural leverage, dependency centrality, expected deletion, 
 
 **Outcome.** A typed request key and state vocabulary connect VFS admission, native and browser scheduling, verified acquisition, engine suspension, incremental candidate ownership, and bibliography resource closure. `DistributionClient` owns source selection and one verified downloader/store state machine. Domain validation remains with fonts, images, formats, and bibliography.
 
+The normative identity, transition, verification, publication, and phase-owner
+contract is [Canonical resource identity and lifecycle](resource_lifecycle.md).
+
 **Combines.** Luna rank 3; Codex ranks 16 and 22, plus the acquisition portion of rank 14.
 
 **Counted reduction.** Approximately 1,200-1,900 scheduled authored LOC. Deleting exported non-driving Umber resource planes adds 950-1,100 conditional LOC only after API review.

@@ -25,6 +25,10 @@ protocol. `umber-vfs` owns the file portion of that protocol; JavaScript or a
 native host still owns asynchronous I/O, URLs, authentication, caching, and
 distribution selection.
 
+The cross-subsystem target vocabulary and migration invariants are fixed by
+[Canonical resource identity and lifecycle](resource_lifecycle.md). This
+document remains authoritative for implemented VFS layers and transactions.
+
 ## Goals
 
 `umber-vfs` must:

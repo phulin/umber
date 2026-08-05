@@ -1,5 +1,9 @@
 # Incremental engine v1 — named-boundary session design
 
+Cross-subsystem resource suspension and admission must follow
+[Canonical resource identity and lifecycle](resource_lifecycle.md). This
+document remains authoritative for incremental restart and acceptance.
+
 > **Status:** this document remains authoritative for restartable named
 > checkpoints, retained editor-session effects/artifacts, edit mapping,
 > generation substrates, and pruning. Its canonical live boundary identity

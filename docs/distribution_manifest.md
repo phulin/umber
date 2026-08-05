@@ -1,5 +1,10 @@
 # Sharded Distribution Manifest
 
+The relationship between semantic request identity and catalogue transport
+identity is fixed by [Canonical resource identity and lifecycle](resource_lifecycle.md).
+This document remains authoritative for implemented catalogue schemas and
+publication.
+
 Status: schema-2 browser/native resolution, schema-3 format-closure publishing,
 and schema-4 HTML font-profile resolution implemented.
 
