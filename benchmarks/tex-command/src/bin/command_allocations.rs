@@ -6,7 +6,7 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, Stats, StatsAlloc};
 use tex_command::{
     AlignmentIdentity, CommandHostCapabilities, CommandHostContext, CommandObservation,
     CommandObserver, CommandProcessor, CommandRuntime, CommandState, PrintCommand,
-    RegisteredSourceKind, SourceRegistration, print_cmd_chr_text,
+    RegisteredSourceKind, SourceRegistration, append_print_cmd_chr_text,
 };
 use tex_state::Universe;
 use tex_state::macro_store::MacroMeaning;
@@ -113,6 +113,7 @@ enum Case {
 struct RenderingCase {
     universe: Universe,
     command: PrintCommand,
+    text: String,
 }
 
 fn main() {
@@ -172,10 +173,13 @@ fn run_case(workload: Workload, configuration: Configuration, case: &mut Case, p
     }
     match case {
         Case::Rendering(case) => {
-            black_box(print_cmd_chr_text(
+            case.text.clear();
+            append_print_cmd_chr_text(
                 &case.universe.command_context(),
                 case.command,
-            ));
+                &mut case.text,
+            );
+            black_box(&case.text);
         }
         Case::Processor(case) => {
             let mut observer = CountingObserver::default();
@@ -371,5 +375,6 @@ fn rendering_case() -> Case {
     Case::Rendering(Box::new(RenderingCase {
         universe,
         command: PrintCommand::from_current(&current),
+        text: String::with_capacity(32),
     }))
 }

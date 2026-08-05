@@ -31,7 +31,9 @@ pub use alignment::{
 pub(crate) use alignment::{AlignmentDeliveryAdjustment, AlignmentDeliveryState};
 pub(crate) use expand::ExpansionState;
 pub use expand::{
-    PrintCommand, character_command_text, command_token_text, print_cmd_chr_text, print_esc_text,
+    PrintCommand, append_character_command_text, append_command_token_text,
+    append_print_cmd_chr_text, append_print_esc_text, character_command_text, command_token_text,
+    print_cmd_chr_text, print_esc_text,
 };
 pub(crate) use expand::{
     meaning_text, print_cs_text, render_the_value, string_text, token_list_string_text,
@@ -183,15 +185,17 @@ impl<'a> CommandProcessor<'a> {
         // expansion remains queued behind any earlier diagnostic.
         self.command.render_file_framing_events(&mut self.state);
         let conditional_suffix = self.command_trace_conditional_suffix(command.meaning());
-        let command = print_cmd_chr_text(&self.state, command);
-        self.print_command_trace_text(command, conditional_suffix);
+        let mut command_text = String::new();
+        expand::append_print_cmd_chr_text(&self.state, command, &mut command_text);
+        self.print_command_trace_text(command_text, conditional_suffix);
     }
 
     /// Prints e-TeX §28.498's merged `\unless` conditional command.
     pub(crate) fn print_unless_command_trace(&mut self, operand: PrintCommand) {
         let conditional_suffix = self.command_trace_conditional_suffix(operand.meaning());
-        let command = crate::processor::expand::print_esc_text(&self.state, "unless")
-            + &print_cmd_chr_text(&self.state, operand);
+        let mut command = String::new();
+        crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut command);
+        crate::processor::expand::append_print_cmd_chr_text(&self.state, operand, &mut command);
         self.print_command_trace_text(command, conditional_suffix);
     }
 

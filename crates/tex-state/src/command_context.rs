@@ -64,6 +64,16 @@ impl CommandContext<'_> {
         }
     }
 
+    /// Appends one token using TeX82 §262's `show_token_list` spelling.
+    pub fn append_token_show_text(&self, token: Token, text: &mut String) {
+        crate::token_show::append_token_show_text(self.universe, token, text);
+    }
+
+    /// Appends one token through TeX82's `new_string` selector spelling.
+    pub fn append_token_string_text(&self, token: Token, text: &mut String) {
+        crate::token_show::append_token_string_text(self.universe, token, text);
+    }
+
     /// Appends one token using TeX82 §262's active-selector `show_token_list`
     /// spelling, including `print_cs` separators and `\newlinechar` handling.
     pub fn append_token_selector_text(&self, token: Token, text: &mut String) {

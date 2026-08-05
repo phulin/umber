@@ -2214,10 +2214,11 @@ impl CommandProcessor<'_> {
                                         .tokens
                                         .iter()
                                         .fold(String::new(), |mut text, token| {
-                                            text.push_str(&super::expand::token_list_token_text(
+                                            super::expand::append_token_list_token_text(
                                                 &self.state,
                                                 token.semantic_token(),
-                                            ));
+                                                &mut text,
+                                            );
                                             text
                                         })
                                 }),
@@ -2315,7 +2316,7 @@ impl CommandProcessor<'_> {
                 raw.push(match_marker);
                 raw.push(char::from(b'0' + slot));
             } else {
-                raw.push_str(&super::expand::token_list_token_text(&self.state, token));
+                super::expand::append_token_list_token_text(&self.state, token, &mut raw);
             }
             index += 1;
         }

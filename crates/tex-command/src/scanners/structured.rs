@@ -2543,13 +2543,15 @@ impl CommandProcessor<'_> {
             .int_param(tex_state::env::banks::IntParam::TRACING_MACROS)
             > 1
         {
-            let mut text = crate::processor::expand::print_esc_text(&self.state, "write");
+            let mut text = String::new();
+            crate::processor::expand::append_print_esc_text(&self.state, "write", &mut text);
             text.push_str("->");
             for token in self.state.tokens(tokens.token_list()).to_vec() {
-                text.push_str(&crate::processor::expand::token_list_token_text(
+                crate::processor::expand::append_token_list_token_text(
                     &self.state,
                     token,
-                ));
+                    &mut text,
+                );
             }
             self.command
                 .semantic_diagnostics

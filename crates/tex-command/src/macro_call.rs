@@ -218,13 +218,11 @@ impl CommandProcessor<'_> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 1 {
             return;
         }
-        let mut text = crate::processor::expand::print_esc_text(&self.state, name);
+        let mut text = String::new();
+        crate::processor::expand::append_print_esc_text(&self.state, name, &mut text);
         text.push_str("->");
         for token in self.state.tokens(tokens).to_vec() {
-            text.push_str(&crate::processor::expand::token_list_token_text(
-                &self.state,
-                token,
-            ));
+            crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
         }
         // §323 uses `print_nl`, unlike §389's unconditional `print_ln` for
         // an ordinary macro invocation. At an existing line boundary this
@@ -430,17 +428,12 @@ impl CommandProcessor<'_> {
         if self.state.int_param(IntParam::TRACING_MACROS) <= 0 {
             return;
         }
-        let mut text = crate::processor::expand::print_cs_text(&mut self.state, macro_name);
-        text.push_str(&crate::processor::expand::token_list_text(
-            &self.state,
-            parameters,
-        ));
+        let mut text = String::new();
+        crate::processor::expand::append_print_cs_text(&mut self.state, macro_name, &mut text);
+        crate::processor::expand::append_token_list_text(&self.state, parameters, &mut text);
         text.push_str("->");
         for token in self.state.tokens(replacement).to_vec() {
-            text.push_str(&crate::processor::expand::token_list_token_text(
-                &self.state,
-                token,
-            ));
+            crate::processor::expand::append_token_list_token_text(&self.state, token, &mut text);
         }
         self.print_macro_trace(text, true);
     }
@@ -457,10 +450,11 @@ impl CommandProcessor<'_> {
         }
         let mut text = format!("{marker}{parameter}<-");
         for word in argument {
-            text.push_str(&crate::processor::expand::token_list_token_text(
+            crate::processor::expand::append_token_list_token_text(
                 &self.state,
                 word.semantic_token(),
-            ));
+                &mut text,
+            );
         }
         self.print_macro_trace(text, false);
     }
@@ -529,10 +523,11 @@ impl CommandProcessor<'_> {
         let context = self.command.output_open_context(&self.state);
         let mut display = String::new();
         for token in partial {
-            display.push_str(&crate::processor::expand::token_list_token_text(
+            crate::processor::expand::append_token_list_token_text(
                 &self.state,
                 token.semantic_token(),
-            ));
+                &mut display,
+            );
         }
         self.command
             .semantic_diagnostics

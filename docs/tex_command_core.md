@@ -2046,6 +2046,15 @@ Expandable primitive dispatch is a statically compiled match over a closed
 opcode enum. Pure heavyweight helpers such as regex, MD5, or numeric formatting
 remain isolated functions outside the token-delivery loop.
 
+Command-text rendering is append-oriented. Numeric, glue, token,
+control-sequence, meaning, and command renderers append into one caller-owned
+`String`; nested renderers and static literal arms do not construct owned
+intermediate strings. Thin allocating wrappers remain only at boundaries that
+must hand ownership to input replay, diagnostics, or retained error state.
+Token-list rendering delegates the shared TeX82 token spelling rules to
+`tex-state`'s append helpers, so `\escapechar`, control-word delimiters, and
+parameter-character doubling remain one implementation.
+
 ## 19. Canonical scalar `macro_call`
 
 The semantic implementation follows TeX's scalar algorithm before any

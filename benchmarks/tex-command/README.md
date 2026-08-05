@@ -24,7 +24,9 @@ recording. `external_observer` attaches a non-allocating sink so the counts
 include observation payload construction. `paragraph_recording` retains the
 same observations in an active paragraph input transaction. Pure command-text
 rendering supports only `unobserved`, because it has no processor observation
-boundary.
+boundary. That workload clears and reuses a caller-owned render buffer around
+the public append API, so it measures renderer-internal allocation rather than
+the ownership allocation deliberately retained by the convenience wrapper.
 
 To verify sensitivity, add `--perturb`. It deliberately requests one 64-byte
 allocation per measured operation, so every reported row increases by exactly

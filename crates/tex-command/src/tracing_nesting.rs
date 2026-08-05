@@ -147,10 +147,7 @@ impl CommandProcessor<'_> {
                 // precisely when `if_limit=fi_code`; the other limits add no
                 // delimiter to `print_cmd_chr(if_test,cur_if)`.
                 if frame.limit == IfLimit::Fi {
-                    text.push_str(&crate::processor::expand::print_esc_text(
-                        &self.state,
-                        "else",
-                    ));
+                    crate::processor::expand::append_print_esc_text(&self.state, "else", &mut text);
                 }
                 (text, frame.source_line)
             })

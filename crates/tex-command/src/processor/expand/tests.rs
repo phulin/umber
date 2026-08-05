@@ -4591,6 +4591,38 @@ fn print_cmd_chr_relax_uses_live_escapechar() {
 }
 
 #[test]
+fn public_append_renderers_extend_caller_owned_text() {
+    let mut universe = crate::test_harness::universe_with_plain_catcodes();
+    let symbol = universe.intern("relax").symbol();
+    universe.set_meaning(symbol, Meaning::Relax);
+    let command = {
+        let mut state = universe.command_context();
+        CurrentCommand::resolve(
+            traced(Token::Cs(symbol)),
+            crate::command::DeliveryStamp::new(0, 0, 0),
+            None,
+            false,
+            &mut state,
+        )
+    };
+
+    let mut text = String::from("prefix:");
+    append_print_cmd_chr_text(
+        &universe.command_context(),
+        PrintCommand::from_current(&command),
+        &mut text,
+    );
+    append_character_command_text('x', Catcode::Letter, &mut text);
+    append_print_esc_text(&universe.command_context(), "end", &mut text);
+    append_command_token_text(&mut universe.command_context(), Token::Param(3), &mut text);
+
+    assert_eq!(
+        text,
+        "prefix:\\relaxthe letter x\\endmacro parameter character #3"
+    );
+}
+
+#[test]
 fn token_list_control_sequences_use_live_escapechar() {
     // TeX82 §§63/294: `show_token_list` delegates control-sequence spelling
     // to `print_cs`, including the live escape prefix.

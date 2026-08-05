@@ -555,16 +555,20 @@ impl CommandProcessor<'_> {
             _ => None,
         };
         let Some(_kind) = kind.filter(|kind| *kind != ConditionalKind::IfCase) else {
-            let unless = crate::processor::expand::print_esc_text(&self.state, "unless");
-            let operand = crate::processor::expand::print_cmd_chr_text(
+            let mut message = String::from("You can't use `");
+            crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut message);
+            message.push_str("' before `");
+            crate::processor::expand::append_print_cmd_chr_text(
                 &self.state,
                 crate::processor::expand::PrintCommand::from_current(&next),
+                &mut message,
             );
+            message.push_str("'.");
             self.observe_command_diagnostic("illegal_unless_operand", &next);
             self.back_error_reporting(
                 next,
                 ILLEGAL_UNLESS_OPERAND_DIAGNOSTIC,
-                format!("You can't use `{unless}' before `{operand}'."),
+                message,
                 &["I'll pretend you didn't say \\unless."],
             )?;
             return Ok(());
@@ -1403,12 +1407,15 @@ impl CommandProcessor<'_> {
         let Some(frame) = self.command.conditions.current() else {
             return String::new();
         };
-        let mut condition =
-            crate::processor::expand::print_esc_text(&self.state, frame.kind.canonical_name());
+        let mut condition = String::new();
         if frame.inverted {
-            condition =
-                crate::processor::expand::print_esc_text(&self.state, "unless") + &condition;
+            crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut condition);
         }
+        crate::processor::expand::append_print_esc_text(
+            &self.state,
+            frame.kind.canonical_name(),
+            &mut condition,
+        );
         conditional_trace_suffix(
             self.command.conditions.frames.len(),
             Some(condition),
@@ -1418,13 +1425,16 @@ impl CommandProcessor<'_> {
 
     /// e-TeX's `\unless`-prefixed `print_cmd_chr(if_test,cur_if)` spelling.
     pub(crate) fn conditional_kind_text(&self, frame: &ConditionFrame) -> String {
-        let name =
-            crate::processor::expand::print_esc_text(&self.state, frame.kind.canonical_name());
+        let mut name = String::new();
         if frame.inverted {
-            crate::processor::expand::print_esc_text(&self.state, "unless") + &name
-        } else {
-            name
+            crate::processor::expand::append_print_esc_text(&self.state, "unless", &mut name);
         }
+        crate::processor::expand::append_print_esc_text(
+            &self.state,
+            frame.kind.canonical_name(),
+            &mut name,
+        );
+        name
     }
 
     #[allow(unused_variables)]

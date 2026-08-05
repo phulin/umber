@@ -186,7 +186,7 @@ pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: 
             append_tex_print_char(ch, text);
         }
     } else {
-        text.push_str(&token_text(stores, token));
+        append_non_character_token_text(stores, token, text);
     }
     let Token::Cs(symbol) = token else {
         return;
@@ -200,6 +200,42 @@ pub fn append_token_show_text(stores: &impl ExpansionState, token: Token, text: 
     match (chars.next(), chars.next()) {
         (Some(ch), None) if stores.catcode(ch) != Catcode::Letter => {}
         _ => text.push(' '),
+    }
+}
+
+fn append_non_character_token_text(stores: &impl ExpansionState, token: Token, text: &mut String) {
+    match token {
+        Token::Cs(symbol) => {
+            let name = stores.resolve(symbol);
+            let escape = escapechar(stores);
+            match stores.control_sequence_kind(symbol) {
+                ControlSequenceKind::ActiveCharacter => text.push_str(name),
+                ControlSequenceKind::Null => {
+                    if let Some(escape) = escape {
+                        text.push(escape);
+                    }
+                    text.push_str("csname");
+                    if let Some(escape) = escape {
+                        text.push(escape);
+                    }
+                    text.push_str("endcsname");
+                }
+                ControlSequenceKind::SingleCharacter
+                | ControlSequenceKind::Named
+                | ControlSequenceKind::Internal => {
+                    if let Some(escape) = escape {
+                        text.push(escape);
+                    }
+                    text.push_str(name);
+                }
+            }
+        }
+        Token::Param(slot) => {
+            text.push('#');
+            text.push(char::from(b'0' + slot));
+        }
+        Token::Frozen(_) => text.push_str("\\endtemplate"),
+        Token::Char { .. } => unreachable!("character tokens are handled by the caller"),
     }
 }
 

@@ -444,13 +444,17 @@ impl CommandState {
                 // preserves that context even when the list has one token
                 // and is exhausted by the next main-control delivery.
                 if state.int_param(tex_state::env::banks::IntParam::TRACING_MACROS) > 1 {
-                    let mut text =
-                        crate::processor::expand::print_esc_text(state, stored_replay_name(reason));
+                    let mut text = String::new();
+                    crate::processor::expand::append_print_esc_text(
+                        state,
+                        stored_replay_name(reason),
+                        &mut text,
+                    );
                     text.push_str("->");
                     for token in state.tokens(tokens).to_vec() {
-                        text.push_str(&crate::processor::expand::token_list_token_text(
-                            state, token,
-                        ));
+                        crate::processor::expand::append_token_list_token_text(
+                            state, token, &mut text,
+                        );
                     }
                     let mut output = state.begin_diagnostic();
                     output.print_nl(&text);
