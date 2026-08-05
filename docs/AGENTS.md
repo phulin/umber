@@ -73,8 +73,8 @@ root-buffer patches and retained incremental execution.
 `generated_input_stabilization.md` defines the implemented correctness and
 lifecycle contract for positive and negative generated-input dependencies,
 safe `JobStart` fallback, provisional editor output, bounded off-hot-path
-fixed-point stabilization, and selective paragraph reuse across unchanged-root
-rerun passes. It also records the default-disabled replay activation decision.
+fixed-point stabilization, and safe cold execution after external-input
+changes.
 
 `stepwise_execution.md` defines the owned `tex-exec` run, atomic per-step
 snapshot/replay protocol, typed resource sites, lifecycle, cumulative fuel and
@@ -84,16 +84,11 @@ cancellation rules, and the migration from whole-attempt retries.
 cost, the required nested inverse-journal invariants, and the mutation-boundary
 gate that must be satisfied before replacing the aggregate rollback root.
 
-`incremental_memoization.md` defines the changed-document slow path: stable
-source alignment plus an ordered accepted-history paragraph replay cursor,
-per-paragraph dependency validation, accepted-history-owned shared finished-line
-mounts, lazy output provenance, cold-equivalent boundary publication, and
-path-separated verification. It deliberately does not use a reverse suffix
-hash, hierarchical execution trace, or prepared-hlist fallback tier.
+`incremental_memoization.md` records the deleted changed-document paragraph
+memoization design and points to the current restart-from-summary contract.
 
-`paragraph_replay_deletion_baseline.md` records the reproducible pre-deletion
-paragraph replay measurements and workload identities used for the fixed
-post-deletion comparison.
+`paragraph_replay_deletion_baseline.md` records the reproducible before/after
+deletion measurements and workload identities.
 
 `retained_group_roots.md` specifies the proposed persistent/COW environment
 history needed for durable paragraph checkpoints inside ordinary open groups,

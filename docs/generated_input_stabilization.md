@@ -7,11 +7,9 @@
 > coordinator, provisional editor session, WebAssembly representation adapter,
 > and direct/worker authored JavaScript facades expose the complete lifecycle.
 > `tex-incr` provides the unchanged-root external-input-delta candidate that
-> restores only `JobStart` while retaining accepted paragraph history. Native,
+> restores only `JobStart` while retaining accepted output history. Native,
 > WebAssembly, incremental-fuzz, rollback, oscillation, and balanced optimized
-> gates cover the contract. Paragraph recording remains default-disabled on
-> every production editor and stabilizer surface by the measured activation
-> decision.
+> gates cover the contract.
 
 This document defines how persistent editor compilation composes
 root-buffer edits, generated TeX inputs such as `.aux` and `.toc` files, and
@@ -47,20 +45,6 @@ corresponds to the affected pages. That is an outcome, not an API guarantee:
 checkpoint pruning may force an earlier restart, equal line counts do not prove
 state convergence, and a reflow may either remain divergent or rejoin at a
 later boundary.
-
-### Changed-document paragraph replay
-
-`tex-incr` can reuse accepted finished lines for source-aligned paragraphs whose
-typed dependency observations still validate. Page building, output routines,
-and shipout execute normally. This is the appropriate slow-path mechanism when
-full engine state does not converge.
-
-The machinery is currently opt-in. Ordinary native and WebAssembly
-`VirtualCompileSession` construction does not enable `PureMemoRuntime`; the
-Gentle profiling runner enables it explicitly. Historical measurements prove
-that the path can win on selected pagination-changing edits, but those results
-are not a default web-session latency contract. Default activation requires a
-new balanced performance and retention gate.
 
 ### Multipass project sessions
 
@@ -108,8 +92,8 @@ and authoritative misses with their access class across checkpoint forks and
 restores the prior map root on rollback. The VFS resolver records a lookup
 only after it resolves to immutable bytes or authoritative absence; unresolved
 resource waits and speculative prefetch hints never enter the map. A mismatch
-selects a private edited candidate that executes from `JobStart`, disables
-paragraph replay for that pass, and retains the accepted generation until all
+selects a private edited candidate that executes from `JobStart` and retains
+the accepted generation until all
 engine, output, and VFS publication checks succeed.
 
 The sharp failure sequence is:
@@ -185,8 +169,7 @@ between-pass deltas.
 ### Mismatch behavior
 
 A mismatch is not a patch error. It selects a safe `JobStart` execution path
-against the new snapshot. The initial correctness implementation may disable
-paragraph replay for that pass. It must preserve:
+against the new snapshot. It must preserve:
 
 - the previously accepted revision and output until the candidate succeeds;
 - resource suspension and retry of the same private candidate;
@@ -259,49 +242,12 @@ arbitrary TeX state changes beyond `\r@...` definitions.
 
 ## Incremental stabilization passes
 
-After the correctness and orchestration contracts are established,
-stabilization passes may preserve accepted paragraph history while restarting
-engine execution at `JobStart`.
-
-The unchanged root gives every surviving source anchor an identity mapping.
-Executing the changed generated inputs first installs the current macro and
-register state. Existing generic dependency tracking already records control-
-sequence meanings and typed state reads. A paragraph that consumed a changed
-reference meaning therefore misses validation, while unrelated paragraphs may
-mount their retained finished lines. Page building and shipout continue to run
-cold, as required by the paragraph-replay contract.
-
-This optimization requires an explicit external-input-delta candidate path. It
-must not pretend that a later checkpoint is valid, and it must not create a
-fresh session that discards the accepted paragraph history. Fast suffix
-adoption remains possible only if the complete future state genuinely rejoins;
-common changed-label passes should expect paragraph replay rather than a fast
-full-state splice.
-
-`tex-incr::Session::start_external_input_delta_candidate` implements the
-engine-side boundary. It keeps the accepted editor revision, fragment store,
-and identity layout, restores the accepted `JobStart` aggregate root, and
-starts paragraph history with prior-record reuse enabled. The candidate and
-its memo runtime remain private and rollback-safe until ordinary pending
-revision acceptance. The current path conservatively disables suffix adoption:
-an external binding consumed later in the root can make an earlier checkpoint
-look equal before the differing read occurs, so that point does not prove
-equal future execution. Named checkpoints are republished by ordinary page
-building and shipout, and retained memo bytes remain part of candidate and
-accepted retention telemetry.
-
-Each accepted output attributes its work with `RevisionExecutionPath`: cold,
-ordinary fast edit, ordinary slow edit, unchanged-root external-input delta,
-or forced `JobStart` fallback. Its `ReuseMetrics` also reports revision-local
-paragraph lookups, hits, and typed validation misses. These are deltas from the
-generic paragraph runtime counters; they neither inspect generated-file
-contents nor encode label-specific cache policy.
-
-Paragraph recording must remain default-disabled until measurements show that
-the combined cost of history construction, stabilization replay, neutral edits,
-retention, and long sessions satisfies the production gate. Rerun-only or
-project-specific enablement may have different economics from universal editor
-enablement and must be measured separately.
+An external-input mismatch starts a private candidate from `JobStart` against
+the new immutable VFS snapshot. The candidate executes ordinary expansion,
+paragraph construction, page building, and shipout. It retains the accepted
+revision and output for atomic failure recovery, but carries no finished-line
+or paragraph transaction history into the new execution. Named checkpoints are
+republished by ordinary execution.
 
 ## Implementation record
 
@@ -345,41 +291,12 @@ provisional result.
 native and wasm-bindgen tests compare exact stabilized artifacts and fixed-point
 failure categories.
 
-### Phase 3: paragraph reuse during stabilization
+### Phase 3: paragraph replay deletion
 
-1. `tex-incr` exposes a root-unchanged external-input-delta candidate that
-   starts at `JobStart` while retaining accepted paragraph history.
-2. Replay uses generic meaning and state dependencies rather than
-   label-specific semantic caches.
-3. Focused tests prove that changed-reference paragraphs miss and unrelated
-   paragraphs hit with ordinary page building and shipout. They compare
-   effects, artifacts, DVI, named boundaries, and boundary state with cold
-   execution, then repeat across mixed paragraph-history generations.
-4. The cold-equivalence, schedule, provenance, retention, and incremental fuzz
-   tiers gate the path.
-
-The exit criterion is satisfied for the isolated replay path: representative
-stabilization passes beat fresh cold reruns in balanced optimized measurements
-without weakening cold equivalence. The broader activation gate remains
-separate and default-disabled as recorded below.
-
-### Phase 4: activation policy
-
-The activation gate measures provisional latency, initial history construction,
-stabilization latency, neutral and contained edits, pagination-changing edits,
-long-session retention, and WebAssembly memory. Paragraph recording may be
-enabled only for surfaces whose complete workload wins. Historical measurements
-remain in Beads or Git history rather than turning one workload's numbers into
-a permanent architecture promise.
-
-The completed measurement gate keeps paragraph recording default-disabled on
-the native single-pass editor, native stabilizer, low-level WebAssembly editor,
-and authored direct/worker facades. Unchanged-root stabilization replay wins
-its isolated rerun workload, but initial construction and retention are not
-free, and the complete balanced edit gate is not currently green. An explicit
-future rerun-only policy remains possible; it requires a separately exposed
-configuration boundary and a new complete gate rather than silently changing
-universal session construction.
+The retained paragraph transaction subsystem was removed. Invalidated work now
+restarts at an accepted command boundary or `JobStart` and executes normally.
+Historical pre-deletion measurements remain in
+[`paragraph_replay_deletion_baseline.md`](paragraph_replay_deletion_baseline.md).
 
 ## Required verification
 
@@ -393,7 +310,7 @@ The implementation gate must include:
 - candidate failure, cancellation, resource suspension, pass-limit, and
   oscillation rollback;
 - native and WebAssembly representation parity; and
-- balanced optimized performance measurements for any replay activation.
+- balanced optimized restart performance measurements.
 
 Use focused `cargo test -q --tests` invocations while implementing, then the
 repository's normal static and correctness gates. Fixture regeneration, when
@@ -404,6 +321,5 @@ needed, goes only through `scripts/regen-fixtures.sh`.
 - promising independent page compilation;
 - inferring convergence from line count or pagination alone;
 - parsing aux files into a label-only semantic model;
-- enabling paragraph replay by default without a complete performance gate;
 - changing TeX's synchronous file-open semantics; or
 - exposing internal stabilization passes as editor revisions.

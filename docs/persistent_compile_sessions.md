@@ -77,7 +77,7 @@ root binding, generated files, and output unchanged.
 
 The private revision is an owned `tex_incr::RevisionCandidate`: its canonical
 main control (including command state and discardable runtime), rollback roots,
-speculative checkpoint sink, paragraph history, and candidate output remain
+speculative checkpoint sink, command trace, and candidate output remain
 live across progressing resource responses.
 Provisioning changes only immutable session resource bindings and increments a
 monotonic response generation. The next `compile_attempt` supplies a fresh VFS
@@ -184,7 +184,7 @@ root in a private workspace generation and opens the exact stage snapshot
 that its resolvers will read. It compares every accepted positive and
 authoritative-negative dependency with that snapshot. An exact match permits
 ordinary checkpoint selection; any mismatch creates a private candidate that
-executes from `JobStart` without paragraph replay. This is a reuse decision,
+executes from `JobStart`. This is a reuse decision,
 not a patch rejection, and the same private candidate remains live across
 resource suspension and retry.
 A resource request, diagnostic failure, or output-limit failure discards that

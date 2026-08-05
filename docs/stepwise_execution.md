@@ -260,8 +260,8 @@ cost from host resource resolution without changing the savepoint boundary or
 allowing a retry to skip restoration.
 
 The `Universe` and command snapshots must be taken and restored as one
-aggregate operation. No caller may roll back command state, modes, paragraph recording,
-execution state, or `Universe` independently. A resource lookup may suspend
+aggregate operation. No caller may roll back command state, modes, execution
+state, or `Universe` independently. A resource lookup may suspend
 after the blocked operation has entered nested TeX groups; the environment's
 lineage check admits rollback through those still-live descendants while
 rejecting a savepoint whose enclosing group was exited. The existing
@@ -303,16 +303,16 @@ The `ResourceSite` recorded for diagnostics and failure injection is one of
 `Shipout`, `FontLoad`, `ExternalImageParse`, or `EndFinalization`. Site does not
 change request identity or atomicity:
 
-| Site                                  | Contract on `Need`                                                                                                                                                                                                                                                                    |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| expansion                             | Roll back token acquisition, macro/scanner frames, input cursors, resolution index, paragraph reads, recoverable diagnostics, and all expansion fuel state except cumulative run fuel.                                                                                                |
-| main-control dispatch                 | Roll back the delivered token, assignment/group mutations, mode changes, virtual effects, and candidate statistics; replay starts before expansion of that token.                                                                                                                     |
-| paragraph finishing and line building | Roll back the entire paragraph-ending dispatch, paragraph memo validation/recording, line nodes, contribution/page-list changes, and any output it triggered. Pure line breaking itself must not call a host; resource-dependent font/shaping inputs are resolved before entering it. |
-| page building                         | Roll back contribution consumption, page totals, insertion splitting, fire-up state, and candidate output work. Pure page-cost calculation has no resolver.                                                                                                                           |
-| shipout                               | Roll back box removal, deferred-write expansion, stream state, image/font selection, detached effects, artifact bytes, prepared DVI plans, and page-node release. `ShipoutComplete` is staged only after the outermost shipout commits.                                               |
-| font loading                          | Roll back request-index advancement and every partially scanned `\font` assignment. Parsing supplied bytes occurs during resource registration; selection is recorded in `World` only on replay.                                                                                      |
-| external image parsing                | Registration validates and pins the external object first. A need during `\pdfximage` or shipout rolls back the whole containing step; no partial PDF object, dimension, or image ledger entry survives.                                                                              |
-| end-of-job finalization               | Roll back final paragraph/page cleanup, output-routine work, shipouts, final summaries, and artifact-plan assembly. Replay re-enters `FinishEnd` or `Finalize`, never an internal output frame.                                                                                       |
+| Site                                  | Contract on `Need`                                                                                                                                                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| expansion                             | Roll back token acquisition, macro/scanner frames, input cursors, resolution index, paragraph reads, recoverable diagnostics, and all expansion fuel state except cumulative run fuel.                                                           |
+| main-control dispatch                 | Roll back the delivered token, assignment/group mutations, mode changes, virtual effects, and candidate statistics; replay starts before expansion of that token.                                                                                |
+| paragraph finishing and line building | Roll back the entire paragraph-ending dispatch, line nodes, contribution/page-list changes, and any output it triggered. Pure line breaking itself must not call a host; resource-dependent font/shaping inputs are resolved before entering it. |
+| page building                         | Roll back contribution consumption, page totals, insertion splitting, fire-up state, and candidate output work. Pure page-cost calculation has no resolver.                                                                                      |
+| shipout                               | Roll back box removal, deferred-write expansion, stream state, image/font selection, detached effects, artifact bytes, prepared DVI plans, and page-node release. `ShipoutComplete` is staged only after the outermost shipout commits.          |
+| font loading                          | Roll back request-index advancement and every partially scanned `\font` assignment. Parsing supplied bytes occurs during resource registration; selection is recorded in `World` only on replay.                                                 |
+| external image parsing                | Registration validates and pins the external object first. A need during `\pdfximage` or shipout rolls back the whole containing step; no partial PDF object, dimension, or image ledger entry survives.                                         |
+| end-of-job finalization               | Roll back final paragraph/page cleanup, output-routine work, shipouts, final summaries, and artifact-plan assembly. Replay re-enters `FinishEnd` or `Finalize`, never an internal output frame.                                                  |
 
 A suspension batch contains every request synchronously emitted by the blocked
 lookup operation before its first unavailable dependency, sorted and
@@ -331,7 +331,7 @@ The implementation and tests must preserve all of these invariants:
    committed next state independent of native/WASM host, response order, and
    response batch partitioning.
 3. No diagnostic, stream write, generated byte, artifact ordering entry, DVI
-   plan, checkpoint, paragraph memo observation, or read-recorder callback from
+   plan, checkpoint, or read-recorder callback from
    a rolled-back candidate is visible.
 4. Previously committed executor steps remain private but intact across a
    later suspension. Rejecting the whole compile discards the enclosing VFS
@@ -345,7 +345,7 @@ The implementation and tests must preserve all of these invariants:
    savepoints are private, unhashed, unretained after commit, and never offered
    for incremental restart.
 7. Resource suspension cannot bypass a TeX group, shipout transaction, output
-   routine, paragraph history barrier, or hard limit.
+   routine, or hard limit.
 8. Successful stepwise output, statistics, checkpoint schedule, effects,
    artifacts, and generated files are byte-for-byte and order-for-order equal
    to the one-shot adapter with the same resources.
@@ -356,7 +356,7 @@ Counters fall into two classes.
 
 Rollback-coupled counters include `ExecutionStats`, input source/replay and
 condition allocators, `Universe` allocation and PDF cursors, effect/artifact
-positions, paragraph recording ordinals, prepared-page occurrence counts,
+positions, prepared-page occurrence counts,
 checkpoint occurrence state, and the expansion `resolution_index`. Restoring
 the savepoint restores these exactly. The replayed lookup therefore receives
 the same resolution index; wraparound becomes a typed hard-limit failure

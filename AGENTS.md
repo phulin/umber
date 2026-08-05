@@ -64,6 +64,7 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/bib-engine`: public bibliography facade, engine-private Biber and classic BibTeX runtimes, and pinned upstream compatibility suite.
 - `tools/`: Rust tooling crates.
 - `benchmarks/`: opt-in standalone benchmark crates kept outside the root workspace.
+- `benchmarks/edit-restart`: paired Plain TeX edit workloads for incremental restart measurement.
 - `benchmarks/tex-command`: bounded generated-source descriptor identity reuse benchmark.
 - `benchmarks/png-import`: host-only comparison of custom, Reader, and bounded
   StreamingDecoder PNG alpha import paths on a recent-arXiv raster workload.

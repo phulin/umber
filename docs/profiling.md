@@ -195,20 +195,21 @@ cold-equivalent in DVI bytes and boundary schedule.
 For path-isolated checks, `--incremental-path slow` exercises the
 pagination-changing edit, `fast` the contained equal-width substitution, and
 `neutral` a comment-only edit whose DVI must remain identical. Repeat a path
-under `--memo-layers none` and `paragraph` in alternating command order when a
-focused gate must remain usable independently of the composite sequence.
+under `--memo-layers none` and the relevant remaining pure layer in alternating
+command order when a focused gate must remain usable independently of the
+composite sequence.
 
 Use the build without `profiling-stats` for release latency. Its summary prints
 `profiling_stats=false` so an attributed run cannot be mistaken for a release
 comparison. Rebuild with `--features profiling-runner,profiling-stats` only
 when named phases and identity counters are needed to explain a path.
 
-To isolate cold recording overhead, repeat fresh session priming under one
-explicit policy:
+To isolate cold pure-cache recording overhead, repeat fresh session priming
+under one explicit policy:
 
 ```bash
 GENTLE_PROFILE_ITERATIONS=100 \
-  scripts/profile-gentle.sh --cold-memo-layers paragraph
+  scripts/profile-gentle.sh --cold-memo-layers page
 GENTLE_PROFILE_ITERATIONS=100 \
   scripts/profile-gentle.sh --cold-memo-layers disabled
 ```
@@ -216,7 +217,7 @@ GENTLE_PROFILE_ITERATIONS=100 \
 `disabled` is the no-runtime control. `none` keeps the memo runtime active with
 all recording layers off. Select explicit recording layers with
 `--memo-layers`; accepted values are comma-separated
-`pretolerance,paragraph,page,shipout`, `all`, and `none`.
+`pretolerance,page,shipout`, `all`, and `none`.
 
 For a direct marginal comparison, also pass `--baseline-memo-layers`. Both
 policies then run in the same alternating loop and report candidate minus
@@ -227,31 +228,25 @@ cargo run --profile profiling -p umber --bin gentle-profile \
   --features profiling-runner -- \
   --repo-root /path/to/umber2 --incremental-edit \
   --iterations 6 --warmups 2 \
-  --baseline-memo-layers paragraph \
-  --memo-layers pretolerance,paragraph
+  --baseline-memo-layers page \
+  --memo-layers pretolerance,page
 ```
 
-## Stabilization replay gate
+## Paragraph replay deletion comparison
 
-The paragraph replay deletion baseline and its reusable post-deletion workload
-identities are recorded in
+The paragraph replay deletion baseline and post-deletion workload identities
+are recorded in
 [`paragraph_replay_deletion_baseline.md`](paragraph_replay_deletion_baseline.md).
-Use `--paragraph-workload` for its paired synthetic edit cases and
-`--synthetic-stabilization-replay` for its compact generated-input case.
-
-Use `--stabilization-replay` for the generated-input slow path. The runner
-alternates sixteen generations of one externally supplied reference width over
-an unchanged Gentle root. Disabled and paragraph-recording sessions run in
-balanced AB/BA order; every accepted DVI is compared between policies. The
-receipt includes initial-history and per-pass mean/median latency, pass count,
-paragraph lookups/hits/validation misses, reexecuted bytes, retained paragraph
-bytes, and the full-session paired delta:
+Use `--edit-restart-workload` for the paired synthetic edit cases. Every
+accepted DVI is compared with a fresh cold target. The receipt includes
+latency, RSS, allocation volume, snapshot cost, convergence, and reexecution
+counters:
 
 ```bash
 cargo run --release -p umber --bin gentle-profile \
   --features profiling-runner -- \
-  --stabilization-replay --iterations 4 --warmups 1 \
-  --memo-layers paragraph
+  --edit-restart-workload prefix --iterations 6 --warmups 2 \
+  --memo-layers none
 ```
 
 Measure the current default WebAssembly editor's linear-memory growth after
@@ -263,10 +258,8 @@ scripts/build-wasm-package.sh
 node --expose-gc scripts/measure-wasm-editor-memory.mjs
 ```
 
-The WASM surface intentionally has no paragraph-recording switch while the
-activation gate remains closed. Pair its current-default memory observation
-with the native candidate's exact retained paragraph-byte charge; do not infer
-that disposal shrinks WebAssembly linear memory, whose pages only grow.
+Do not infer that disposal shrinks WebAssembly linear memory, whose pages only
+grow.
 
 ## Interpreting incremental counters
 
@@ -279,9 +272,6 @@ metadata is reported separately from detached-cache retention.
 
 `commands_reexecuted` counts tokens reaching scalar main-control dispatch;
 `tokens_reexecuted` also includes expansion and scanning below main control.
-`commands_skipped` counts recorded main-control deliveries bypassed by accepted
-paragraph replay. Compare `commands_reexecuted + commands_skipped` between
-policies when evaluating saved interpreter work.
 
 Timing samples taken during thermal pressure or unrelated host contention are
 not admissible. Use balanced paired runs, report means and medians, preserve the

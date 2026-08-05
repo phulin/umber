@@ -156,13 +156,6 @@ At local refcount zero the root slot is removed. Its vectors enter the recycled
 pool only if `Arc::try_unwrap` proves that no related Universe still shares the
 payload; otherwise teardown is an O(1) shared-payload drop.
 
-Accepted paragraph history mounts these shared roots directly. Its handle owns
-the payload and deduplicated glue closure. A restarted Universe validates the
-handle, installs it under an ordinary rollback pin, restores compatible glue
-resources, and overlays current-revision character origins without changing
-semantic words or ids. Unsupported handle-bearing forms are rejected before
-mutation.
-
 ## Access boundary
 
 The node API exposes builders, `NodeList<'a>`/`NodeIter<'a>` read-only views,

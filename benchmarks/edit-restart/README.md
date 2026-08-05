@@ -1,9 +1,9 @@
-# Paragraph replay deletion workloads
+# Edit-restart workloads
 
-These paired Plain TeX inputs are the stable synthetic workloads for the
-paragraph replay deletion comparison. Each pair differs by one minimal edit;
-`gentle-profile --paragraph-workload NAME` alternates both directions in one
-retained session and verifies every result against a fresh cold execution.
+These paired Plain TeX inputs are stable synthetic workloads for incremental
+restart comparisons. Each pair differs by one minimal edit;
+`gentle-profile --edit-restart-workload NAME` alternates both directions in one
+session and verifies every result against a fresh cold execution.
 
 - `unchanged`: changes only a leading comment, leaving every paragraph input
   and output unchanged.
@@ -17,8 +17,7 @@ retained session and verifies every result against a fresh cold execution.
   the pair changes the first `Alpha` to `Omega` and exercises a roughly
   100-page source without committing duplicated corpus bytes.
 
-Generated-input stabilization and the representative long-document cases use
-the pinned Gentle corpus rather than copied fixtures. Run them with
-`--stabilization-replay`, `--incremental-path neutral`,
+Representative long-document cases use the pinned Gentle corpus rather than
+copied fixtures. Run them with `--incremental-path neutral`,
 `--incremental-path fast`, and `--incremental-path slow` as documented in
 [`docs/profiling.md`](../../docs/profiling.md).

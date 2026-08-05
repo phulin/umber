@@ -584,15 +584,11 @@ Checkpoint publication remains executor-controlled.
 root patches. Acceptance is atomic across incremental history, the synthetic
 VFS root, generated files, diagnostics, artifacts, and rendered output: a
 resource miss or failed revision does not replace prior accepted state.
-Full canonical-state convergence can reuse the accepted suffix. When page
-state does not converge, changed-content reuse uses the aligned ordered
-paragraph cursor in [incremental_memoization.md](incremental_memoization.md).
-Paragraph replay validates recorded semantic observations before mutation and
-fails closed; it uses stable source mapping and has no reverse suffix hash or
-tierarchical execution trace. Accepted hlists and finished lines retain only
-compact piece-relative provenance recipes for reachable output origins; replay
-mounts those origins through ordinary survivor-node traversal rather than
-retaining an expanded-token trace. The separate schedule-aligned suffix-adoption fast path
+Full canonical-state convergence can reuse the accepted suffix. Otherwise an
+invalidated region restarts from the nearest accepted `CommandSummary` and
+executes ordinary command and paragraph processing. No finished-line or
+paragraph transaction payload is retained across revisions. The
+schedule-aligned suffix-adoption fast path
 treats a deterministic fixed-seed 64-bit aHash over canonical current-state
 projections as authoritative: it has no SHA-256 or structural fallback, and the
 rare possibility of collision-induced incorrect reuse is an accepted

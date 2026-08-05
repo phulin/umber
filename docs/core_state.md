@@ -157,15 +157,6 @@ restore/retain records so `Universe` can render TeX82 §283
 An alignment-token accounting error must therefore be repaired before group
 exit, not by redirecting an `Env` restore to a different control sequence.
 
-Optional paragraph replay recording overlays this boundary without changing
-rollback history. While active, count-register and integer-parameter setters
-save each touched cell's paragraph-entry value in an Env-owned recorder.
-Depth-zero locals and globals at any depth may contribute a final root
-transition; balanced nested locals and values restored to entry are omitted.
-Starting the recorder does not advance the Env epoch, and finishing it does not
-inspect journal suffix positions. Paragraphs entering inside an existing group
-retain a conservative write-observed ownership barrier.
-
 ## 7. Content: token, provenance, source, glue, font, and node stores
 
 Immutable content follows builder-then-freeze. Builders are private to the
@@ -222,15 +213,10 @@ transaction or checkpoint. Each frozen list has a canonical semantic identity
 composed from decoded node values and child identities, excluding provenance.
 
 Survivor roots separate immutable payload ownership from one Universe's local
-root/refcount table. Related Universe forks share the payload through `Arc`;
+root/refcount table. Related Universe forks share payloads through `Arc`;
 dropping a fork recycles storage only when it is the last payload owner.
-Accepted paragraph history may therefore mount a retained survivor root in a
-restarted Universe without copying or re-freezing its semantic graph. A local
-origin overlay supplies current-revision diagnostic provenance from a compact
-piece-relative recipe containing only roots reachable from retained output;
-expanded tokens that produced no node are absent. A captured glue closure
-restores ordinary glue-interner state before the root is exposed. Unsupported
-handle-bearing node forms miss before live execution mutates.
+Survivors preserve checkpoint-owned node graphs; they are not cross-revision
+finished-paragraph mounts.
 
 ## 8. External effects: the virtualized world
 

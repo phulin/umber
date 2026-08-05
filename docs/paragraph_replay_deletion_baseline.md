@@ -31,7 +31,7 @@ features. `/usr/bin/time` wrapped the already-built binary, never Cargo.
 ## Workloads
 
 The committed pairs live in
-[`benchmarks/paragraph-replay/workloads`](../benchmarks/paragraph-replay/workloads).
+[`benchmarks/edit-restart/workloads`](../benchmarks/edit-restart/workloads).
 Every measured advance alternates before to after and after to before in one
 retained session, then compares DVI bytes with a fresh execution of the target
 source. The runner generates `long` as 384 copies of its pinned paragraph text
@@ -145,21 +145,46 @@ hash above preserves the intended corpus identity for a later rerun.
 
 ## Post-deletion comparison
 
-After paragraph replay is removed, rerun every command above with the same
-toolchain, features, order, iterations, and workload identities. Compare:
+The post-deletion attributed binary was built from the deletion tree atop
+`d5b55a4c74deabac3c6f6f98c4efc28dc6ed3fb8` with the same Rust toolchain and
+profiling features. It is 301,144,472 bytes with SHA-256
+`294bd229704429b31cb284eb45f25f3e980ecf4cfb9596664db7d20aeda1165a`.
+The paired runner is now the generic `--edit-restart-workload` mode, with all
+remaining pure memo layers disabled.
 
-- DVI bytes for every target against fresh execution;
-- fresh and edit mean, median, minimum, and maximum latency;
-- accepted convergence boundary, retained/retyped/reused pages, reexecuted
-  bytes, tokens, commands, and paragraphs;
-- accepted-output snapshot, fork, executor, detach/materialize, and DVI
-  materialization time;
-- `StepSnapshot` size/capture time and active-paragraph cloned bytes;
-- Valgrind total allocation count/bytes and `/usr/bin/time` maximum RSS; and
-- generated-input pass latency, retained history bytes, and validation work.
+All seven workload results were byte-identical to fresh cold executions.
 
-Expected structural differences are zero paragraph transaction detach and
-materialize work, no active `ParagraphRecorder` clone charge, and reexecution
-from the nearest accepted `CommandSummary`. Correctness still requires exact
-cold output and boundary-schedule comparisons. Report observed performance
-deltas without treating any regression as grounds to retain or revive replay.
+| Workload     |  Fresh before/after |    Edit mean/median |        Edit min/max | Edit mean delta |   RSS KiB | Last reexecuted paragraphs/bytes/commands |
+| ------------ | ------------------: | ------------------: | ------------------: | --------------: | --------: | ----------------------------------------: |
+| unchanged    |     189.146/169.793 |     160.541/160.656 |     156.644/163.887 |           -4.0% |    30,432 |                               5/534/2,050 |
+| prefix       |     156.755/159.908 |     161.167/164.302 |     157.170/165.471 |          -23.9% |    30,428 |                               5/524/2,073 |
+| suffix       |     184.532/184.270 |      82.074/158.870 |       4.550/160.729 |           -4.6% |    29,284 |                               5/542/2,091 |
+| display-math |     176.001/167.743 |     162.863/165.453 |     151.906/172.839 |           +1.4% |    27,168 |                               2/373/1,913 |
+| macro        |     182.268/168.026 |     159.355/159.863 |     157.000/161.455 |           -3.3% |    26,484 |                               3/393/1,910 |
+| conditional  |     191.837/172.956 |     157.760/158.600 |     153.606/161.583 |           -4.1% |    25,188 |                               2/386/1,805 |
+| long         | 2,217.660/2,130.880 | 2,267.614/2,330.161 | 2,205.067/2,330.161 |          -54.6% | 1,177,072 |                        338/99,503/103,104 |
+
+The suffix pair retains its generic checkpoint-convergence bimodality. The long
+case still retypes 57 pages and reexecutes 338 paragraphs, but removing
+transaction capture reduced its measured edit mean from 4,999.019 ms to
+2,267.614 ms. No row performs paragraph validation or retained-line mounting.
+
+`StepSnapshot` is now 7,576 logical bytes, down from 8,232 bytes. The long
+case captured 515,765 snapshots in 2.885 seconds and 3,907,435,640 logical
+bytes; paragraph-recorder clone bytes and paragraph endpoint
+detach/materialize work are zero because those fields and paths no longer
+exist. The unchanged pair captured the same 20,990 snapshots in 213.046 ms and
+159,020,240 logical bytes.
+
+Valgrind Memcheck for one prefix iteration, one warm-up, and the two cold
+references reported 334,542,286 allocated bytes in 1,428,506 allocations, with
+zero errors. Against the pre-deletion disabled-layer control, that is
+12,520,890 fewer bytes and 129,071 fewer allocations. Maximum RSS fell for six
+small pairs and from 1,249,932 KiB to 1,177,072 KiB for the long case.
+
+Across tracked and newly added Rust sources, the repository moved from 442,100
+to 427,878 lines, a reduction of 14,222 lines. The complete working-tree diff,
+including tests, profiler modes, workloads, and documentation, removes 15,308
+lines and adds 510. Invalidated paragraphs now restart from
+the nearest eligible accepted `CommandSummary` (or `JobStart`) and execute
+normally; generic checkpoint, output, provenance, and convergence paths remain.

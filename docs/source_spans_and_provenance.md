@@ -409,11 +409,9 @@ diagnostic:
   output remain unchanged. The layout line-start index built while resolving a
   current origin is instead checkpoint-owned diagnostic state and is charged
   to `diagnostic_bytes` and the protected checkpoint budget.
-- Incremental paragraph history derives provenance closures only from char and
-  ligature origins reachable through the accepted hlist or finished-line
-  graph. Stable piece anchors plus compact relative ranges rebuild a
-  mount-local node-arena overlay in the current revision; expanded deliveries
-  which produced no retained node are neither recorded nor replayed.
+- Detached artifact provenance recipes retain stable piece anchors plus compact
+  relative ranges for rendered nodes. Expanded deliveries which produced no
+  artifact node are absent from the rendered-source sidecar.
 
 Errors use a structured payload conceptually equivalent to:
 
