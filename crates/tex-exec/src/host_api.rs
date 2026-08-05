@@ -91,15 +91,15 @@ pub trait PdfImageResolver {
 pub enum FontSource {
     Tfm {
         metrics: FileContent,
-        opentype: Option<tex_fonts::OpenTypeProgramSelection>,
+        opentype: Option<tex_fonts::OpenTypeFont>,
     },
     MappedTfm {
         metrics: FileContent,
-        opentype: tex_fonts::OpenTypeProgramSelection,
+        opentype: tex_fonts::OpenTypeFont,
         encoding_map: tex_fonts::LegacyEncodingMap,
     },
     ClassicTfmFallback {
         metrics: FileContent,
     },
-    OpenType(tex_fonts::OpenTypeProgramSelection),
+    OpenType(tex_fonts::OpenTypeFont),
 }

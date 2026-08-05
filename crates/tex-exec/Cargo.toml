@@ -15,7 +15,6 @@ smallvec.workspace = true
 tex-command = { path = "../tex-command" }
 tex-fonts = { path = "../tex-fonts" }
 tex-out = { path = "../tex-out" }
-tex-shape = { path = "../tex-shape" }
 tex-state = { path = "../tex-state" }
 tex-typeset = { path = "../tex-typeset" }
 

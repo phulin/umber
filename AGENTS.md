@@ -44,11 +44,10 @@ The project also uses bd (beads) for issue tracking; see below for full instruct
 - `crates/tex-observe`: detached command-observation translation into portable
   normalized semantic and geometry evidence.
 - `crates/tex-state`: engine state layer substrate.
-- `crates/tex-fonts`: immutable font metric parsing and TFM data.
+- `crates/tex-fonts`: immutable validated font contexts, metrics, and OpenType shaping.
 - `crates/tex-exec`: stomach execution, mode nest, main-control dispatch, assignments, and h/v-mode material construction.
 - `crates/tex-incr`: named-boundary editor sessions, revision mapping, convergence, pruning, and suffix reuse.
 - `crates/tex-typeset`: pure packing, line-breaking, and list transformation kernels.
-- `crates/tex-shape`: pure Unicode/OpenType single-run shaping and positioned glyph output.
 - `crates/tex-out`: committed page artifact model, hashing, and binary serialization.
 - `crates/umber-vfs`: host-neutral canonical virtual paths and shared virtual filesystem substrate.
 - `crates/umber`: CLI driver.

@@ -8952,12 +8952,7 @@ fn opentype_only_math_family_rejection_precedes_state_mutation() {
         tex_fonts::FontLimits::default(),
     )
     .expect("OpenType fixture parses");
-    let selection = tex_fonts::OpenTypeProgramSelection {
-        font,
-        variation: tex_fonts::VariationSelection::default(),
-        features: tex_fonts::FontFeaturePolicy::default(),
-        direction: tex_fonts::WritingDirection::LeftToRight,
-    };
+    let selection = font;
     let size = Scaled::from_raw(10 * Scaled::UNITY);
     let mut stores = crate::test_harness::universe_with_plain_catcodes();
     let unsupported = stores.intern_font(tex_fonts::LoadedFont::new_opentype(

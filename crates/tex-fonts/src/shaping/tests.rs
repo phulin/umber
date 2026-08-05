@@ -1,13 +1,14 @@
 use super::*;
-use tex_fonts::{
-    AcceptedFontContainers, FeatureSetting, FontContainer, FontLanguage, FontLimits, FontMetrics,
-    FontObjectIdentity, FontPurposes, FontRequest, FontRequestKey, LoadedFont, OpenTypeFont,
-    OpenTypeProgramSelection, ResolvedFont, VariationSelection, WritingDirection,
+use crate::{
+    AcceptedFontContainers, FeatureSetting, FontContainer, FontFeaturePolicy, FontLanguage,
+    FontLimits, FontMetrics, FontObjectIdentity, FontPurposes, FontRequest, FontRequestKey,
+    LoadedFont, OpenTypeFont, ResolvedFont, VariationSelection, WritingDirection,
 };
 
-const CMU_SERIF: &[u8] = include_bytes!("../../umber-wasm/assets/cmu-serif-500-roman.woff2");
-const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../tests/fixtures/NotoSansArabic.ttf");
-const NOTO_SANS_DEVANAGARI: &[u8] = include_bytes!("../tests/fixtures/NotoSansDevanagari.ttf");
+const CMU_SERIF: &[u8] = include_bytes!("../../../umber-wasm/assets/cmu-serif-500-roman.woff2");
+const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../../tests/fixtures/shaping/NotoSansArabic.ttf");
+const NOTO_SANS_DEVANAGARI: &[u8] =
+    include_bytes!("../../tests/fixtures/shaping/NotoSansDevanagari.ttf");
 
 fn cmu_serif(features: FontFeaturePolicy) -> LoadedFont {
     loaded_font(
@@ -16,6 +17,9 @@ fn cmu_serif(features: FontFeaturePolicy) -> LoadedFont {
         FontContainer::Woff2,
         AcceptedFontContainers::WASM,
         features,
+        WritingDirection::LeftToRight,
+        None,
+        None,
     )
 }
 
@@ -25,9 +29,14 @@ fn loaded_font(
     container: FontContainer,
     accepted_containers: AcceptedFontContainers,
     features: FontFeaturePolicy,
+    direction: WritingDirection,
+    script: Option<OpenTypeTag>,
+    language: Option<FontLanguage>,
 ) -> LoadedFont {
     let key = FontRequestKey::new(name, 0, VariationSelection::default(), features.clone())
-        .expect("fixture request key");
+        .expect("fixture request key")
+        .with_shaping_context(direction, script, language)
+        .expect("fixture shaping context");
     let request = FontRequest {
         key: key.clone(),
         accepted_containers,
@@ -58,12 +67,7 @@ fn loaded_font(
         vec![Scaled::from_raw(0); 7],
         FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
     )
-    .with_opentype(OpenTypeProgramSelection {
-        font,
-        variation: VariationSelection::default(),
-        features,
-        direction: WritingDirection::LeftToRight,
-    })
+    .with_opentype(font)
 }
 
 #[test]
@@ -71,20 +75,17 @@ fn script_detection_skips_common_prefixes() {
     assert_eq!(run_script("(Hello)"), Script::Latin);
     assert_eq!(run_script("123"), Script::Common);
     assert_eq!(run_script("(مرحبا)"), Script::Arabic);
-    assert_eq!(Direction::from_text("(Hello)"), Direction::LeftToRight);
-    assert_eq!(Direction::from_text("123 مرحبا"), Direction::RightToLeft);
+    assert_eq!(text_direction("(Hello)"), WritingDirection::LeftToRight);
+    assert_eq!(text_direction("123 مرحبا"), WritingDirection::RightToLeft);
 }
 
 #[test]
 fn cmu_serif_ligatures_and_mark_attachment_match_fixture() {
     let features = FontFeaturePolicy::default();
     let font = cmu_serif(features.clone());
-    let ligature = shape_run(
-        font.shaping_font().expect("OpenType fixture"),
-        "office",
-        &features,
-        Direction::LeftToRight,
-    );
+    let ligature = font
+        .shape_run(ShapingRequest::new("office"))
+        .expect("OpenType fixture");
     assert_eq!(
         ligature.glyphs,
         vec![
@@ -95,12 +96,9 @@ fn cmu_serif_ligatures_and_mark_attachment_match_fixture() {
         ]
     );
 
-    let mark = shape_run(
-        font.shaping_font().expect("OpenType fixture"),
-        "x\u{0301}",
-        &features,
-        Direction::LeftToRight,
-    );
+    let mark = font
+        .shape_run(ShapingRequest::new("x\u{0301}"))
+        .expect("OpenType fixture");
     assert_eq!(
         mark.glyphs,
         vec![glyph(91, 0, 345_375, 0), glyph(685, 0, 0, -45_220)]
@@ -111,12 +109,17 @@ fn cmu_serif_ligatures_and_mark_attachment_match_fixture() {
 fn complex_script_fixtures_match_glyph_and_position_snapshots() {
     let features = FontFeaturePolicy::default();
     for (name, bytes, text, direction) in [
-        ("noto-arabic", NOTO_SANS_ARABIC, "لَا", Direction::RightToLeft),
+        (
+            "noto-arabic",
+            NOTO_SANS_ARABIC,
+            "لَا",
+            WritingDirection::RightToLeft,
+        ),
         (
             "noto-devanagari",
             NOTO_SANS_DEVANAGARI,
             "क्षि",
-            Direction::LeftToRight,
+            WritingDirection::LeftToRight,
         ),
     ] {
         let font = loaded_font(
@@ -125,13 +128,13 @@ fn complex_script_fixtures_match_glyph_and_position_snapshots() {
             FontContainer::TrueType,
             AcceptedFontContainers::NATIVE,
             features.clone(),
-        );
-        let shaped = shape_run(
-            font.shaping_font().expect("OpenType fixture"),
-            text,
-            &features,
             direction,
+            None,
+            None,
         );
+        let shaped = font
+            .shape_run(ShapingRequest::new(text))
+            .expect("OpenType fixture");
         let expected = match name {
             "noto-arabic" => vec![
                 glyph_full(10, 4, 237_896, 0, 0),
@@ -185,20 +188,25 @@ fn explicit_script_language_and_mark_policy_reach_rustybuzz() {
         FontContainer::TrueType,
         AcceptedFontContainers::NATIVE,
         enabled.clone(),
+        WritingDirection::RightToLeft,
+        Some(OpenTypeTag::new(*b"arab")),
+        Some(FontLanguage::new("ar").expect("language")),
     );
-    let language = FontLanguage::new("ar").expect("language");
-    let shape = |features| {
-        shape_run_with_context(
-            font.shaping_font().expect("OpenType fixture"),
-            "لَا",
-            features,
-            Direction::RightToLeft,
-            Some(OpenTypeTag::new(*b"arab")),
-            Some(&language),
-        )
-    };
-    let positioned = shape(&enabled);
-    let unpositioned = shape(&disabled);
+    let positioned = font
+        .shape_run(ShapingRequest::new("لَا"))
+        .expect("OpenType fixture");
+    let unpositioned = loaded_font(
+        "noto-arabic",
+        NOTO_SANS_ARABIC,
+        FontContainer::TrueType,
+        AcceptedFontContainers::NATIVE,
+        disabled,
+        WritingDirection::RightToLeft,
+        Some(OpenTypeTag::new(*b"arab")),
+        Some(FontLanguage::new("ar").expect("language")),
+    )
+    .shape_run(ShapingRequest::new("لَا"))
+    .expect("OpenType fixture");
     assert_eq!(positioned.glyphs[1].x_offset.raw(), -74_711);
     assert_eq!(unpositioned.glyphs[1].x_offset.raw(), 0);
     assert_eq!(positioned.glyphs[1].y_offset.raw(), 167_772);
@@ -213,12 +221,9 @@ fn feature_policy_can_disable_ligatures() {
     }])
     .expect("feature policy");
     let font = cmu_serif(features.clone());
-    let shaped = shape_run(
-        font.shaping_font().expect("OpenType fixture"),
-        "office",
-        &features,
-        Direction::LeftToRight,
-    );
+    let shaped = font
+        .shape_run(ShapingRequest::new("office"))
+        .expect("OpenType fixture");
     assert_eq!(
         shaped
             .glyphs
@@ -233,15 +238,12 @@ fn feature_policy_can_disable_ligatures() {
 fn candidate_break_suppresses_only_the_ligature_crossing_it() {
     let features = FontFeaturePolicy::default();
     let font = cmu_serif(features.clone());
-    let shaping_font = font.shaping_font().expect("OpenType fixture");
-    let unbroken = shape_run(shaping_font, "office", &features, Direction::LeftToRight);
-    let candidate = shape_run_with_breaks(
-        shaping_font,
-        "office",
-        &features,
-        Direction::LeftToRight,
-        &[2],
-    );
+    let unbroken = font
+        .shape_run(ShapingRequest::new("office"))
+        .expect("OpenType fixture");
+    let candidate = font
+        .shape_run(ShapingRequest::with_breaks("office", &[2]))
+        .expect("OpenType fixture");
 
     assert!(!unbroken.glyphs.iter().any(|glyph| glyph.cluster == 2));
     assert!(

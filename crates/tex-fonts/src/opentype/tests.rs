@@ -89,12 +89,7 @@ fn woff2_and_decoded_ttf_have_one_program_identity_and_projection() {
         vec![tex_arith::Scaled::from_raw(0); 7],
         crate::FontMetrics::new(Vec::new(), Vec::new(), None, None, Vec::new()),
     )
-    .with_opentype(crate::OpenTypeProgramSelection {
-        font: web.clone(),
-        variation: VariationSelection::default(),
-        features: FontFeaturePolicy::default(),
-        direction: WritingDirection::LeftToRight,
-    });
+    .with_opentype(web.clone());
     let advance = web.metrics.horizontal_advances[usize::from(glyph)];
     assert!(loaded.character_exists(scalar));
     assert_eq!(
@@ -157,24 +152,14 @@ fn stix_math_is_identical_from_woff2_and_native_sfnt() {
         "stix-two-math.woff2",
         size,
         size,
-        crate::OpenTypeProgramSelection {
-            font: web.clone(),
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
+        web.clone(),
     );
     let native_loaded = crate::LoadedFont::new_opentype(
         "stix-native-math",
         "stix-two-math.ttf",
         size,
         size,
-        crate::OpenTypeProgramSelection {
-            font: native.clone(),
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
+        native.clone(),
     );
     let crate::MathMetricsSource::OpenType(web_metrics) = web_loaded.math_metrics_source() else {
         panic!("web MATH metrics");
@@ -226,18 +211,8 @@ fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
     .expect("STIX fixture");
     let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
     let identity = font.identity;
-    let loaded = crate::LoadedFont::new_opentype(
-        "stix-two-math",
-        "stix-two-math.woff2",
-        size,
-        size,
-        crate::OpenTypeProgramSelection {
-            font,
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
-    );
+    let loaded =
+        crate::LoadedFont::new_opentype("stix-two-math", "stix-two-math.woff2", size, size, font);
     let crate::MathMetricsSource::OpenType(math) = loaded.math_metrics_source() else {
         panic!("validated MATH table must be exposed directly")
     };
@@ -255,10 +230,8 @@ fn stix_direct_math_metrics_cover_basic_layout_queries_and_classic_fallback() {
     assert_eq!(math.glyph('A', 2), math.glyph('A', 2));
 
     let math_tables = loaded
-        .shaping_font()
+        .opentype()
         .expect("OpenType selection")
-        .parts()
-        .0
         .math
         .as_ref()
         .expect("MATH table");
@@ -333,18 +306,8 @@ fn opentype_only_font_synthesizes_versioned_text_fontdimens() {
                 .expect("x-height scales"),
         )
     });
-    let loaded = crate::LoadedFont::new_opentype(
-        "cmu-serif-roman",
-        "cmu-serif-roman",
-        size,
-        size,
-        crate::OpenTypeProgramSelection {
-            font,
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
-    );
+    let loaded =
+        crate::LoadedFont::new_opentype("cmu-serif-roman", "cmu-serif-roman", size, size, font);
 
     assert_eq!(crate::OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, 1);
     assert_eq!(loaded.parameters()[0], tex_arith::Scaled::from_raw(0));
@@ -378,12 +341,7 @@ fn mapped_tfm_identity_records_policy_map_and_classic_math_authority() {
         FontLimits::default(),
     )
     .expect("fixture font");
-    let selection = || crate::OpenTypeProgramSelection {
-        font: font.clone(),
-        variation: VariationSelection::default(),
-        features: FontFeaturePolicy::default(),
-        direction: WritingDirection::LeftToRight,
-    };
+    let selection = || font.clone();
     let mut first_entries = vec![None; 256];
     first_entries[65] = Some("A".to_owned());
     let mut second_entries = first_entries.clone();

@@ -1389,24 +1389,18 @@ fn register_font_resource(stores: &Universe, font: FontId, emission: &mut Emissi
         layout_policy: loaded.layout_policy(),
         mapping_fallback: loaded.mapping_fallback(),
         opentype: loaded.opentype().map(|font| tex_out::OpenTypeFontResource {
-            program_identity: font.program_identity,
+            program_identity: font.identity,
             object_identity: font.object_identity,
-            instance_identity: font.instance_identity,
+            instance_identity: loaded
+                .opentype_instance_identity()
+                .expect("OpenType font has an instance identity"),
             container: font.container,
             face_index: font.face_index,
-            variation: loaded
-                .shaping_variation()
-                .expect("OpenType selection variation")
-                .clone(),
-            features: loaded
-                .shaping_features()
-                .expect("OpenType selection features")
-                .clone(),
-            direction: loaded
-                .shaping_direction()
-                .expect("OpenType selection direction"),
-            script: loaded.shaping_script(),
-            language: loaded.shaping_language().cloned(),
+            variation: font.variation.clone(),
+            features: font.feature_policy.clone(),
+            direction: font.direction,
+            script: font.script,
+            language: font.language.clone(),
             encoding_map_version: loaded.encoding_map().map(|map| map.version()),
             encoding_map_identity: loaded.encoding_map().map(|map| map.identity()),
             fontdimen_synthesis_version: loaded

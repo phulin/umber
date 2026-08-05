@@ -1,9 +1,7 @@
 //! Immutable loaded font records and backend-neutral metric queries.
 
 use crate::opentype::{
-    FontContainer, FontFeaturePolicy, FontInstanceIdentity, FontLanguage, FontObjectIdentity,
-    FontProgramIdentity, MathConstant, MathKern, MathValue, OpenTypeFont, VariationSelection,
-    WritingDirection,
+    FontInstanceIdentity, FontProgramIdentity, MathConstant, MathKern, MathValue, OpenTypeFont,
 };
 use sha2::{Digest, Sha256};
 use std::hash::Hash;
@@ -147,7 +145,6 @@ pub struct LoadedFont {
     /// TeX82's occupied `font_info` extent for this immutable font record.
     font_info_words: usize,
     metrics: FontMetricsSource,
-    opentype: Option<OpenTypeFontSelection>,
     construction: FontConstruction,
     classic_math_capable: bool,
     layout_policy: FontLayoutPolicy,
@@ -213,15 +210,6 @@ impl std::fmt::Display for FontConstructionError {
 }
 
 impl std::error::Error for FontConstructionError {}
-
-/// OpenType program selected alongside classic TeX metrics for artifact/output reuse.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenTypeProgramSelection {
-    pub font: OpenTypeFont,
-    pub variation: VariationSelection,
-    pub features: FontFeaturePolicy,
-    pub direction: WritingDirection,
-}
 
 /// Metrics selected for character existence and width queries.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -332,27 +320,6 @@ impl FontMetricsSource {
             }),
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct OpenTypeFontSelection {
-    pub program_identity: FontProgramIdentity,
-    pub object_identity: FontObjectIdentity,
-    pub instance_identity: FontInstanceIdentity,
-    pub container: FontContainer,
-    pub face_index: u32,
-    variation: VariationSelection,
-    features: FontFeaturePolicy,
-    direction: WritingDirection,
-    script: Option<crate::OpenTypeTag>,
-    language: Option<FontLanguage>,
-}
-
-/// A validated OpenType program paired with one loaded TeX font size.
-#[derive(Clone, Copy, Debug)]
-pub struct ShapingFont<'a> {
-    font: &'a OpenTypeFont,
-    size: Scaled,
 }
 
 /// Direct math-metric capability selected for one immutable loaded font.
@@ -656,14 +623,6 @@ impl OpenTypeMathMetrics<'_> {
     }
 }
 
-impl<'a> ShapingFont<'a> {
-    /// Exposes the immutable program and requested size to shaping kernels.
-    #[must_use]
-    pub const fn parts(self) -> (&'a OpenTypeFont, Scaled) {
-        (self.font, self.size)
-    }
-}
-
 impl LoadedFont {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -694,7 +653,6 @@ impl LoadedFont {
             source_parameters,
             font_info_words,
             metrics: FontMetricsSource::Tfm(metrics),
-            opentype: None,
             construction: FontConstruction::Loaded,
             classic_math_capable: true,
             layout_policy: FontLayoutPolicy::ClassicTfmExact,
@@ -724,10 +682,10 @@ impl LoadedFont {
         path: impl Into<PathBuf>,
         design_size: Scaled,
         size: Scaled,
-        selection: OpenTypeProgramSelection,
+        font: OpenTypeFont,
     ) -> Self {
-        let parameters = synthesized_opentype_parameters(&selection, size);
-        let content_hash = selection.font.object_identity.bytes();
+        let parameters = synthesized_opentype_parameters(&font, size);
+        let content_hash = font.object_identity.bytes();
         let mut loaded = Self::new(
             name,
             path,
@@ -738,24 +696,14 @@ impl LoadedFont {
             parameters,
             FontMetrics::default(),
         )
-        .with_opentype(selection);
+        .with_opentype(font);
         loaded.classic_math_capable = false;
         loaded.layout_policy = FontLayoutPolicy::OpenTypePreferred;
         loaded
     }
 
     #[must_use]
-    pub fn with_opentype(mut self, selection: OpenTypeProgramSelection) -> Self {
-        let OpenTypeProgramSelection { font, .. } = selection;
-        let program_identity = font.identity;
-        let object_identity = font.object_identity;
-        let face_index = font.face_index;
-        let container = font.container;
-        let variation = font.variation.clone();
-        let features = font.feature_policy.clone();
-        let direction = font.direction;
-        let script = font.script;
-        let language = font.language.clone();
+    pub fn with_opentype(mut self, font: OpenTypeFont) -> Self {
         let classic_metrics = match self.metrics {
             FontMetricsSource::Tfm(metrics) => metrics,
             FontMetricsSource::OpenType(font) => font.classic_metrics,
@@ -763,29 +711,6 @@ impl LoadedFont {
         self.metrics = FontMetricsSource::OpenType(OpenTypeFontShaped {
             font: Box::new(font),
             classic_metrics,
-        });
-        self.opentype = Some(OpenTypeFontSelection {
-            program_identity,
-            object_identity,
-            instance_identity: FontInstanceIdentity::new_with_context(
-                program_identity,
-                face_index,
-                self.size.raw(),
-                crate::FontInstanceContext {
-                    variation: &variation,
-                    features: &features,
-                    direction,
-                    script,
-                    language: language.as_ref(),
-                },
-            ),
-            container,
-            face_index,
-            variation,
-            features,
-            direction,
-            script,
-            language,
         });
         self
     }
@@ -795,11 +720,11 @@ impl LoadedFont {
     #[must_use]
     pub fn with_mapped_opentype(
         mut self,
-        selection: OpenTypeProgramSelection,
+        font: OpenTypeFont,
         encoding_map: LegacyEncodingMap,
     ) -> Self {
-        self.parameters = synthesized_opentype_parameters(&selection, self.size);
-        self = self.with_opentype(selection);
+        self.parameters = synthesized_opentype_parameters(&font, self.size);
+        self = self.with_opentype(font);
         self.layout_policy = FontLayoutPolicy::OpenTypePreferred;
         self.fallback = None;
         self.encoding_map = Some(encoding_map);
@@ -839,20 +764,40 @@ impl LoadedFont {
     }
 
     #[must_use]
-    pub const fn opentype(&self) -> Option<&OpenTypeFontSelection> {
-        self.opentype.as_ref()
-    }
-
-    /// Returns the selected validated OpenType program and its requested size.
-    #[must_use]
-    pub const fn shaping_font(&self) -> Option<ShapingFont<'_>> {
+    pub const fn opentype(&self) -> Option<&OpenTypeFont> {
         match &self.metrics {
-            FontMetricsSource::OpenType(font) => Some(ShapingFont {
-                font: &font.font,
-                size: self.size,
-            }),
+            FontMetricsSource::OpenType(font) => Some(&font.font),
             FontMetricsSource::Tfm(_) => None,
         }
+    }
+
+    /// Shapes one run with this font's validated immutable instance context.
+    #[must_use]
+    pub fn shape_run(&self, request: crate::ShapingRequest<'_>) -> Option<crate::ShapedRun> {
+        match &self.metrics {
+            FontMetricsSource::OpenType(font) => {
+                Some(crate::shaping::shape_run(&font.font, self.size, request))
+            }
+            FontMetricsSource::Tfm(_) => None,
+        }
+    }
+
+    /// Canonical identity for the selected OpenType instance at this TeX size.
+    #[must_use]
+    pub fn opentype_instance_identity(&self) -> Option<FontInstanceIdentity> {
+        let font = self.opentype()?;
+        Some(FontInstanceIdentity::new_with_context(
+            font.identity,
+            font.face_index,
+            self.size.raw(),
+            crate::FontInstanceContext {
+                variation: &font.variation,
+                features: &font.feature_policy,
+                direction: font.direction,
+                script: font.script,
+                language: font.language.as_ref(),
+            },
+        ))
     }
 
     /// Returns direct OpenType MATH metrics when present, otherwise the
@@ -879,37 +824,6 @@ impl LoadedFont {
     pub const fn supports_math(&self) -> bool {
         self.classic_math_capable
             || matches!(self.math_metrics_source(), MathMetricsSource::OpenType(_))
-    }
-
-    /// OpenType feature policy selected for this immutable font instance.
-    #[must_use]
-    pub fn shaping_features(&self) -> Option<&FontFeaturePolicy> {
-        self.opentype.as_ref().map(|selection| &selection.features)
-    }
-
-    /// Logical writing direction selected for this immutable font instance.
-    #[must_use]
-    pub fn shaping_direction(&self) -> Option<WritingDirection> {
-        self.opentype.as_ref().map(|selection| selection.direction)
-    }
-
-    #[must_use]
-    pub fn shaping_script(&self) -> Option<crate::OpenTypeTag> {
-        self.opentype
-            .as_ref()
-            .and_then(|selection| selection.script)
-    }
-
-    #[must_use]
-    pub fn shaping_language(&self) -> Option<&FontLanguage> {
-        self.opentype
-            .as_ref()
-            .and_then(|selection| selection.language.as_ref())
-    }
-
-    #[must_use]
-    pub fn shaping_variation(&self) -> Option<&VariationSelection> {
-        self.opentype.as_ref().map(|selection| &selection.variation)
     }
 
     #[must_use]
@@ -956,9 +870,13 @@ impl LoadedFont {
         } else {
             hasher.update([0, 0]);
         }
-        if let Some(opentype) = &self.opentype {
-            hasher.update(opentype.program_identity.bytes());
-            hasher.update(opentype.instance_identity.bytes());
+        if let Some(opentype) = self.opentype() {
+            hasher.update(opentype.identity.bytes());
+            hasher.update(
+                self.opentype_instance_identity()
+                    .expect("OpenType font has an instance identity")
+                    .bytes(),
+            );
         }
         match self.construction {
             FontConstruction::Loaded => hasher.update([0]),
@@ -1722,40 +1640,21 @@ fn round_scaled_ratio(value: Scaled, numerator: i32, denominator: i32) -> Scaled
     Scaled::from_raw(i32::try_from(rounded).expect("bounded letterspace ratio fits i32"))
 }
 
-fn synthesized_opentype_parameters(
-    selection: &OpenTypeProgramSelection,
-    size: Scaled,
-) -> Vec<Scaled> {
-    let space = selection
-        .font
+fn synthesized_opentype_parameters(font: &OpenTypeFont, size: Scaled) -> Vec<Scaled> {
+    let space = font
         .cmap
         .glyph(' ')
-        .and_then(|glyph| {
-            selection
-                .font
-                .metrics
-                .horizontal_advances
-                .get(usize::from(glyph))
-        })
+        .and_then(|glyph| font.metrics.horizontal_advances.get(usize::from(glyph)))
         .and_then(|advance| {
-            selection
-                .font
-                .metrics
+            font.metrics
                 .units_to_sp(i32::from(*advance), size.raw())
                 .ok()
         })
         .map_or(Scaled::from_raw(0), Scaled::from_raw);
-    let x_height = selection
-        .font
+    let x_height = font
         .metadata
         .x_height
-        .and_then(|height| {
-            selection
-                .font
-                .metrics
-                .units_to_sp(i32::from(height), size.raw())
-                .ok()
-        })
+        .and_then(|height| font.metrics.units_to_sp(i32::from(height), size.raw()).ok())
         .map_or(Scaled::from_raw(0), Scaled::from_raw);
     vec![
         Scaled::from_raw(0),

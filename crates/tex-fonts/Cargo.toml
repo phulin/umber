@@ -12,6 +12,8 @@ sha2.workspace = true
 subsetter.workspace = true
 tex-arith = { path = "../tex-arith" }
 ttf-parser = "0.25.1"
+unicode-bidi.workspace = true
+unicode-script.workspace = true
 woff2-patched = "0.4.0"
 
 [lints]

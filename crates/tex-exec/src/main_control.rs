@@ -18977,11 +18977,8 @@ fn load_font(
 ) -> Result<tex_fonts::LoadedFont, ExecError> {
     let display_name = request.name.strip_suffix(".tfm").unwrap_or(&request.name);
     let from_tfm = |metrics: tex_state::world::FileContent,
-                    opentype: Option<tex_fonts::OpenTypeProgramSelection>,
-                    mapped: Option<(
-        tex_fonts::OpenTypeProgramSelection,
-        tex_fonts::LegacyEncodingMap,
-    )>|
+                    opentype: Option<tex_fonts::OpenTypeFont>,
+                    mapped: Option<(tex_fonts::OpenTypeFont, tex_fonts::LegacyEncodingMap)>|
      -> Result<tex_fonts::LoadedFont, ExecError> {
         let tfm = tex_fonts::TfmFont::parse_with_size(metrics.bytes(), request.size)?;
         let parameters = tfm

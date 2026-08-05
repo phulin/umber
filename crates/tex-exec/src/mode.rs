@@ -782,7 +782,7 @@ pub(crate) struct PendingHRun {
     /// Absolute position in this mode list where a left-boundary node belongs.
     pub(crate) insertion_index: usize,
     pub(crate) source: Vec<PendingHChar>,
-    pub(crate) script: tex_shape::Script,
+    pub(crate) script: tex_fonts::Script,
 }
 
 impl PendingHRun {
@@ -792,7 +792,7 @@ impl PendingHRun {
             current: PendingHRunChar::new(font, ch, origin),
             insertion_index,
             source: vec![PendingHChar { font, ch, origin }],
-            script: tex_shape::character_script(ch),
+            script: tex_fonts::character_script(ch),
         }
     }
 }

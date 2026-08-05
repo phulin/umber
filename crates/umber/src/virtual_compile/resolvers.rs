@@ -819,12 +819,7 @@ impl VirtualFontResolver<'_> {
                 }
             }
         }
-        let selection = tex_fonts::OpenTypeProgramSelection {
-            font: font.clone(),
-            variation: key.variation,
-            features: key.feature_policy,
-            direction: tex_fonts::WritingDirection::LeftToRight,
-        };
+        let selection = font.clone();
         match tfm_content {
             Some(metrics) => {
                 let encoding_map = LegacyEncodingMap::new(

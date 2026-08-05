@@ -315,8 +315,9 @@ pub(crate) fn append_hchar_with_fuel(
         let loaded = stores.font(font);
         (
             loaded.character_exists(ch),
-            loaded.shaping_font().is_some()
-                && loaded.shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight),
+            loaded
+                .opentype()
+                .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight),
         )
     };
     let false_boundary_character = font_code(ch)
@@ -327,7 +328,7 @@ pub(crate) fn append_hchar_with_fuel(
             (font_is_ltr_shaping
                 || (pending.first.font != font && is_ltr_shaping_font(stores, pending.first.font)))
                 && (pending.first.font != font
-                    || !scripts_compatible(pending.script, tex_shape::character_script(ch)))
+                    || !scripts_compatible(pending.script, tex_fonts::character_script(ch)))
         });
         if flush_incompatible_run {
             let insert_hyphen_discs = mode == Mode::Horizontal;
@@ -496,9 +497,9 @@ pub(crate) fn append_pending_hchar(
     };
     if font_is_ltr_shaping
         && is_supported_script(pending.script)
-        && is_supported_script(tex_shape::character_script(ch))
+        && is_supported_script(tex_fonts::character_script(ch))
     {
-        let script = tex_shape::character_script(ch);
+        let script = tex_fonts::character_script(ch);
         if is_strong_script(script) {
             pending.script = script;
         }
@@ -516,37 +517,37 @@ pub(crate) fn append_pending_hchar(
     list.set_pending_hchars(pending);
 }
 
-pub(crate) fn is_strong_script(script: tex_shape::Script) -> bool {
+pub(crate) fn is_strong_script(script: tex_fonts::Script) -> bool {
     !matches!(
         script,
-        tex_shape::Script::Common | tex_shape::Script::Inherited | tex_shape::Script::Unknown
+        tex_fonts::Script::Common | tex_fonts::Script::Inherited | tex_fonts::Script::Unknown
     )
 }
 
-pub(crate) fn scripts_compatible(left: tex_shape::Script, right: tex_shape::Script) -> bool {
+pub(crate) fn scripts_compatible(left: tex_fonts::Script, right: tex_fonts::Script) -> bool {
     !is_strong_script(left) || !is_strong_script(right) || left == right
 }
 
-pub(crate) fn is_supported_script(script: tex_shape::Script) -> bool {
+pub(crate) fn is_supported_script(script: tex_fonts::Script) -> bool {
     matches!(
         script,
-        tex_shape::Script::Common
-            | tex_shape::Script::Inherited
-            | tex_shape::Script::Latin
-            | tex_shape::Script::Cyrillic
-            | tex_shape::Script::Greek
-            | tex_shape::Script::Han
-            | tex_shape::Script::Hiragana
-            | tex_shape::Script::Katakana
-            | tex_shape::Script::Hangul
-            | tex_shape::Script::Bopomofo
+        tex_fonts::Script::Common
+            | tex_fonts::Script::Inherited
+            | tex_fonts::Script::Latin
+            | tex_fonts::Script::Cyrillic
+            | tex_fonts::Script::Greek
+            | tex_fonts::Script::Han
+            | tex_fonts::Script::Hiragana
+            | tex_fonts::Script::Katakana
+            | tex_fonts::Script::Hangul
+            | tex_fonts::Script::Bopomofo
     )
 }
 
 pub(crate) fn is_ltr_shaping_font(stores: &Universe, font: FontId) -> bool {
     let font = stores.font(font);
-    font.shaping_font().is_some()
-        && font.shaping_direction() == Some(tex_fonts::WritingDirection::LeftToRight)
+    font.opentype()
+        .is_some_and(|font| font.direction == tex_fonts::WritingDirection::LeftToRight)
 }
 
 pub(crate) fn shape_open_type_chars(
@@ -560,8 +561,6 @@ pub(crate) fn shape_open_type_chars(
         return Vec::new();
     };
     let font = stores.font(first.font);
-    let shaping_font = font.shaping_font().expect("OpenType run font");
-    let features = font.shaping_features().expect("OpenType feature policy");
     let mut text = String::new();
     let mut byte_starts = Vec::with_capacity(chars.len());
     for entry in chars {
@@ -576,19 +575,9 @@ pub(crate) fn shape_open_type_chars(
         .iter()
         .filter_map(|&position| byte_starts.get(position).copied())
         .collect::<Vec<_>>();
-    let direction = match font.shaping_direction() {
-        Some(tex_fonts::WritingDirection::RightToLeft) => tex_shape::Direction::RightToLeft,
-        Some(tex_fonts::WritingDirection::LeftToRight) | None => tex_shape::Direction::LeftToRight,
-    };
-    let shaped = tex_shape::shape_run_with_breaks_and_context(
-        shaping_font,
-        &text,
-        features,
-        direction,
-        font.shaping_script(),
-        font.shaping_language(),
-        &break_bytes,
-    );
+    let shaped = font
+        .shape_run(tex_fonts::ShapingRequest::with_breaks(&text, &break_bytes))
+        .expect("OpenType run font");
     let mut cluster_advances = BTreeMap::<usize, i64>::new();
     for glyph in shaped.glyphs {
         let cluster_byte = glyph.cluster as usize;
@@ -649,13 +638,13 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
             continue;
         };
         if !is_ltr_shaping_font(stores, font)
-            || !is_supported_script(tex_shape::character_script(ch))
+            || !is_supported_script(tex_fonts::character_script(ch))
         {
             index += 1;
             continue;
         }
         let mut chars = vec![crate::mode::PendingHChar { font, ch, origin }];
-        let mut script = tex_shape::character_script(ch);
+        let mut script = tex_fonts::character_script(ch);
         let start = index;
         index += 1;
         while index < nodes.len() {
@@ -669,9 +658,9 @@ pub(crate) fn reshape_open_type_runs(stores: &Universe, nodes: &mut Vec<Node>) {
                     ch: next_ch,
                     origin: next_origin,
                 } if next_font == font
-                    && scripts_compatible(script, tex_shape::character_script(next_ch)) =>
+                    && scripts_compatible(script, tex_fonts::character_script(next_ch)) =>
                 {
-                    let next_script = tex_shape::character_script(next_ch);
+                    let next_script = tex_fonts::character_script(next_ch);
                     if is_strong_script(next_script) {
                         script = next_script;
                     }

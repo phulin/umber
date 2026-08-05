@@ -522,7 +522,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
     use tex_fonts::{
         AcceptedFontContainers, FontContainer, FontFeaturePolicy, FontLimits, FontPurposes,
         FontRequest, FontRequestKey, LoadedFont, MathMetricsSource, MathVariantDirection,
-        OpenTypeFont, OpenTypeProgramSelection, ResolvedFont, VariationSelection, WritingDirection,
+        OpenTypeFont, ResolvedFont, VariationSelection, WritingDirection,
     };
 
     fn parse(name: &str, bytes: &[u8]) -> OpenTypeFont {
@@ -558,18 +558,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
         include_bytes!("../../tex-fonts/tests/fixtures/stix-two-math.woff2"),
     );
     let size = tex_arith::Scaled::from_raw(10 * tex_arith::Scaled::UNITY);
-    let loaded = LoadedFont::new_opentype(
-        "stix-two-math",
-        "stix-two-math.woff2",
-        size,
-        size,
-        OpenTypeProgramSelection {
-            font: stix,
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
-    );
+    let loaded = LoadedFont::new_opentype("stix-two-math", "stix-two-math.woff2", size, size, stix);
     let MathMetricsSource::OpenType(math) = loaded.math_metrics_source() else {
         panic!("STIX must publish direct MATH metrics in WASM")
     };
@@ -596,18 +585,7 @@ fn opentype_math_woff2_projects_authoritative_data_and_explicit_fallback_in_wasm
         "cmu-serif",
         include_bytes!("../assets/cmu-serif-500-roman.woff2"),
     );
-    let classic = LoadedFont::new_opentype(
-        "cmu-serif",
-        "cmu-serif.woff2",
-        size,
-        size,
-        OpenTypeProgramSelection {
-            font: cmu,
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
-    );
+    let classic = LoadedFont::new_opentype("cmu-serif", "cmu-serif.woff2", size, size, cmu);
     assert!(matches!(
         classic.math_metrics_source(),
         MathMetricsSource::ClassicTfmExact

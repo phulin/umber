@@ -18,7 +18,7 @@ source "$repo_root/scripts/optional-check-runner.sh"
 
 OPTIONAL_CHECK_ARGS="$*" optional_check_begin check-hb-shape-fixtures.sh hb-shape-comparison
 
-fixtures="$repo_root/crates/tex-shape/tests/fixtures"
+fixtures="$repo_root/crates/tex-fonts/tests/fixtures/shaping"
 
 compare_fixtures() {
   local actual status

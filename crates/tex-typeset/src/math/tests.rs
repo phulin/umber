@@ -4,8 +4,7 @@ use tex_fonts::metrics::CharTag;
 use tex_fonts::{
     AcceptedFontContainers, CharMetrics, FontContainer, FontFeaturePolicy, FontLimits, FontMetrics,
     FontPurposes, FontRequest, FontRequestKey, LigKernCommand, LigKernInstruction, LigatureCommand,
-    LoadedFont, OpenTypeFont, OpenTypeProgramSelection, ResolvedFont, VariationSelection,
-    WritingDirection,
+    LoadedFont, OpenTypeFont, ResolvedFont, VariationSelection,
 };
 use tex_state::env::banks::{GlueParam, IntParam};
 use tex_state::glue::{GlueSpec, Order};
@@ -208,18 +207,7 @@ fn parse_stix_math(container: FontContainer, bytes: Vec<u8>) -> OpenTypeFont {
 
 fn positioned_math_fixture_layouts(font: OpenTypeFont) -> Vec<MathLayout> {
     let size = sc(10 * Scaled::UNITY);
-    let loaded = LoadedFont::new_opentype(
-        "stix-two-math",
-        "stix-two-math.woff2",
-        size,
-        size,
-        OpenTypeProgramSelection {
-            font,
-            variation: VariationSelection::default(),
-            features: FontFeaturePolicy::default(),
-            direction: WritingDirection::LeftToRight,
-        },
-    );
+    let loaded = LoadedFont::new_opentype("stix-two-math", "stix-two-math.woff2", size, size, font);
     let MathMetricsSource::OpenType(stix_math) = loaded.math_metrics_source() else {
         panic!("fixture has MATH metrics");
     };

@@ -915,7 +915,6 @@ dependencies = [
  "tex-command",
  "tex-fonts",
  "tex-out",
- "tex-shape",
  "tex-state",
  "tex-typeset",
 ]
@@ -947,6 +946,8 @@ dependencies = [
  "subsetter",
  "tex-arith",
  "ttf-parser",
+ "unicode-bidi",
+ "unicode-script",
  "woff2-patched",
 ]
 
@@ -974,17 +975,6 @@ dependencies = [
  "tex-fonts",
  "ttf-parser",
  "woff2-patched",
-]
-
-[[package]]
-name = "tex-shape"
-version = "0.1.0"
-dependencies = [
- "rustybuzz",
- "tex-arith",
- "tex-fonts",
- "unicode-bidi",
- "unicode-script",
 ]
 
 [[package]]

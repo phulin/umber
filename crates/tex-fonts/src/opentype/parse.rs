@@ -203,7 +203,7 @@ pub struct OpenTypeFont {
 
 impl OpenTypeFont {
     /// Borrows the cached rustybuzz face built after SFNT validation.
-    pub fn with_shaping_face<T>(&self, shape: impl FnOnce(&rustybuzz::Face<'_>) -> T) -> T {
+    pub(crate) fn with_shaping_face<T>(&self, shape: impl FnOnce(&rustybuzz::Face<'_>) -> T) -> T {
         self.shaping_face.with_face(shape)
     }
 

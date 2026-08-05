@@ -29,7 +29,6 @@ default-members = [
   "crates/tex-oracle",
   "crates/tex-observe",
   "crates/tex-out",
-  "crates/tex-shape",
   "crates/tex-state",
   "crates/tex-typeset",
   "crates/umber",

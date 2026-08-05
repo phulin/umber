@@ -7,6 +7,7 @@ pub mod pdf_map;
 pub mod pdf_pk;
 pub mod pdf_truetype;
 pub mod pdf_vf;
+mod shaping;
 pub mod tfm;
 pub mod type1;
 
@@ -17,10 +18,9 @@ pub use metrics::{
     FontMetricsValidationError, FontSourceIdentity, LEGACY_ENCODING_MAP_VERSION, LegacyEncodingMap,
     LigKernChar, LigKernCommand, LigKernInstruction, LigKernIter, LigKernStep as MetricLigKernStep,
     LigatureCommand, LoadedFont, MAX_LIG_KERN_PROGRAM_LEN, MathKernCorner, MathMetricsSource,
-    MathVariantDirection, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontSelection,
-    OpenTypeFontShaped, OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction,
-    OpenTypeMathGlyph, OpenTypeMathMetrics, OpenTypeMathVariant, OpenTypeProgramSelection,
-    ShapingFont,
+    MathVariantDirection, OPENTYPE_FONTDIMEN_SYNTHESIS_VERSION, OpenTypeFontShaped,
+    OpenTypeMathAssembly, OpenTypeMathAssemblyPart, OpenTypeMathConstruction, OpenTypeMathGlyph,
+    OpenTypeMathMetrics, OpenTypeMathVariant,
 };
 pub use opentype::{
     AcceptedFontContainers, CharacterMap, FONT_FEATURE_POLICY_VERSION, FeatureSetting,
@@ -45,6 +45,9 @@ pub use pdf_truetype::{
 pub use pdf_vf::{
     PDFTEX_VF_MAX_RECURSION, VfCharacterReference, VfCommand, VfLimits, VfLocalFont, VfPacket,
     VfPacketMetadata, VfParseError, VfProgram, VfProgramIdentity,
+};
+pub use shaping::{
+    Script, ShapedGlyph, ShapedRun, ShapingRequest, character_script, run_script, text_direction,
 };
 pub use tfm::{
     CharacterTag, ExtensibleRecipe, FontParameter, FontParameterKind, FontParameters, Header,
