@@ -4357,8 +4357,8 @@ fn invalid_mixed_batch_publishes_nothing() {
 }
 
 #[test]
-#[ignore = "xfail: umber2-horq"]
 fn requested_html_and_dvi_share_one_committed_compile() {
+    const SOURCE: &[u8] = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end";
     let mut session = VirtualCompileSession::new(SessionOptions {
         outputs: OutputCapabilitySet::DVI.with(OutputCapability::Html),
         ..SessionOptions::default()
@@ -4368,10 +4368,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         .add_user_file("cmr10.tfm", CMR10.to_vec())
         .expect("TFM");
     session
-        .add_user_file(
-            "main.tex",
-            b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end".to_vec(),
-        )
+        .add_user_file("main.tex", SOURCE.to_vec())
         .expect("main source");
     let missing = resources(session.compile_attempt());
     let font = missing
@@ -4386,6 +4383,7 @@ fn requested_html_and_dvi_share_one_committed_compile() {
         panic!("HTML compile should complete");
     };
     assert!(!output.dvi.is_empty());
+    let joint_dvi = output.dvi.clone();
     let html = String::from_utf8(output.html.expect("HTML output")).expect("HTML UTF-8");
     let output_id = session
         .rendered_output_id()
@@ -4397,19 +4395,21 @@ fn requested_html_and_dvi_share_one_committed_compile() {
     assert!(output.html_assets.is_empty());
 
     let (page, event) = rendered_text_address(&html, u32::from(b'A'));
-    let retention_before = session.retention_metrics().expect("accepted retention");
     let location = current_render_location(
         session
             .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
             .expect("source query"),
     );
-    let retention_after = session.retention_metrics().expect("live retention");
-    assert_eq!(
-        retention_after.diagnostic_bytes,
-        retention_before.diagnostic_bytes
+    let retention_before = session.retention_metrics().expect("accepted retention");
+    let repeated_location = current_render_location(
+        session
+            .rendered_source_location(page, event, Some(0), output_id, RevisionId::new(1))
+            .expect("repeated source query"),
     );
-    let source = b"\\font\\tenrm=cmr10\\relax \\tenrm \\shipout\\hbox{A}\\end";
-    let start = source.iter().position(|byte| *byte == b'A').expect("A");
+    let retention_after = session.retention_metrics().expect("live retention");
+    assert_eq!(retention_after, retention_before);
+    assert_eq!(repeated_location, location);
+    let start = SOURCE.iter().position(|byte| *byte == b'A').expect("A");
     assert_eq!(location.revision, RevisionId::new(1));
     assert_eq!(location.path, "/job/main.tex");
     assert_eq!(location.start as usize, start);
@@ -4427,6 +4427,27 @@ fn requested_html_and_dvi_share_one_committed_compile() {
             .expect("invalid unit query")
             .is_none()
     );
+
+    let mut dvi_only =
+        VirtualCompileSession::new(SessionOptions::default()).expect("DVI-only session");
+    dvi_only
+        .add_user_file("cmr10.tfm", CMR10.to_vec())
+        .expect("DVI-only TFM");
+    dvi_only
+        .add_user_file("main.tex", SOURCE.to_vec())
+        .expect("DVI-only main source");
+    let font = resources(dvi_only.compile_attempt())
+        .into_iter()
+        .find_map(|request| match request {
+            ResourceRequest::Font(request) => Some(request),
+            ResourceRequest::File(_) | ResourceRequest::PkFont(_) => None,
+        })
+        .expect("DVI-only font request");
+    provide_cmu_font(&mut dvi_only, font);
+    let CompileAttemptResult::Complete(dvi_only_output) = dvi_only.compile_attempt() else {
+        panic!("DVI-only compile should complete");
+    };
+    assert_eq!(joint_dvi, dvi_only_output.dvi);
 
     session
         .apply_patch(SourcePatch {
