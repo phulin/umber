@@ -181,6 +181,12 @@ the observer does not use replay or a legacy input-stack projection. A
 successful comparison removes any stale TRIP-specific artifact and
 emits no new triage output.
 
+Umber's detached semantic and geometry evidence uses
+`tex_oracle::OracleBundle`. The oracle crate owns its `UMBREVID` encoding,
+canonical pinned-header JSONL projection, independent channel sequences, and
+hard limits. The format cache, command-stream façade, and TRIP/parity paths no
+longer carry a second evidence codec.
+
 ## Umber format images
 
 `umber run INPUT --format-out NAME.fmt` writes a format when INPUT terminates

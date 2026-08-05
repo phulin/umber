@@ -28,9 +28,9 @@ pub mod report;
 pub mod semantic;
 
 pub use tex_observe::{
-    DetachedEvidence, LiveSessionOutcome, LiveSessionStreams, LiveSessionTranslator, LiveSource,
-    ObservedEvent,
+    LiveSessionOutcome, LiveSessionStreams, LiveSessionTranslator, LiveSource, ObservedEvent,
 };
+pub use tex_oracle::OracleBundle;
 
 type Recorder = LiveSessionTranslator;
 

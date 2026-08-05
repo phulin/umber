@@ -21,6 +21,8 @@ Umber observers.
 - `src/encoding.rs`: canonical JSON encoding and domain-separated identities.
 - `src/normalize.rs`: deterministic stream normalization.
 - `src/transport.rs`: enabled and compile-away disabled observer boundaries.
+- `src/bundle.rs`: canonical detached semantic/geometry bundle, byte codec,
+  pinned-header JSONL binding, validation, and resource limits.
 - `src/tests.rs`: focused synthetic contract tests.
 - `src/bin/tex-oracle-validate.rs`: canonical JSON Lines validator used by
   live reference regeneration tooling.

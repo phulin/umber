@@ -187,7 +187,11 @@ Affected crates: `tex-command`, `tex-observe`, `tex-oracle`, `tex-command-stream
 
 **Current design — observed.** `tex-command` records observation fields in several stringly or loosely structured forms, including [`crates/tex-command/src/observation/mod.rs:569`](/home/phulin/umber/crates/tex-command/src/observation/mod.rs:569). `tex-observe` reparses locations and reconstructs alignment state in a second shadow machine at [`crates/tex-observe/src/translation.rs:237`](/home/phulin/umber/crates/tex-observe/src/translation.rs:237) and [`crates/tex-observe/src/translation.rs:454`](/home/phulin/umber/crates/tex-observe/src/translation.rs:454), even though source registration is already owned by command input at [`crates/tex-command/src/input/source.rs:305`](/home/phulin/umber/crates/tex-command/src/input/source.rs:305).
 
-`tex-oracle` owns canonical JSONL streams, while detached evidence transport still has a parallel implementation in `tex-observe` at [`crates/tex-observe/src/lib.rs:53`](/home/phulin/umber/crates/tex-observe/src/lib.rs:53) and [`crates/tex-observe/src/lib.rs:107`](/home/phulin/umber/crates/tex-observe/src/lib.rs:107).
+`tex-oracle` now owns canonical JSONL streams and the canonical detached
+semantic/geometry `OracleBundle`, including the byte-compatible evidence
+codec, validation, and resource limits. `tex-observe` only projects live
+engine records into that owned bundle; format construction, replay, and TRIP
+parity bind its independently sequenced channels through the same oracle API.
 
 **End state.** The engine emits a typed neutral observation record containing source identity, source location, command identity, alignment identity, semantic effect, and geometry references. `tex-observe` becomes a thin adapter from engine-owned records to oracle values. `tex-oracle` owns the detached evidence codec, canonical JSONL transport, normalization, sequence checks, and stream identity. Replay, TRIP capture, and live parity all consume one bundle format.
 
@@ -199,7 +203,7 @@ Affected crates: `tex-command`, `tex-observe`, `tex-oracle`, `tex-command-stream
 
 1. Add typed producer fields while continuing to emit the old records.
 2. Compare old and new translations for every live observation.
-3. Move detached evidence encoding behind the oracle crate while retaining the old decoder.
+3. Move detached evidence encoding behind the oracle crate while retaining the old decoder. _(Completed: the existing schema-2 `UMBREVID` bytes and all limits moved unchanged.)_
 4. Migrate command-stream, TRIP, and parity consumers.
 5. Delete shadow source/alignment state and string conversion only after byte-level stream parity.
 

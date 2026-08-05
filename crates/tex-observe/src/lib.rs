@@ -17,19 +17,7 @@ use tex_oracle::{
     RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion,
     SourceLocation, StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
 };
-pub use tex_oracle::{
-    OracleBundle as DetachedEvidence, canonical_bundle_json_lines as canonical_evidence_json_lines,
-    decode_oracle_bundle as decode_detached_evidence,
-    encode_oracle_bundle as encode_detached_evidence,
-};
-#[cfg(test)]
-use tex_oracle::{
-    MAX_BUNDLE_EVENTS_PER_STREAM as MAX_EVIDENCE_EVENTS_PER_STREAM,
-    MAX_BUNDLE_NESTING_DEPTH as MAX_EVIDENCE_NESTING_DEPTH,
-    MAX_BUNDLE_STRING_BYTES as MAX_EVIDENCE_STRING_BYTES,
-    NormalizedEvent, ORACLE_BUNDLE_MAGIC as EVIDENCE_MAGIC,
-    ORACLE_BUNDLE_SCHEMA as EVIDENCE_CODEC_SCHEMA,
-};
+use tex_oracle::OracleBundle;
 use tex_state::SourceId;
 
 mod translation;
@@ -294,18 +282,14 @@ fn encode_observed_stream<'a>(
     header: &ObservationHeader,
     events: impl IntoIterator<Item = &'a Event>,
 ) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec(header).map_err(|error| error.to_string())?;
-    bytes.push(b'\n');
     let mut normalizer = Normalizer::new();
-    for event in events {
-        bytes.extend_from_slice(
-            &serde_json::to_vec(&normalizer.normalize(event.clone()))
-                .map_err(|error| error.to_string())?,
-        );
-        bytes.push(b'\n');
-    }
-    ObservationStream::from_canonical_json_lines(&bytes).map_err(|error| error.to_string())?;
-    Ok(bytes)
+    let events = events
+        .into_iter()
+        .map(|event| normalizer.normalize(event.clone()))
+        .collect::<Vec<_>>();
+    let mut oracle = serde_json::to_vec(header).map_err(|error| error.to_string())?;
+    oracle.push(b'\n');
+    tex_oracle::canonical_bundle_json_lines(&events, &oracle)
 }
 
 fn geometry_source(observation: &CommandObservation) -> Option<SourceId> {
@@ -410,10 +394,10 @@ impl LiveSessionTranslator {
 
     /// Finalizes portable normalized evidence without engine or source identities.
     #[must_use]
-    pub fn finalize_detached_evidence(self) -> DetachedEvidence {
+    pub fn finalize_detached_evidence(self) -> OracleBundle {
         let mut semantic_normalizer = Normalizer::new();
         let mut geometry_normalizer = Normalizer::new();
-        let mut evidence = DetachedEvidence::default();
+        let mut evidence = OracleBundle::default();
         for observed in self.events {
             match observed.event {
                 Event::Geometry(event) => evidence

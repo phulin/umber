@@ -232,3 +232,6 @@ fn validate_bundle(bundle: &OracleBundle) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

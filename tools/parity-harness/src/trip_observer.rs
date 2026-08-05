@@ -9,14 +9,16 @@ use tex_command::{
 };
 use tex_oracle::{
     CanonicalValue, EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason,
-    InputTransition, Normalizer, ObservationStream, SchemaVersion, Tex82ObserverProfile,
+    InputTransition, NormalizedEvent, Normalizer, ObservationStream, SchemaVersion,
+    Tex82ObserverProfile, canonical_bundle_json_lines,
 };
 
 /// Collects only the stable full-document events admitted by the TRIP
 /// schema-v1 profile: committed shipouts, terminal stop, and termination.
 #[derive(Default)]
 pub struct TripProfileObserver {
-    events: Vec<Event>,
+    events: Vec<NormalizedEvent>,
+    normalizer: Normalizer,
 }
 
 impl TripProfileObserver {
@@ -30,15 +32,9 @@ impl TripProfileObserver {
     /// Reusing the oracle header is valid because both sides describe the
     /// same engine profile, fixture inputs, and deterministic environment.
     pub fn canonical_json_lines(&self, oracle: &[u8]) -> Result<Vec<u8>> {
-        let oracle = ObservationStream::from_canonical_json_lines(oracle)
-            .context("pinned TRIP oracle stream is invalid")?;
-        let mut bytes = serde_json::to_vec(&oracle.header)?;
-        bytes.push(b'\n');
-        let mut normalizer = Normalizer::new();
-        for event in self.events.iter().cloned() {
-            bytes.extend_from_slice(&serde_json::to_vec(&normalizer.normalize(event))?);
-            bytes.push(b'\n');
-        }
+        let bytes = canonical_bundle_json_lines(&self.events, oracle)
+            .map_err(anyhow::Error::msg)
+            .context("generated Umber TRIP stream is invalid")?;
         let stream = ObservationStream::from_canonical_json_lines(&bytes)
             .context("generated Umber TRIP stream is invalid")?;
         Tex82ObserverProfile::Trip
@@ -67,11 +63,11 @@ impl CommandObserver for TripProfileObserver {
                 // profile event as a terminal stop; the full command profile
                 // retains the underlying retirement and observes no §331
                 // terminal-stack stop.
-            }) => self.events.push(Event::Input(InputEvent {
+            }) => self.events.push(self.normalizer.normalize(Event::Input(InputEvent {
                 transition: InputTransition::Stop,
                 reason: InputReason::Source,
                 name: "terminal".into(),
-            })),
+            }))),
             CommandObservation::Effect(EffectRecord {
                 kind: "shipout",
                 detail,
@@ -83,11 +79,11 @@ impl CommandObserver for TripProfileObserver {
                 let Ok(page) = page.parse::<i64>() else {
                     return;
                 };
-                self.events.push(Event::Effect(EffectEvent {
+                self.events.push(self.normalizer.normalize(Event::Effect(EffectEvent {
                     kind: EffectKind::Shipout,
                     channel: channel.into(),
                     value: CanonicalValue::Integer(page),
-                }));
+                })));
             }
             CommandObservation::Effect(EffectRecord {
                 kind: "terminate",
@@ -95,11 +91,11 @@ impl CommandObserver for TripProfileObserver {
                 ..
             }) => {
                 let channel = detail.strip_suffix('\0').unwrap_or(&detail);
-                self.events.push(Event::Effect(EffectEvent {
+                self.events.push(self.normalizer.normalize(Event::Effect(EffectEvent {
                     kind: EffectKind::Terminate,
                     channel: channel.into(),
                     value: CanonicalValue::None,
-                }));
+                })));
             }
             _ => {}
         }
@@ -109,7 +105,8 @@ impl CommandObserver for TripProfileObserver {
 /// Identity-separated geometry projection for full TRIP runs.
 #[derive(Default)]
 pub struct TripGeometryObserver {
-    events: Vec<Event>,
+    events: Vec<NormalizedEvent>,
+    normalizer: Normalizer,
 }
 
 impl TripGeometryObserver {
@@ -122,19 +119,16 @@ impl TripGeometryObserver {
         if self.events.is_empty() {
             bail!("TRIP geometry stream is empty");
         }
-        let oracle = ObservationStream::from_canonical_json_lines(oracle)
+        let parsed_oracle = ObservationStream::from_canonical_json_lines(oracle)
             .context("pinned TRIP geometry oracle stream is invalid")?;
-        let schema = SchemaVersion::try_from(oracle.header.schema).map_err(anyhow::Error::msg)?;
+        let schema =
+            SchemaVersion::try_from(parsed_oracle.header.schema).map_err(anyhow::Error::msg)?;
         if schema < SchemaVersion::V2 {
             bail!("pinned TRIP geometry oracle must use a geometry schema");
         }
-        let mut bytes = serde_json::to_vec(&oracle.header)?;
-        bytes.push(b'\n');
-        let mut normalizer = Normalizer::new();
-        for event in self.events.iter().cloned() {
-            bytes.extend_from_slice(&serde_json::to_vec(&normalizer.normalize(event))?);
-            bytes.push(b'\n');
-        }
+        let bytes = canonical_bundle_json_lines(&self.events, oracle)
+            .map_err(anyhow::Error::msg)
+            .context("generated Umber TRIP geometry stream is invalid")?;
         let stream = ObservationStream::from_canonical_json_lines(&bytes)
             .context("generated Umber TRIP geometry stream is invalid")?;
         if stream.events.is_empty()
@@ -196,7 +190,8 @@ impl CommandObserver for TripGeometryObserver {
                 location: None,
             },
         };
-        self.events.push(Event::Geometry(event));
+        self.events
+            .push(self.normalizer.normalize(Event::Geometry(event)));
     }
 }
 

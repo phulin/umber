@@ -1,8 +1,9 @@
 # tex-observe Guidance
 
 Read the repository-level `AGENTS.md` before editing here. This crate owns the
-detached, host-neutral translation from `tex-command` observation records and
-`tex-state` source provenance into `tex-oracle` values.
+thin, host-neutral projection from `tex-command` observation records and
+`tex-state` source provenance into `tex-oracle` values. `tex-oracle` owns every
+persistent evidence transport.
 
 ## Boundaries
 
@@ -14,7 +15,7 @@ detached, host-neutral translation from `tex-command` observation records and
 
 ## File Map
 
-- `src/lib.rs`: source-stack/session translation and public detached APIs.
+- `src/lib.rs`: source/session projection into oracle-owned bundles.
 - `src/translation.rs`: exact observation-to-oracle event mappings.
 - `src/tests.rs`: focused internal translation tests.
 - `tests/live_session.rs`: public live-session and extraction-equivalence tests.
