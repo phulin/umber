@@ -131,7 +131,9 @@ pub fn assemble_sharded_catalog(
     shards: Vec<ManifestShard>,
 ) -> Result<ShardedCatalog, SelectionError> {
     if shards.len() != root.shard_count as usize {
-        return Err(SelectionError::new("root manifest shard metadata is inconsistent"));
+        return Err(SelectionError::new(
+            "root manifest shard metadata is inconsistent",
+        ));
     }
     let mut files = BTreeMap::new();
     let mut fonts = BTreeMap::new();
@@ -163,7 +165,9 @@ pub fn assemble_sharded_catalog(
         }
         for (key, record) in &shard.legacy_mappings {
             if shard_index_for_key(key, root.shard_bits)? != index as u32
-                || legacy_mappings.insert(key.clone(), record.clone()).is_some()
+                || legacy_mappings
+                    .insert(key.clone(), record.clone())
+                    .is_some()
             {
                 return Err(SelectionError::new(format!(
                     "invalid or duplicate legacy mapping key {key} across shards"

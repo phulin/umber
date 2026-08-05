@@ -316,7 +316,7 @@ fn current_format_schema_receipts_cover_every_release_surface() {
             format!("formatSchemaVersion() === {schema}"),
         ),
         (
-            "crates/umber-wasm/js/manifest-schema.test.js",
+            "crates/umber-wasm/js/manifest-resolver.test.js",
             format!("formatSchema: {schema}"),
         ),
         ("tests/latex-source.lock", format!("format_schema {schema}")),

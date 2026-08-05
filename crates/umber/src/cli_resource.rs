@@ -923,9 +923,10 @@ impl DistributionResolver {
         let mut keys_by_shard = BTreeMap::<u32, Vec<String>>::new();
         for key in original_files.keys() {
             keys_by_shard
-                .entry(shard_index_for_key(key, shard_bits).map_err(|error| {
-                    NativeRunError::Selection(error.to_string())
-                })?)
+                .entry(
+                    shard_index_for_key(key, shard_bits)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))?,
+                )
                 .or_default()
                 .push(key.clone());
         }
@@ -941,9 +942,10 @@ impl DistributionResolver {
             }
             original_hints.insert(key.clone(), request.key().clone());
             hinted_keys
-                .entry(shard_index_for_key(&key, shard_bits).map_err(|error| {
-                    NativeRunError::Selection(error.to_string())
-                })?)
+                .entry(
+                    shard_index_for_key(&key, shard_bits)
+                        .map_err(|error| NativeRunError::Selection(error.to_string()))?,
+                )
                 .or_default()
                 .push(key);
         }

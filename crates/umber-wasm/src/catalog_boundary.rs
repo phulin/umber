@@ -59,8 +59,7 @@ pub fn select(shard_text: &str, keys: &Array) -> Result<String, JsValue> {
             if key.starts_with("font:") {
                 FontRequestKey::from_manifest_key(&key).map(ManifestRequest::Font)
             } else if key.starts_with("legacy-mapping:") {
-                LegacyMappingRequestKey::from_manifest_key(&key)
-                    .map(ManifestRequest::LegacyMapping)
+                LegacyMappingRequestKey::from_manifest_key(&key).map(ManifestRequest::LegacyMapping)
             } else {
                 FileRequestKey::from_manifest_key(&key).map(ManifestRequest::File)
             }

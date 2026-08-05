@@ -100,7 +100,7 @@ function formatEntry(bytes) {
 		bytes: bytes.byteLength,
 		engine: "umber",
 		engineVersion: "0.1.0",
-		formatSchema: 4,
+		formatSchema: 11,
 		sourceDistribution: "fixture",
 		sourceManifestSha256: "1".repeat(64),
 		sourceDateEpoch: 0,
@@ -539,14 +539,14 @@ test("formats remain inline and download through the verified object cache", asy
 	assert.deepEqual(
 		await resolver.resolveFormat("plain", {
 			engineVersion: "0.1.0",
-			formatSchema: 4,
+			formatSchema: 11,
 		}),
 		data.payloads.format,
 	);
 	await resolver.resolveFormat("plain");
 	assert.equal(calls.length, 1);
 	await assert.rejects(
-		resolver.resolveFormat("plain", { formatSchema: 5 }),
+		resolver.resolveFormat("plain", { formatSchema: 12 }),
 		(error) => error.code === "incompatible-format",
 	);
 });
