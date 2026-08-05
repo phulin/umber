@@ -8,7 +8,13 @@ publish = false
 
 [dependencies]
 criterion = "0.5"
+stats_alloc = "0.1"
+tex-command = { path = "../../crates/tex-command" }
 tex-state = { path = "../../crates/tex-state" }
+
+[[bin]]
+name = "command_allocations"
+path = "src/bin/command_allocations.rs"
 
 [[bench]]
 name = "source_descriptor"

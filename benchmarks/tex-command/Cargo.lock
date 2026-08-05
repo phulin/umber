@@ -616,6 +616,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "posix-regex"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66df580334caab2f744839ab1be85493d7ec731a92d6cf928008ab0b212bf3bc"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +835,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "stats_alloc"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c0e04424e733e69714ca1bbb9204c1a57f09f5493439520f9f68c132ad25eec"
+
+[[package]]
 name = "subsetter"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -873,10 +885,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "tex-command"
+version = "0.1.0"
+dependencies = [
+ "md-5",
+ "posix-regex",
+ "tex-fonts",
+ "tex-state",
+]
+
+[[package]]
 name = "tex-command-benchmarks"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "stats_alloc",
+ "tex-command",
  "tex-state",
 ]
 
@@ -896,6 +920,8 @@ dependencies = [
  "subsetter",
  "tex-arith",
  "ttf-parser",
+ "unicode-bidi",
+ "unicode-script",
  "woff2-patched",
 ]
 
@@ -959,6 +985,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-bidi-mirroring"
