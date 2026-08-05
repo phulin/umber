@@ -375,16 +375,14 @@ fn brace_delivery_transitions_preserve_command_owned_align_state_changes() {
         ("end_group", -999_999, -1_000_000),
     ] {
         assert_eq!(
-            translate_alignment(
-                AlignmentRecord {
-                    transition,
-                    alignment: Some(1),
-                    nesting: Some(1),
-                    align_state,
-                    delimiter: None,
-                    previous_align_state: Some(previous_align_state),
-                },
-            ),
+            translate_alignment(AlignmentRecord {
+                transition,
+                alignment: Some(1),
+                nesting: Some(1),
+                align_state,
+                delimiter: None,
+                previous_align_state: Some(previous_align_state),
+            },),
             Event::Alignment(AlignmentEvent {
                 transition: AlignmentTransition::StateChange,
                 align_state: i64::from(align_state),
@@ -401,16 +399,14 @@ fn brace_delivery_transitions_preserve_command_owned_align_state_changes() {
 #[test]
 fn missing_right_brace_alignment_correction_is_canonical_recovery() {
     assert_eq!(
-        translate_alignment(
-            AlignmentRecord {
-                transition: "missing_right_brace",
-                alignment: Some(1),
-                nesting: Some(1),
-                align_state: 1,
-                delimiter: None,
-                previous_align_state: None,
-            },
-        ),
+        translate_alignment(AlignmentRecord {
+            transition: "missing_right_brace",
+            alignment: Some(1),
+            nesting: Some(1),
+            align_state: 1,
+            delimiter: None,
+            previous_align_state: None,
+        },),
         Event::Alignment(AlignmentEvent {
             transition: AlignmentTransition::Recovery,
             align_state: 1,

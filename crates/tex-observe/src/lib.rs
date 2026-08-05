@@ -7,18 +7,17 @@ use tex_command::{
     AlignmentRecord, CommandDeliveryBoundary, CommandObservation, CommandObserver, ConditionRecord,
     EffectRecord, GeometryRecord, InputReason as CommandInputReason, InputRecord, InputTransition,
     MacroRecord, MutationRecord, ObservationValue, ObservedToken,
-    RecoveryKind as CommandRecoveryKind,
-    RecoveryRecord, ScannerStatusRecord, TokenListRecord,
+    RecoveryKind as CommandRecoveryKind, RecoveryRecord, ScannerStatusRecord, TokenListRecord,
 };
+use tex_oracle::OracleBundle;
 use tex_oracle::{
     AlignmentEvent, AlignmentTransition, CanonicalCommand, CanonicalValue, CommandDelivery,
     CommandEvent, ConditionEvent, ConditionTransition, DiagnosticEvent, DiagnosticSeverity,
     EffectEvent, EffectKind, Event, GeometryEvent, InputEvent, InputReason, MacroEvent,
-    MutationEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken,
-    RecoveryEvent, RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion,
-    SourceLocation, StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
+    MutationEvent, Normalizer, ObservationHeader, ObservationStream, OracleToken, RecoveryEvent,
+    RecoveryKind, ScannerEvent, ScannerStatus, ScannerStatusEvent, SchemaVersion, SourceLocation,
+    StateTarget, Tex82ObserverProfile, TokenListEvent, TokenListTransition,
 };
-use tex_oracle::OracleBundle;
 use tex_state::SourceId;
 
 mod translation;
@@ -349,8 +348,8 @@ impl CommandObserver for Recorder {
             self.current_source = Some(source);
         }
         let source = source_id.and_then(|source| self.source(source));
-        let source_name = source
-            .map_or_else(|| self.default_source.clone(), |source| source.name.clone());
+        let source_name =
+            source.map_or_else(|| self.default_source.clone(), |source| source.name.clone());
         let source_bytes = source.map(|source| Arc::clone(&source.bytes));
         let source_line_starts = source.map(|source| Arc::clone(&source.line_starts));
         self.events.push(translate_observation(

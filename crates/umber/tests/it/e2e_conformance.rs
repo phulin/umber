@@ -159,11 +159,9 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
     );
     let prepared = provider.prepare(&recipe).expect("focused TRIP format");
     let oracle = b"{\"schema\":3,\"manifest\":\"1111111111111111111111111111111111111111111111111111111111111111\"}\n";
-    let semantic = tex_oracle::canonical_bundle_json_lines(
-        &prepared.construction_evidence().semantic,
-        oracle,
-    )
-    .expect("actual construction semantics validate as schema v3");
+    let semantic =
+        tex_oracle::canonical_bundle_json_lines(&prepared.construction_evidence().semantic, oracle)
+            .expect("actual construction semantics validate as schema v3");
     let semantic_stream =
         ObservationStream::from_canonical_json_lines(&semantic).expect("semantic stream");
     assert_eq!(semantic_stream.events.len(), 8707);
@@ -225,11 +223,9 @@ fn trip_construction_evidence_is_fresh_complete_and_canonical() {
                 && command.command.command == "assign_int"
                 && command.command.control_sequence.as_deref() == Some("righthyphenmin")
     ));
-    let actual = tex_oracle::canonical_bundle_json_lines(
-        &prepared.construction_evidence().geometry,
-        oracle,
-    )
-    .expect("actual construction geometry validates as schema v3");
+    let actual =
+        tex_oracle::canonical_bundle_json_lines(&prepared.construction_evidence().geometry, oracle)
+            .expect("actual construction geometry validates as schema v3");
     let stream = ObservationStream::from_canonical_json_lines(&actual).expect("geometry stream");
     let mut hpack = 0;
     let mut vpack = 0;

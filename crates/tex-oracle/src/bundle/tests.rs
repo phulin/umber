@@ -35,8 +35,12 @@ fn geometry_obeys_the_pinned_schema() {
             location: None,
         }),
     };
-    assert!(canonical_bundle_json_lines(std::slice::from_ref(&event), header(1).as_bytes()).is_err());
-    assert!(canonical_bundle_json_lines(std::slice::from_ref(&event), header(2).as_bytes()).is_ok());
+    assert!(
+        canonical_bundle_json_lines(std::slice::from_ref(&event), header(1).as_bytes()).is_err()
+    );
+    assert!(
+        canonical_bundle_json_lines(std::slice::from_ref(&event), header(2).as_bytes()).is_ok()
+    );
     assert!(canonical_bundle_json_lines(&[event], header(3).as_bytes()).is_err());
 }
 

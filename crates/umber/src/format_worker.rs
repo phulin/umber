@@ -818,8 +818,7 @@ fn validate_response(
     }
     Universe::from_format(World::memory(), &result.image)
         .map_err(|error| FormatFixtureError::Format(error.to_string()))?;
-    tex_oracle::decode_oracle_bundle(&result.evidence)
-        .map_err(FormatFixtureError::Evidence)?;
+    tex_oracle::decode_oracle_bundle(&result.evidence).map_err(FormatFixtureError::Evidence)?;
     Ok(ConstructionResult {
         image: result.image,
         evidence: result.evidence,
@@ -1248,10 +1247,8 @@ mod tests {
         ));
         assert!(
             cache
-                .load_entry(&identity, |bytes| tex_oracle::decode_oracle_bundle(
-                    bytes
-                )
-                .map(|_| ()))
+                .load_entry(&identity, |bytes| tex_oracle::decode_oracle_bundle(bytes)
+                    .map(|_| ()))
                 .expect("cache remains readable")
                 .is_none(),
             "a forged decoder-valid worker response must leave no cache entry"

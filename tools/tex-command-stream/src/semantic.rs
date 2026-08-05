@@ -1868,7 +1868,11 @@ fn scanner_value_text(record: &tex_command::ScannerRecord) -> String {
             shrink_order,
         } => format!(
             "{}width={width};stretch={stretch};stretch_order={stretch_order};shrink={shrink};shrink_order={shrink_order}",
-            if record.kind == "internal" { "glue:" } else { "" }
+            if record.kind == "internal" {
+                "glue:"
+            } else {
+                ""
+            }
         ),
         ObservationValue::Name(value) => value.clone(),
         ObservationValue::Tokens(_) => "tokens".into(),

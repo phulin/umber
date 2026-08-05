@@ -392,8 +392,8 @@ impl CommandProcessor<'_> {
     fn observe_expression(&mut self, kind: ExpressionKind, value: ExpressionValue) {
         let value = match value {
             ExpressionValue::Number(value) => match kind {
-                ExpressionKind::Integer => ObservationValue::Integer(i64::from(value)),
-                ExpressionKind::Dimension => ObservationValue::Scaled(i64::from(value)),
+                ExpressionKind::Integer => ObservationValue::Integer(value),
+                ExpressionKind::Dimension => ObservationValue::Scaled(value),
                 _ => unreachable!("numeric expressions are integer or dimension values"),
             },
             ExpressionValue::Glue(value) => glue_value(value.into_spec()),

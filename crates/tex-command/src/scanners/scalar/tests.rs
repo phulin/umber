@@ -6294,9 +6294,27 @@ fn tex82_scanner_conditionals_observes_glue_and_muglue_results() {
     assert_eq!(
         observed_glue,
         [
-            ObservationValue::Glue { width: 65_536, stretch: 131_072, stretch_order: "normal", shrink: 196_608, shrink_order: "normal" },
-            ObservationValue::Glue { width: 262_144, stretch: 327_680, stretch_order: "filll", shrink: 0, shrink_order: "normal" },
-            ObservationValue::Glue { width: 131_072, stretch: 65_536, stretch_order: "fil", shrink: 196_608, shrink_order: "normal" },
+            ObservationValue::Glue {
+                width: 65_536,
+                stretch: 131_072,
+                stretch_order: "normal",
+                shrink: 196_608,
+                shrink_order: "normal"
+            },
+            ObservationValue::Glue {
+                width: 262_144,
+                stretch: 327_680,
+                stretch_order: "filll",
+                shrink: 0,
+                shrink_order: "normal"
+            },
+            ObservationValue::Glue {
+                width: 131_072,
+                stretch: 65_536,
+                stretch_order: "fil",
+                shrink: 196_608,
+                shrink_order: "normal"
+            },
         ]
     );
     assert!(recorder.0.iter().any(|record| matches!(

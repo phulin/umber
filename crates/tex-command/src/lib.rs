@@ -92,8 +92,7 @@ pub use observation::{
     EffectRecord, GeneratedSourceRecord, GeometryRecord, InputReason, InputRecord, InputTransition,
     MacroRecord, MutationRecord, ObservationValue, ObservedToken, OpenedSourceSnapshot,
     ParameterClass, RecoveryKind, RecoveryRecord, ScannerRecord, ScannerStatusRecord,
-    TokenListRecord, parameter_mutation_key,
-    parameter_mutation_key_for_dialect,
+    TokenListRecord, parameter_mutation_key, parameter_mutation_key_for_dialect,
 };
 pub use paragraph::{
     ParagraphInputCoverage, ParagraphInputReplayError, ParagraphInputTransaction,

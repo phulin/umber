@@ -82,15 +82,13 @@ pub(crate) fn translate_observation(
             let context = format!("source={source}; condition={}", record.identity);
             ObservedEvent::new(translate_condition(record), context)
         }
-        CommandObservation::Scanner(record) => {
-            ObservedEvent::new(
-                Event::Scanner(ScannerEvent {
-                    scanner: record.kind.into(),
-                    result: observation_value(record.value),
-                }),
-                format!("source={source}"),
-            )
-        }
+        CommandObservation::Scanner(record) => ObservedEvent::new(
+            Event::Scanner(ScannerEvent {
+                scanner: record.kind.into(),
+                result: observation_value(record.value),
+            }),
+            format!("source={source}"),
+        ),
         CommandObservation::TokenList(record) => {
             ObservedEvent::new(translate_token_list(record), format!("source={source}"))
         }

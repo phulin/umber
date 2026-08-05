@@ -12,8 +12,8 @@ use tex_command::{
 };
 use tex_exec::{CheckpointSink, ResourceNeed};
 use tex_observe::{LiveSessionTranslator, LiveSource};
-use tex_oracle::{OracleBundle, decode_oracle_bundle, encode_oracle_bundle};
 use tex_oracle::SchemaVersion;
+use tex_oracle::{OracleBundle, decode_oracle_bundle, encode_oracle_bundle};
 use tex_state::{JobClock, Universe, World};
 use umber_fetch::{
     FormatCacheClock, FormatCacheError, FormatCacheIdentity, FormatCacheStore, FormatEngineMode,
@@ -572,8 +572,7 @@ pub fn ensure_format(
     Ok(FormatFixture {
         recipe: recipe.clone(),
         image: entry.image().clone(),
-        evidence: decode_oracle_bundle(entry.evidence())
-            .map_err(FormatFixtureError::Evidence)?,
+        evidence: decode_oracle_bundle(entry.evidence()).map_err(FormatFixtureError::Evidence)?,
     })
 }
 
