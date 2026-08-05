@@ -1798,3 +1798,39 @@ fn retry_suffix_reconciliation_preserves_prefix_and_new_tail() {
     ));
     assert_eq!(unrelated, b"accepted marker new");
 }
+
+#[test]
+fn memory_retry_reconciliation_deduplicates_every_output_channel_once() {
+    let mut world = World::memory();
+    let slot = StreamSlot::new(4);
+    world.open_out(slot, "retry.aux");
+    world.write_text(PrintSink::TerminalAndLog, "accepted marker");
+    world.write_text(PrintSink::Stream(slot), "accepted marker");
+    world
+        .commit_effects(world.effect_pos())
+        .expect("materialize suspended attempt");
+    let checkpoint = world
+        .memory_materialization_checkpoint()
+        .expect("memory materialization checkpoint");
+
+    world.write_text(PrintSink::TerminalAndLog, " marker tail");
+    world.write_text(PrintSink::Stream(slot), " marker tail");
+    world
+        .commit_effects(world.effect_pos())
+        .expect("materialize replay");
+
+    assert!(world.reconcile_memory_retry_materialization(&checkpoint));
+    assert_eq!(
+        world.memory_terminal_output(),
+        Some(&b"accepted marker tail"[..])
+    );
+    assert_eq!(
+        world.memory_log_output(),
+        Some(&b"accepted marker tail"[..])
+    );
+    assert_eq!(
+        world.memory_output("retry.aux"),
+        Some(&b"accepted marker tail"[..])
+    );
+    assert!(!world.reconcile_memory_retry_materialization(&checkpoint));
+}
