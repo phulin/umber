@@ -1855,7 +1855,10 @@ fn run_show_publishes_canonical_error_context() {
     // TeX82 §§82, 310 publish the live input context after `show_eqtb`'s
     // diagnostic and before returning from the recoverable error.
     assert!(stdout.contains("> \\foo=macro:\n->bar."), "{stdout}");
-    assert!(stdout.contains("l.1 \\def\\foo{bar}\\show\\foo"), "{stdout}");
+    assert!(
+        stdout.contains("l.1 \\def\\foo{bar}\\show\\foo"),
+        "{stdout}"
+    );
     assert!(
         output.stderr.is_empty(),
         "recovered diagnostic must stay on the terminal channel"
