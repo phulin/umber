@@ -30,7 +30,7 @@ pub use bib_output::{
     BblOutputFailure, BblOutputFailureKind, BblSerializer, BibtexCase, BibtexMacro, BibtexOptions,
     BibtexOutputFailure, BibtexOutputFailureKind, BibtexSerializer, DotInclude, DotOptions,
     DotOutputFailure, DotOutputFailureKind, DotSerializer, OutputContext, OutputFailure,
-    OutputFailureKind, OutputOptions, OutputRouter, Serializer,
+    OutputFailureKind, OutputOptions, OutputPlan, OutputRouter,
 };
 pub use bib_unicode::{LegacyEncoding, RecodeSet, UnicodeData};
 #[doc(hidden)]

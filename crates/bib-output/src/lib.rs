@@ -6,20 +6,26 @@ mod dot;
 mod router;
 mod xml;
 
-use bib_model::{GeneratedFile, OutputRequest, ProcessedBibliography};
+use bib_model::ProcessedBibliography;
 use bib_unicode::UnicodeData;
 
-pub use bbl::{BblOutputFailure, BblOutputFailureKind, BblSerializer};
-pub use bibtex::{
-    BibtexCase, BibtexMacro, BibtexOptions, BibtexOutputFailure, BibtexOutputFailureKind,
-    BibtexSerializer,
-};
-pub use dot::{DotInclude, DotOptions, DotOutputFailure, DotOutputFailureKind, DotSerializer};
-pub use router::{OutputFailure, OutputFailureKind, OutputOptions, OutputRouter};
+pub use bbl::BblSerializer;
+pub use bibtex::{BibtexCase, BibtexMacro, BibtexOptions, BibtexSerializer};
+pub use dot::{DotInclude, DotOptions, DotSerializer};
+pub use router::{OutputFailure, OutputFailureKind, OutputOptions, OutputPlan, OutputRouter};
 pub use xml::{
     BBL_XML_NAMESPACE, BIBLATEX_XML_NAMESPACE, BblXmlSerializer, BibLatexXmlSerializer,
-    XmlOutputFailure, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
+    XmlSchemaKind, generate_xml_schema,
 };
+
+pub type BblOutputFailure = OutputFailure;
+pub type BblOutputFailureKind = OutputFailureKind;
+pub type BibtexOutputFailure = OutputFailure;
+pub type BibtexOutputFailureKind = OutputFailureKind;
+pub type DotOutputFailure = OutputFailure;
+pub type DotOutputFailureKind = OutputFailureKind;
+pub type XmlOutputFailure = OutputFailure;
+pub type XmlOutputFailureKind = OutputFailureKind;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OutputContext<'a> {
@@ -40,17 +46,6 @@ impl<'a> OutputContext<'a> {
     pub const fn unicode(self) -> &'a UnicodeData {
         self.unicode
     }
-}
-
-/// Implemented serializers are pure functions over a frozen document.
-pub trait Serializer {
-    type Error;
-
-    fn serialize(
-        &self,
-        context: OutputContext<'_>,
-        request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error>;
 }
 
 #[cfg(test)]

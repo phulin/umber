@@ -326,6 +326,10 @@ Affected crates: `bib-output`, `bib-model`, `bib-engine`, `umber`, and `umber-wa
 
 Rollback is per format: any serializer can continue using the old projection until its output gate passes.
 
+**Migration status.** Complete. `bib-output::OutputPlan` is the single frozen projection and policy boundary for BBL, BibTeX, DOT, BibLaTeXML, and BBLXML. `OutputRouter` owns compatibility validation, dispatch, newline/encoding finalization, byte limits, and one typed failure. The former open serializer trait and four independent failure objects are deleted; the old named serializer structs remain only as thin forwarding entry points. Engine, tool, native, and WASM callers continue to use the same closed request enum and generated-file contract.
+
+Rollback is a single revert of the output-protocol migration; there is no parallel production router.
+
 **Gates and risks.** Require byte-exact BBL/BibTeX/DOT/XML fixtures, generated-file naming, empty-section behavior, duplicate handling, error diagnostics, and WASM output parity. Risks are format-specific omissions hidden by a common projection and accidental changes to output ordering.
 
 **Dependencies and conflicts.** Rank 2 supplies the single typed document; rank 8 supplies classic compatibility. This estimate excludes model-entry conversion and graph deletion already counted in rank 2.

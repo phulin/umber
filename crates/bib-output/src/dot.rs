@@ -1,14 +1,14 @@
-use std::fmt;
 use std::fmt::Write as _;
-use std::sync::Arc;
 
 use bib_model::{
-    BibDiagnostic, BibDiagnosticCode, BibSeverity, DiagnosticBuilder, Entry, FieldProvenance,
-    FieldValue, GeneratedFile, OutputFormat, OutputNewline, OutputRequest, ProcessedSection,
+    Entry, FieldProvenance, FieldValue, GeneratedFile, OutputFormat, OutputRequest,
+    ProcessedSection,
 };
-use bib_unicode::{EncodingError, encode_legacy};
 
-use crate::{OutputContext, Serializer};
+use crate::{
+    DotOutputFailure, DotOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
+    router::failure as output_failure,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DotInclude {
@@ -50,43 +50,6 @@ impl DotOptions {
         self.include
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DotOutputFailureKind {
-    WrongFormat,
-    IncompatibleVersion,
-    Unrepresentable,
-    Limit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DotOutputFailure {
-    kind: DotOutputFailureKind,
-    diagnostics: Arc<[BibDiagnostic]>,
-}
-
-impl DotOutputFailure {
-    #[must_use]
-    pub const fn kind(&self) -> DotOutputFailureKind {
-        self.kind
-    }
-
-    pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &BibDiagnostic> {
-        self.diagnostics.iter()
-    }
-}
-
-impl fmt::Display for DotOutputFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            self.diagnostics
-                .first()
-                .map_or("DOT output failed", BibDiagnostic::message),
-        )
-    }
-}
-
-impl std::error::Error for DotOutputFailure {}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DotSerializer {
@@ -280,46 +243,35 @@ impl DotSerializer {
     }
 }
 
-impl Serializer for DotSerializer {
-    type Error = DotOutputFailure;
-
-    fn serialize(
+impl DotSerializer {
+    pub fn serialize(
         &self,
         context: OutputContext<'_>,
         request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error> {
-        if request.format() != OutputFormat::Dot {
-            return Err(failure(
-                DotOutputFailureKind::WrongFormat,
-                "BIB_DOT_FORMAT",
-                "the DOT serializer requires a DOT output request",
-            ));
-        }
-        if context.document().configuration().version() != context.unicode().compatibility() {
-            return Err(failure(
-                DotOutputFailureKind::IncompatibleVersion,
-                "BIB_DOT_VERSION",
-                "the processed document and Unicode tables are incompatible",
-            ));
-        }
+    ) -> Result<GeneratedFile, DotOutputFailure> {
+        OutputRouter::new(crate::OutputOptions::default().with_dot(self.options)).serialize_as(
+            OutputFormat::Dot,
+            context,
+            request,
+        )
+    }
+
+    fn render(self, plan: &OutputPlan<'_>) -> Result<String, DotOutputFailure> {
         let mut text = String::from(
             "digraph Biberdata {\n  compound = true;\n  edge [ arrowhead=open ];\n  graph [ style=filled, rankdir=LR ];\n  node [\n    fontsize=10,\n    fillcolor=white,\n    style=filled,\n    shape=box ];\n\n",
         );
-        check_limit(&text, request.max_bytes())?;
-        for section in context.document().sections() {
-            self.write_section(&mut text, section, request.max_bytes())?;
+        check_limit(&text, plan.request().max_bytes())?;
+        for section in plan.sections() {
+            self.write_section(&mut text, section.section(), plan.request().max_bytes())?;
         }
         text.push_str("}\n");
-        check_limit(&text, request.max_bytes())?;
-        if request.newline() == OutputNewline::CrLf {
-            text = text.replace('\n', "\r\n");
-        }
-        let bytes = encode_legacy(&text, request.encoding()).map_err(encoding_failure)?;
-        if bytes.len() > request.max_bytes() {
-            return Err(limit_failure(request.max_bytes()));
-        }
-        Ok(GeneratedFile::new(request.path().clone(), bytes))
+        check_limit(&text, plan.request().max_bytes())?;
+        Ok(text)
     }
+}
+
+pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, DotOutputFailure> {
+    DotSerializer::new(plan.options().dot()).render(plan)
 }
 
 fn relationship_targets(value: &FieldValue) -> Option<Vec<&str>> {
@@ -370,14 +322,6 @@ fn check_limit(text: &str, max_bytes: usize) -> Result<(), DotOutputFailure> {
     }
 }
 
-fn encoding_failure(error: EncodingError) -> DotOutputFailure {
-    failure(
-        DotOutputFailureKind::Unrepresentable,
-        "BIB_DOT_ENCODING",
-        &format!("DOT output encoding failed: {error:?}"),
-    )
-}
-
 fn limit_failure(max_bytes: usize) -> DotOutputFailure {
     failure(
         DotOutputFailureKind::Limit,
@@ -387,15 +331,5 @@ fn limit_failure(max_bytes: usize) -> DotOutputFailure {
 }
 
 fn failure(kind: DotOutputFailureKind, code: &str, message: &str) -> DotOutputFailure {
-    let diagnostic = DiagnosticBuilder::new(
-        BibDiagnosticCode::new(code).expect("static diagnostic code"),
-        BibSeverity::Error,
-        message,
-    )
-    .expect("output diagnostic message is valid")
-    .freeze();
-    DotOutputFailure {
-        kind,
-        diagnostics: Arc::from([diagnostic]),
-    }
+    output_failure(OutputFormat::Dot, kind, code, message)
 }

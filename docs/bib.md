@@ -148,9 +148,9 @@ The workspace now contains these packages and dependency boundaries:
   transliteration, legacy encodings, and TeX recoding data;
 - `bib-input`: control/config parsing and validation plus BibTeX and
   BibLaTeXML datasource parsing;
-- `bib-output`: detached deterministic BBL 3.3, BibTeX, BibLaTeXML, BBLXML,
-  and DOT serialization, deterministic Relax NG companion generation, and a
-  single typed router across every alternate output format; and
+- `bib-output`: one closed `OutputPlan` over the frozen document, deterministic
+  BBL 3.3, BibTeX, BibLaTeXML, BBLXML, and DOT writers, Relax NG companion
+  generation, and one typed router/failure/finalization boundary; and
 - `bib-engine`: the only ordinary dependency of `umber`, owning the private
   typed Biber worker plus resource-session and one-shot APIs.
 
@@ -701,8 +701,8 @@ table/schema detection, and unrepresentable characters return typed failures
 with stable ordered diagnostics; serializers read no VFS, host locale, mutable
 option state, or process global.
 
-The implemented BibTeX writer uses the same detached boundary. Its immutable
-serializer policy fixes field alignment, entry/field case, TeX safe-character
+The implemented BibTeX writer uses the same detached `OutputPlan`. Its immutable
+output policy fixes field alignment, entry/field case, TeX safe-character
 recoding, ordered string macros and their eligible fields, and ordered output
 comments. The explicit `OutputRequest` continues to own legacy encoding,
 LF/CRLF selection, destination identity, and the exact byte limit. Entries are
@@ -716,14 +716,15 @@ comments, encoding failures, compatibility mismatches, and checked work/output
 limits return typed ordered diagnostics without consulting input sources or
 mutable configuration.
 
-The DOT writer emits stable section and entry clusters, optional field nodes,
+The DOT writer consumes the same planned section and provenance projection and emits stable section and entry clusters, optional field nodes,
 relationship edges for xdata, crossref, xref, and related keys, and derived
 edges from frozen field provenance. `DotInclude` makes each graph family
 explicit. Identifiers and tooltips are escaped before emission; checked work
 growth, final bytes, encoding, newline policy, compatibility identity, and
-wrong-format requests produce the same style of typed bounded failures as the
-other serializers. `OutputRouter` is the sole final dispatch point for BBL,
-BibTeX, BibLaTeXML, BBLXML, and DOT requests.
+wrong-format requests produce the single typed bounded output failure.
+`OutputRouter` is the sole validation, finalization, and dispatch point for
+BBL, BibTeX, BibLaTeXML, BBLXML, and DOT requests. Legacy named serializer
+structs delegate to that router; there is no open serializer trait.
 
 Diagnostics have stable codes and structured data:
 

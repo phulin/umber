@@ -1,15 +1,16 @@
-use std::collections::BTreeSet;
-use std::fmt;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use bib_model::{
-    BibDiagnostic, BibDiagnosticCode, BibSeverity, DateValue, DiagnosticBuilder, Entry, Field,
-    FieldValue, GeneratedFile, OutputFormat, OutputNewline, OutputRequest, Range, RangeEndpoint,
+    DateValue, Entry, Field, FieldValue, GeneratedFile, OutputFormat, OutputRequest, Range,
+    RangeEndpoint,
 };
-use bib_unicode::{EncodingError, RecodeSet, TexRecoder, encode_legacy};
+use bib_unicode::{RecodeSet, TexRecoder};
 
-use crate::{OutputContext, Serializer};
+use crate::{
+    BibtexOutputFailure, BibtexOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
+    router::failure as output_failure,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BibtexCase {
@@ -137,44 +138,6 @@ impl BibtexOptions {
         self
     }
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BibtexOutputFailureKind {
-    WrongFormat,
-    IncompatibleVersion,
-    MalformedValue,
-    Unrepresentable,
-    Limit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BibtexOutputFailure {
-    kind: BibtexOutputFailureKind,
-    diagnostics: Arc<[BibDiagnostic]>,
-}
-
-impl BibtexOutputFailure {
-    #[must_use]
-    pub const fn kind(&self) -> BibtexOutputFailureKind {
-        self.kind
-    }
-
-    pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &BibDiagnostic> {
-        self.diagnostics.iter()
-    }
-}
-
-impl fmt::Display for BibtexOutputFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = self
-            .diagnostics
-            .first()
-            .map_or("BibTeX output failed", BibDiagnostic::message);
-        formatter.write_str(message)
-    }
-}
-
-impl std::error::Error for BibtexOutputFailure {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BibtexSerializer {
@@ -316,29 +279,17 @@ impl BibtexSerializer {
     }
 }
 
-impl Serializer for BibtexSerializer {
-    type Error = BibtexOutputFailure;
-
-    fn serialize(
+impl BibtexSerializer {
+    pub fn serialize(
         &self,
         context: OutputContext<'_>,
         request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error> {
-        if request.format() != OutputFormat::Bibtex {
-            return Err(failure(
-                BibtexOutputFailureKind::WrongFormat,
-                "BIB_BIBTEX_FORMAT",
-                "the BibTeX serializer requires a BibTeX output request",
-            ));
-        }
-        if context.document().configuration().version() != context.unicode().compatibility() {
-            return Err(failure(
-                BibtexOutputFailureKind::IncompatibleVersion,
-                "BIB_BIBTEX_VERSION",
-                "the processed document and Unicode tables are incompatible",
-            ));
-        }
+    ) -> Result<GeneratedFile, BibtexOutputFailure> {
+        OutputRouter::new(crate::OutputOptions::default().with_bibtex(self.options.clone()))
+            .serialize_as(OutputFormat::Bibtex, context, request)
+    }
 
+    fn render(&self, plan: &OutputPlan<'_>) -> Result<String, BibtexOutputFailure> {
         let mut text = String::new();
         for comment in self.options.comments.iter() {
             validate_comment(comment)?;
@@ -347,7 +298,7 @@ impl Serializer for BibtexSerializer {
         if !self.options.comments.is_empty() {
             text.push('\n');
         }
-        check_work_limit(&text, request.max_bytes())?;
+        check_work_limit(&text, plan.request().max_bytes())?;
         for value in self.options.macros.iter() {
             validate_identifier(value.name(), "macro name")?;
             validate_value(value.value(), "macro value")?;
@@ -358,67 +309,29 @@ impl Serializer for BibtexSerializer {
                 value.value()
             )
             .expect("writing a String cannot fail");
-            check_work_limit(&text, request.max_bytes())?;
+            check_work_limit(&text, plan.request().max_bytes())?;
         }
 
-        let mut emitted = BTreeSet::new();
-        for section in context.document().sections() {
-            if section.lists().len() == 0 {
-                for entry in section.entries() {
-                    if emitted.insert((section.id().get(), entry.id().as_str().to_owned())) {
-                        self.write_entry(&mut text, entry)?;
-                        check_work_limit(&text, request.max_bytes())?;
-                    }
-                }
-                continue;
-            }
-            for list in section.lists() {
-                for id in list.entries() {
-                    if !emitted.insert((section.id().get(), id.as_str().to_owned())) {
-                        continue;
-                    }
-                    let entry = section.entry(id).ok_or_else(|| {
-                        failure(
-                            BibtexOutputFailureKind::MalformedValue,
-                            "BIB_BIBTEX_UNKNOWN_ENTRY",
-                            &format!("data list references unknown entry `{id}`"),
-                        )
-                    })?;
-                    self.write_entry(&mut text, entry)?;
-                    check_work_limit(&text, request.max_bytes())?;
-                }
+        for section in plan.sections() {
+            for selected in section.first_entries() {
+                let entry = selected.entry().ok_or_else(|| {
+                    failure(
+                        BibtexOutputFailureKind::MalformedValue,
+                        "BIB_BIBTEX_UNKNOWN_ENTRY",
+                        &format!("data list references unknown entry `{}`", selected.id()),
+                    )
+                })?;
+                self.write_entry(&mut text, entry)?;
+                check_work_limit(&text, plan.request().max_bytes())?;
             }
         }
 
-        let text = TexRecoder::new(RecodeSet::Null, self.options.escape).encode(&text);
-        let text = match request.newline() {
-            OutputNewline::Lf => text,
-            OutputNewline::CrLf => text.replace('\n', "\r\n"),
-        };
-        let bytes = encode_legacy(&text, request.encoding()).map_err(|error| match error {
-            EncodingError::UnmappableCharacter => failure(
-                BibtexOutputFailureKind::Unrepresentable,
-                "BIB_BIBTEX_ENCODING",
-                "BibTeX output contains a character unavailable in the requested encoding",
-            ),
-            EncodingError::UnknownLabel | EncodingError::MalformedInput => failure(
-                BibtexOutputFailureKind::MalformedValue,
-                "BIB_BIBTEX_ENCODING",
-                "the requested BibTeX encoding is invalid",
-            ),
-        })?;
-        if bytes.len() > request.max_bytes() {
-            return Err(failure(
-                BibtexOutputFailureKind::Limit,
-                "BIB_BIBTEX_LIMIT",
-                &format!(
-                    "BibTeX output exceeds the {} byte limit",
-                    request.max_bytes()
-                ),
-            ));
-        }
-        Ok(GeneratedFile::new(request.path().clone(), bytes))
+        Ok(TexRecoder::new(RecodeSet::Null, self.options.escape).encode(&text))
     }
+}
+
+pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BibtexOutputFailure> {
+    BibtexSerializer::new(plan.options().bibtex().clone()).render(plan)
 }
 
 fn field_text(value: &FieldValue) -> Option<&str> {
@@ -528,14 +441,5 @@ fn malformed_value(what: &str) -> BibtexOutputFailure {
 }
 
 fn failure(kind: BibtexOutputFailureKind, code: &str, message: &str) -> BibtexOutputFailure {
-    BibtexOutputFailure {
-        kind,
-        diagnostics: Arc::from([DiagnosticBuilder::new(
-            BibDiagnosticCode::new(code).expect("static output diagnostic code is valid"),
-            BibSeverity::Error,
-            message,
-        )
-        .expect("output diagnostic message is valid")
-        .freeze()]),
-    }
+    output_failure(OutputFormat::Bibtex, kind, code, message)
 }

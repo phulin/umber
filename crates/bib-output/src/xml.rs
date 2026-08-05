@@ -1,54 +1,18 @@
-use std::fmt;
 use std::fmt::Write as _;
-use std::sync::Arc;
 
 use bib_model::{
-    BibDiagnostic, BibDiagnosticCode, BibSeverity, DateValue, Entry, Field, FieldValue,
-    GeneratedFile, Name, NamePartValue, OptionValue, OutputFormat, OutputNewline, OutputRequest,
-    Range, RangeEndpoint,
+    DateValue, Entry, Field, FieldValue, GeneratedFile, Name, NamePartValue, OptionValue,
+    OutputFormat, OutputRequest, Range, RangeEndpoint,
 };
-use bib_unicode::{EncodingError, LegacyEncoding, encode_legacy, normalise_nfc};
+use bib_unicode::{LegacyEncoding, normalise_nfc};
 
-use crate::{OutputContext, Serializer};
+use crate::{
+    OutputContext, OutputPlan, OutputRouter, XmlOutputFailure, XmlOutputFailureKind,
+    router::{failure as output_failure, finalize},
+};
 
 pub const BIBLATEX_XML_NAMESPACE: &str = "http://biblatex-biber.sourceforge.net/biblatexml";
 pub const BBL_XML_NAMESPACE: &str = "https://sourceforge.net/projects/biblatex/bblxml";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum XmlOutputFailureKind {
-    WrongFormat,
-    IncompatibleVersion,
-    MalformedValue,
-    Unrepresentable,
-    Limit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct XmlOutputFailure {
-    kind: XmlOutputFailureKind,
-    diagnostics: Arc<[BibDiagnostic]>,
-}
-
-impl XmlOutputFailure {
-    #[must_use]
-    pub const fn kind(&self) -> XmlOutputFailureKind {
-        self.kind
-    }
-    pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &BibDiagnostic> {
-        self.diagnostics.iter()
-    }
-}
-
-impl fmt::Display for XmlOutputFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(
-            self.diagnostics
-                .first()
-                .map_or("XML output failed", BibDiagnostic::message),
-        )
-    }
-}
-impl std::error::Error for XmlOutputFailure {}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BibLatexXmlSerializer;
@@ -62,96 +26,102 @@ pub enum XmlSchemaKind {
     Bbl,
 }
 
-impl Serializer for BibLatexXmlSerializer {
-    type Error = XmlOutputFailure;
-    fn serialize(
+impl BibLatexXmlSerializer {
+    pub fn serialize(
         &self,
         context: OutputContext<'_>,
         request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error> {
-        validate(context, request, OutputFormat::BibLatexXml, "BibLaTeXML")?;
-        let schema = schema_file_name(request.path().as_str());
-        let mut xml = XmlWriter::new(request.max_bytes());
-        xml.raw(&header(
-            "bltx",
-            &schema,
-            "biblatexml",
-            BIBLATEX_XML_NAMESPACE,
-        ))?;
-        for section in context.document().sections() {
-            for entry in section.entries() {
-                write_biblatexml_entry(
-                    &mut xml,
-                    entry,
-                    section.aliases().filter_map(|(alias, target)| {
-                        (target == entry.id()).then_some(alias.as_str())
-                    }),
-                )?;
-            }
-        }
-        xml.raw("</bltx:entries>\n")?;
-        finish(xml, request)
+    ) -> Result<GeneratedFile, XmlOutputFailure> {
+        OutputRouter::default().serialize_as(OutputFormat::BibLatexXml, context, request)
     }
 }
 
-impl Serializer for BblXmlSerializer {
-    type Error = XmlOutputFailure;
-    fn serialize(
+pub(crate) fn render_biblatex(plan: &OutputPlan<'_>) -> Result<String, XmlOutputFailure> {
+    let schema = schema_file_name(plan.request().path().as_str());
+    let mut xml = XmlWriter::new(plan.request().max_bytes());
+    xml.raw(&header(
+        "bltx",
+        &schema,
+        "biblatexml",
+        BIBLATEX_XML_NAMESPACE,
+    ))?;
+    for planned in plan.sections() {
+        let section = planned.section();
+        for entry in section.entries() {
+            write_biblatexml_entry(
+                &mut xml,
+                entry,
+                section
+                    .aliases()
+                    .filter_map(|(alias, target)| (target == entry.id()).then_some(alias.as_str())),
+            )?;
+        }
+    }
+    xml.raw("</bltx:entries>\n")?;
+    Ok(prepare_text(xml.value, plan.request()))
+}
+
+impl BblXmlSerializer {
+    pub fn serialize(
         &self,
         context: OutputContext<'_>,
         request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error> {
-        validate(context, request, OutputFormat::BblXml, "BBLXML")?;
-        let schema = schema_file_name(request.path().as_str());
-        let mut xml = XmlWriter::new(request.max_bytes());
-        xml.raw(&header("bbl", &schema, "bblxml", BBL_XML_NAMESPACE))?;
-        for section in context.document().sections() {
-            xml.line(1, &format!("<bbl:refsection number=\"{}\">", section.id()))?;
-            for list in section.lists() {
-                xml.line(
-                    2,
-                    &format!(
-                        "<bbl:datalist name=\"{}\" type=\"{}\">",
-                        attr(list.id().as_str())?,
-                        match list.kind() {
-                            bib_model::DataListKind::Entry => "entry",
-                            bib_model::DataListKind::List => "list",
-                        }
-                    ),
-                )?;
-                for item in list.items() {
-                    let entry = section.entry(item.entry()).ok_or_else(|| {
-                        failure(
-                            XmlOutputFailureKind::MalformedValue,
-                            "BIB_XML_UNKNOWN_ENTRY",
-                            "BBLXML data list references an unknown entry",
-                        )
-                    })?;
-                    write_bblxml_entry(&mut xml, entry)?;
-                }
-                xml.line(2, "</bbl:datalist>")?;
-            }
-            for (alias, target) in section.aliases() {
-                xml.line(
-                    2,
-                    &format!(
-                        "<bbl:keyalias key=\"{}\" target=\"{}\" />",
-                        attr(alias.as_str())?,
-                        attr(target.as_str())?
-                    ),
-                )?;
-            }
-            for key in section.undefined_keys() {
-                xml.line(
-                    2,
-                    &format!("<bbl:missing key=\"{}\" />", attr(key.as_str())?),
-                )?;
-            }
-            xml.line(1, "</bbl:refsection>")?;
-        }
-        xml.raw("</bbl:refsections>\n")?;
-        finish(xml, request)
+    ) -> Result<GeneratedFile, XmlOutputFailure> {
+        OutputRouter::default().serialize_as(OutputFormat::BblXml, context, request)
     }
+}
+
+pub(crate) fn render_bbl(plan: &OutputPlan<'_>) -> Result<String, XmlOutputFailure> {
+    let schema = schema_file_name(plan.request().path().as_str());
+    let mut xml = XmlWriter::new(plan.request().max_bytes());
+    xml.raw(&header("bbl", &schema, "bblxml", BBL_XML_NAMESPACE))?;
+    for planned in plan.sections() {
+        let section = planned.section();
+        xml.line(1, &format!("<bbl:refsection number=\"{}\">", section.id()))?;
+        for list in section.lists() {
+            xml.line(
+                2,
+                &format!(
+                    "<bbl:datalist name=\"{}\" type=\"{}\">",
+                    attr(list.id().as_str())?,
+                    match list.kind() {
+                        bib_model::DataListKind::Entry => "entry",
+                        bib_model::DataListKind::List => "list",
+                    }
+                ),
+            )?;
+            for item in list.items() {
+                let entry = section.entry(item.entry()).ok_or_else(|| {
+                    failure(
+                        XmlOutputFailureKind::MalformedValue,
+                        "BIB_XML_UNKNOWN_ENTRY",
+                        "BBLXML data list references an unknown entry",
+                    )
+                })?;
+                write_bblxml_entry(&mut xml, entry)?;
+            }
+            xml.line(2, "</bbl:datalist>")?;
+        }
+        for (alias, target) in section.aliases() {
+            xml.line(
+                2,
+                &format!(
+                    "<bbl:keyalias key=\"{}\" target=\"{}\" />",
+                    attr(alias.as_str())?,
+                    attr(target.as_str())?
+                ),
+            )?;
+        }
+        for key in section.undefined_keys() {
+            xml.line(
+                2,
+                &format!("<bbl:missing key=\"{}\" />", attr(key.as_str())?),
+            )?;
+        }
+        xml.line(1, "</bbl:refsection>")?;
+    }
+    xml.raw("</bbl:refsections>\n")?;
+    Ok(prepare_text(xml.value, plan.request()))
 }
 
 /// Generates the deterministic Relax NG companion for the active frozen data model.
@@ -192,30 +162,7 @@ pub fn generate_xml_schema(
         .expect("writing a String cannot fail");
     }
     schema.push_str("  </choice></zeroOrMore></element></define>\n</grammar>\n");
-    encode_result(schema, request)
-}
-
-fn validate(
-    context: OutputContext<'_>,
-    request: &OutputRequest,
-    expected: OutputFormat,
-    label: &str,
-) -> Result<(), XmlOutputFailure> {
-    if request.format() != expected {
-        return Err(failure(
-            XmlOutputFailureKind::WrongFormat,
-            "BIB_XML_FORMAT",
-            &format!("the {label} serializer requires a {label} output request"),
-        ));
-    }
-    if context.document().configuration().version() != context.unicode().compatibility() {
-        return Err(failure(
-            XmlOutputFailureKind::IncompatibleVersion,
-            "BIB_XML_VERSION",
-            "the processed document and Unicode tables are incompatible",
-        ));
-    }
-    Ok(())
+    finalize(prepare_text(schema, request), request)
 }
 
 fn header(prefix: &str, schema: &str, format: &str, namespace: &str) -> String {
@@ -618,13 +565,7 @@ impl XmlWriter {
         self.raw("\n")
     }
 }
-fn finish(xml: XmlWriter, request: &OutputRequest) -> Result<GeneratedFile, XmlOutputFailure> {
-    encode_result(xml.value, request)
-}
-fn encode_result(
-    mut text: String,
-    request: &OutputRequest,
-) -> Result<GeneratedFile, XmlOutputFailure> {
+fn prepare_text(mut text: String, request: &OutputRequest) -> String {
     if request.encoding() != LegacyEncoding::Utf8 {
         text = text.replacen(
             "encoding=\"UTF-8\"",
@@ -632,25 +573,7 @@ fn encode_result(
             1,
         );
     }
-    if request.newline() == OutputNewline::CrLf {
-        text = text.replace('\n', "\r\n");
-    }
-    let bytes = encode_legacy(&text, request.encoding()).map_err(|e| match e {
-        EncodingError::UnmappableCharacter => failure(
-            XmlOutputFailureKind::Unrepresentable,
-            "BIB_XML_ENCODING",
-            "XML output contains a character unavailable in the requested encoding",
-        ),
-        _ => failure(
-            XmlOutputFailureKind::MalformedValue,
-            "BIB_XML_ENCODING",
-            "the requested XML encoding is invalid",
-        ),
-    })?;
-    if bytes.len() > request.max_bytes() {
-        return Err(limit(request.max_bytes()));
-    }
-    Ok(GeneratedFile::new(request.path().clone(), bytes))
+    text
 }
 fn encoding_name(v: LegacyEncoding) -> &'static str {
     match v {
@@ -669,15 +592,5 @@ fn limit(max: usize) -> XmlOutputFailure {
     )
 }
 fn failure(kind: XmlOutputFailureKind, code: &str, message: &str) -> XmlOutputFailure {
-    let diagnostic = bib_model::DiagnosticBuilder::new(
-        BibDiagnosticCode::new(code).expect("static diagnostic code"),
-        BibSeverity::Error,
-        message,
-    )
-    .expect("output diagnostic message is valid")
-    .freeze();
-    XmlOutputFailure {
-        kind,
-        diagnostics: Arc::from([diagnostic]),
-    }
+    output_failure(OutputFormat::BibLatexXml, kind, code, message)
 }

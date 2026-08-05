@@ -1,15 +1,15 @@
-use std::fmt;
 use std::fmt::Write as _;
-use std::sync::Arc;
 
 use bib_model::{
-    BibDiagnostic, BibDiagnosticCode, BibSeverity, DataListKind, DateValue, Entry, Field,
-    FieldValue, GeneratedFile, Name, OutputFormat, OutputNewline, OutputRequest, Range,
-    RangeEndpoint,
+    DataListKind, DateValue, Entry, Field, FieldValue, GeneratedFile, Name, OutputFormat,
+    OutputRequest, Range, RangeEndpoint,
 };
-use bib_unicode::{EncodingError, compatibility_hash, encode_legacy, normalise_nfc};
+use bib_unicode::{compatibility_hash, normalise_nfc};
 
-use crate::{OutputContext, Serializer};
+use crate::{
+    BblOutputFailure, BblOutputFailureKind, OutputContext, OutputPlan, OutputRouter,
+    router::failure as output_failure,
+};
 
 const HEADER: &str = concat!(
     "% $ biblatex auxiliary file $\n",
@@ -31,130 +31,60 @@ const HEADER: &str = concat!(
     "\\endgroup\n\n\n",
 );
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BblOutputFailureKind {
-    WrongFormat,
-    IncompatibleVersion,
-    MalformedValue,
-    Unrepresentable,
-    Limit,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BblOutputFailure {
-    kind: BblOutputFailureKind,
-    diagnostics: Arc<[BibDiagnostic]>,
-}
-
-impl BblOutputFailure {
-    #[must_use]
-    pub const fn kind(&self) -> BblOutputFailureKind {
-        self.kind
-    }
-
-    pub fn diagnostics(&self) -> impl ExactSizeIterator<Item = &BibDiagnostic> {
-        self.diagnostics.iter()
-    }
-}
-
-impl fmt::Display for BblOutputFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = self
-            .diagnostics
-            .first()
-            .map_or("BBL output failed", BibDiagnostic::message);
-        formatter.write_str(message)
-    }
-}
-
-impl std::error::Error for BblOutputFailure {}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BblSerializer;
 
-impl Serializer for BblSerializer {
-    type Error = BblOutputFailure;
-
-    fn serialize(
+impl BblSerializer {
+    pub fn serialize(
         &self,
         context: OutputContext<'_>,
         request: &OutputRequest,
-    ) -> Result<GeneratedFile, Self::Error> {
-        if request.format() != OutputFormat::Bbl {
-            return Err(failure(
-                BblOutputFailureKind::WrongFormat,
-                "BIB_OUTPUT_FORMAT",
-                "the BBL serializer requires a BBL output request",
-            ));
-        }
-        let compatibility = context.document().configuration().version();
-        if compatibility != context.unicode().compatibility() || compatibility.bbl_schema != "3.3" {
-            return Err(failure(
-                BblOutputFailureKind::IncompatibleVersion,
-                "BIB_OUTPUT_VERSION",
-                "the processed document and Unicode tables must use BBL schema 3.3",
-            ));
-        }
-
-        let mut writer = BoundedWriter::new(request.max_bytes());
-        writer.push(HEADER)?;
-        for section in context.document().sections() {
-            writer.line(&format!("\\refsection{{{}}}", section.id()))?;
-            for list in section.lists() {
-                let kind = match list.kind() {
-                    DataListKind::Entry => "entry",
-                    DataListKind::List => "list",
-                };
-                validate_argument(list.id().as_str(), "data-list identifier")?;
-                writer.line(&format!("  \\datalist[{kind}]{{{}}}", list.id()))?;
-                for item in list.items() {
-                    let entry_id = item.entry();
-                    let entry = section.entry(entry_id).ok_or_else(|| {
-                        failure(
-                            BblOutputFailureKind::MalformedValue,
-                            "BIB_OUTPUT_UNKNOWN_ENTRY",
-                            &format!("data list references unknown entry `{entry_id}`"),
-                        )
-                    })?;
-                    write_entry(&mut writer, entry, item.context_fields())?;
-                }
-                writer.line("  \\enddatalist")?;
-            }
-            for (alias, target) in section.aliases() {
-                validate_argument(alias.as_str(), "entry alias")?;
-                validate_argument(target.as_str(), "entry identifier")?;
-                writer.line(&format!("  \\keyalias{{{alias}}}{{{target}}}"))?;
-            }
-            for key in section.undefined_keys() {
-                validate_argument(key.as_str(), "undefined entry identifier")?;
-                writer.line(&format!("  \\missing{{{key}}}"))?;
-            }
-            writer.line("\\endrefsection")?;
-        }
-        writer.line("\\endinput")?;
-        writer.push("\n")?;
-
-        let text = match request.newline() {
-            OutputNewline::Lf => writer.finish(),
-            OutputNewline::CrLf => writer.finish().replace('\n', "\r\n"),
-        };
-        let bytes = encode_legacy(&text, request.encoding()).map_err(|error| match error {
-            EncodingError::UnmappableCharacter => failure(
-                BblOutputFailureKind::Unrepresentable,
-                "BIB_OUTPUT_ENCODING",
-                "BBL output contains a character unavailable in the requested encoding",
-            ),
-            EncodingError::UnknownLabel | EncodingError::MalformedInput => failure(
-                BblOutputFailureKind::MalformedValue,
-                "BIB_OUTPUT_ENCODING",
-                "the requested BBL encoding is invalid",
-            ),
-        })?;
-        if bytes.len() > request.max_bytes() {
-            return Err(limit_failure(request.max_bytes()));
-        }
-        Ok(GeneratedFile::new(request.path().clone(), bytes))
+    ) -> Result<GeneratedFile, BblOutputFailure> {
+        OutputRouter::default().serialize_as(OutputFormat::Bbl, context, request)
     }
+}
+
+pub(crate) fn render(plan: &OutputPlan<'_>) -> Result<String, BblOutputFailure> {
+    let mut writer = BoundedWriter::new(plan.request().max_bytes());
+    writer.push(HEADER)?;
+    for planned in plan.sections() {
+        let section = planned.section();
+        writer.line(&format!("\\refsection{{{}}}", section.id()))?;
+        for list in section.lists() {
+            let kind = match list.kind() {
+                DataListKind::Entry => "entry",
+                DataListKind::List => "list",
+            };
+            validate_argument(list.id().as_str(), "data-list identifier")?;
+            writer.line(&format!("  \\datalist[{kind}]{{{}}}", list.id()))?;
+            for item in list.items() {
+                let entry_id = item.entry();
+                let entry = section.entry(entry_id).ok_or_else(|| {
+                    failure(
+                        BblOutputFailureKind::MalformedValue,
+                        "BIB_OUTPUT_UNKNOWN_ENTRY",
+                        &format!("data list references unknown entry `{entry_id}`"),
+                    )
+                })?;
+                write_entry(&mut writer, entry, item.context_fields())?;
+            }
+            writer.line("  \\enddatalist")?;
+        }
+        for (alias, target) in section.aliases() {
+            validate_argument(alias.as_str(), "entry alias")?;
+            validate_argument(target.as_str(), "entry identifier")?;
+            writer.line(&format!("  \\keyalias{{{alias}}}{{{target}}}"))?;
+        }
+        for key in section.undefined_keys() {
+            validate_argument(key.as_str(), "undefined entry identifier")?;
+            writer.line(&format!("  \\missing{{{key}}}"))?;
+        }
+        writer.line("\\endrefsection")?;
+    }
+    writer.line("\\endinput")?;
+    writer.push("\n")?;
+
+    Ok(writer.finish())
 }
 
 fn write_entry<'a>(
@@ -423,14 +353,7 @@ fn validate_text(value: &str, kind: &str) -> Result<(), BblOutputFailure> {
 }
 
 fn failure(kind: BblOutputFailureKind, code: &str, message: &str) -> BblOutputFailure {
-    let code = BibDiagnosticCode::new(code).expect("static output diagnostic code is valid");
-    let diagnostic = bib_model::DiagnosticBuilder::new(code, BibSeverity::Error, message)
-        .expect("output diagnostic message is valid")
-        .freeze();
-    BblOutputFailure {
-        kind,
-        diagnostics: Arc::from([diagnostic]),
-    }
+    output_failure(OutputFormat::Bbl, kind, code, message)
 }
 
 fn limit_failure(limit: usize) -> BblOutputFailure {

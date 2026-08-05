@@ -11,7 +11,7 @@ use crate::{
     BblOutputFailureKind, BblSerializer, BblXmlSerializer, BibLatexXmlSerializer, BibtexMacro,
     BibtexOptions, BibtexOutputFailureKind, BibtexSerializer, DotInclude, DotOptions,
     DotOutputFailureKind, DotSerializer, OutputContext, OutputFailureKind, OutputOptions,
-    OutputRouter, Serializer, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
+    OutputRouter, XmlOutputFailureKind, XmlSchemaKind, generate_xml_schema,
 };
 
 fn source() -> BibSourceLocation {
@@ -201,13 +201,11 @@ fn output_router_dispatches_every_alternate_format() {
         );
     }
     let tiny = dot_request().with_max_bytes(1);
-    assert_eq!(
-        router
-            .serialize(context, &tiny)
-            .expect_err("typed route failure")
-            .kind(),
-        OutputFailureKind::Dot
-    );
+    let error = router
+        .serialize(context, &tiny)
+        .expect_err("typed route failure");
+    assert_eq!(error.format(), OutputFormat::Dot);
+    assert_eq!(error.kind(), OutputFailureKind::Limit);
 }
 
 fn person(family: &str, given: &str) -> bib_model::Name {
